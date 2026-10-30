@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 import pytest
-from click.testing import CliRunner
+from click.testing import CliRunner, Result
 
 from portolan_cli.cli import cli
 
@@ -130,6 +130,25 @@ def make_versions_json(col_dir: Path, assets: dict[str, dict]) -> None:
     (col_dir / "versions.json").write_text(json.dumps(versions_data))
 
 
+def make_col1_item1(tmp_path: Path, assets: dict[str, str]) -> Path:
+    """Write a catalog with collection col1 and item item1, and return the item directory."""
+    make_catalog(tmp_path, ["col1"])
+    col_dir = tmp_path / "col1"
+    make_collection(col_dir, ["item1"])
+    item_dir = col_dir / "item1"
+    make_item(item_dir, assets)
+    return item_dir
+
+
+TRACKED_DATA = {"item1/data.parquet": {"sha256": "abc", "size_bytes": 100}}
+
+
+def run_list(runner: CliRunner, tmp_path: Path, *flags: str) -> Result:
+    """Run the list command on the catalog at tmp_path with the given flags."""
+    with patch("portolan_cli.cli.find_catalog_root", return_value=tmp_path):
+        return runner.invoke(cli, ["list", *flags, "--catalog", str(tmp_path)])
+
+
 # =============================================================================
 # Test: Status indicators in list output
 # =============================================================================
@@ -141,18 +160,13 @@ class TestListStatusIndicators:
     @pytest.mark.unit
     def test_list_shows_tracked_indicator(self, runner: CliRunner, tmp_path: Path) -> None:
         """List shows checkmark for tracked files."""
-        make_catalog(tmp_path, ["col1"])
-        col_dir = tmp_path / "col1"
-        make_collection(col_dir, ["item1"])
-        item_dir = col_dir / "item1"
-        make_item(item_dir, {"data": "./data.parquet"})
+        item_dir = make_col1_item1(tmp_path, {"data": "./data.parquet"})
         (item_dir / "data.parquet").write_bytes(b"x" * 100)
 
         # Mark file as tracked in versions.json
-        make_versions_json(col_dir, {"item1/data.parquet": {"sha256": "abc", "size_bytes": 100}})
+        make_versions_json(tmp_path / "col1", TRACKED_DATA)
 
-        with patch("portolan_cli.cli.find_catalog_root", return_value=tmp_path):
-            result = runner.invoke(cli, ["list", "--catalog", str(tmp_path)])
+        result = run_list(runner, tmp_path)
 
         assert result.exit_code == 0
         # Should show checkmark for tracked file
@@ -161,20 +175,15 @@ class TestListStatusIndicators:
     @pytest.mark.unit
     def test_list_shows_untracked_indicator(self, runner: CliRunner, tmp_path: Path) -> None:
         """List shows + for untracked files (on disk but not in versions.json)."""
-        make_catalog(tmp_path, ["col1"])
-        col_dir = tmp_path / "col1"
-        make_collection(col_dir, ["item1"])
-        item_dir = col_dir / "item1"
-        make_item(item_dir, {"data": "./data.parquet"})
+        item_dir = make_col1_item1(tmp_path, {"data": "./data.parquet"})
         (item_dir / "data.parquet").write_bytes(b"x" * 100)
         # Also create an untracked file
         (item_dir / "README.md").write_text("Hello")
 
         # Only track data.parquet, not README.md
-        make_versions_json(col_dir, {"item1/data.parquet": {"sha256": "abc", "size_bytes": 100}})
+        make_versions_json(tmp_path / "col1", TRACKED_DATA)
 
-        with patch("portolan_cli.cli.find_catalog_root", return_value=tmp_path):
-            result = runner.invoke(cli, ["list", "--catalog", str(tmp_path)])
+        result = run_list(runner, tmp_path)
 
         assert result.exit_code == 0
         # Should show the untracked file with + indicator
@@ -184,18 +193,13 @@ class TestListStatusIndicators:
     @pytest.mark.unit
     def test_list_shows_deleted_indicator(self, runner: CliRunner, tmp_path: Path) -> None:
         """List shows ! for deleted files (in versions.json but missing from disk)."""
-        make_catalog(tmp_path, ["col1"])
-        col_dir = tmp_path / "col1"
-        make_collection(col_dir, ["item1"])
-        item_dir = col_dir / "item1"
-        make_item(item_dir, {"data": "./data.parquet"})
+        make_col1_item1(tmp_path, {"data": "./data.parquet"})
         # Don't create the actual file - it's "deleted"
 
         # Track file in versions.json even though it doesn't exist
-        make_versions_json(col_dir, {"item1/data.parquet": {"sha256": "abc", "size_bytes": 100}})
+        make_versions_json(tmp_path / "col1", TRACKED_DATA)
 
-        with patch("portolan_cli.cli.find_catalog_root", return_value=tmp_path):
-            result = runner.invoke(cli, ["list", "--catalog", str(tmp_path)])
+        result = run_list(runner, tmp_path)
 
         assert result.exit_code == 0
         # Should show the deleted file with ! indicator
@@ -224,8 +228,7 @@ class TestListScansAllSubdirectories:
         item_dir.mkdir()
         (item_dir / "data.parquet").write_bytes(b"x" * 100)
 
-        with patch("portolan_cli.cli.find_catalog_root", return_value=tmp_path):
-            result = runner.invoke(cli, ["list", "--catalog", str(tmp_path)])
+        result = run_list(runner, tmp_path)
 
         assert result.exit_code == 0
         # Should show the uninitialized collection and its files
@@ -235,11 +238,7 @@ class TestListScansAllSubdirectories:
     @pytest.mark.unit
     def test_list_shows_all_files_not_just_geo(self, runner: CliRunner, tmp_path: Path) -> None:
         """List shows all files in item directories, not just geo-assets."""
-        make_catalog(tmp_path, ["col1"])
-        col_dir = tmp_path / "col1"
-        make_collection(col_dir, ["item1"])
-        item_dir = col_dir / "item1"
-        make_item(item_dir, {"data": "./data.parquet"})
+        item_dir = make_col1_item1(tmp_path, {"data": "./data.parquet"})
 
         # Create various file types
         (item_dir / "data.parquet").write_bytes(b"x" * 100)
@@ -247,10 +246,9 @@ class TestListScansAllSubdirectories:
         (item_dir / "style.json").write_text("{}")
         (item_dir / "thumbnail.png").write_bytes(b"PNG")
 
-        make_versions_json(col_dir, {"item1/data.parquet": {"sha256": "abc", "size_bytes": 100}})
+        make_versions_json(tmp_path / "col1", TRACKED_DATA)
 
-        with patch("portolan_cli.cli.find_catalog_root", return_value=tmp_path):
-            result = runner.invoke(cli, ["list", "--catalog", str(tmp_path)])
+        result = run_list(runner, tmp_path)
 
         assert result.exit_code == 0
         # Should show ALL files
@@ -271,18 +269,13 @@ class TestListFilterFlags:
     @pytest.mark.unit
     def test_list_tracked_only_hides_untracked(self, runner: CliRunner, tmp_path: Path) -> None:
         """--tracked-only flag shows only tracked files."""
-        make_catalog(tmp_path, ["col1"])
-        col_dir = tmp_path / "col1"
-        make_collection(col_dir, ["item1"])
-        item_dir = col_dir / "item1"
-        make_item(item_dir, {"data": "./data.parquet"})
+        item_dir = make_col1_item1(tmp_path, {"data": "./data.parquet"})
         (item_dir / "data.parquet").write_bytes(b"x" * 100)
         (item_dir / "README.md").write_text("Untracked")
 
-        make_versions_json(col_dir, {"item1/data.parquet": {"sha256": "abc", "size_bytes": 100}})
+        make_versions_json(tmp_path / "col1", TRACKED_DATA)
 
-        with patch("portolan_cli.cli.find_catalog_root", return_value=tmp_path):
-            result = runner.invoke(cli, ["list", "--tracked-only", "--catalog", str(tmp_path)])
+        result = run_list(runner, tmp_path, "--tracked-only")
 
         assert result.exit_code == 0
         assert "data.parquet" in result.output
@@ -293,18 +286,13 @@ class TestListFilterFlags:
         self, runner: CliRunner, tmp_path: Path
     ) -> None:
         """--untracked-only flag shows only untracked files."""
-        make_catalog(tmp_path, ["col1"])
-        col_dir = tmp_path / "col1"
-        make_collection(col_dir, ["item1"])
-        item_dir = col_dir / "item1"
-        make_item(item_dir, {"data": "./data.parquet"})
+        item_dir = make_col1_item1(tmp_path, {"data": "./data.parquet"})
         (item_dir / "data.parquet").write_bytes(b"x" * 100)
         (item_dir / "README.md").write_text("Untracked")
 
-        make_versions_json(col_dir, {"item1/data.parquet": {"sha256": "abc", "size_bytes": 100}})
+        make_versions_json(tmp_path / "col1", TRACKED_DATA)
 
-        with patch("portolan_cli.cli.find_catalog_root", return_value=tmp_path):
-            result = runner.invoke(cli, ["list", "--untracked-only", "--catalog", str(tmp_path)])
+        result = run_list(runner, tmp_path, "--untracked-only")
 
         assert result.exit_code == 0
         assert "README.md" in result.output
@@ -322,18 +310,13 @@ class TestListIgnoredFiles:
     @pytest.mark.unit
     def test_list_excludes_ds_store(self, runner: CliRunner, tmp_path: Path) -> None:
         """List excludes .DS_Store files."""
-        make_catalog(tmp_path, ["col1"])
-        col_dir = tmp_path / "col1"
-        make_collection(col_dir, ["item1"])
-        item_dir = col_dir / "item1"
-        make_item(item_dir, {"data": "./data.parquet"})
+        item_dir = make_col1_item1(tmp_path, {"data": "./data.parquet"})
         (item_dir / "data.parquet").write_bytes(b"x" * 100)
         (item_dir / ".DS_Store").write_bytes(b"x")
 
-        make_versions_json(col_dir, {"item1/data.parquet": {"sha256": "abc", "size_bytes": 100}})
+        make_versions_json(tmp_path / "col1", TRACKED_DATA)
 
-        with patch("portolan_cli.cli.find_catalog_root", return_value=tmp_path):
-            result = runner.invoke(cli, ["list", "--catalog", str(tmp_path)])
+        result = run_list(runner, tmp_path)
 
         assert result.exit_code == 0
         assert ".DS_Store" not in result.output
@@ -341,18 +324,13 @@ class TestListIgnoredFiles:
     @pytest.mark.unit
     def test_list_excludes_tmp_files(self, runner: CliRunner, tmp_path: Path) -> None:
         """List excludes *.tmp files."""
-        make_catalog(tmp_path, ["col1"])
-        col_dir = tmp_path / "col1"
-        make_collection(col_dir, ["item1"])
-        item_dir = col_dir / "item1"
-        make_item(item_dir, {"data": "./data.parquet"})
+        item_dir = make_col1_item1(tmp_path, {"data": "./data.parquet"})
         (item_dir / "data.parquet").write_bytes(b"x" * 100)
         (item_dir / "temp.tmp").write_text("temp")
 
-        make_versions_json(col_dir, {"item1/data.parquet": {"sha256": "abc", "size_bytes": 100}})
+        make_versions_json(tmp_path / "col1", TRACKED_DATA)
 
-        with patch("portolan_cli.cli.find_catalog_root", return_value=tmp_path):
-            result = runner.invoke(cli, ["list", "--catalog", str(tmp_path)])
+        result = run_list(runner, tmp_path)
 
         assert result.exit_code == 0
         assert "temp.tmp" not in result.output
@@ -369,18 +347,13 @@ class TestListJsonWithStatus:
     @pytest.mark.unit
     def test_list_json_includes_status_field(self, runner: CliRunner, tmp_path: Path) -> None:
         """JSON output includes status field for each asset."""
-        make_catalog(tmp_path, ["col1"])
-        col_dir = tmp_path / "col1"
-        make_collection(col_dir, ["item1"])
-        item_dir = col_dir / "item1"
-        make_item(item_dir, {"data": "./data.parquet"})
+        item_dir = make_col1_item1(tmp_path, {"data": "./data.parquet"})
         (item_dir / "data.parquet").write_bytes(b"x" * 100)
         (item_dir / "README.md").write_text("Untracked")
 
-        make_versions_json(col_dir, {"item1/data.parquet": {"sha256": "abc", "size_bytes": 100}})
+        make_versions_json(tmp_path / "col1", TRACKED_DATA)
 
-        with patch("portolan_cli.cli.find_catalog_root", return_value=tmp_path):
-            result = runner.invoke(cli, ["list", "--json", "--catalog", str(tmp_path)])
+        result = run_list(runner, tmp_path, "--json")
 
         assert result.exit_code == 0
         envelope = json.loads(result.output)
@@ -392,18 +365,13 @@ class TestListJsonWithStatus:
     @pytest.mark.unit
     def test_list_json_includes_summary_counts(self, runner: CliRunner, tmp_path: Path) -> None:
         """JSON output includes summary with tracked/untracked counts."""
-        make_catalog(tmp_path, ["col1"])
-        col_dir = tmp_path / "col1"
-        make_collection(col_dir, ["item1"])
-        item_dir = col_dir / "item1"
-        make_item(item_dir, {"data": "./data.parquet"})
+        item_dir = make_col1_item1(tmp_path, {"data": "./data.parquet"})
         (item_dir / "data.parquet").write_bytes(b"x" * 100)
         (item_dir / "README.md").write_text("Untracked")
 
-        make_versions_json(col_dir, {"item1/data.parquet": {"sha256": "abc", "size_bytes": 100}})
+        make_versions_json(tmp_path / "col1", TRACKED_DATA)
 
-        with patch("portolan_cli.cli.find_catalog_root", return_value=tmp_path):
-            result = runner.invoke(cli, ["list", "--json", "--catalog", str(tmp_path)])
+        result = run_list(runner, tmp_path, "--json")
 
         assert result.exit_code == 0
         envelope = json.loads(result.output)
@@ -449,11 +417,8 @@ class TestFormatDetectionFix:
     @pytest.mark.unit
     def test_cpg_file_not_shown_as_geoparquet(self, runner: CliRunner, tmp_path: Path) -> None:
         """CPG files should not be labeled as GeoParquet."""
-        make_catalog(tmp_path, ["col1"])
         col_dir = tmp_path / "col1"
-        make_collection(col_dir, ["item1"])
-        item_dir = col_dir / "item1"
-        make_item(item_dir, {"data": "./data.parquet", "cpg": "./data.CPG"})
+        item_dir = make_col1_item1(tmp_path, {"data": "./data.parquet", "cpg": "./data.CPG"})
         (item_dir / "data.parquet").write_bytes(b"x" * 100)
         (item_dir / "data.CPG").write_text("UTF-8")
 
@@ -465,8 +430,7 @@ class TestFormatDetectionFix:
             },
         )
 
-        with patch("portolan_cli.cli.find_catalog_root", return_value=tmp_path):
-            result = runner.invoke(cli, ["list", "--catalog", str(tmp_path)])
+        result = run_list(runner, tmp_path)
 
         assert result.exit_code == 0
         # data.parquet should show as GeoParquet
