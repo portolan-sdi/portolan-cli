@@ -9,7 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
@@ -31,6 +31,64 @@ def _sha256(data: str) -> str:
     return hashlib.sha256(data.encode()).hexdigest()
 
 
+CREATED = datetime(2024, 1, 15, 10, 30, 0, tzinfo=UTC)
+
+
+def _one_asset_version(
+    key: str, asset: Asset, created: datetime = CREATED, **fields: Any
+) -> Version:
+    """Return version 1.0.0 that is not breaking and holds one asset under the key."""
+    return Version(
+        version="1.0.0",
+        created=created,
+        breaking=False,
+        assets={key: asset},
+        changes=[key],
+        **fields,
+    )
+
+
+def _versions_file(version: Version) -> VersionsFile:
+    """Return a versions file whose only and current version is the given version."""
+    return VersionsFile(spec_version="1.0.0", current_version=version.version, versions=[version])
+
+
+def _write_json(tmp_path: Path, vf: VersionsFile) -> dict[str, Any]:
+    """Write vf to versions.json in tmp_path and return the parsed JSON."""
+    versions_path = tmp_path / "versions.json"
+    write_versions(versions_path, vf)
+    data: dict[str, Any] = json.loads(versions_path.read_text())
+    return data
+
+
+def _versions_json(
+    asset_fields: dict[str, Any] | None = None, version_fields: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """Return versions.json data for version 1.0.0 with asset data.parquet (sha256 abc123, 1024 bytes)."""
+    asset = {"sha256": "abc123", "size_bytes": 1024, "href": "data.parquet", **(asset_fields or {})}
+    return {
+        "spec_version": "1.0.0",
+        "current_version": "1.0.0",
+        "versions": [
+            {
+                "version": "1.0.0",
+                "created": "2024-01-15T10:30:00Z",
+                "breaking": False,
+                "assets": {"data.parquet": asset},
+                "changes": ["data.parquet"],
+                **(version_fields or {}),
+            }
+        ],
+    }
+
+
+def _read_json(tmp_path: Path, data: dict[str, Any]) -> VersionsFile:
+    """Write data to versions.json in tmp_path and return the result of read_versions."""
+    versions_path = tmp_path / "versions.json"
+    versions_path.write_text(json.dumps(data))
+    return read_versions(versions_path)
+
+
 class TestVersionsFileModel:
     """Tests for the VersionsFile data model."""
 
@@ -50,18 +108,8 @@ class TestVersionsFileModel:
             size_bytes=1024,
             href="data.parquet",
         )
-        version = Version(
-            version="1.0.0",
-            created=datetime(2024, 1, 15, 10, 30, 0, tzinfo=UTC),
-            breaking=False,
-            assets={"data.parquet": asset},
-            changes=["data.parquet"],
-        )
-        vf = VersionsFile(
-            spec_version="1.0.0",
-            current_version="1.0.0",
-            versions=[version],
-        )
+        version = _one_asset_version("data.parquet", asset)
+        vf = _versions_file(version)
         assert vf.current_version == "1.0.0"
         assert len(vf.versions) == 1
         assert vf.versions[0].assets["data.parquet"].sha256 == "abc123"
@@ -73,29 +121,7 @@ class TestReadVersions:
     @pytest.mark.unit
     def test_read_valid_versions_file(self, tmp_path: Path) -> None:
         """read_versions parses a valid versions.json file."""
-        versions_data = {
-            "spec_version": "1.0.0",
-            "current_version": "1.0.0",
-            "versions": [
-                {
-                    "version": "1.0.0",
-                    "created": "2024-01-15T10:30:00Z",
-                    "breaking": False,
-                    "assets": {
-                        "data.parquet": {
-                            "sha256": "abc123",
-                            "size_bytes": 1024,
-                            "href": "data.parquet",
-                        }
-                    },
-                    "changes": ["data.parquet"],
-                }
-            ],
-        }
-        versions_path = tmp_path / "versions.json"
-        versions_path.write_text(json.dumps(versions_data))
-
-        vf = read_versions(versions_path)
+        vf = _read_json(tmp_path, _versions_json())
 
         assert vf.spec_version == "1.0.0"
         assert vf.current_version == "1.0.0"
@@ -193,18 +219,10 @@ class TestWriteVersions:
     def test_write_roundtrip(self, tmp_path: Path) -> None:
         """write then read produces identical data."""
         asset = Asset(sha256="roundtrip", size_bytes=512, href="test.parquet")
-        version = Version(
-            version="1.0.0",
-            created=datetime(2024, 3, 15, 8, 0, 0, tzinfo=UTC),
-            breaking=False,
-            assets={"test.parquet": asset},
-            changes=["test.parquet"],
+        version = _one_asset_version(
+            "test.parquet", asset, created=datetime(2024, 3, 15, 8, 0, 0, tzinfo=UTC)
         )
-        vf = VersionsFile(
-            spec_version="1.0.0",
-            current_version="1.0.0",
-            versions=[version],
-        )
+        vf = _versions_file(version)
         versions_path = tmp_path / "versions.json"
 
         write_versions(versions_path, vf)
@@ -232,14 +250,10 @@ class TestWriteVersions:
             feature_count=1000,
             schema_fingerprint="deadbeefcafef00d",
         )
-        version = Version(
-            version="1.0.0",
-            created=datetime(2024, 3, 15, 8, 0, 0, tzinfo=UTC),
-            breaking=False,
-            assets={"test.parquet": asset},
-            changes=["test.parquet"],
+        version = _one_asset_version(
+            "test.parquet", asset, created=datetime(2024, 3, 15, 8, 0, 0, tzinfo=UTC)
         )
-        vf = VersionsFile(spec_version="1.0.0", current_version="1.0.0", versions=[version])
+        vf = _versions_file(version)
         versions_path = tmp_path / "versions.json"
 
         write_versions(versions_path, vf)
@@ -253,14 +267,10 @@ class TestWriteVersions:
     def test_source_fingerprint_roundtrip(self, tmp_path: Path) -> None:
         """The fingerprint of a generated asset's inputs survives write and read."""
         asset = Asset(sha256="fp", size_bytes=1, href="c/items.parquet", source_fingerprint="ab12")
-        version = Version(
-            version="1.0.0",
-            created=datetime(2024, 3, 15, 8, 0, 0, tzinfo=UTC),
-            breaking=False,
-            assets={"items.parquet": asset},
-            changes=["items.parquet"],
+        version = _one_asset_version(
+            "items.parquet", asset, created=datetime(2024, 3, 15, 8, 0, 0, tzinfo=UTC)
         )
-        vf = VersionsFile(spec_version="1.0.0", current_version="1.0.0", versions=[version])
+        vf = _versions_file(version)
         versions_path = tmp_path / "versions.json"
 
         write_versions(versions_path, vf)
@@ -274,14 +284,10 @@ class TestWriteVersions:
         """An asset written without heuristics reads them back as None and
         omits them from the JSON (backward-compatible)."""
         asset = Asset(sha256="none", size_bytes=1, href="d.parquet")
-        version = Version(
-            version="1.0.0",
-            created=datetime(2024, 3, 15, 8, 0, 0, tzinfo=UTC),
-            breaking=False,
-            assets={"d.parquet": asset},
-            changes=["d.parquet"],
+        version = _one_asset_version(
+            "d.parquet", asset, created=datetime(2024, 3, 15, 8, 0, 0, tzinfo=UTC)
         )
-        vf = VersionsFile(spec_version="1.0.0", current_version="1.0.0", versions=[version])
+        vf = _versions_file(version)
         versions_path = tmp_path / "versions.json"
 
         write_versions(versions_path, vf)
@@ -331,18 +337,10 @@ class TestAddVersion:
     def test_add_subsequent_version(self) -> None:
         """add_version appends to existing versions."""
         existing_asset = Asset(sha256="old", size_bytes=500, href="old.parquet")
-        existing_version = Version(
-            version="1.0.0",
-            created=datetime(2024, 1, 1, tzinfo=UTC),
-            breaking=False,
-            assets={"old.parquet": existing_asset},
-            changes=["old.parquet"],
+        existing_version = _one_asset_version(
+            "old.parquet", existing_asset, created=datetime(2024, 1, 1, tzinfo=UTC)
         )
-        vf = VersionsFile(
-            spec_version="1.0.0",
-            current_version="1.0.0",
-            versions=[existing_version],
-        )
+        vf = _versions_file(existing_version)
         new_assets = {"new.parquet": Asset(sha256="new", size_bytes=2000, href="new.parquet")}
 
         updated = add_version(vf, version="2.0.0", assets=new_assets, breaking=True)
@@ -370,18 +368,10 @@ class TestAddVersion:
         """add_version correctly identifies changed files."""
         # Start with one asset
         old_asset = Asset(sha256="same", size_bytes=100, href="unchanged.parquet")
-        existing_version = Version(
-            version="1.0.0",
-            created=datetime(2024, 1, 1, tzinfo=UTC),
-            breaking=False,
-            assets={"unchanged.parquet": old_asset},
-            changes=["unchanged.parquet"],
+        existing_version = _one_asset_version(
+            "unchanged.parquet", old_asset, created=datetime(2024, 1, 1, tzinfo=UTC)
         )
-        vf = VersionsFile(
-            spec_version="1.0.0",
-            current_version="1.0.0",
-            versions=[existing_version],
-        )
+        vf = _versions_file(existing_version)
 
         # Add version with same file (unchanged) + new file
         new_assets = {
@@ -398,18 +388,10 @@ class TestAddVersion:
     def test_add_version_detects_modified_file(self) -> None:
         """add_version detects when existing file has new checksum."""
         old_asset = Asset(sha256="old_hash", size_bytes=100, href="data.parquet")
-        existing_version = Version(
-            version="1.0.0",
-            created=datetime(2024, 1, 1, tzinfo=UTC),
-            breaking=False,
-            assets={"data.parquet": old_asset},
-            changes=["data.parquet"],
+        existing_version = _one_asset_version(
+            "data.parquet", old_asset, created=datetime(2024, 1, 1, tzinfo=UTC)
         )
-        vf = VersionsFile(
-            spec_version="1.0.0",
-            current_version="1.0.0",
-            versions=[existing_version],
-        )
+        vf = _versions_file(existing_version)
 
         # Same filename, different checksum
         modified_assets = {
@@ -531,23 +513,10 @@ class TestVersionsSerializationSourceTracking:
             href="data.parquet",
             source_path="data.geojson",
         )
-        version = Version(
-            version="1.0.0",
-            created=datetime(2024, 1, 15, 10, 30, 0, tzinfo=UTC),
-            breaking=False,
-            assets={"data.parquet": asset},
-            changes=["data.parquet"],
-        )
-        vf = VersionsFile(
-            spec_version="1.0.0",
-            current_version="1.0.0",
-            versions=[version],
-        )
+        version = _one_asset_version("data.parquet", asset)
+        vf = _versions_file(version)
 
-        versions_path = tmp_path / "versions.json"
-        write_versions(versions_path, vf)
-
-        data = json.loads(versions_path.read_text())
+        data = _write_json(tmp_path, vf)
         asset_data = data["versions"][0]["assets"]["data.parquet"]
         assert asset_data["source_path"] == "data.geojson"
 
@@ -561,23 +530,10 @@ class TestVersionsSerializationSourceTracking:
             href="data.parquet",
             source_mtime=mtime,
         )
-        version = Version(
-            version="1.0.0",
-            created=datetime(2024, 1, 15, 10, 30, 0, tzinfo=UTC),
-            breaking=False,
-            assets={"data.parquet": asset},
-            changes=["data.parquet"],
-        )
-        vf = VersionsFile(
-            spec_version="1.0.0",
-            current_version="1.0.0",
-            versions=[version],
-        )
+        version = _one_asset_version("data.parquet", asset)
+        vf = _versions_file(version)
 
-        versions_path = tmp_path / "versions.json"
-        write_versions(versions_path, vf)
-
-        data = json.loads(versions_path.read_text())
+        data = _write_json(tmp_path, vf)
         asset_data = data["versions"][0]["assets"]["data.parquet"]
         assert asset_data["source_mtime"] == mtime
 
@@ -589,23 +545,10 @@ class TestVersionsSerializationSourceTracking:
             size_bytes=1024,
             href="data.parquet",
         )
-        version = Version(
-            version="1.0.0",
-            created=datetime(2024, 1, 15, 10, 30, 0, tzinfo=UTC),
-            breaking=False,
-            assets={"data.parquet": asset},
-            changes=["data.parquet"],
-        )
-        vf = VersionsFile(
-            spec_version="1.0.0",
-            current_version="1.0.0",
-            versions=[version],
-        )
+        version = _one_asset_version("data.parquet", asset)
+        vf = _versions_file(version)
 
-        versions_path = tmp_path / "versions.json"
-        write_versions(versions_path, vf)
-
-        data = json.loads(versions_path.read_text())
+        data = _write_json(tmp_path, vf)
         asset_data = data["versions"][0]["assets"]["data.parquet"]
         assert "source_path" not in asset_data
 
@@ -617,23 +560,10 @@ class TestVersionsSerializationSourceTracking:
             size_bytes=1024,
             href="data.parquet",
         )
-        version = Version(
-            version="1.0.0",
-            created=datetime(2024, 1, 15, 10, 30, 0, tzinfo=UTC),
-            breaking=False,
-            assets={"data.parquet": asset},
-            changes=["data.parquet"],
-        )
-        vf = VersionsFile(
-            spec_version="1.0.0",
-            current_version="1.0.0",
-            versions=[version],
-        )
+        version = _one_asset_version("data.parquet", asset)
+        vf = _versions_file(version)
 
-        versions_path = tmp_path / "versions.json"
-        write_versions(versions_path, vf)
-
-        data = json.loads(versions_path.read_text())
+        data = _write_json(tmp_path, vf)
         asset_data = data["versions"][0]["assets"]["data.parquet"]
         assert "source_mtime" not in asset_data
 
@@ -644,30 +574,7 @@ class TestVersionsParsingSourceTracking:
     @pytest.mark.unit
     def test_parse_reads_source_path_from_json(self, tmp_path: Path) -> None:
         """_parse_versions_file reads source_path from JSON."""
-        data = {
-            "spec_version": "1.0.0",
-            "current_version": "1.0.0",
-            "versions": [
-                {
-                    "version": "1.0.0",
-                    "created": "2024-01-15T10:30:00Z",
-                    "breaking": False,
-                    "assets": {
-                        "data.parquet": {
-                            "sha256": "abc123",
-                            "size_bytes": 1024,
-                            "href": "data.parquet",
-                            "source_path": "data.geojson",
-                        }
-                    },
-                    "changes": ["data.parquet"],
-                }
-            ],
-        }
-        versions_path = tmp_path / "versions.json"
-        versions_path.write_text(json.dumps(data))
-
-        vf = read_versions(versions_path)
+        vf = _read_json(tmp_path, _versions_json(asset_fields={"source_path": "data.geojson"}))
 
         asset = vf.versions[0].assets["data.parquet"]
         assert asset.source_path == "data.geojson"
@@ -676,30 +583,7 @@ class TestVersionsParsingSourceTracking:
     def test_parse_reads_source_mtime_from_json(self, tmp_path: Path) -> None:
         """_parse_versions_file reads source_mtime from JSON."""
         mtime = 1708372800.0
-        data = {
-            "spec_version": "1.0.0",
-            "current_version": "1.0.0",
-            "versions": [
-                {
-                    "version": "1.0.0",
-                    "created": "2024-01-15T10:30:00Z",
-                    "breaking": False,
-                    "assets": {
-                        "data.parquet": {
-                            "sha256": "abc123",
-                            "size_bytes": 1024,
-                            "href": "data.parquet",
-                            "source_mtime": mtime,
-                        }
-                    },
-                    "changes": ["data.parquet"],
-                }
-            ],
-        }
-        versions_path = tmp_path / "versions.json"
-        versions_path.write_text(json.dumps(data))
-
-        vf = read_versions(versions_path)
+        vf = _read_json(tmp_path, _versions_json(asset_fields={"source_mtime": mtime}))
 
         asset = vf.versions[0].assets["data.parquet"]
         assert asset.source_mtime == mtime
@@ -707,29 +591,7 @@ class TestVersionsParsingSourceTracking:
     @pytest.mark.unit
     def test_parse_defaults_source_fields_to_none(self, tmp_path: Path) -> None:
         """_parse_versions_file defaults to None when fields missing."""
-        data = {
-            "spec_version": "1.0.0",
-            "current_version": "1.0.0",
-            "versions": [
-                {
-                    "version": "1.0.0",
-                    "created": "2024-01-15T10:30:00Z",
-                    "breaking": False,
-                    "assets": {
-                        "data.parquet": {
-                            "sha256": "abc123",
-                            "size_bytes": 1024,
-                            "href": "data.parquet",
-                        }
-                    },
-                    "changes": ["data.parquet"],
-                }
-            ],
-        }
-        versions_path = tmp_path / "versions.json"
-        versions_path.write_text(json.dumps(data))
-
-        vf = read_versions(versions_path)
+        vf = _read_json(tmp_path, _versions_json())
 
         asset = vf.versions[0].assets["data.parquet"]
         assert asset.source_path is None
@@ -795,18 +657,8 @@ class TestVersionsParsingSourceTracking:
             source_path="data.geojson",
             source_mtime=mtime,
         )
-        version = Version(
-            version="1.0.0",
-            created=datetime(2024, 1, 15, 10, 30, 0, tzinfo=UTC),
-            breaking=False,
-            assets={"data.parquet": original_asset},
-            changes=["data.parquet"],
-        )
-        vf = VersionsFile(
-            spec_version="1.0.0",
-            current_version="1.0.0",
-            versions=[version],
-        )
+        version = _one_asset_version("data.parquet", original_asset)
+        vf = _versions_file(version)
 
         versions_path = tmp_path / "versions.json"
         write_versions(versions_path, vf)
@@ -867,14 +719,7 @@ class TestSchemaFingerprintInVersion:
             },
         )
         asset = Asset(sha256="abc123", size_bytes=1024, href="data.parquet")
-        version = Version(
-            version="1.0.0",
-            created=datetime(2024, 1, 15, 10, 30, 0, tzinfo=UTC),
-            breaking=False,
-            assets={"data.parquet": asset},
-            changes=["data.parquet"],
-            schema=schema,
-        )
+        version = _one_asset_version("data.parquet", asset, schema=schema)
         assert version.schema is not None
         assert version.schema.type == "geoparquet"
 
@@ -882,26 +727,15 @@ class TestSchemaFingerprintInVersion:
     def test_version_schema_defaults_to_none(self) -> None:
         """Version schema field defaults to None for backward compatibility."""
         asset = Asset(sha256="abc123", size_bytes=1024, href="data.parquet")
-        version = Version(
-            version="1.0.0",
-            created=datetime(2024, 1, 15, 10, 30, 0, tzinfo=UTC),
-            breaking=False,
-            assets={"data.parquet": asset},
-            changes=["data.parquet"],
-        )
+        version = _one_asset_version("data.parquet", asset)
         assert version.schema is None
 
     @pytest.mark.unit
     def test_version_accepts_message(self) -> None:
         """Version dataclass accepts optional message field (MAJOR #6)."""
         asset = Asset(sha256="abc123", size_bytes=1024, href="data.parquet")
-        version = Version(
-            version="1.0.0",
-            created=datetime(2024, 1, 15, 10, 30, 0, tzinfo=UTC),
-            breaking=False,
-            assets={"data.parquet": asset},
-            changes=["data.parquet"],
-            message="Data update, no schema changes",
+        version = _one_asset_version(
+            "data.parquet", asset, message="Data update, no schema changes"
         )
         assert version.message == "Data update, no schema changes"
 
@@ -909,13 +743,7 @@ class TestSchemaFingerprintInVersion:
     def test_version_message_defaults_to_none(self) -> None:
         """Version message field defaults to None for backward compatibility."""
         asset = Asset(sha256="abc123", size_bytes=1024, href="data.parquet")
-        version = Version(
-            version="1.0.0",
-            created=datetime(2024, 1, 15, 10, 30, 0, tzinfo=UTC),
-            breaking=False,
-            assets={"data.parquet": asset},
-            changes=["data.parquet"],
-        )
+        version = _one_asset_version("data.parquet", asset)
         assert version.message is None
 
 
@@ -932,24 +760,10 @@ class TestSchemaFingerprintSerialization:
             fingerprint={"columns": [{"name": "geometry", "type": "geometry"}]},
         )
         asset = Asset(sha256="abc123", size_bytes=1024, href="data.parquet")
-        version = Version(
-            version="1.0.0",
-            created=datetime(2024, 1, 15, 10, 30, 0, tzinfo=UTC),
-            breaking=False,
-            assets={"data.parquet": asset},
-            changes=["data.parquet"],
-            schema=schema,
-        )
-        vf = VersionsFile(
-            spec_version="1.0.0",
-            current_version="1.0.0",
-            versions=[version],
-        )
+        version = _one_asset_version("data.parquet", asset, schema=schema)
+        vf = _versions_file(version)
 
-        versions_path = tmp_path / "versions.json"
-        write_versions(versions_path, vf)
-
-        data = json.loads(versions_path.read_text())
+        data = _write_json(tmp_path, vf)
         assert "schema" in data["versions"][0]
         assert data["versions"][0]["schema"]["type"] == "geoparquet"
 
@@ -957,70 +771,30 @@ class TestSchemaFingerprintSerialization:
     def test_serialize_includes_message_when_present(self, tmp_path: Path) -> None:
         """write_versions includes message in JSON when present (MAJOR #6)."""
         asset = Asset(sha256="abc123", size_bytes=1024, href="data.parquet")
-        version = Version(
-            version="1.0.0",
-            created=datetime(2024, 1, 15, 10, 30, 0, tzinfo=UTC),
-            breaking=False,
-            assets={"data.parquet": asset},
-            changes=["data.parquet"],
-            message="Data update",
-        )
-        vf = VersionsFile(
-            spec_version="1.0.0",
-            current_version="1.0.0",
-            versions=[version],
-        )
+        version = _one_asset_version("data.parquet", asset, message="Data update")
+        vf = _versions_file(version)
 
-        versions_path = tmp_path / "versions.json"
-        write_versions(versions_path, vf)
-
-        data = json.loads(versions_path.read_text())
+        data = _write_json(tmp_path, vf)
         assert data["versions"][0]["message"] == "Data update"
 
     @pytest.mark.unit
     def test_serialize_omits_schema_when_none(self, tmp_path: Path) -> None:
         """write_versions omits schema from JSON when None."""
         asset = Asset(sha256="abc123", size_bytes=1024, href="data.parquet")
-        version = Version(
-            version="1.0.0",
-            created=datetime(2024, 1, 15, 10, 30, 0, tzinfo=UTC),
-            breaking=False,
-            assets={"data.parquet": asset},
-            changes=["data.parquet"],
-        )
-        vf = VersionsFile(
-            spec_version="1.0.0",
-            current_version="1.0.0",
-            versions=[version],
-        )
+        version = _one_asset_version("data.parquet", asset)
+        vf = _versions_file(version)
 
-        versions_path = tmp_path / "versions.json"
-        write_versions(versions_path, vf)
-
-        data = json.loads(versions_path.read_text())
+        data = _write_json(tmp_path, vf)
         assert "schema" not in data["versions"][0]
 
     @pytest.mark.unit
     def test_serialize_omits_message_when_none(self, tmp_path: Path) -> None:
         """write_versions omits message from JSON when None."""
         asset = Asset(sha256="abc123", size_bytes=1024, href="data.parquet")
-        version = Version(
-            version="1.0.0",
-            created=datetime(2024, 1, 15, 10, 30, 0, tzinfo=UTC),
-            breaking=False,
-            assets={"data.parquet": asset},
-            changes=["data.parquet"],
-        )
-        vf = VersionsFile(
-            spec_version="1.0.0",
-            current_version="1.0.0",
-            versions=[version],
-        )
+        version = _one_asset_version("data.parquet", asset)
+        vf = _versions_file(version)
 
-        versions_path = tmp_path / "versions.json"
-        write_versions(versions_path, vf)
-
-        data = json.loads(versions_path.read_text())
+        data = _write_json(tmp_path, vf)
         assert "message" not in data["versions"][0]
 
 
@@ -1030,33 +804,17 @@ class TestSchemaFingerprintParsing:
     @pytest.mark.unit
     def test_parse_reads_schema_from_json(self, tmp_path: Path) -> None:
         """read_versions parses schema from JSON."""
-        data = {
-            "spec_version": "1.0.0",
-            "current_version": "1.0.0",
-            "versions": [
-                {
-                    "version": "1.0.0",
-                    "created": "2024-01-15T10:30:00Z",
-                    "breaking": False,
-                    "assets": {
-                        "data.parquet": {
-                            "sha256": "abc123",
-                            "size_bytes": 1024,
-                            "href": "data.parquet",
-                        }
-                    },
-                    "changes": ["data.parquet"],
+        vf = _read_json(
+            tmp_path,
+            _versions_json(
+                version_fields={
                     "schema": {
                         "type": "geoparquet",
                         "fingerprint": {"columns": [{"name": "geometry", "type": "geometry"}]},
-                    },
+                    }
                 }
-            ],
-        }
-        versions_path = tmp_path / "versions.json"
-        versions_path.write_text(json.dumps(data))
-
-        vf = read_versions(versions_path)
+            ),
+        )
 
         assert vf.versions[0].schema is not None
         assert vf.versions[0].schema.type == "geoparquet"
@@ -1064,59 +822,14 @@ class TestSchemaFingerprintParsing:
     @pytest.mark.unit
     def test_parse_reads_message_from_json(self, tmp_path: Path) -> None:
         """read_versions parses message from JSON."""
-        data = {
-            "spec_version": "1.0.0",
-            "current_version": "1.0.0",
-            "versions": [
-                {
-                    "version": "1.0.0",
-                    "created": "2024-01-15T10:30:00Z",
-                    "breaking": False,
-                    "assets": {
-                        "data.parquet": {
-                            "sha256": "abc123",
-                            "size_bytes": 1024,
-                            "href": "data.parquet",
-                        }
-                    },
-                    "changes": ["data.parquet"],
-                    "message": "Initial import",
-                }
-            ],
-        }
-        versions_path = tmp_path / "versions.json"
-        versions_path.write_text(json.dumps(data))
-
-        vf = read_versions(versions_path)
+        vf = _read_json(tmp_path, _versions_json(version_fields={"message": "Initial import"}))
 
         assert vf.versions[0].message == "Initial import"
 
     @pytest.mark.unit
     def test_parse_defaults_schema_to_none(self, tmp_path: Path) -> None:
         """read_versions defaults schema to None when missing."""
-        data = {
-            "spec_version": "1.0.0",
-            "current_version": "1.0.0",
-            "versions": [
-                {
-                    "version": "1.0.0",
-                    "created": "2024-01-15T10:30:00Z",
-                    "breaking": False,
-                    "assets": {
-                        "data.parquet": {
-                            "sha256": "abc123",
-                            "size_bytes": 1024,
-                            "href": "data.parquet",
-                        }
-                    },
-                    "changes": ["data.parquet"],
-                }
-            ],
-        }
-        versions_path = tmp_path / "versions.json"
-        versions_path.write_text(json.dumps(data))
-
-        vf = read_versions(versions_path)
+        vf = _read_json(tmp_path, _versions_json())
 
         assert vf.versions[0].schema is None
         assert vf.versions[0].message is None
@@ -1304,31 +1017,15 @@ class TestEdgeCases:
     def test_unicode_asset_names(self) -> None:
         """Version handles unicode asset names."""
         asset = Asset(sha256="abc123", size_bytes=1024, href="données.parquet")
-        version = Version(
-            version="1.0.0",
-            created=datetime(2024, 1, 15, 10, 30, 0, tzinfo=UTC),
-            breaking=False,
-            assets={"données.parquet": asset},
-            changes=["données.parquet"],
-        )
+        version = _one_asset_version("données.parquet", asset)
         assert "données.parquet" in version.assets
 
     @pytest.mark.integration
     def test_unicode_roundtrip(self, tmp_path: Path) -> None:
         """Unicode asset names survive serialization roundtrip."""
         asset = Asset(sha256="abc123", size_bytes=1024, href="数据.parquet")
-        version = Version(
-            version="1.0.0",
-            created=datetime(2024, 1, 15, 10, 30, 0, tzinfo=UTC),
-            breaking=False,
-            assets={"数据.parquet": asset},
-            changes=["数据.parquet"],
-        )
-        vf = VersionsFile(
-            spec_version="1.0.0",
-            current_version="1.0.0",
-            versions=[version],
-        )
+        version = _one_asset_version("数据.parquet", asset)
+        vf = _versions_file(version)
 
         versions_path = tmp_path / "versions.json"
         write_versions(versions_path, vf)
