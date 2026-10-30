@@ -99,7 +99,6 @@ dev = [
     "import-linter>=2.0", # Architecture enforcement via import contracts
     "commitizen>=4.13.4",
     "hypothesis>=6.151.5",
-    "mutmut>=3.8.0",
     "mypy>=1.19.1",
     "pip-audit>=2.10.0",
     "pytest>=9.0.3",
@@ -176,7 +175,6 @@ markers = [
     "slow: Takes > 5 seconds",
     "e2e: End-to-end tests requiring Docker (REST catalog + RustFS)",
     "e2e_slow: Extended E2E tests (concurrency stress, large datasets) - nightly only",
-    "source_scan: Static source-tree guard incompatible with mutmut instrumentation",
 ]
 
 [tool.coverage.run]
@@ -401,7 +399,7 @@ untyped_calls_exclude = ["pyarrow"]
 warn_unreachable = true
 
 [[tool.mypy.overrides]]
-module = ["pyarrow.*", "rasterio.*", "gitingest.*", "matplotlib.*", "pyiceberg.*", "shapely.*", "pygeohash.*", "mutmut.*", "geopandas.*", "contextily.*", "jsonschema.*"]
+module = ["pyarrow.*", "rasterio.*", "gitingest.*", "matplotlib.*", "pyiceberg.*", "shapely.*", "pygeohash.*", "geopandas.*", "contextily.*", "jsonschema.*"]
 ignore_missing_imports = true
 
 # markdown ships no inline types. types-Markdown exists on PyPI, so mypy
@@ -441,62 +439,6 @@ exclude = [
 ]
 sort_by_size = true
 verbose = false
-
-# ---------- mutation testing ----------
-
-[tool.mutmut]
-paths_to_mutate = ["portolan_cli/"]
-# Keep workers clear of async runtimes started by the baseline tests (#1081).
-# https://github.com/boxed/mutmut/issues/578
-process_isolation = "forkserver"
-pytest_add_cli_args_test_selection = ["tests/"]
-# The `scripts/` package is imported by a few tests (test_scripts,
-# test_pip_audit_ignores, test_fetch_lib_docs_integration). mutmut runs the
-# suite from a copied `mutants/` sandbox, so scripts/ must be copied in too or
-# collection dies with `ModuleNotFoundError: No module named 'scripts'` — which
-# used to sink the whole stats phase silently (see nightly.yml's zero-mutant
-# guard).
-# scripts/ (imported by a few tests) and the data files those tests read must
-# be present in the sandbox, or collection/execution dies there.
-# (spec/ used to be copied here for the spec_compliance suite; both are gone —
-# the spec moved to portolan-spec and validation to rashid, which ships its own
-# schemas inside its wheel, so nothing reads a schema by repo-root path now.)
-# `.mutation-shards.json` joins `.mutation-baseline` here because
-# TestShardBaselines::test_repo_baseline_file_parses reads it by repo-root path:
-# inside the copied sandbox that root is `mutants/`, so an uncopied file is a
-# FileNotFoundError that fails the in-mutation pytest run and aborts the gate.
-also_copy = [
-  "scripts/",
-  ".pip-audit-ignores",
-  ".mutation-baseline",
-  ".mutation-shards.json",
-]
-# The stats/baseline run must mirror the fast CI test job, not the whole suite:
-# - --no-cov: keeps coverage instrumentation off even when a caller or config
-# adds --cov (it conflicts with mutmut's); addopts no longer injects it.
-# - --tb=short: a stats-phase failure must show WHERE it broke.
-# - --ignore=tests/docs: the docs tests check docs/, mkdocs.yml, and README.md,
-# not portolan_cli behavior. The sandbox holds none of those files (#997).
-# - --ignore=tests/perf: subprocess performance checks cannot report stats to
-# mutmut and delay the sweep (#1081). Dedicated CI jobs verify these checks.
-# - marker filter: exclude network/slow/benchmark/e2e (mutation of portolan_cli
-# is validated by the fast, offline suite; e2e needs Docker, network needs a
-# live server).
-#
-# The sandbox rule (#997): a test that mutmut runs reads only paths that
-# mutmut copies into mutants/. tests/mutation_sandbox.py enforces it in every
-# ordinary pytest run. It reads this table and fails a test in the selection
-# that opens any other repo-root path. A test that checks repository files goes
-# in tests/docs/. A test of portolan_cli behavior reads a fixture under tests/.
-# Add a path to also_copy only when such a test must read it from the root.
-# The guard reads the -m filter only in the form "not a and not b".
-pytest_add_cli_args = [
-    "--no-cov",
-    "--tb=short",
-    "--ignore=tests/docs",
-    "--ignore=tests/perf",
-    "-m", "not network and not slow and not benchmark and not e2e and not e2e_slow and not source_scan",
-]
 
 # ---------- architecture enforcement ----------
 # Stricter layered contracts are aspirational - the current architecture has some coupling

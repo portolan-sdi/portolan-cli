@@ -22,11 +22,6 @@ from unittest import mock
 
 import pytest
 
-from tests.mutation_sandbox import (
-    MutationSandbox,
-    SandboxReadGuard,
-    reset_stats_mode_in_children,
-)
 from tests.network_guard import (
     NO_PROXY_KEYS,
     PROXY_KEYS,
@@ -36,7 +31,7 @@ from tests.network_guard import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Generator, Iterator
+    from collections.abc import Callable, Iterator
 
     from click.testing import Result
 
@@ -44,15 +39,6 @@ if TYPE_CHECKING:
 # =============================================================================
 # Environment Isolation
 # =============================================================================
-
-# mutmut instruments every mutated function with a trampoline that reads
-# os.environ["MUTANT_UNDER_TEST"] on each call into portolan_cli. A bare
-# patch.dict(os.environ, {}, clear=True) wipes that var, so any cleared-env test
-# that then calls into portolan_cli fails the mutation baseline with
-# KeyError: 'MUTANT_UNDER_TEST' (portolan-sdi/portolan-cli#612). Preserve just
-# that one bookkeeping var. Outside mutmut it is absent, so this is identical to
-# a full clear.
-_MUTMUT_ENV_KEY = "MUTANT_UNDER_TEST"
 
 # botocore reads ~/.aws itself, so these point it at an empty directory. A test
 # that clears the environment must keep them, or the developer's real profiles
@@ -91,45 +77,12 @@ _WINDOWS_SYSTEM_KEYS = (
 # them for every test.
 _AWS_SHELL_KEYS = ("AWS_PROFILE", "AWS_DEFAULT_PROFILE", "AWS_REGION", "AWS_DEFAULT_REGION")
 
-# mutmut also re-invokes Hypothesis tests through its own runner, once per
-# mutant in the same process, so class-based property tests see more than one
-# executor instance and trip HealthCheck.differing_executors during the
-# mutation baseline (#612). Register a profile that relaxes exactly that check
-# when running under mutmut; a test's own @settings(suppress_health_check=...)
-# replaces this list, so explicit lists in test files carry the entry
-# themselves. Outside mutmut the default profile stays fully strict.
-if _MUTMUT_ENV_KEY in os.environ:
-    from hypothesis import HealthCheck as _HealthCheck
-    from hypothesis import settings as _hypothesis_settings
-
-    _hypothesis_settings.register_profile(
-        "mutmut",
-        suppress_health_check=[_HealthCheck.differing_executors],
-    )
-    _hypothesis_settings.load_profile("mutmut")
-
-    # Under mutmut the whole suite runs in one long-lived process that pytest
-    # did not start, so the root logger arrives carrying whatever handlers and
-    # level that process left on it. Library records (rasterio and GDAL are the
-    # loud ones) then reach the stream CliRunner captures, and every test that
-    # does json.loads(result.output) dies on "Extra data" past the envelope.
-    # That is how the mutation gate failed on #612. Reset the root logger to the
-    # state a plain pytest run starts from: no handlers, level WARNING. pytest
-    # adds its own capture handlers per test phase, so caplog is unaffected.
-    import logging as _logging
-
-    _root_logger = _logging.getLogger()
-    for _handler in list(_root_logger.handlers):
-        _root_logger.removeHandler(_handler)
-    _root_logger.setLevel(_logging.WARNING)
-
-
 # CI selects a reduced, deterministic Hypothesis profile with
 # HYPOTHESIS_PROFILE=ci (set in .github/workflows/ci.yml). A PR run gets a fast
 # reproducible check. Nightly does not set the variable, so it keeps the
 # default profile with 100 randomized examples, and example exploration is not
 # lost. A test's own @settings(...) overrides these values.
-if _MUTMUT_ENV_KEY not in os.environ and os.environ.get("HYPOTHESIS_PROFILE") == "ci":
+if os.environ.get("HYPOTHESIS_PROFILE") == "ci":
     from hypothesis import settings as _ci_hypothesis_settings
 
     _ci_hypothesis_settings.register_profile(
@@ -143,7 +96,7 @@ if _MUTMUT_ENV_KEY not in os.environ and os.environ.get("HYPOTHESIS_PROFILE") ==
 
 # The nightly property-tests job sets HYPOTHESIS_PROFILE=nightly: 500 random
 # examples with no deadline, and the failing blob printed for a replay.
-if _MUTMUT_ENV_KEY not in os.environ and os.environ.get("HYPOTHESIS_PROFILE") == "nightly":
+if os.environ.get("HYPOTHESIS_PROFILE") == "nightly":
     from hypothesis import settings as _nightly_hypothesis_settings
 
     _nightly_hypothesis_settings.register_profile(
@@ -155,7 +108,7 @@ if _MUTMUT_ENV_KEY not in os.environ and os.environ.get("HYPOTHESIS_PROFILE") ==
 # loaded machine an I/O-bound example takes longer than the 200 ms default, and
 # Hypothesis then reports a flaky failure that no property caused. No profile
 # keeps a deadline, and this one covers a run that names no profile.
-if _MUTMUT_ENV_KEY not in os.environ and os.environ.get("HYPOTHESIS_PROFILE") not in {
+if os.environ.get("HYPOTHESIS_PROFILE") not in {
     "ci",
     "nightly",
 }:
@@ -184,16 +137,15 @@ def aws_files_environ(aws_dir: Path) -> Iterator[None]:
 
 @contextmanager
 def cleared_environ(**overrides: str) -> Iterator[None]:
-    """Clear os.environ for the block, preserving the harness bookkeeping vars.
+    """Clear os.environ for the block, preserving the harness isolation vars.
 
-    Drop-in replacement for ``mock.patch.dict(os.environ, {}, clear=True)`` that
-    keeps the environment sandbox-stable under mutation testing. It also keeps
-    the AWS isolation vars, so botocore cannot read the developer's real
+    Drop-in replacement for ``mock.patch.dict(os.environ, {}, clear=True)``. It
+    keeps the AWS isolation vars, so botocore cannot read the developer's real
     profiles. It keeps the proxy vars of the network guard, so obstore and GDAL
     cannot reach a remote host. Pass keyword ``overrides`` to seed specific
     variables into the otherwise-empty environment.
     """
-    keep = (_MUTMUT_ENV_KEY, *_AWS_ISOLATION_KEYS, *PROXY_KEYS, *NO_PROXY_KEYS)
+    keep = (*_AWS_ISOLATION_KEYS, *PROXY_KEYS, *NO_PROXY_KEYS)
     if sys.platform == "win32":
         keep = (*keep, *_WINDOWS_SYSTEM_KEYS)
     preserved = {k: v for k, v in os.environ.items() if k in keep}
@@ -209,7 +161,6 @@ def cleared_environ(**overrides: str) -> Iterator[None]:
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _TOOL_OUTPUTS = (
     ".venv/",
-    "mutants/",
     ".pytest_cache/",
     ".mypy_cache/",
     ".ruff_cache/",
@@ -274,107 +225,11 @@ def pytest_configure(config: pytest.Config) -> None:
     """List the repository root, and install the DuckDB extensions before the network guard starts."""
     if hasattr(config, "workerinput"):
         return
-    if _MUTMUT_ENV_KEY not in os.environ:
-        entries = _root_entries()
-        if entries is not None:
-            config.stash[_ROOT_ENTRIES_KEY] = entries
+    entries = _root_entries()
+    if entries is not None:
+        config.stash[_ROOT_ENTRIES_KEY] = entries
     # Under xdist only the controller installs them, before it starts the workers.
     install_duckdb_extensions()
-
-
-# mutmut drives pytest in-process and runs the suite several times per
-# invocation: a stats pass, a clean pass, a forced-fail pass, then one pass per
-# mutant. Hypothesis remembers the instance that ran a @given method and fails
-# HealthCheck.differing_executors the second time that method runs against a
-# fresh instance, so the clean pass dies on the first class-based property test
-# it reaches and takes the night's sweep with it (portolan-sdi/portolan-cli#612).
-# Those 100-odd tests are ordinary pytest methods, not the reused executors the
-# check is aimed at.
-#
-# Dropping the example database answers what the check actually warns about:
-# a failing example recorded while one mutant was live would replay against the
-# next, crediting a kill to the wrong mutant. Outside mutmut the var is absent
-# and the check stays on.
-def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
-    """Keep class-based Hypothesis tests alive across mutmut's repeated sessions."""
-    if _MUTMUT_ENV_KEY not in os.environ:
-        return
-
-    from hypothesis import HealthCheck, settings
-
-    for item in items:
-        obj = getattr(item, "obj", None)
-        func = getattr(obj, "__func__", obj)
-        if not hasattr(func, "hypothesis"):
-            continue
-        current = getattr(func, "_hypothesis_internal_use_settings", None) or settings.default
-        if HealthCheck.differing_executors in current.suppress_health_check:
-            continue
-        func._hypothesis_internal_use_settings = settings(
-            parent=current,
-            suppress_health_check=[
-                *current.suppress_health_check,
-                HealthCheck.differing_executors,
-            ],
-            database=None,
-        )
-
-
-# A test in the mutation selection must not read a repo-root path that mutmut
-# leaves out of mutants/ (#997). tests/mutation_sandbox.py explains the guard.
-# Under mutmut the run already happens in the sandbox, so the guard stays off.
-_SANDBOX_GUARD: SandboxReadGuard | None = None
-if _MUTMUT_ENV_KEY not in os.environ:
-    _SANDBOX_GUARD = SandboxReadGuard(MutationSandbox.from_pyproject(Path(__file__).parent.parent))
-    sys.addaudithook(_SANDBOX_GUARD.audit)
-
-
-def _watch_sandbox_reads(item: pytest.Item) -> Generator[None, object, object]:
-    """Fail ``item`` when its setup or body opens a path outside the sandbox."""
-    guard = _SANDBOX_GUARD
-    if guard is None or not guard.sandbox.selects(
-        item.path, (marker.name for marker in item.iter_markers())
-    ):
-        return (yield)
-    guard.start(item.nodeid)
-    try:
-        result = yield
-    finally:
-        reads = guard.stop()
-    if reads:
-        pytest.fail(guard.message(item.nodeid, reads), pytrace=False)
-    return result
-
-
-# The phase hooks, not an autouse fixture: a session fixture that reads a file
-# runs inside the setup phase of the first test that uses it.
-@pytest.hookimpl(wrapper=True)
-def pytest_runtest_setup(item: pytest.Item) -> Generator[None, object, object]:
-    return (yield from _watch_sandbox_reads(item))
-
-
-@pytest.hookimpl(wrapper=True)
-def pytest_runtest_call(item: pytest.Item) -> Generator[None, object, object]:
-    return (yield from _watch_sandbox_reads(item))
-
-
-@pytest.fixture
-def sandbox_guard() -> SandboxReadGuard:
-    """The session's sandbox read guard. A test that expects a record clears ``reads``."""
-    if _SANDBOX_GUARD is None:
-        pytest.skip("the sandbox guard is off under mutmut")
-    return _SANDBOX_GUARD
-
-
-@pytest.fixture(autouse=True)
-def _mutmut_stats_children(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Keep child interpreters out of mutmut's stats mode.
-
-    ``reset_stats_mode_in_children`` in tests/mutation_sandbox.py gives the
-    reason. Outside the stats phase this fixture does nothing.
-    """
-    if os.environ.get(_MUTMUT_ENV_KEY) == "stats":
-        reset_stats_mode_in_children(monkeypatch)
 
 
 # =============================================================================

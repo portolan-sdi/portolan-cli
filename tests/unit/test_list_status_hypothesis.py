@@ -111,7 +111,6 @@ class TestListStatusHypothesis:
         max_examples=20,
         suppress_health_check=[
             HealthCheck.function_scoped_fixture,
-            HealthCheck.differing_executors,
         ],
     )
     @given(
@@ -162,7 +161,6 @@ class TestListStatusHypothesis:
         max_examples=10,
         suppress_health_check=[
             HealthCheck.function_scoped_fixture,
-            HealthCheck.differing_executors,
         ],
     )
     @given(num_files=st.integers(min_value=0, max_value=10))
@@ -205,7 +203,6 @@ class TestListStatusHypothesis:
         max_examples=10,
         suppress_health_check=[
             HealthCheck.function_scoped_fixture,
-            HealthCheck.differing_executors,
         ],
     )
     @given(
@@ -289,7 +286,6 @@ class TestListIgnoredFilesHypothesis:
         max_examples=10,
         suppress_health_check=[
             HealthCheck.function_scoped_fixture,
-            HealthCheck.differing_executors,
         ],
     )
     @given(ext=st.sampled_from([".tmp", ".temp", ".pyc"]))
@@ -325,7 +321,6 @@ class TestListIgnoredFilesHypothesis:
         max_examples=5,
         suppress_health_check=[
             HealthCheck.function_scoped_fixture,
-            HealthCheck.differing_executors,
         ],
     )
     @given(

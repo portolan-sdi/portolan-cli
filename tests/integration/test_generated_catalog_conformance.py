@@ -453,7 +453,7 @@ def _pushed(root: Path, run: RunCli, build: Builder = _roads_catalog) -> Iterato
             region_name="us-east-1",
         )
         # moto keeps its backends across servers in one process. A serial run,
-        # such as the mutmut sweep, otherwise clones the bucket of an earlier test.
+        # without xdist otherwise clones the bucket of an earlier test.
         urllib.request.urlopen(
             urllib.request.Request(f"{endpoint}/moto-api/reset", method="POST"), timeout=30
         ).close()

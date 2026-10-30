@@ -116,9 +116,8 @@ class PullOutcome(Protocol):
     up_to_date: bool
 
 
-# Generated methods become extra protocol requirements: https://github.com/boxed/mutmut/issues/590
 @runtime_checkable
-class VersioningBackend(Protocol):  # pragma: no mutate block
+class VersioningBackend(Protocol):
     """Protocol for version storage and management backends.
 
     This protocol defines the interface that all versioning backends must implement.

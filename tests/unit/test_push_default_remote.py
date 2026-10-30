@@ -421,7 +421,6 @@ class TestPushDefaultRemoteInvariants:
         max_examples=20,
         suppress_health_check=[
             HealthCheck.function_scoped_fixture,
-            HealthCheck.differing_executors,
         ],
         deadline=None,  # A CliRunner run takes as long as the host load makes it.
     )
@@ -481,7 +480,6 @@ class TestPushDefaultRemoteInvariants:
         max_examples=20,
         suppress_health_check=[
             HealthCheck.function_scoped_fixture,
-            HealthCheck.differing_executors,
         ],
         deadline=None,  # A CliRunner run takes as long as the host load makes it.
     )

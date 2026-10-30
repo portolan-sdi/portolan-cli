@@ -35,7 +35,7 @@ Each spec file should follow this structure:
 
 1. **Human writes spec** — Define what matters in a `.md` file
 2. **AI implements tests** — Generate pytest code from the spec
-3. **Mutation testing verifies** — Nightly `mutmut` runs confirm tests catch real bugs
+3. **Human confirms red** — Break the behavior and confirm that each test fails
 4. **Spec evolves** — Update specs as requirements change
 
 ## Files

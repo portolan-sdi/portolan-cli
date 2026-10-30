@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """Prove that each quality gate fails on the fault it exists to catch (#1035).
 
-A gate that nobody has seen fail can be dead: the nightly mutation sweep ran
-green for seven weeks while it tested no mutant, and the benchmark job compared
-each run with itself. This script injects one known fault per gate and expects
+A gate that nobody has seen fail can be dead: the nightly benchmark job
+compared each run with itself. This script injects one known fault per gate and expects
 the gate to go red.
 
 For each fault the script:
@@ -25,8 +24,8 @@ needs extra privileges to create one, and the tools would walk into it.
 
 Usage::
 
-    uv run python scripts/gate_selftest.py                 # every fault
-    uv run python scripts/gate_selftest.py --fault mutant  # one fault
+    uv run python scripts/gate_selftest.py                        # every fault
+    uv run python scripts/gate_selftest.py --fault dead-function  # one fault
 
 The exit status is 1 when a row is MISSED, BROKEN, or ERROR.
 """
@@ -37,7 +36,6 @@ import argparse
 import io
 import json
 import os
-import re
 import shutil
 import subprocess
 import sys
@@ -51,7 +49,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
 GATE_TIMEOUT_S = 1200
-_STRIPPED_ENV_PREFIXES = ("COV_CORE_", "PYTEST_", "MUTANT_UNDER_TEST")
+_STRIPPED_ENV_PREFIXES = ("COV_CORE_", "PYTEST_")
 
 
 @dataclass(frozen=True)
@@ -67,14 +65,12 @@ class Fault:
     """A known defect and the gates that must catch it.
 
     ``apply(root, faulty)`` writes the fault into the copy at ``root`` when
-    ``faulty`` is true, and the clean variant otherwise. ``control`` is false
-    when a clean run of the gate has no meaning.
+    ``faulty`` is true, and the clean variant otherwise.
     """
 
     name: str
     apply: Callable[[Path, bool], None]
     gates: tuple[Gate, ...]
-    control: bool = True
 
 
 @dataclass(frozen=True)
@@ -174,27 +170,6 @@ def _apply_compiled(fault: Fault, root: Path, faulty: bool) -> None:
 # ---------------------------------------------------------------------------
 
 BBOX = "portolan_cli/bbox.py"
-MUTANT_GLOB = "portolan_cli.bbox.x_is_valid_bbox__mutmut_*"
-
-
-def _apply_mutant(root: Path, faulty: bool) -> None:
-    # Narrow the test selection to the bbox tests, so the stats phase takes
-    # seconds and not the whole suite. The mutants and the runner are the
-    # nightly sweep's own.
-    _replace_once(
-        root / "pyproject.toml",
-        'pytest_add_cli_args_test_selection = ["tests/"]',
-        'pytest_add_cli_args_test_selection = ["tests/unit/test_bbox.py"]',
-    )
-    if faulty:
-        _setup(root, ("uv", "run", "mutmut", "run", MUTANT_GLOB))
-
-
-def _killed(proc: subprocess.CompletedProcess[str]) -> bool:
-    killed = re.findall(
-        r"^\s*portolan_cli\.bbox\.x_is_valid_bbox__mutmut_\d+: killed$", proc.stdout, re.MULTILINE
-    )
-    return proc.returncode == 0 and len(killed) >= 1
 
 
 def _apply_library_print(root: Path, faulty: bool) -> None:
@@ -420,12 +395,6 @@ OPEN_SITES = "tests/perf/test_open_sites.py::test_every_open_site_counts"
 
 FAULTS = (
     Fault(
-        "mutant",
-        _apply_mutant,
-        (Gate(("uv", "run", "mutmut", "results", "--all", "true"), _killed),),
-        control=False,
-    ),
-    Fault(
         "library-print",
         _apply_library_print,
         (Gate(("uv", "run", "ruff", "check", "--select", "T20", BBOX)),),
@@ -557,17 +526,16 @@ def run_fault(fault: Fault, repo: Path, workdir: Path) -> Result:
     try:
         faulty_root = copy_head(repo, workdir / f"{fault.name}-faulty")
         _apply_compiled(fault, faulty_root, True)
-        if fault.control:
-            clean_root = copy_head(repo, workdir / f"{fault.name}-clean")
-            _apply_compiled(fault, clean_root, False)
-            for gate in fault.gates:
-                proc = run(clean_root, gate.command)
-                if gate.caught(proc):
-                    return Result(
-                        fault.name,
-                        "BROKEN",
-                        f"{' '.join(gate.command)} fails on a clean tree: {_tail(proc)}",
-                    )
+        clean_root = copy_head(repo, workdir / f"{fault.name}-clean")
+        _apply_compiled(fault, clean_root, False)
+        for gate in fault.gates:
+            proc = run(clean_root, gate.command)
+            if gate.caught(proc):
+                return Result(
+                    fault.name,
+                    "BROKEN",
+                    f"{' '.join(gate.command)} fails on a clean tree: {_tail(proc)}",
+                )
         for gate in fault.gates:
             proc = run(faulty_root, gate.command)
             if not gate.caught(proc):

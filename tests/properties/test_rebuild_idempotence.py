@@ -224,7 +224,7 @@ def test_a_rebuild_equals_a_fresh_build(mutation: str, tmp_path: Path, run_cli: 
 @settings(
     max_examples=5,
     deadline=None,
-    suppress_health_check=[HealthCheck.function_scoped_fixture, HealthCheck.differing_executors],
+    suppress_health_check=[HealthCheck.function_scoped_fixture],
 )
 @given(dropped=st.sets(st.sampled_from(COLUMNS), min_size=1))
 def test_dropping_any_columns_rebuilds_like_a_fresh_build(

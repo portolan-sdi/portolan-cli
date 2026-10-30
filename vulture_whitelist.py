@@ -67,17 +67,13 @@ SPECIAL_DIRECTORY  # unused variable (portolan_cli/scan/classify.py:134)
 
 # --- tests ---
 _.exitstatus  # pytest calls it by name (tests/conftest.py:230)
-_mutmut_stats_children  # unused function (tests/conftest.py:263)
 catalog_with_versions_for_dry_run  # unused function (tests/conftest.py:511)
 isolate_aws_config  # unused function (tests/conftest.py:790)
 isolate_installed_plugins  # unused function (tests/conftest.py:928)
 isolate_trace_and_logging  # unused function (tests/conftest.py:903)
 no_basemap_tiles  # unused function (tests/conftest.py:854)
 no_extract_side_requests  # unused function (tests/conftest.py:872)
-pytest_collection_modifyitems  # unused function (tests/conftest.py:192)
 pytest_configure  # unused function (tests/conftest.py:160)
-pytest_runtest_call  # unused function (tests/conftest.py:250)
-pytest_runtest_setup  # unused function (tests/conftest.py:245)
 pytest_sessionfinish  # pytest calls it by name (tests/conftest.py:219)
 temp_catalog_dir  # unused function (tests/conftest.py:494)
 

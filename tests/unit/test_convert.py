@@ -1124,12 +1124,11 @@ class TestConvertDirectoryPoolFallback:
 
     A ``ProcessPoolExecutor`` can fail to spawn workers in restricted
     environments: locked-down containers with no ``/dev/shm``, seccomp filters
-    that block ``clone``, or a nested multiprocessing context such as mutmut's
-    mutation runner (which re-sets the start method during worker bootstrap and
-    surfaces as ``BrokenProcessPool`` in the parent). Without a fallback every
-    file is reported FAILED even though the inputs are valid. Conversion must
-    still complete by dropping to the serial path. Regression guard for the
-    mutation-testing baseline (issue #612).
+    that block ``clone``, or a nested multiprocessing context inside another
+    test runner. Each one surfaces as ``BrokenProcessPool`` in the parent.
+    Without a fallback every file is reported FAILED even though the inputs are
+    valid. Conversion must still complete by dropping to the serial path
+    (issue #612).
     """
 
     @pytest.mark.unit

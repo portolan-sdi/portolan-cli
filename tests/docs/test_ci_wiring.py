@@ -9,9 +9,6 @@ when a job drops out of the aggregate check or a nightly gate stops failing.
 The last tests run the cheap faults of ``scripts/gate_selftest.py`` on a copy
 of the tree, so a gate that stops catching its fault fails a pull request and
 not only the nightly run.
-
-The module lives in ``tests/docs/`` because it reads repository files that the
-mutmut sandbox does not copy (#997).
 """
 
 from __future__ import annotations
@@ -30,7 +27,7 @@ import yaml
 if TYPE_CHECKING:
     from types import ModuleType
 
-pytestmark = [pytest.mark.unit, pytest.mark.source_scan]
+pytestmark = pytest.mark.unit
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WORKFLOWS = REPO_ROOT / ".github" / "workflows"
@@ -286,7 +283,6 @@ def test_the_property_selector_picks_decorated_tests_only() -> None:
     }
 
     assert "tests/docs/test_ci_wiring.py" not in selected
-    assert "tests/integration/test_mutmut_hypothesis_guard.py" not in selected
     assert "tests/unit/test_add_rm_hypothesis.py" in selected
 
 

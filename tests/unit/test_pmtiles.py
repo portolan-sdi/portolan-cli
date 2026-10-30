@@ -130,10 +130,8 @@ class TestCheckPMTilesAvailable:
         )
 
         # Setting sys.modules[name] = None makes `import name` raise ImportError,
-        # scoped to geoparquet_io.api.ops only. Do NOT patch builtins.__import__
-        # globally here: mutmut's trampoline runs `import os` at call time, so a
-        # global __import__ side_effect raises from the trampoline before the
-        # function body's try/except runs, failing the baseline stats phase (#612).
+        # scoped to geoparquet_io.api.ops only. A global builtins.__import__
+        # patch also breaks every other import that runs during the call.
         with (
             patch.dict("sys.modules", {"geoparquet_io.api.ops": None}),
             patch("portolan_cli.viz.pmtiles.shutil.which", return_value="/usr/bin/tippecanoe"),

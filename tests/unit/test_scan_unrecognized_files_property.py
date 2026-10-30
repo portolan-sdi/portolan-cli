@@ -31,9 +31,7 @@ class TestUnrecognizedFileClassification:
     """Property-based tests for unrecognized file classification."""
 
     @given(ext=unknown_extensions)
-    @settings(
-        suppress_health_check=[HealthCheck.function_scoped_fixture, HealthCheck.differing_executors]
-    )
+    @settings(suppress_health_check=[HealthCheck.function_scoped_fixture])
     def test_truly_unknown_extensions_are_classified_as_unknown(self, ext: str) -> None:
         """Any extension not in known lists should be classified as UNKNOWN.
 
@@ -87,9 +85,7 @@ class TestUnrecognizedFileClassification:
             max_size=5,
         ),
     )
-    @settings(
-        suppress_health_check=[HealthCheck.function_scoped_fixture, HealthCheck.differing_executors]
-    )
+    @settings(suppress_health_check=[HealthCheck.function_scoped_fixture])
     def test_multiple_unknown_files_all_classified_as_unknown(
         self, count: int, ext_prefix: str
     ) -> None:
@@ -141,9 +137,7 @@ class TestUnrecognizedFileLimitingLogic:
     @given(
         file_count=st.integers(min_value=1, max_value=25),
     )
-    @settings(
-        suppress_health_check=[HealthCheck.function_scoped_fixture, HealthCheck.differing_executors]
-    )
+    @settings(suppress_health_check=[HealthCheck.function_scoped_fixture])
     def test_unknown_file_limit_boundary(self, file_count: int) -> None:
         """Test that truncation logic works correctly at boundary (10 files).
 
@@ -173,9 +167,7 @@ class TestUnrecognizedFileLimitingLogic:
                 assert file_count > truncation_threshold
 
     @given(filename_count=st.integers(min_value=1, max_value=50))
-    @settings(
-        suppress_health_check=[HealthCheck.function_scoped_fixture, HealthCheck.differing_executors]
-    )
+    @settings(suppress_health_check=[HealthCheck.function_scoped_fixture])
     def test_truncation_logic_consistency(self, filename_count: int) -> None:
         """Verify that truncation logic respects --all flag."""
         with tempfile.TemporaryDirectory() as tmp_dir:

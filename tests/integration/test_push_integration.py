@@ -1178,7 +1178,6 @@ class TestPushOutputInvariants:
         max_examples=25,
         suppress_health_check=[
             HealthCheck.function_scoped_fixture,
-            HealthCheck.differing_executors,
         ],
         deadline=None,  # CLI invocation can be slow
     )
@@ -1278,7 +1277,6 @@ class TestPushOutputInvariants:
         max_examples=25,
         suppress_health_check=[
             HealthCheck.function_scoped_fixture,
-            HealthCheck.differing_executors,
         ],
         deadline=None,  # CLI invocation can be slow
     )
@@ -1335,7 +1333,6 @@ class TestPushOutputInvariants:
         max_examples=25,
         suppress_health_check=[
             HealthCheck.function_scoped_fixture,
-            HealthCheck.differing_executors,
         ],
         deadline=None,  # CLI invocation can be slow
     )

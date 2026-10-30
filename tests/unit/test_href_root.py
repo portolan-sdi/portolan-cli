@@ -59,7 +59,6 @@ class TestHrefRoot:
         assert not result.endswith("//")
 
 
-@pytest.mark.source_scan
 class TestEveryCallSiteUsesTheHelper:
     """The 'fix every parallel call site' rule, made executable.
 
