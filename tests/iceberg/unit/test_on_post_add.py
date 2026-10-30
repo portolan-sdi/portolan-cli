@@ -72,6 +72,37 @@ def _make_context(
     }
 
 
+def _publish(iceberg_backend, parquet_file) -> None:
+    """Publish the one-column test schema to the boundaries collection."""
+    iceberg_backend.publish(
+        collection="boundaries",
+        assets={"item1/data.parquet": str(parquet_file)},
+        schema={"columns": ["id"], "types": {"id": "int64"}, "hash": "x"},
+        breaking=False,
+        message="test",
+    )
+
+
+def _publish_and_run_post_add(iceberg_backend, parquet_file, catalog_root, item_dir, collection):
+    """Publish one collection and run the post-add hook over it with no remote."""
+    _publish(iceberg_backend, parquet_file)
+    context = _make_context(catalog_root, item_dir, collection, remote=None)
+    with patch("portolan_cli.backends.iceberg.backend.upload_file", create=True):
+        iceberg_backend.on_post_add(context)
+
+
+def _publish_and_upload(
+    iceberg_backend, parquet_file, catalog_root, item_dir, collection, remote
+) -> MagicMock:
+    """Publish, run the post-add hook with a remote, and return the upload mock."""
+    _publish(iceberg_backend, parquet_file)
+    context = _make_context(catalog_root, item_dir, collection, remote=remote)
+    with patch("portolan_cli.sync.upload.upload_file") as mock_upload:
+        mock_upload.return_value = MagicMock(success=True)
+        iceberg_backend.on_post_add(context)
+    return mock_upload
+
+
 @pytest.mark.integration
 def test_on_post_add_updates_stac_extensions(iceberg_backend, parquet_file, catalog_with_stac):
     """on_post_add should update collection extra_fields with STAC extension metadata."""
@@ -109,13 +140,7 @@ def test_on_post_add_logs_warning_when_stac_update_fails(
     """STAC enrichment failures must surface as a warning with traceback, not be swallowed."""
     catalog_root, item_dir, collection = catalog_with_stac
 
-    iceberg_backend.publish(
-        collection="boundaries",
-        assets={"item1/data.parquet": str(parquet_file)},
-        schema={"columns": ["id"], "types": {"id": "int64"}, "hash": "x"},
-        breaking=False,
-        message="test",
-    )
+    _publish(iceberg_backend, parquet_file)
 
     context = _make_context(catalog_root, item_dir, collection, remote=None)
 
@@ -142,19 +167,14 @@ def test_on_post_add_uploads_stac_metadata_when_remote_set(
     """on_post_add should upload STAC metadata when remote is configured."""
     catalog_root, item_dir, collection = catalog_with_stac
 
-    iceberg_backend.publish(
-        collection="boundaries",
-        assets={"item1/data.parquet": str(parquet_file)},
-        schema={"columns": ["id"], "types": {"id": "int64"}, "hash": "x"},
-        breaking=False,
-        message="test",
+    mock_upload = _publish_and_upload(
+        iceberg_backend,
+        parquet_file,
+        catalog_root,
+        item_dir,
+        collection,
+        remote="gs://test-bucket/catalog",
     )
-
-    context = _make_context(catalog_root, item_dir, collection, remote="gs://test-bucket/catalog")
-
-    with patch("portolan_cli.sync.upload.upload_file") as mock_upload:
-        mock_upload.return_value = MagicMock(success=True)
-        iceberg_backend.on_post_add(context)
 
     assert mock_upload.call_count >= 1
     destinations = [call.kwargs["destination"] for call in mock_upload.call_args_list]
@@ -168,13 +188,7 @@ def test_on_post_add_no_upload_when_remote_is_none(
     """on_post_add should not upload when remote is None."""
     catalog_root, item_dir, collection = catalog_with_stac
 
-    iceberg_backend.publish(
-        collection="boundaries",
-        assets={"item1/data.parquet": str(parquet_file)},
-        schema={"columns": ["id"], "types": {"id": "int64"}, "hash": "x"},
-        breaking=False,
-        message="test",
-    )
+    _publish(iceberg_backend, parquet_file)
 
     context = _make_context(catalog_root, item_dir, collection, remote=None)
 
@@ -189,19 +203,14 @@ def test_on_post_add_uploads_correct_remote_paths(iceberg_backend, parquet_file,
     """Remote paths should follow the correct pattern for STAC metadata."""
     catalog_root, item_dir, collection = catalog_with_stac
 
-    iceberg_backend.publish(
-        collection="boundaries",
-        assets={"item1/data.parquet": str(parquet_file)},
-        schema={"columns": ["id"], "types": {"id": "int64"}, "hash": "x"},
-        breaking=False,
-        message="test",
+    mock_upload = _publish_and_upload(
+        iceberg_backend,
+        parquet_file,
+        catalog_root,
+        item_dir,
+        collection,
+        remote="gs://test-bucket/catalog",
     )
-
-    context = _make_context(catalog_root, item_dir, collection, remote="gs://test-bucket/catalog")
-
-    with patch("portolan_cli.sync.upload.upload_file") as mock_upload:
-        mock_upload.return_value = MagicMock(success=True)
-        iceberg_backend.on_post_add(context)
 
     destinations = [call.kwargs["destination"] for call in mock_upload.call_args_list]
     assert "gs://test-bucket/catalog/boundaries/item1/item1.json" in destinations
@@ -216,19 +225,14 @@ def test_on_post_add_strips_trailing_slash(iceberg_backend, parquet_file, catalo
     """Trailing slash in remote URL should be stripped to avoid double-slash."""
     catalog_root, item_dir, collection = catalog_with_stac
 
-    iceberg_backend.publish(
-        collection="boundaries",
-        assets={"item1/data.parquet": str(parquet_file)},
-        schema={"columns": ["id"], "types": {"id": "int64"}, "hash": "x"},
-        breaking=False,
-        message="test",
+    mock_upload = _publish_and_upload(
+        iceberg_backend,
+        parquet_file,
+        catalog_root,
+        item_dir,
+        collection,
+        remote="gs://test-bucket/catalog/",
     )
-
-    context = _make_context(catalog_root, item_dir, collection, remote="gs://test-bucket/catalog/")
-
-    with patch("portolan_cli.sync.upload.upload_file") as mock_upload:
-        mock_upload.return_value = MagicMock(success=True)
-        iceberg_backend.on_post_add(context)
 
     destinations = [call.kwargs["destination"] for call in mock_upload.call_args_list]
     assert all("//" not in d.split("://")[1] for d in destinations)
@@ -239,19 +243,14 @@ def test_on_post_add_no_data_files_uploaded(iceberg_backend, parquet_file, catal
     """on_post_add should never upload data files -- Iceberg manages them."""
     catalog_root, item_dir, collection = catalog_with_stac
 
-    iceberg_backend.publish(
-        collection="boundaries",
-        assets={"item1/data.parquet": str(parquet_file)},
-        schema={"columns": ["id"], "types": {"id": "int64"}, "hash": "x"},
-        breaking=False,
-        message="test",
+    mock_upload = _publish_and_upload(
+        iceberg_backend,
+        parquet_file,
+        catalog_root,
+        item_dir,
+        collection,
+        remote="gs://test-bucket/catalog",
     )
-
-    context = _make_context(catalog_root, item_dir, collection, remote="gs://test-bucket/catalog")
-
-    with patch("portolan_cli.sync.upload.upload_file") as mock_upload:
-        mock_upload.return_value = MagicMock(success=True)
-        iceberg_backend.on_post_add(context)
 
     destinations = [call.kwargs["destination"] for call in mock_upload.call_args_list]
     assert not any("data.parquet" in d for d in destinations)
@@ -266,18 +265,7 @@ def test_on_post_add_merges_stac_extensions(iceberg_backend, parquet_file, catal
     catalog_root, item_dir, collection = catalog_with_stac
     collection.stac_extensions = [STAC_TABLE_EXTENSION]
 
-    iceberg_backend.publish(
-        collection="boundaries",
-        assets={"item1/data.parquet": str(parquet_file)},
-        schema={"columns": ["id"], "types": {"id": "int64"}, "hash": "x"},
-        breaking=False,
-        message="test",
-    )
-
-    context = _make_context(catalog_root, item_dir, collection, remote=None)
-
-    with patch("portolan_cli.backends.iceberg.backend.upload_file", create=True):
-        iceberg_backend.on_post_add(context)
+    _publish_and_run_post_add(iceberg_backend, parquet_file, catalog_root, item_dir, collection)
 
     assert STAC_TABLE_EXTENSION in collection.stac_extensions
     assert STAC_ICEBERG_EXTENSION in collection.stac_extensions
@@ -292,18 +280,7 @@ def test_on_post_add_preserves_existing_extensions(
     projection_ext = "https://stac-extensions.github.io/projection/v2.0.0/schema.json"
     collection.stac_extensions = [projection_ext]
 
-    iceberg_backend.publish(
-        collection="boundaries",
-        assets={"item1/data.parquet": str(parquet_file)},
-        schema={"columns": ["id"], "types": {"id": "int64"}, "hash": "x"},
-        breaking=False,
-        message="test",
-    )
-
-    context = _make_context(catalog_root, item_dir, collection, remote=None)
-
-    with patch("portolan_cli.backends.iceberg.backend.upload_file", create=True):
-        iceberg_backend.on_post_add(context)
+    _publish_and_run_post_add(iceberg_backend, parquet_file, catalog_root, item_dir, collection)
 
     assert projection_ext in collection.stac_extensions
     assert STAC_TABLE_EXTENSION in collection.stac_extensions
@@ -316,38 +293,9 @@ def test_on_post_add_no_duplicate_extensions(iceberg_backend, parquet_file, cata
     catalog_root, item_dir, collection = catalog_with_stac
     collection.stac_extensions = [STAC_TABLE_EXTENSION, STAC_ICEBERG_EXTENSION]
 
-    iceberg_backend.publish(
-        collection="boundaries",
-        assets={"item1/data.parquet": str(parquet_file)},
-        schema={"columns": ["id"], "types": {"id": "int64"}, "hash": "x"},
-        breaking=False,
-        message="test",
-    )
-
-    context = _make_context(catalog_root, item_dir, collection, remote=None)
-
-    with patch("portolan_cli.backends.iceberg.backend.upload_file", create=True):
-        iceberg_backend.on_post_add(context)
+    _publish_and_run_post_add(iceberg_backend, parquet_file, catalog_root, item_dir, collection)
 
     assert len(collection.stac_extensions) == len(set(collection.stac_extensions))
-
-
-def _publish_and_run_post_add(iceberg_backend, parquet_file, catalog_root, item_dir, collection):
-    """Publish one collection and run the post-add hook over it.
-
-    Every assertion below needs the same three steps, so they live here rather
-    than in each test (the duplicate-code gate reads tests/ too).
-    """
-    iceberg_backend.publish(
-        collection="boundaries",
-        assets={"item1/data.parquet": str(parquet_file)},
-        schema={"columns": ["id"], "types": {"id": "int64"}, "hash": "x"},
-        breaking=False,
-        message="test",
-    )
-    context = _make_context(catalog_root, item_dir, collection, remote=None)
-    with patch("portolan_cli.backends.iceberg.backend.upload_file", create=True):
-        iceberg_backend.on_post_add(context)
 
 
 @pytest.mark.integration
@@ -442,18 +390,7 @@ def test_on_post_add_preserves_existing_assets(iceberg_backend, parquet_file, ca
         roles=["data"],
     )
 
-    iceberg_backend.publish(
-        collection="boundaries",
-        assets={"item1/data.parquet": str(parquet_file)},
-        schema={"columns": ["id"], "types": {"id": "int64"}, "hash": "x"},
-        breaking=False,
-        message="test",
-    )
-
-    context = _make_context(catalog_root, item_dir, collection, remote=None)
-
-    with patch("portolan_cli.backends.iceberg.backend.upload_file", create=True):
-        iceberg_backend.on_post_add(context)
+    _publish_and_run_post_add(iceberg_backend, parquet_file, catalog_root, item_dir, collection)
 
     assert "thumbnail" in collection.assets
     assert collection.assets["data"].href == "./roads.parquet"
