@@ -209,15 +209,18 @@ class RestCatalog:
 
     # ---------------------------------------------------------------- namespaces
 
-    def namespace_exists(self, namespace: str) -> bool:
-        """Return whether the namespace exists."""
-        path = self._namespace_path(namespace)
+    def _exists(self, path: str) -> bool:
+        """Return whether a HEAD on ``path`` finds the resource."""
         response = self._request("HEAD", path)
         if response.status_code in (httpx.codes.OK, httpx.codes.NO_CONTENT):
             return True
         if response.status_code == httpx.codes.NOT_FOUND:
             return False
         raise self._fail("HEAD", path, response)
+
+    def namespace_exists(self, namespace: str) -> bool:
+        """Return whether the namespace exists."""
+        return self._exists(self._namespace_path(namespace))
 
     def create_namespace(self, namespace: str) -> None:
         """Create the namespace. One that exists already is fine."""
@@ -241,13 +244,7 @@ class RestCatalog:
 
     def table_exists(self, namespace: str, name: str) -> bool:
         """Return whether the table exists."""
-        path = self._table_path(namespace, name)
-        response = self._request("HEAD", path)
-        if response.status_code in (httpx.codes.OK, httpx.codes.NO_CONTENT):
-            return True
-        if response.status_code == httpx.codes.NOT_FOUND:
-            return False
-        raise self._fail("HEAD", path, response)
+        return self._exists(self._table_path(namespace, name))
 
     def list_tables(self, namespace: str) -> list[str]:
         """Return the table names of the namespace, first page."""
@@ -276,13 +273,7 @@ class RestCatalog:
         path = self._table_path(namespace, name)
         headers = {VENDED_CREDENTIALS_HEADER: "vended-credentials"} if vended_credentials else None
         response = self._request("GET", path, headers=headers)
-        if response.status_code == httpx.codes.NOT_FOUND:
-            raise NoSuchTableError(
-                f"Table {namespace}.{name} does not exist in {self._base}", status=404
-            )
-        if response.status_code != httpx.codes.OK:
-            raise self._fail("GET", path, response)
-        return self._loaded(response.json())
+        return self._table_result("GET", path, response, namespace, name)
 
     def commit_table(
         self,
@@ -309,18 +300,12 @@ class RestCatalog:
             json_body={"requirements": requirements, "updates": updates},
             retry_transient=False,
         )
-        if response.status_code == httpx.codes.NOT_FOUND:
-            raise NoSuchTableError(
-                f"Table {namespace}.{name} does not exist in {self._base}", status=404
-            )
         if response.status_code == httpx.codes.CONFLICT:
             raise CommitConflictError(
                 f"Another writer committed to {namespace}.{name} first: {_server_text(response)}",
                 status=409,
             )
-        if response.status_code != httpx.codes.OK:
-            raise self._fail("POST", path, response)
-        return self._loaded(response.json())
+        return self._table_result("POST", path, response, namespace, name)
 
     def drop_table(self, namespace: str, name: str, *, purge: bool = False) -> None:
         """Drop the table. With ``purge``, ask the catalog to delete its files too."""
@@ -329,6 +314,18 @@ class RestCatalog:
         response = self._request("DELETE", path, params=params)
         if response.status_code >= httpx.codes.BAD_REQUEST:
             raise self._fail("DELETE", path, response)
+
+    def _table_result(
+        self, method: str, path: str, response: httpx.Response, namespace: str, name: str
+    ) -> LoadTableResult:
+        """Turn a table response into a result, or raise for 404 and any other error."""
+        if response.status_code == httpx.codes.NOT_FOUND:
+            raise NoSuchTableError(
+                f"Table {namespace}.{name} does not exist in {self._base}", status=404
+            )
+        if response.status_code != httpx.codes.OK:
+            raise self._fail(method, path, response)
+        return self._loaded(response.json())
 
     @staticmethod
     def _loaded(body: dict[str, Any]) -> LoadTableResult:
