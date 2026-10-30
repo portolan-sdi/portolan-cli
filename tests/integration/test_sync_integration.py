@@ -17,8 +17,15 @@ from unittest.mock import patch
 import pytest
 from click.testing import CliRunner
 
+from portolan_cli.cli import cli
+from portolan_cli.sync.core import SyncResult
+from portolan_cli.sync.pull import PullResult
+from portolan_cli.sync.push import PushResult
+
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from click.testing import Result
 
 
 @pytest.fixture
@@ -84,6 +91,75 @@ def fresh_directory(tmp_path: Path) -> Path:
     return fresh_dir
 
 
+def _success_result(
+    *,
+    files_downloaded: int = 0,
+    remote_version: str = "1.0.0",
+    up_to_date: bool = False,
+    files_uploaded: int = 0,
+    versions_pushed: int = 0,
+) -> SyncResult:
+    """Return a successful SyncResult with the given pull and push counts."""
+    return SyncResult(
+        success=True,
+        pull_result=PullResult(
+            success=True,
+            files_downloaded=files_downloaded,
+            files_skipped=0,
+            local_version="1.0.0",
+            remote_version=remote_version,
+            up_to_date=up_to_date,
+        ),
+        init_performed=False,
+        scan_result=None,
+        check_result=None,
+        push_result=PushResult(
+            success=True,
+            files_uploaded=files_uploaded,
+            versions_pushed=versions_pushed,
+        ),
+        errors=[],
+    )
+
+
+def _failure_result(error: str) -> SyncResult:
+    """Return a failed SyncResult with one error message."""
+    return SyncResult(
+        success=False,
+        pull_result=None,
+        init_performed=False,
+        scan_result=None,
+        check_result=None,
+        push_result=None,
+        errors=[error],
+    )
+
+
+def _invoke_sync(
+    catalog: Path,
+    extra_args: list[str],
+    *,
+    json_output: bool = False,
+    catch_exceptions: bool = True,
+) -> Result:
+    """Run sync to s3://mybucket/catalog for the demographics collection."""
+    prefix = ["--format", "json"] if json_output else []
+    return CliRunner().invoke(
+        cli,
+        [
+            *prefix,
+            "sync",
+            "s3://mybucket/catalog",
+            "--collection",
+            "demographics",
+            *extra_args,
+            "--catalog",
+            str(catalog),
+        ],
+        catch_exceptions=catch_exceptions,
+    )
+
+
 # =============================================================================
 # CLI Registration Tests
 # =============================================================================
@@ -95,8 +171,6 @@ class TestSyncCLI:
     @pytest.mark.integration
     def test_sync_command_exists(self) -> None:
         """Sync command should be registered in CLI."""
-        from portolan_cli.cli import cli
-
         runner = CliRunner()
         result = runner.invoke(cli, ["sync", "--help"])
 
@@ -106,8 +180,6 @@ class TestSyncCLI:
     @pytest.mark.integration
     def test_sync_requires_destination(self) -> None:
         """Sync should require destination argument."""
-        from portolan_cli.cli import cli
-
         runner = CliRunner()
         result = runner.invoke(cli, ["sync"])
 
@@ -117,8 +189,6 @@ class TestSyncCLI:
     @pytest.mark.integration
     def test_sync_requires_collection(self, managed_catalog: Path) -> None:
         """Sync should require --collection flag."""
-        from portolan_cli.cli import cli
-
         runner = CliRunner()
         result = runner.invoke(
             cli,
@@ -137,8 +207,6 @@ class TestSyncCLI:
     @pytest.mark.integration
     def test_sync_help_shows_all_options(self) -> None:
         """Sync --help should show all expected options."""
-        from portolan_cli.cli import cli
-
         runner = CliRunner()
         result = runner.invoke(cli, ["sync", "--help"])
 
@@ -162,48 +230,10 @@ class TestSyncFlagPassthrough:
     @pytest.mark.integration
     def test_sync_dry_run_flag(self, managed_catalog: Path) -> None:
         """Sync --dry-run should pass dry_run=True to sync function."""
-        from portolan_cli.cli import cli
-        from portolan_cli.sync.core import SyncResult
-        from portolan_cli.sync.pull import PullResult
-        from portolan_cli.sync.push import PushResult
-
-        runner = CliRunner()
-
         with patch("portolan_cli.sync.core.sync") as mock_sync:
-            mock_sync.return_value = SyncResult(
-                success=True,
-                pull_result=PullResult(
-                    success=True,
-                    files_downloaded=0,
-                    files_skipped=0,
-                    local_version="1.0.0",
-                    remote_version="1.0.0",
-                    up_to_date=True,
-                ),
-                init_performed=False,
-                scan_result=None,
-                check_result=None,
-                push_result=PushResult(
-                    success=True,
-                    files_uploaded=0,
-                    versions_pushed=0,
-                ),
-                errors=[],
-            )
+            mock_sync.return_value = _success_result(up_to_date=True)
 
-            result = runner.invoke(
-                cli,
-                [
-                    "sync",
-                    "s3://mybucket/catalog",
-                    "--collection",
-                    "demographics",
-                    "--dry-run",
-                    "--catalog",
-                    str(managed_catalog),
-                ],
-                catch_exceptions=False,
-            )
+            result = _invoke_sync(managed_catalog, ["--dry-run"], catch_exceptions=False)
 
             # Verify dry_run=True was passed
             call_kwargs = mock_sync.call_args.kwargs
@@ -213,47 +243,10 @@ class TestSyncFlagPassthrough:
     @pytest.mark.integration
     def test_sync_force_flag(self, managed_catalog: Path) -> None:
         """Sync --force should pass force=True to sync function."""
-        from portolan_cli.cli import cli
-        from portolan_cli.sync.core import SyncResult
-        from portolan_cli.sync.pull import PullResult
-        from portolan_cli.sync.push import PushResult
-
-        runner = CliRunner()
-
         with patch("portolan_cli.sync.core.sync") as mock_sync:
-            mock_sync.return_value = SyncResult(
-                success=True,
-                pull_result=PullResult(
-                    success=True,
-                    files_downloaded=0,
-                    files_skipped=0,
-                    local_version="1.0.0",
-                    remote_version="1.0.0",
-                ),
-                init_performed=False,
-                scan_result=None,
-                check_result=None,
-                push_result=PushResult(
-                    success=True,
-                    files_uploaded=0,
-                    versions_pushed=0,
-                ),
-                errors=[],
-            )
+            mock_sync.return_value = _success_result()
 
-            runner.invoke(
-                cli,
-                [
-                    "sync",
-                    "s3://mybucket/catalog",
-                    "--collection",
-                    "demographics",
-                    "--force",
-                    "--catalog",
-                    str(managed_catalog),
-                ],
-                catch_exceptions=False,
-            )
+            _invoke_sync(managed_catalog, ["--force"], catch_exceptions=False)
 
             call_kwargs = mock_sync.call_args.kwargs
             assert call_kwargs.get("force") is True
@@ -261,47 +254,10 @@ class TestSyncFlagPassthrough:
     @pytest.mark.integration
     def test_sync_fix_flag(self, managed_catalog: Path) -> None:
         """Sync --fix should pass fix=True to sync function."""
-        from portolan_cli.cli import cli
-        from portolan_cli.sync.core import SyncResult
-        from portolan_cli.sync.pull import PullResult
-        from portolan_cli.sync.push import PushResult
-
-        runner = CliRunner()
-
         with patch("portolan_cli.sync.core.sync") as mock_sync:
-            mock_sync.return_value = SyncResult(
-                success=True,
-                pull_result=PullResult(
-                    success=True,
-                    files_downloaded=0,
-                    files_skipped=0,
-                    local_version="1.0.0",
-                    remote_version="1.0.0",
-                ),
-                init_performed=False,
-                scan_result=None,
-                check_result=None,
-                push_result=PushResult(
-                    success=True,
-                    files_uploaded=0,
-                    versions_pushed=0,
-                ),
-                errors=[],
-            )
+            mock_sync.return_value = _success_result()
 
-            runner.invoke(
-                cli,
-                [
-                    "sync",
-                    "s3://mybucket/catalog",
-                    "--collection",
-                    "demographics",
-                    "--fix",
-                    "--catalog",
-                    str(managed_catalog),
-                ],
-                catch_exceptions=False,
-            )
+            _invoke_sync(managed_catalog, ["--fix"], catch_exceptions=False)
 
             call_kwargs = mock_sync.call_args.kwargs
             assert call_kwargs.get("fix") is True
@@ -309,48 +265,10 @@ class TestSyncFlagPassthrough:
     @pytest.mark.integration
     def test_sync_profile_flag(self, managed_catalog: Path) -> None:
         """Sync --profile should pass AWS profile to sync function."""
-        from portolan_cli.cli import cli
-        from portolan_cli.sync.core import SyncResult
-        from portolan_cli.sync.pull import PullResult
-        from portolan_cli.sync.push import PushResult
-
-        runner = CliRunner()
-
         with patch("portolan_cli.sync.core.sync") as mock_sync:
-            mock_sync.return_value = SyncResult(
-                success=True,
-                pull_result=PullResult(
-                    success=True,
-                    files_downloaded=0,
-                    files_skipped=0,
-                    local_version="1.0.0",
-                    remote_version="1.0.0",
-                ),
-                init_performed=False,
-                scan_result=None,
-                check_result=None,
-                push_result=PushResult(
-                    success=True,
-                    files_uploaded=0,
-                    versions_pushed=0,
-                ),
-                errors=[],
-            )
+            mock_sync.return_value = _success_result()
 
-            runner.invoke(
-                cli,
-                [
-                    "sync",
-                    "s3://mybucket/catalog",
-                    "--collection",
-                    "demographics",
-                    "--profile",
-                    "production",
-                    "--catalog",
-                    str(managed_catalog),
-                ],
-                catch_exceptions=False,
-            )
+            _invoke_sync(managed_catalog, ["--profile", "production"], catch_exceptions=False)
 
             call_kwargs = mock_sync.call_args.kwargs
             assert call_kwargs.get("profile") == "production"
@@ -364,33 +282,10 @@ class TestSyncFlagPassthrough:
         import os
         from unittest.mock import patch as mock_patch
 
-        from portolan_cli.cli import cli
-        from portolan_cli.sync.core import SyncResult
-        from portolan_cli.sync.pull import PullResult
-        from portolan_cli.sync.push import PushResult
-
         runner = CliRunner()
 
         with mock_patch("portolan_cli.sync.core.sync") as mock_sync:
-            mock_sync.return_value = SyncResult(
-                success=True,
-                pull_result=PullResult(
-                    success=True,
-                    files_downloaded=0,
-                    files_skipped=0,
-                    local_version="1.0.0",
-                    remote_version="1.0.0",
-                ),
-                init_performed=False,
-                scan_result=None,
-                check_result=None,
-                push_result=PushResult(
-                    success=True,
-                    files_uploaded=0,
-                    versions_pushed=0,
-                ),
-                errors=[],
-            )
+            mock_sync.return_value = _success_result()
 
             # Set profile via env var (Issue #356: sensitive settings)
             with mock_patch.dict(
@@ -428,67 +323,22 @@ class TestSyncErrorHandling:
     @pytest.mark.integration
     def test_sync_failure_returns_nonzero(self, managed_catalog: Path) -> None:
         """Sync failure should return non-zero exit code."""
-        from portolan_cli.cli import cli
-        from portolan_cli.sync.core import SyncResult
-
-        runner = CliRunner()
-
         with patch("portolan_cli.sync.core.sync") as mock_sync:
-            mock_sync.return_value = SyncResult(
-                success=False,
-                pull_result=None,
-                init_performed=False,
-                scan_result=None,
-                check_result=None,
-                push_result=None,
-                errors=["Pull failed: network timeout"],
-            )
+            mock_sync.return_value = _failure_result("Pull failed: network timeout")
 
-            result = runner.invoke(
-                cli,
-                [
-                    "sync",
-                    "s3://mybucket/catalog",
-                    "--collection",
-                    "demographics",
-                    "--catalog",
-                    str(managed_catalog),
-                ],
-            )
+            result = _invoke_sync(managed_catalog, [])
 
             assert result.exit_code == 1
 
     @pytest.mark.integration
     def test_sync_missing_catalog_returns_error(self, tmp_path: Path) -> None:
         """Sync with non-existent catalog should fail."""
-        from portolan_cli.cli import cli
-        from portolan_cli.sync.core import SyncResult
-
-        runner = CliRunner()
         non_existent = tmp_path / "does_not_exist"
 
         with patch("portolan_cli.sync.core.sync") as mock_sync:
-            mock_sync.return_value = SyncResult(
-                success=False,
-                pull_result=None,
-                init_performed=False,
-                scan_result=None,
-                check_result=None,
-                push_result=None,
-                errors=["Catalog root not found"],
-            )
+            mock_sync.return_value = _failure_result("Catalog root not found")
 
-            result = runner.invoke(
-                cli,
-                [
-                    "sync",
-                    "s3://mybucket/catalog",
-                    "--collection",
-                    "demographics",
-                    "--catalog",
-                    str(non_existent),
-                ],
-            )
+            result = _invoke_sync(non_existent, [])
 
             assert result.exit_code == 1
 
@@ -504,48 +354,15 @@ class TestSyncJSONOutput:
     @pytest.mark.integration
     def test_sync_json_output_success(self, managed_catalog: Path) -> None:
         """Sync with --format=json should output valid JSON envelope."""
-        from portolan_cli.cli import cli
-        from portolan_cli.sync.core import SyncResult
-        from portolan_cli.sync.pull import PullResult
-        from portolan_cli.sync.push import PushResult
-
-        runner = CliRunner()
-
         with patch("portolan_cli.sync.core.sync") as mock_sync:
-            mock_sync.return_value = SyncResult(
-                success=True,
-                pull_result=PullResult(
-                    success=True,
-                    files_downloaded=2,
-                    files_skipped=0,
-                    local_version="1.0.0",
-                    remote_version="1.1.0",
-                ),
-                init_performed=False,
-                scan_result=None,
-                check_result=None,
-                push_result=PushResult(
-                    success=True,
-                    files_uploaded=1,
-                    versions_pushed=1,
-                ),
-                errors=[],
+            mock_sync.return_value = _success_result(
+                files_downloaded=2,
+                remote_version="1.1.0",
+                files_uploaded=1,
+                versions_pushed=1,
             )
 
-            result = runner.invoke(
-                cli,
-                [
-                    "--format",
-                    "json",
-                    "sync",
-                    "s3://mybucket/catalog",
-                    "--collection",
-                    "demographics",
-                    "--catalog",
-                    str(managed_catalog),
-                ],
-                catch_exceptions=False,
-            )
+            result = _invoke_sync(managed_catalog, [], json_output=True, catch_exceptions=False)
 
             assert result.exit_code == 0
 
@@ -562,35 +379,10 @@ class TestSyncJSONOutput:
     @pytest.mark.integration
     def test_sync_json_output_failure(self, managed_catalog: Path) -> None:
         """Sync failure with --format=json should include errors array."""
-        from portolan_cli.cli import cli
-        from portolan_cli.sync.core import SyncResult
-
-        runner = CliRunner()
-
         with patch("portolan_cli.sync.core.sync") as mock_sync:
-            mock_sync.return_value = SyncResult(
-                success=False,
-                pull_result=None,
-                init_performed=False,
-                scan_result=None,
-                check_result=None,
-                push_result=None,
-                errors=["Pull failed: connection refused"],
-            )
+            mock_sync.return_value = _failure_result("Pull failed: connection refused")
 
-            result = runner.invoke(
-                cli,
-                [
-                    "--format",
-                    "json",
-                    "sync",
-                    "s3://mybucket/catalog",
-                    "--collection",
-                    "demographics",
-                    "--catalog",
-                    str(managed_catalog),
-                ],
-            )
+            result = _invoke_sync(managed_catalog, [], json_output=True)
 
             assert result.exit_code == 1
 
@@ -614,49 +406,12 @@ class TestSyncCombinedFlags:
     @pytest.mark.integration
     def test_sync_all_flags_together(self, managed_catalog: Path) -> None:
         """Sync should handle all flags simultaneously."""
-        from portolan_cli.cli import cli
-        from portolan_cli.sync.core import SyncResult
-        from portolan_cli.sync.pull import PullResult
-        from portolan_cli.sync.push import PushResult
-
-        runner = CliRunner()
-
         with patch("portolan_cli.sync.core.sync") as mock_sync:
-            mock_sync.return_value = SyncResult(
-                success=True,
-                pull_result=PullResult(
-                    success=True,
-                    files_downloaded=0,
-                    files_skipped=0,
-                    local_version="1.0.0",
-                    remote_version="1.0.0",
-                ),
-                init_performed=False,
-                scan_result=None,
-                check_result=None,
-                push_result=PushResult(
-                    success=True,
-                    files_uploaded=0,
-                    versions_pushed=0,
-                ),
-                errors=[],
-            )
+            mock_sync.return_value = _success_result()
 
-            result = runner.invoke(
-                cli,
-                [
-                    "sync",
-                    "s3://mybucket/catalog",
-                    "--collection",
-                    "demographics",
-                    "--force",
-                    "--dry-run",
-                    "--fix",
-                    "--profile",
-                    "production",
-                    "--catalog",
-                    str(managed_catalog),
-                ],
+            result = _invoke_sync(
+                managed_catalog,
+                ["--force", "--dry-run", "--fix", "--profile", "production"],
                 catch_exceptions=False,
             )
 
