@@ -322,7 +322,9 @@ def test_no_hypothesis_profile_keeps_a_deadline() -> None:
 
     import tests.conftest  # noqa: F401  (registers the profiles)
 
-    assert settings.default.deadline is None
+    default = settings.default
+    assert default is not None
+    assert default.deadline is None
     for name in ("ci", "nightly", "local"):
         try:
             profile = settings.get_profile(name)
