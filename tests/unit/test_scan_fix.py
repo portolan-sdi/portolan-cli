@@ -978,6 +978,13 @@ class TestApplyShapefileRenameEdgeCases:
 class TestRollbackRenames:
     """Tests for _rollback_renames function."""
 
+    def test_rollback_empty_list(self) -> None:
+        """Rollback with empty list should do nothing."""
+        from portolan_cli.scan.fix import _rollback_renames
+
+        # Should not raise
+        _rollback_renames([])
+
     def test_rollback_restores_original_names(self, tmp_path: Path) -> None:
         """Rollback should restore files to original names."""
         from portolan_cli.scan.fix import _rollback_renames

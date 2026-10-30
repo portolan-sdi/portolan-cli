@@ -354,6 +354,7 @@ class TestConvertFileSkip:
         assert result.format_to is None
         assert result.error is None
         assert result.format_from == "GeoParquet"
+        assert result.duration_ms >= 0
 
     @pytest.mark.unit
     def test_skip_cog(self, valid_rgb_cog: Path) -> None:
