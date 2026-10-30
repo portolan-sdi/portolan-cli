@@ -167,7 +167,33 @@ versioning.
     options:
       heading_level: 4
 
+::: portolan_cli.api.delete_file
+    options:
+      heading_level: 4
+
 ::: portolan_cli.api.PullResult
+    options:
+      heading_level: 4
+
+::: portolan_cli.api.S3Settings
+    options:
+      heading_level: 4
+
+::: portolan_cli.api.resolve_s3_settings
+    options:
+      heading_level: 4
+
+### Retries
+
+::: portolan_cli.api.RetryConfig
+    options:
+      heading_level: 4
+
+::: portolan_cli.api.retry_with_backoff
+    options:
+      heading_level: 4
+
+::: portolan_cli.api.is_transient_status
     options:
       heading_level: 4
 
