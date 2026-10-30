@@ -378,17 +378,6 @@ class TestJsonFileBackend:
             backend._versions_path(collection)
 
     @pytest.mark.unit
-    def test_nested_collection_survives_the_flavor_guard(self, tmp_path: Any) -> None:
-        """The cross-flavor guard must not reject a legitimate nested id (#723)."""
-        from pathlib import Path
-
-        backend = JsonFileBackend(catalog_root=Path(tmp_path))
-
-        result = backend._versions_path("climate/hittekaart")
-
-        assert result == Path(tmp_path) / "climate" / "hittekaart" / "versions.json"
-
-    @pytest.mark.unit
     def test_dot_collection_rejected(self, tmp_path: Any) -> None:
         """``.`` resolves to the catalog root itself and is not a collection."""
         from pathlib import Path

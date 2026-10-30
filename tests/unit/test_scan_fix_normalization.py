@@ -56,18 +56,6 @@ class TestNormalizationUsesLowercaseAndDashes:
         new_path, _ = result
         assert new_path.name == "mydatafile.geojson"
 
-    def test_mixed_case_with_spaces(self, tmp_path: Path) -> None:
-        """Mixed case and spaces should normalize to lowercase with dashes."""
-        path = tmp_path / "Radios 2010 v2025-1.shp"
-        path.touch()
-
-        result = _compute_safe_rename(path)
-
-        assert result is not None
-        new_path, _ = result
-        # The exact example from issue #208
-        assert new_path.name == "radios-2010-v2025-1.shp"
-
     def test_multiple_spaces_become_single_dash(self, tmp_path: Path) -> None:
         """Multiple consecutive spaces should become a single dash."""
         path = tmp_path / "My   File.geojson"

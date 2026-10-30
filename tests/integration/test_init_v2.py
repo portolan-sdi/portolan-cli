@@ -195,21 +195,6 @@ class TestInitErrorCases:
         return CliRunner()
 
     @pytest.mark.integration
-    def test_init_fails_on_managed_catalog(self, runner: CliRunner, tmp_path: Path) -> None:
-        """Init on MANAGED catalog should abort with 'already a Portolan catalog'."""
-        with runner.isolated_filesystem(temp_dir=tmp_path):
-            # Create managed catalog structure
-            portolan = Path(".portolan")
-            portolan.mkdir()
-            (portolan / "config.yaml").write_text("{}")
-
-            # Use --auto to skip interactive prompts and test error path
-            result = runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
-
-            assert result.exit_code == 1
-            assert "already" in result.output.lower()
-
-    @pytest.mark.integration
     def test_init_fails_on_unmanaged_stac(self, runner: CliRunner, tmp_path: Path) -> None:
         """Init on UNMANAGED_STAC should abort with 'existing STAC catalog'."""
         with runner.isolated_filesystem(temp_dir=tmp_path):

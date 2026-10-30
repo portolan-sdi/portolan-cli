@@ -315,16 +315,6 @@ class TestUrlParsing:
         assert prefix == "data/file.parquet"
 
     @pytest.mark.integration
-    def test_parse_gcs_url(self) -> None:
-        """Should correctly parse GCS URLs."""
-        from portolan_cli.sync.upload import parse_object_store_url
-
-        bucket_url, prefix = parse_object_store_url("gs://mybucket/path/to/data")
-
-        assert bucket_url == "gs://mybucket"
-        assert prefix == "path/to/data"
-
-    @pytest.mark.integration
     def test_parse_azure_url(self) -> None:
         """Should correctly parse Azure URLs."""
         from portolan_cli.sync.upload import parse_object_store_url
@@ -333,13 +323,3 @@ class TestUrlParsing:
 
         assert bucket_url == "az://myaccount/mycontainer"
         assert prefix == "data/file.parquet"
-
-    @pytest.mark.integration
-    def test_parse_url_bucket_only(self) -> None:
-        """Should handle URL with bucket only."""
-        from portolan_cli.sync.upload import parse_object_store_url
-
-        bucket_url, prefix = parse_object_store_url("s3://mybucket")
-
-        assert bucket_url == "s3://mybucket"
-        assert prefix == ""

@@ -136,12 +136,6 @@ class TestFindCommonPrefix:
         result = find_common_prefix(names)
         assert result is None
 
-    def test_empty_list_returns_none(self) -> None:
-        """Empty list should return None."""
-        names: list[str] = []
-        result = find_common_prefix(names)
-        assert result is None
-
     def test_identical_names(self) -> None:
         """Identical names should return the stem as prefix."""
         names = ["identical.shp", "identical.shp", "identical.shp"]

@@ -11,15 +11,6 @@ import pytest
 
 
 @pytest.mark.unit
-def test_iceberg_backend_importable():
-    """Verify IcebergBackend can be imported from portolan_cli.backends.iceberg."""
-    from portolan_cli.backends.iceberg import IcebergBackend
-
-    assert IcebergBackend is not None
-    assert IcebergBackend.__name__ == "IcebergBackend"
-
-
-@pytest.mark.unit
 def test_get_backend_returns_iceberg_backend(tmp_path):
     """get_backend("iceberg") should return an IcebergBackend instance."""
     from portolan_cli.backends import get_backend

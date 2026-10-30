@@ -77,11 +77,6 @@ class TestCollectionIdPathSyntax:
         assert not is_valid
         # Double slash creates empty segment
 
-    def test_validate_path_rejects_empty_segment(self) -> None:
-        """Test that paths with empty segments are rejected."""
-        is_valid, error = validate_collection_id("environment//air-quality")
-        assert not is_valid
-
     def test_validate_path_allows_segment_starting_with_number(self) -> None:
         """Test that path segments starting with numbers are valid."""
         is_valid, error = validate_collection_id("environment/2024")
