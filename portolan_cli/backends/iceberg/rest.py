@@ -83,7 +83,7 @@ class RestCatalog:
     """One REST catalog, reached with one credential.
 
     Args:
-        base_url: The catalog root, such as ``https://catalog.lakehousebox.com``.
+        base_url: The catalog root, such as ``https://catalog.example.org``.
         auth: The credential.
         warehouse: The warehouse to name in ``GET /v1/config``, or None.
         http: The HTTP client, replaceable in tests. The default has a 30 s timeout.

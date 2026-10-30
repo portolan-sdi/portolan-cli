@@ -78,16 +78,16 @@ def test_defaults_for_the_apache_fixture(monkeypatch: pytest.MonkeyPatch) -> Non
 
 
 def test_a_trailing_slash_leaves_the_uri(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("PORTOLAN_ICEBERG_URI", "https://catalog.lakehousebox.com/")
+    monkeypatch.setenv("PORTOLAN_ICEBERG_URI", "https://catalog.example.org/")
 
-    assert load_settings().uri == "https://catalog.lakehousebox.com"
+    assert load_settings().uri == "https://catalog.example.org"
 
 
 def test_a_client_id_selects_oauth2_with_the_default_token_endpoint(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("PORTOLAN_ICEBERG_URI", "https://catalog.lakehousebox.com")
-    monkeypatch.setenv("PORTOLAN_ICEBERG_WAREHOUSE", "carto-sdi--portolan-testbed")
+    monkeypatch.setenv("PORTOLAN_ICEBERG_URI", "https://catalog.example.org")
+    monkeypatch.setenv("PORTOLAN_ICEBERG_WAREHOUSE", "my-warehouse")
     monkeypatch.setenv("PORTOLAN_ICEBERG_CLIENT_ID", "id-1")
     monkeypatch.setenv("PORTOLAN_ICEBERG_CLIENT_SECRET", "secret-1")
 
@@ -96,8 +96,8 @@ def test_a_client_id_selects_oauth2_with_the_default_token_endpoint(
     assert settings.auth == "oauth2"
     assert settings.client_id == "id-1"
     assert settings.client_secret == "secret-1"
-    assert settings.oauth2_server_uri == "https://catalog.lakehousebox.com/v1/oauth/tokens"
-    assert settings.warehouse == "carto-sdi--portolan-testbed"
+    assert settings.oauth2_server_uri == "https://catalog.example.org/v1/oauth/tokens"
+    assert settings.warehouse == "my-warehouse"
 
 
 def test_an_explicit_token_endpoint_wins(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -122,9 +122,7 @@ def test_oauth2_without_a_secret_names_the_missing_variable(
 
 
 def test_a_token_selects_bearer(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv(
-        "PORTOLAN_ICEBERG_URI", "https://biglake.googleapis.com/iceberg/v1/restcatalog"
-    )
+    monkeypatch.setenv("PORTOLAN_ICEBERG_URI", "https://catalog.example.org/iceberg/v1/restcatalog")
     monkeypatch.setenv("PORTOLAN_ICEBERG_TOKEN", "ya29.token")
 
     settings = load_settings()
@@ -199,32 +197,35 @@ def test_s3_settings_come_from_the_upload_conventions(monkeypatch: pytest.Monkey
 
 def test_the_endpoint_scheme_is_dropped(monkeypatch: pytest.MonkeyPatch) -> None:
     """DuckDB's S3 secret takes a host, and USE_SSL carries the scheme."""
-    monkeypatch.setenv("PORTOLAN_ICEBERG_URI", "https://catalog.lakehousebox.com")
-    monkeypatch.setenv("PORTOLAN_S3_ENDPOINT", "https://s3.lakehousebox.com")
+    monkeypatch.setenv("PORTOLAN_ICEBERG_URI", "https://catalog.example.org")
+    monkeypatch.setenv("PORTOLAN_S3_ENDPOINT", "https://s3.example.org")
 
     storage = load_settings().storage
 
-    assert storage.endpoint == "s3.lakehousebox.com"
+    assert storage.endpoint == "s3.example.org"
     assert storage.use_ssl is True
 
 
-def test_the_client_pair_is_the_s3_key_when_no_aws_key_is_set(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """LakehouseBox issues one key pair for the catalog and its buckets."""
-    monkeypatch.setenv("PORTOLAN_ICEBERG_URI", "https://catalog.lakehousebox.com")
+def test_the_client_pair_is_never_an_s3_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The catalog credential and the storage credential stay separate.
+
+    A service that issues one key pair for both takes it twice, as the
+    client pair and as the AWS key pair. The vended mode covers a catalog
+    that fronts its own store.
+    """
+    monkeypatch.setenv("PORTOLAN_ICEBERG_URI", "https://catalog.example.org")
     monkeypatch.setenv("PORTOLAN_ICEBERG_CLIENT_ID", "id-1")
     monkeypatch.setenv("PORTOLAN_ICEBERG_CLIENT_SECRET", "secret-1")
-    monkeypatch.setenv("PORTOLAN_S3_ENDPOINT", "s3.lakehousebox.com")
+    monkeypatch.setenv("PORTOLAN_S3_ENDPOINT", "s3.example.org")
 
     storage = load_settings().storage
 
-    assert storage.key_id == "id-1"
-    assert storage.secret == "secret-1"
+    assert storage.key_id is None
+    assert storage.secret is None
 
 
-def test_an_aws_key_wins_over_the_client_pair(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("PORTOLAN_ICEBERG_URI", "https://catalog.lakehousebox.com")
+def test_an_aws_key_is_the_s3_key_under_oauth2(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PORTOLAN_ICEBERG_URI", "https://catalog.example.org")
     monkeypatch.setenv("PORTOLAN_ICEBERG_CLIENT_ID", "id-1")
     monkeypatch.setenv("PORTOLAN_ICEBERG_CLIENT_SECRET", "secret-1")
     monkeypatch.setenv("AWS_ACCESS_KEY_ID", "AKIA1")
@@ -239,7 +240,7 @@ def test_an_aws_key_wins_over_the_client_pair(monkeypatch: pytest.MonkeyPatch) -
 def test_vended_storage_takes_no_key_from_the_environment(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("PORTOLAN_ICEBERG_URI", "https://catalog.lakehousebox.com")
+    monkeypatch.setenv("PORTOLAN_ICEBERG_URI", "https://catalog.example.org")
     monkeypatch.setenv("PORTOLAN_ICEBERG_TOKEN", "t")
     monkeypatch.setenv("PORTOLAN_ICEBERG_STORAGE", "vended")
     monkeypatch.setenv("AWS_ACCESS_KEY_ID", "AKIA1")
@@ -254,7 +255,7 @@ def test_vended_storage_takes_no_key_from_the_environment(
 
 def test_secrets_stay_out_of_repr(monkeypatch: pytest.MonkeyPatch) -> None:
     """A traceback or a log line that prints the settings must not leak a key."""
-    monkeypatch.setenv("PORTOLAN_ICEBERG_URI", "https://catalog.lakehousebox.com")
+    monkeypatch.setenv("PORTOLAN_ICEBERG_URI", "https://catalog.example.org")
     monkeypatch.setenv("PORTOLAN_ICEBERG_CLIENT_ID", "id-1")
     monkeypatch.setenv("PORTOLAN_ICEBERG_CLIENT_SECRET", "very-secret")
     monkeypatch.setenv("PORTOLAN_ICEBERG_TOKEN", "very-token")

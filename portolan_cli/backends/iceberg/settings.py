@@ -7,16 +7,18 @@ credential, and the storage credential. All of them come from environment
 variables:
 
 ``PORTOLAN_ICEBERG_URI``
-    The REST catalog, such as ``https://catalog.lakehousebox.com`` or the
-    e2e stack's ``http://localhost:8181``. Required.
+    The REST catalog, such as ``https://catalog.example.org`` or the e2e
+    stack's ``http://localhost:8181``. Required.
 ``PORTOLAN_ICEBERG_WAREHOUSE``
     The warehouse the catalog serves, passed to ``GET /v1/config`` and to
-    DuckDB's ``ATTACH``. A LakehouseBox catalog names its catalog here.
+    DuckDB's ``ATTACH``. Each catalog service names its warehouses its own
+    way; the service's documentation gives the value.
 ``PORTOLAN_ICEBERG_NAMESPACE``
     The namespace that holds one table per collection. Default ``portolake``.
 ``PORTOLAN_ICEBERG_AUTH``
-    ``oauth2`` (client credentials, LakehouseBox), ``bearer`` (a static access
-    token, Google's managed Iceberg), or ``none`` (the Apache fixture). When
+    ``oauth2`` (the client credentials grant the Iceberg REST specification
+    defines), ``bearer`` (an access token minted by an identity provider), or
+    ``none`` (a catalog with no authentication, such as the e2e stack). When
     unset, a client id selects ``oauth2``, a token selects ``bearer``, and
     nothing selects ``none``.
 ``PORTOLAN_ICEBERG_CLIENT_ID``, ``PORTOLAN_ICEBERG_CLIENT_SECRET``,
@@ -25,16 +27,17 @@ variables:
 ``PORTOLAN_ICEBERG_OAUTH2_SERVER_URI``
     The token endpoint. Default ``<uri>/v1/oauth/tokens``.
 ``PORTOLAN_ICEBERG_STORAGE``
-    ``s3`` (default), ``vended`` (take the storage key from the catalog's
-    ``loadTable`` response), or ``gcs`` (reserved for Google's managed
-    Iceberg, whose data lives on GCS).
+    ``s3`` (default), ``vended`` (take the storage credential from the
+    catalog's ``loadTable`` response, the mechanism the REST specification
+    defines for a catalog that fronts the object store), or ``gcs``
+    (reserved for a catalog whose data lives on Google Cloud Storage).
 
 The S3 settings come from the conventions ``upload_file`` already follows
 (``PORTOLAN_S3_ENDPOINT``, ``PORTOLAN_S3_USE_SSL``, the ``AWS_*`` variables,
 and the AWS profile), so one shell setup serves the STAC upload and the
-warehouse. One rule is LakehouseBox's: its catalog issues one key pair that
-is both the OAuth2 client credential and the S3 key, so under ``oauth2`` the
-client pair stands in when no AWS key is set.
+warehouse. The catalog credential and the storage credential stay separate.
+A service that issues one key pair for both takes it twice: as the client
+pair and as the AWS key pair.
 
 Why the environment and not ``.portolan/config.yaml``: ``init --backend
 iceberg`` checks the catalog before the config file exists, and a secret
@@ -167,9 +170,7 @@ def _resolve_auth(uri: str) -> tuple[AuthMode, str | None, str | None, str | Non
     return auth, oauth2_server_uri, client_id, client_secret, token
 
 
-def _resolve_storage(
-    auth: AuthMode, client_id: str | None, client_secret: str | None, profile: str | None
-) -> StorageSettings:
+def _resolve_storage(profile: str | None) -> StorageSettings:
     kind_value = _choice("STORAGE", _read("STORAGE"), STORAGE_KINDS, "s3")
     kind: StorageKind = kind_value  # type: ignore[assignment]
     s3 = resolve_s3_settings(profile=profile)
@@ -182,9 +183,6 @@ def _resolve_storage(
     key_id, secret, session_token = s3.access_key, s3.secret_key, s3.session_token
     if kind == "vended":
         key_id = secret = session_token = None
-    elif auth == "oauth2" and not (key_id and secret):
-        # LakehouseBox: the catalog key pair is also the S3 key pair.
-        key_id, secret, session_token = client_id, client_secret, None
     return StorageSettings(
         kind=kind,
         endpoint=endpoint,
@@ -214,7 +212,7 @@ def load_settings(*, profile: str | None = None) -> IcebergSettings:
     if uri is None:
         raise IcebergSettingsError(
             f"The iceberg backend needs {_variable('URI')}, the Iceberg REST catalog "
-            "to write to, for example https://catalog.lakehousebox.com."
+            "to write to, for example https://catalog.example.org."
         )
     uri = uri.rstrip("/")
     namespace = _read("NAMESPACE") or DEFAULT_NAMESPACE
@@ -228,5 +226,5 @@ def load_settings(*, profile: str | None = None) -> IcebergSettings:
         client_id=client_id,
         client_secret=client_secret,
         token=token,
-        storage=_resolve_storage(auth, client_id, client_secret, profile),
+        storage=_resolve_storage(profile),
     )
