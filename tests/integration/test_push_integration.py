@@ -23,6 +23,10 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
 
+    from click.testing import Result
+
+    from portolan_cli.sync.push import PushResult
+
 
 @pytest.fixture
 def catalog_with_versions(tmp_path: Path) -> Path:
@@ -112,16 +116,10 @@ def catalog_with_versions(tmp_path: Path) -> Path:
     return catalog_dir
 
 
-@pytest.fixture
-def catalog_with_versions_malformed(tmp_path: Path) -> Path:
-    """Create a catalog with invalid JSON in versions.json.
-
-    Versions.json lives at collection root level.
-    """
-    catalog_dir = tmp_path / "catalog_malformed"
+def _write_catalog_with_collection_dir(catalog_dir: Path) -> Path:
+    """Write catalog.json, .portolan/, and an empty demographics/ directory."""
     catalog_dir.mkdir()
 
-    # Create catalog.json at root
     catalog_data = {
         "type": "Catalog",
         "id": "test-catalog",
@@ -132,12 +130,37 @@ def catalog_with_versions_malformed(tmp_path: Path) -> Path:
     (catalog_dir / "catalog.json").write_text(json.dumps(catalog_data, indent=2))
 
     # Create .portolan directory for internal state
-    portolan_dir = catalog_dir / ".portolan"
-    portolan_dir.mkdir()
+    (catalog_dir / ".portolan").mkdir()
 
-    # Create collection directory at root with invalid versions.json
+    # Create collection directory at root
     collection_dir = catalog_dir / "demographics"
     collection_dir.mkdir(parents=True)
+    return collection_dir
+
+
+def _in_sync_remote_versions() -> tuple[dict[str, Any], str]:
+    """Return a remote versions.json with versions 1.0.0 and 1.1.0, and its ETag."""
+    return (
+        {
+            "spec_version": "1.0.0",
+            "current_version": "1.1.0",
+            "versions": [
+                {"version": "1.0.0", "created": "2024-01-01T00:00:00Z"},
+                {"version": "1.1.0", "created": "2024-02-01T00:00:00Z"},
+            ],
+        },
+        "etag-123",
+    )
+
+
+@pytest.fixture
+def catalog_with_versions_malformed(tmp_path: Path) -> Path:
+    """Create a catalog with invalid JSON in versions.json.
+
+    Versions.json lives at collection root level.
+    """
+    catalog_dir = tmp_path / "catalog_malformed"
+    collection_dir = _write_catalog_with_collection_dir(catalog_dir)
 
     # Write invalid JSON
     (collection_dir / "versions.json").write_text("{ this is not valid json }")
@@ -152,28 +175,56 @@ def catalog_missing_versions_file(tmp_path: Path) -> Path:
     Collection directory exists at root but has no versions.json.
     """
     catalog_dir = tmp_path / "catalog_no_versions"
-    catalog_dir.mkdir()
-
-    # Create catalog.json at root
-    catalog_data = {
-        "type": "Catalog",
-        "id": "test-catalog",
-        "stac_version": "1.0.0",
-        "description": "Test catalog",
-        "links": [],
-    }
-    (catalog_dir / "catalog.json").write_text(json.dumps(catalog_data, indent=2))
-
-    # Create .portolan directory for internal state
-    portolan_dir = catalog_dir / ".portolan"
-    portolan_dir.mkdir()
-
-    # Create collection directory at root but no versions.json
-    collection_dir = catalog_dir / "demographics"
-    collection_dir.mkdir(parents=True)
+    _write_catalog_with_collection_dir(catalog_dir)
     # Intentionally NOT creating versions.json
 
     return catalog_dir
+
+
+def _invoke_push(
+    catalog: Path,
+    extra_args: list[str],
+    *,
+    json_output: bool = False,
+    catch_exceptions: bool = True,
+) -> Result:
+    """Run push to s3://mybucket/catalog for the demographics collection."""
+    from portolan_cli.cli import cli
+
+    prefix = ["--format", "json"] if json_output else []
+    return CliRunner().invoke(
+        cli,
+        [
+            *prefix,
+            "push",
+            "s3://mybucket/catalog",
+            "--collection",
+            "demographics",
+            *extra_args,
+            "--catalog",
+            str(catalog),
+        ],
+        catch_exceptions=catch_exceptions,
+    )
+
+
+def _push_result(
+    files_uploaded: int,
+    versions_pushed: int,
+    *,
+    success: bool = True,
+    errors: list[str] | None = None,
+) -> PushResult:
+    """Return a PushResult with no conflicts and the given counts."""
+    from portolan_cli.sync.push import PushResult
+
+    return PushResult(
+        success=success,
+        files_uploaded=files_uploaded,
+        versions_pushed=versions_pushed,
+        conflicts=[],
+        errors=errors if errors is not None else [],
+    )
 
 
 # =============================================================================
@@ -281,34 +332,11 @@ class TestPushCLI:
         """Push --dry-run should show what would be uploaded."""
         from unittest.mock import AsyncMock
 
-        from portolan_cli.cli import cli
-        from portolan_cli.sync.push import PushResult
-
-        runner = CliRunner()
-
         # CLI calls push_async directly (not push) for single-collection push
         with patch("portolan_cli.sync.push.push_async", new_callable=AsyncMock) as mock_push:
-            mock_push.return_value = PushResult(
-                success=True,
-                files_uploaded=0,
-                versions_pushed=0,
-                conflicts=[],
-                errors=[],
-            )
+            mock_push.return_value = _push_result(files_uploaded=0, versions_pushed=0)
 
-            runner.invoke(
-                cli,
-                [
-                    "push",
-                    "s3://mybucket/catalog",
-                    "--collection",
-                    "demographics",
-                    "--dry-run",
-                    "--catalog",
-                    str(catalog_with_versions),
-                ],
-                catch_exceptions=False,
-            )
+            _invoke_push(catalog_with_versions, ["--dry-run"], catch_exceptions=False)
 
             # Verify dry_run=True was passed
             call_kwargs = mock_push.call_args[1]
@@ -319,34 +347,11 @@ class TestPushCLI:
         """Push --force should enable force mode."""
         from unittest.mock import AsyncMock
 
-        from portolan_cli.cli import cli
-        from portolan_cli.sync.push import PushResult
-
-        runner = CliRunner()
-
         # CLI calls push_async directly (not push) for single-collection push
         with patch("portolan_cli.sync.push.push_async", new_callable=AsyncMock) as mock_push:
-            mock_push.return_value = PushResult(
-                success=True,
-                files_uploaded=1,
-                versions_pushed=1,
-                conflicts=[],
-                errors=[],
-            )
+            mock_push.return_value = _push_result(files_uploaded=1, versions_pushed=1)
 
-            runner.invoke(
-                cli,
-                [
-                    "push",
-                    "s3://mybucket/catalog",
-                    "--collection",
-                    "demographics",
-                    "--force",
-                    "--catalog",
-                    str(catalog_with_versions),
-                ],
-                catch_exceptions=False,
-            )
+            _invoke_push(catalog_with_versions, ["--force"], catch_exceptions=False)
 
             call_kwargs = mock_push.call_args[1]
             assert call_kwargs.get("force") is True
@@ -354,34 +359,11 @@ class TestPushCLI:
     @pytest.mark.integration
     def test_push_profile_flag(self, catalog_with_versions: Path) -> None:
         """Push --profile should pass AWS profile."""
-        from portolan_cli.cli import cli
-        from portolan_cli.sync.push import PushResult
-
-        runner = CliRunner()
 
         with patch("portolan_cli.sync.push.push_async", new_callable=AsyncMock) as mock_push:
-            mock_push.return_value = PushResult(
-                success=True,
-                files_uploaded=1,
-                versions_pushed=1,
-                conflicts=[],
-                errors=[],
-            )
+            mock_push.return_value = _push_result(files_uploaded=1, versions_pushed=1)
 
-            runner.invoke(
-                cli,
-                [
-                    "push",
-                    "s3://mybucket/catalog",
-                    "--collection",
-                    "demographics",
-                    "--profile",
-                    "myprofile",
-                    "--catalog",
-                    str(catalog_with_versions),
-                ],
-                catch_exceptions=False,
-            )
+            _invoke_push(catalog_with_versions, ["--profile", "myprofile"], catch_exceptions=False)
 
             call_kwargs = mock_push.call_args[1]
             assert call_kwargs.get("profile") == "myprofile"
@@ -494,33 +476,12 @@ class TestPushJSONOutput:
     @pytest.mark.integration
     def test_push_json_success(self, catalog_with_versions: Path) -> None:
         """Push with --format=json should output JSON envelope."""
-        from portolan_cli.cli import cli
-        from portolan_cli.sync.push import PushResult
-
-        runner = CliRunner()
 
         with patch("portolan_cli.sync.push.push_async", new_callable=AsyncMock) as mock_push:
-            mock_push.return_value = PushResult(
-                success=True,
-                files_uploaded=1,
-                versions_pushed=1,
-                conflicts=[],
-                errors=[],
-            )
+            mock_push.return_value = _push_result(files_uploaded=1, versions_pushed=1)
 
-            result = runner.invoke(
-                cli,
-                [
-                    "--format",
-                    "json",
-                    "push",
-                    "s3://mybucket/catalog",
-                    "--collection",
-                    "demographics",
-                    "--catalog",
-                    str(catalog_with_versions),
-                ],
-                catch_exceptions=False,
+            result = _invoke_push(
+                catalog_with_versions, [], json_output=True, catch_exceptions=False
             )
 
             # Should be valid JSON
@@ -531,27 +492,12 @@ class TestPushJSONOutput:
     @pytest.mark.integration
     def test_push_json_error(self, catalog_with_versions: Path) -> None:
         """Push errors with --format=json should output JSON error envelope."""
-        from portolan_cli.cli import cli
         from portolan_cli.sync.push import PushConflictError
-
-        runner = CliRunner()
 
         with patch("portolan_cli.sync.push.push_async", new_callable=AsyncMock) as mock_push:
             mock_push.side_effect = PushConflictError("Remote diverged")
 
-            result = runner.invoke(
-                cli,
-                [
-                    "--format",
-                    "json",
-                    "push",
-                    "s3://mybucket/catalog",
-                    "--collection",
-                    "demographics",
-                    "--catalog",
-                    str(catalog_with_versions),
-                ],
-            )
+            result = _invoke_push(catalog_with_versions, [], json_output=True)
 
             output_data = json.loads(result.output)
             assert output_data["success"] is False
@@ -714,33 +660,11 @@ class TestDryRunBehavior:
     @pytest.mark.integration
     def test_cli_dry_run_shows_completion_message(self, catalog_with_versions: Path) -> None:
         """CLI should show dry-run completion message when dry-run succeeds."""
-        from portolan_cli.cli import cli
-        from portolan_cli.sync.push import PushResult
-
-        runner = CliRunner()
 
         with patch("portolan_cli.sync.push.push_async", new_callable=AsyncMock) as mock_push:
-            mock_push.return_value = PushResult(
-                success=True,
-                files_uploaded=0,
-                versions_pushed=0,
-                conflicts=[],
-                errors=[],
-            )
+            mock_push.return_value = _push_result(files_uploaded=0, versions_pushed=0)
 
-            result = runner.invoke(
-                cli,
-                [
-                    "push",
-                    "s3://mybucket/catalog",
-                    "--collection",
-                    "demographics",
-                    "--dry-run",
-                    "--catalog",
-                    str(catalog_with_versions),
-                ],
-                catch_exceptions=False,
-            )
+            result = _invoke_push(catalog_with_versions, ["--dry-run"], catch_exceptions=False)
 
             # Should show dry-run completion indicator
             assert "DRY RUN" in result.output or "dry-run" in result.output.lower(), (
@@ -750,33 +674,12 @@ class TestDryRunBehavior:
     @pytest.mark.integration
     def test_cli_normal_push_still_shows_nothing_to_push(self, catalog_with_versions: Path) -> None:
         """Non-dry-run with nothing to push should still show 'Nothing to push'."""
-        from portolan_cli.cli import cli
-        from portolan_cli.sync.push import PushResult
-
-        runner = CliRunner()
 
         with patch("portolan_cli.sync.push.push_async", new_callable=AsyncMock) as mock_push:
-            mock_push.return_value = PushResult(
-                success=True,
-                files_uploaded=0,
-                versions_pushed=0,
-                conflicts=[],
-                errors=[],
-            )
+            mock_push.return_value = _push_result(files_uploaded=0, versions_pushed=0)
 
-            result = runner.invoke(
-                cli,
-                [
-                    "push",
-                    "s3://mybucket/catalog",
-                    "--collection",
-                    "demographics",
-                    # NOTE: No --dry-run flag
-                    "--catalog",
-                    str(catalog_with_versions),
-                ],
-                catch_exceptions=False,
-            )
+            # NOTE: No --dry-run flag
+            result = _invoke_push(catalog_with_versions, [], catch_exceptions=False)
 
             # Normal push with nothing to do SHOULD show this message
             assert "Nothing to push" in result.output, (
@@ -848,32 +751,17 @@ class TestDryRunBehavior:
 
         Tests the actual CLI output when local and remote are in sync.
         """
-        from portolan_cli.cli import cli
 
         # Setup: remote has same versions as local
         versions_path = catalog_with_versions / "demographics" / "versions.json"
         local_versions = json.loads(versions_path.read_text())
-
-        runner = CliRunner()
 
         with patch(
             "portolan_cli.sync.push._fetch_remote_versions_async", new_callable=AsyncMock
         ) as mock_fetch:
             mock_fetch.return_value = (local_versions, "etag-123")
 
-            result = runner.invoke(
-                cli,
-                [
-                    "push",
-                    "s3://mybucket/catalog",
-                    "--collection",
-                    "demographics",
-                    "--dry-run",
-                    "--catalog",
-                    str(catalog_with_versions),
-                ],
-                catch_exceptions=False,
-            )
+            result = _invoke_push(catalog_with_versions, ["--dry-run"], catch_exceptions=False)
 
         # In dry-run mode with nothing to push, should show DRY RUN prefix
         assert "[DRY RUN]" in result.output, (
@@ -891,9 +779,6 @@ class TestDryRunBehavior:
         Tests that we see "[DRY RUN] Would push N version(s)" without
         contradictory "Nothing to push" message.
         """
-        from portolan_cli.cli import cli
-
-        runner = CliRunner()
 
         with patch(
             "portolan_cli.sync.push._fetch_remote_versions_async", new_callable=AsyncMock
@@ -901,19 +786,7 @@ class TestDryRunBehavior:
             # Remote is empty = local has versions to push
             mock_fetch.return_value = (None, None)
 
-            result = runner.invoke(
-                cli,
-                [
-                    "push",
-                    "s3://mybucket/catalog",
-                    "--collection",
-                    "demographics",
-                    "--dry-run",
-                    "--catalog",
-                    str(catalog_with_versions),
-                ],
-                catch_exceptions=False,
-            )
+            result = _invoke_push(catalog_with_versions, ["--dry-run"], catch_exceptions=False)
 
         # Should show what would be pushed
         assert "[DRY RUN] Would push" in result.output, (
@@ -1024,23 +897,8 @@ class TestPushCLIErrorBranches:
     @pytest.mark.integration
     def test_push_cli_filenotfound_json_output(self, catalog_missing_versions_file: Path) -> None:
         """Push CLI with --format=json should output JSON error on FileNotFoundError."""
-        from portolan_cli.cli import cli
 
-        runner = CliRunner()
-
-        result = runner.invoke(
-            cli,
-            [
-                "--format",
-                "json",
-                "push",
-                "s3://mybucket/catalog",
-                "--collection",
-                "demographics",
-                "--catalog",
-                str(catalog_missing_versions_file),
-            ],
-        )
+        result = _invoke_push(catalog_missing_versions_file, [], json_output=True)
 
         assert result.exit_code == 1
         output_data = json.loads(result.output)
@@ -1050,21 +908,8 @@ class TestPushCLIErrorBranches:
     @pytest.mark.integration
     def test_push_cli_filenotfound_human_output(self, catalog_missing_versions_file: Path) -> None:
         """Push CLI should show human-readable error on FileNotFoundError."""
-        from portolan_cli.cli import cli
 
-        runner = CliRunner()
-
-        result = runner.invoke(
-            cli,
-            [
-                "push",
-                "s3://mybucket/catalog",
-                "--collection",
-                "demographics",
-                "--catalog",
-                str(catalog_missing_versions_file),
-            ],
-        )
+        result = _invoke_push(catalog_missing_versions_file, [])
 
         assert result.exit_code == 1
         assert "versions.json" in result.output.lower() or "not found" in result.output.lower()
@@ -1126,31 +971,16 @@ class TestPushCLIErrorBranches:
     @pytest.mark.integration
     def test_push_cli_result_errors_human_output(self, catalog_with_versions: Path) -> None:
         """Push CLI should show errors from PushResult and exit 1."""
-        from portolan_cli.cli import cli
-        from portolan_cli.sync.push import PushResult
-
-        runner = CliRunner()
 
         with patch("portolan_cli.sync.push.push_async", new_callable=AsyncMock) as mock_push:
-            mock_push.return_value = PushResult(
-                success=False,
+            mock_push.return_value = _push_result(
                 files_uploaded=0,
                 versions_pushed=0,
-                conflicts=[],
+                success=False,
                 errors=["Network timeout uploading file1.parquet"],
             )
 
-            result = runner.invoke(
-                cli,
-                [
-                    "push",
-                    "s3://mybucket/catalog",
-                    "--collection",
-                    "demographics",
-                    "--catalog",
-                    str(catalog_with_versions),
-                ],
-            )
+            result = _invoke_push(catalog_with_versions, [])
 
         assert result.exit_code == 1
 
@@ -1192,33 +1022,14 @@ class TestPushOutputInvariants:
         This invariant ensures we don't show contradictory messages where
         dry-run indicates work to do but then says nothing to push.
         """
-        from portolan_cli.cli import cli
-        from portolan_cli.sync.push import PushResult
-
-        runner = CliRunner()
 
         with patch("portolan_cli.sync.push.push_async", new_callable=AsyncMock) as mock_push:
-            mock_push.return_value = PushResult(
-                success=True,
-                files_uploaded=files_uploaded,
-                versions_pushed=versions_pushed,
-                conflicts=[],
-                errors=[],
+            mock_push.return_value = _push_result(
+                files_uploaded=files_uploaded, versions_pushed=versions_pushed
             )
 
-            result = runner.invoke(
-                cli,
-                [
-                    "push",
-                    "s3://mybucket/catalog",
-                    "--collection",
-                    "demographics",
-                    "--dry-run",  # Key: dry-run mode
-                    "--catalog",
-                    str(catalog_with_versions),
-                ],
-                catch_exceptions=False,
-            )
+            # Key: dry-run mode
+            result = _invoke_push(catalog_with_versions, ["--dry-run"], catch_exceptions=False)
 
             # INVARIANT: Dry-run should never show "Nothing to push"
             assert "Nothing to push" not in result.output, (
@@ -1235,33 +1046,15 @@ class TestPushOutputInvariants:
 
         This invariant ensures the fully-in-sync case still works correctly.
         """
-        from portolan_cli.cli import cli
-        from portolan_cli.sync.push import PushResult
-
-        runner = CliRunner()
 
         with patch("portolan_cli.sync.push.push_async", new_callable=AsyncMock) as mock_push:
-            mock_push.return_value = PushResult(
-                success=True,
+            mock_push.return_value = _push_result(
                 files_uploaded=0,  # Key: nothing uploaded
                 versions_pushed=0,  # Key: 0 versions
-                conflicts=[],
-                errors=[],
             )
 
-            result = runner.invoke(
-                cli,
-                [
-                    "push",
-                    "s3://mybucket/catalog",
-                    "--collection",
-                    "demographics",
-                    # No --dry-run
-                    "--catalog",
-                    str(catalog_with_versions),
-                ],
-                catch_exceptions=False,
-            )
+            # No --dry-run
+            result = _invoke_push(catalog_with_versions, [], catch_exceptions=False)
 
             # INVARIANT: Non-dry-run with 0 versions and 0 files shows "Nothing to push"
             assert "Nothing to push" in result.output, (
@@ -1346,33 +1139,15 @@ class TestPushOutputInvariants:
 
         This invariant ensures success messages appear when work is done.
         """
-        from portolan_cli.cli import cli
-        from portolan_cli.sync.push import PushResult
-
-        runner = CliRunner()
 
         with patch("portolan_cli.sync.push.push_async", new_callable=AsyncMock) as mock_push:
-            mock_push.return_value = PushResult(
-                success=True,
+            mock_push.return_value = _push_result(
                 files_uploaded=files_uploaded,
                 versions_pushed=versions_pushed,  # Key: >0 versions
-                conflicts=[],
-                errors=[],
             )
 
-            result = runner.invoke(
-                cli,
-                [
-                    "push",
-                    "s3://mybucket/catalog",
-                    "--collection",
-                    "demographics",
-                    # No --dry-run
-                    "--catalog",
-                    str(catalog_with_versions),
-                ],
-                catch_exceptions=False,
-            )
+            # No --dry-run
+            result = _invoke_push(catalog_with_versions, [], catch_exceptions=False)
 
             # INVARIANT: Should show "Pushed" message with version count
             assert "Pushed" in result.output, (
@@ -1412,17 +1187,7 @@ class TestDryRunRealCodePath:
             "portolan_cli.sync.push._fetch_remote_versions_async", new_callable=AsyncMock
         ) as mock_fetch:
             # Simulate remote having same versions as local (nothing to push)
-            mock_fetch.return_value = (
-                {
-                    "spec_version": "1.0.0",
-                    "current_version": "1.1.0",
-                    "versions": [
-                        {"version": "1.0.0", "created": "2024-01-01T00:00:00Z"},
-                        {"version": "1.1.0", "created": "2024-02-01T00:00:00Z"},
-                    ],
-                },
-                "etag-123",
-            )
+            mock_fetch.return_value = _in_sync_remote_versions()
 
             # Call real push() with dry_run=True
             result = push(
@@ -1449,17 +1214,7 @@ class TestDryRunRealCodePath:
             "portolan_cli.sync.push._fetch_remote_versions_async", new_callable=AsyncMock
         ) as mock_fetch:
             # Simulate remote having same versions as local (nothing to push)
-            mock_fetch.return_value = (
-                {
-                    "spec_version": "1.0.0",
-                    "current_version": "1.1.0",
-                    "versions": [
-                        {"version": "1.0.0", "created": "2024-01-01T00:00:00Z"},
-                        {"version": "1.1.0", "created": "2024-02-01T00:00:00Z"},
-                    ],
-                },
-                "etag-123",
-            )
+            mock_fetch.return_value = _in_sync_remote_versions()
 
             # Call real push() with dry_run=False
             result = push(
