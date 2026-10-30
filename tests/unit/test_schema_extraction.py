@@ -172,15 +172,6 @@ class TestMissingCRSWarning:
         return file_path
 
     @pytest.mark.unit
-    def test_missing_crs_does_not_raise(self, geoparquet_no_crs: Path) -> None:
-        """Missing CRS should not raise an error."""
-        from portolan_cli.metadata.geoparquet import extract_schema_from_geoparquet
-
-        # Should not raise
-        schema = extract_schema_from_geoparquet(geoparquet_no_crs)
-        assert schema is not None
-
-    @pytest.mark.unit
     def test_missing_crs_returns_none(self, geoparquet_no_crs: Path) -> None:
         """Missing CRS should result in None crs field."""
         from portolan_cli.metadata.geoparquet import extract_schema_from_geoparquet

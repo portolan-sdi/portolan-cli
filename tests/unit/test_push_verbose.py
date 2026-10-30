@@ -318,7 +318,7 @@ class TestUploadAssetsVerboseMode:
         assert metrics.total_bytes > 0
         assert metrics.file_count == 2
         # Average speed should be calculated (may be very fast in tests)
-        assert metrics.average_speed >= 0
+        assert metrics.average_speed > 0
 
 
 class TestUploadMetricsMerge:

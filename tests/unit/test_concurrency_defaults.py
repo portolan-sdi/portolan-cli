@@ -143,8 +143,18 @@ class TestUploadModuleDefaults:
         chunk_param = sig.parameters.get("chunk_concurrency")
 
         assert chunk_param is not None
-        # _setup_store_and_kwargs requires chunk_concurrency (no default)
-        # but callers should pass get_default_chunk_concurrency()
+        # _setup_store_and_kwargs requires chunk_concurrency (no default),
+        # so setup_store must pass 4 itself.
+        from unittest.mock import MagicMock, patch
+
+        from portolan_cli.sync.upload import setup_store
+
+        with patch(
+            "portolan_cli.sync.upload._setup_store_and_kwargs",
+            return_value=(MagicMock(), {}),
+        ) as setup:
+            setup_store("s3://bucket/prefix")
+        assert setup.call_args.kwargs["chunk_concurrency"] == 4
 
 
 # =============================================================================
@@ -180,6 +190,8 @@ class TestPushModuleDefaults:
         chunk_param = sig.parameters.get("chunk_concurrency")
 
         assert chunk_param is not None, "push_async must have chunk_concurrency param"
+        # None means "use get_default_chunk_concurrency()", which is 4
+        assert chunk_param.default is None
 
     @pytest.mark.unit
     def test_push_all_collections_has_chunk_concurrency_param(self) -> None:
@@ -192,6 +204,8 @@ class TestPushModuleDefaults:
         chunk_param = sig.parameters.get("chunk_concurrency")
 
         assert chunk_param is not None, "push_all_collections must have chunk_concurrency param"
+        # None means "use get_default_chunk_concurrency()", which is 4
+        assert chunk_param.default is None
 
 
 # =============================================================================

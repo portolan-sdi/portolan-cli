@@ -24,13 +24,6 @@ class TestAdaptiveConcurrencyManager:
     """Tests for AdaptiveConcurrencyManager class."""
 
     @pytest.mark.unit
-    def test_manager_exists(self) -> None:
-        """AdaptiveConcurrencyManager class should exist."""
-        from portolan_cli.async_utils import AdaptiveConcurrencyManager
-
-        assert AdaptiveConcurrencyManager is not None
-
-    @pytest.mark.unit
     def test_manager_initial_concurrency_is_low(self) -> None:
         """Manager should start with low concurrency (slow-start)."""
         from portolan_cli.async_utils import AdaptiveConcurrencyManager

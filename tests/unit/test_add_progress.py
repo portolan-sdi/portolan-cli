@@ -154,7 +154,7 @@ class TestAddProgressReporter:
             pass
 
         assert reporter.files_processed == 0
-        assert reporter.elapsed_seconds >= 0
+        assert reporter.elapsed_seconds > 0
 
 
 @pytest.mark.unit

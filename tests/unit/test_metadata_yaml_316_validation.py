@@ -349,13 +349,6 @@ class TestOrcidPattern:
     """Tests for ORCID pattern regex."""
 
     @pytest.mark.unit
-    def test_orcid_pattern_exists(self) -> None:
-        """ORCID_PATTERN is exported from module."""
-        from portolan_cli.metadata_yaml import ORCID_PATTERN
-
-        assert ORCID_PATTERN is not None
-
-    @pytest.mark.unit
     def test_orcid_pattern_matches_valid(self) -> None:
         """ORCID_PATTERN matches valid ORCID format."""
         from portolan_cli.metadata_yaml import ORCID_PATTERN

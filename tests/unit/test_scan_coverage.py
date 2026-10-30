@@ -677,7 +677,12 @@ class TestScanIntegrationEdgeCases:
 
     def test_permission_denied_handling(self, tmp_path: Path) -> None:
         """Permission denied errors should be reported as issues."""
-        # This test may be skipped on Windows or when running as root
+        import os
+        import sys
+
+        # chmod 000 does not block Windows or root, so the scan reads the directory
+        if sys.platform == "win32" or os.geteuid() == 0:
+            pytest.skip("chmod 000 does not deny access on Windows or as root")
 
         restricted_dir = tmp_path / "restricted"
         restricted_dir.mkdir()
@@ -689,10 +694,8 @@ class TestScanIntegrationEdgeCases:
             Path(restricted_dir).chmod(0o000)
             result = scan_directory(tmp_path)
 
-            # Should have permission denied issue (or not depending on permissions)
-            # May or may not trigger depending on OS/permissions
-            # Just ensure no crash - we count issues to verify test ran
-            _ = [i for i in result.issues if i.issue_type == IssueType.PERMISSION_DENIED]
+            denied = [i for i in result.issues if i.issue_type == IssueType.PERMISSION_DENIED]
+            assert [i.path for i in denied] == [restricted_dir]
         finally:
             # Restore permissions
             Path(restricted_dir).chmod(original_mode)

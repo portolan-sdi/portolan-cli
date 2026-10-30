@@ -274,12 +274,6 @@ class TestJsonFileBackend:
     """Tests for the JsonFileBackend implementation."""
 
     @pytest.mark.unit
-    def test_json_file_backend_instantiates(self) -> None:
-        """JsonFileBackend can be instantiated without arguments."""
-        backend = JsonFileBackend()
-        assert backend is not None
-
-    @pytest.mark.unit
     def test_json_file_backend_isinstance_versioning_backend(self) -> None:
         """JsonFileBackend is recognized as VersioningBackend via isinstance."""
         backend = JsonFileBackend()

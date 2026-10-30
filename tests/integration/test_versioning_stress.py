@@ -187,14 +187,6 @@ class TestAddPopulatesVersions:
     """Verify `portolan add` creates properly-structured collection-level versions.json."""
 
     @pytest.mark.integration
-    def test_add_single_file_creates_versions_json(
-        self, single_file_add_versions: dict[str, Any]
-    ) -> None:
-        """versions.json exists after add (add.py:1174)."""
-        # The shared fixture asserts existence; a parsed document proves it.
-        assert single_file_add_versions is not None
-
-    @pytest.mark.integration
     def test_add_populates_versions_array(self, single_file_add_versions: dict[str, Any]) -> None:
         """versions array is non-empty after add (add.py:1216)."""
         versions_data = single_file_add_versions
@@ -773,6 +765,8 @@ class TestPushPullDivergence:
             Key="catalog/test-collection/versions.json",
             Body=json.dumps(remote_versions),
         )
+        # The asset href is relative to the catalog root
+        client.put_object(Bucket=bucket_name, Key="catalog/remote.parquet", Body=b"remote")
 
         # Create local collection without versions
         collection_dir = initialized_catalog / "test-collection"
@@ -794,10 +788,19 @@ class TestPushPullDivergence:
             # Pull requires REMOTE_URL as positional argument
             remote_url = f"s3://{bucket_name}/catalog"
             result = runner.invoke(
-                cli, ["pull", remote_url, "--catalog", str(initialized_catalog), "--dry-run"]
+                cli,
+                [
+                    "pull",
+                    remote_url,
+                    "--collection",
+                    "test-collection",
+                    "--catalog",
+                    str(initialized_catalog),
+                ],
             )
-            # Pull should run without crashing and detect remote state
-            assert result.exit_code in (0, 1), f"Unexpected error: {result.output}"
+            # Pull reads the remote versions.json and fetches the asset it lists
+            assert result.exit_code == 0, result.output
+            assert (initialized_catalog / "remote.parquet").read_bytes() == b"remote"
         finally:
             os.environ.clear()
             os.environ.update(env_backup)
@@ -928,8 +931,9 @@ class TestPushPullDivergence:
             # Pull requires REMOTE_URL as positional argument
             remote_url = f"s3://{bucket_name}/catalog"
             result = runner.invoke(cli, ["pull", remote_url, "--catalog", str(initialized_catalog)])
-            # Either warns about divergence or fails with conflict - both acceptable
-            assert result.exit_code in (0, 1), f"Unexpected error: {result.output}"
+            # Pull reports the divergence and refuses to overwrite local work
+            assert result.exit_code == 1, result.output
+            assert "Local and remote have diverged" in result.output
         finally:
             os.environ.clear()
             os.environ.update(env_backup)

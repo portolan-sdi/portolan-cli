@@ -15,6 +15,9 @@ import pytest
 
 from portolan_cli.constants import PORTOLAN_SCHEMA_URI
 from portolan_cli.validation.legacy import (
+    _MESSAGE,
+    _REMOVED_FIELDS_MESSAGE,
+    _STYLE_MANIFEST_MESSAGE,
     detect_legacy_generation,
     detect_legacy_notes,
     detect_removed_fields,
@@ -77,7 +80,7 @@ class TestDetectLegacyGeneration:
                 "portolan:geospatial": True,
             },
         )
-        assert detect_legacy_generation(tmp_path) is not None
+        assert detect_legacy_generation(tmp_path) == _MESSAGE
 
     def test_schema_uri_present_wins_over_a_stale_field(self, tmp_path: Path) -> None:
         """A catalog re-fixed but not yet cleaned is current, not legacy."""
@@ -130,7 +133,7 @@ class TestDetectStyleManifest:
             tmp_path / "transport" / "roads" / "collection.json",
             _collection(**{"portolan:styles": []}),
         )
-        assert detect_style_manifest(tmp_path) is not None
+        assert detect_style_manifest(tmp_path) == _STYLE_MANIFEST_MESSAGE
 
     def test_current_collection_is_not_flagged(self, tmp_path: Path) -> None:
         _write(tmp_path / "catalog.json", _catalog())
@@ -185,7 +188,7 @@ class TestDetectRemovedFields:
             tmp_path / "catalog.json",
             _catalog(stac_extensions=[PORTOLAN_SCHEMA_URI], **{"portolan:collection_count": 3}),
         )
-        assert detect_removed_fields(tmp_path) is not None
+        assert detect_removed_fields(tmp_path) == _REMOVED_FIELDS_MESSAGE
 
     def test_item_marker_is_flagged(self, tmp_path: Path) -> None:
         """portolan:datetime_provisional is the one that lives on an item."""
@@ -198,7 +201,7 @@ class TestDetectRemovedFields:
             tmp_path / "roads" / "tile" / "tile.json",
             _item(properties={"portolan:datetime_provisional": True}),
         )
-        assert detect_removed_fields(tmp_path) is not None
+        assert detect_removed_fields(tmp_path) == _REMOVED_FIELDS_MESSAGE
 
     def test_asset_field_is_flagged(self, tmp_path: Path) -> None:
         """portolan:glob and portolan:managed sit inside an asset, not at the top."""
@@ -209,7 +212,7 @@ class TestDetectRemovedFields:
                 assets={"data": {"href": "s3://bucket/roads.parquet", "portolan:managed": False}}
             ),
         )
-        assert detect_removed_fields(tmp_path) is not None
+        assert detect_removed_fields(tmp_path) == _REMOVED_FIELDS_MESSAGE
 
     def test_current_catalog_is_not_flagged(self, tmp_path: Path) -> None:
         _write(tmp_path / "catalog.json", _catalog(stac_extensions=[PORTOLAN_SCHEMA_URI]))
