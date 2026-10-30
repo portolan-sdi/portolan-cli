@@ -35,6 +35,53 @@ from portolan_cli.run_state import RunState
 from tests.unit.add_stubs import add_mixed_directory_without_raising, write_point_geojson
 
 
+def _write_test_point_geojson(path: Path) -> None:
+    """Write a FeatureCollection with one Point named "Test" to PATH."""
+    path.write_text(
+        json.dumps(
+            {
+                "type": "FeatureCollection",
+                "features": [
+                    {
+                        "type": "Feature",
+                        "geometry": {"type": "Point", "coordinates": [-122.4, 37.8]},
+                        "properties": {"name": "Test"},
+                    }
+                ],
+            }
+        )
+    )
+
+
+def _write_test_catalog(root: Path) -> None:
+    """Write the metadata.yaml and the catalog.json of a test catalog into ROOT."""
+    portolan_dir = root / ".portolan"
+    portolan_dir.mkdir(exist_ok=True)
+    (portolan_dir / "metadata.yaml").write_text('license: "CC-BY-4.0"\n')
+    catalog_data = {
+        "type": "Catalog",
+        "stac_version": "1.0.0",
+        "id": "portolan-catalog",
+        "description": "Test catalog",
+        "links": [],
+    }
+    (root / "catalog.json").write_text(json.dumps(catalog_data))
+
+
+def _minimal_item(item_id: str, assets: dict[str, object]) -> dict[str, object]:
+    """Return a STAC item dict with one Point geometry and the given ASSETS."""
+    return {
+        "type": "Feature",
+        "stac_version": "1.0.0",
+        "id": item_id,
+        "geometry": {"type": "Point", "coordinates": [-122.4, 37.8]},
+        "bbox": [-122.4, 37.8, -122.4, 37.8],
+        "properties": {"datetime": "2024-01-01T00:00:00Z"},
+        "links": [],
+        "assets": assets,
+    }
+
+
 @pytest.fixture
 def initialized_catalog(tmp_path: Path) -> Path:
     """Create an initialized Portolan catalog structure."""
@@ -206,20 +253,7 @@ class TestMixedDirectoryProcessing:
 
         # Create a valid GeoJSON
         geojson = collection_dir / "data.geojson"
-        geojson.write_text(
-            json.dumps(
-                {
-                    "type": "FeatureCollection",
-                    "features": [
-                        {
-                            "type": "Feature",
-                            "geometry": {"type": "Point", "coordinates": [-122.4, 37.8]},
-                            "properties": {"name": "Test"},
-                        }
-                    ],
-                }
-            )
-        )
+        _write_test_point_geojson(geojson)
 
         # Mock prepare_item and finalize_items to track calls
         # Per Issue #281: add_files now calls prepare_item + finalize_items
@@ -463,18 +497,7 @@ class TestCsvSkipHypothesis:
         tmp_dir = tempfile.mkdtemp()
         tmp_path = Path(tmp_dir)
         try:
-            # Set up catalog
-            portolan_dir = tmp_path / ".portolan"
-            portolan_dir.mkdir(exist_ok=True)
-            (portolan_dir / "metadata.yaml").write_text('license: "CC-BY-4.0"\n')
-            catalog_data = {
-                "type": "Catalog",
-                "stac_version": "1.0.0",
-                "id": "portolan-catalog",
-                "description": "Test catalog",
-                "links": [],
-            }
-            (tmp_path / "catalog.json").write_text(json.dumps(catalog_data))
+            _write_test_catalog(tmp_path)
 
             # Generate non-geo CSV with random columns
             collection_dir = tmp_path / "collection"
@@ -517,18 +540,7 @@ class TestCsvSkipHypothesis:
         tmp_dir = tempfile.mkdtemp()
         tmp_path = Path(tmp_dir)
         try:
-            # Set up catalog
-            portolan_dir = tmp_path / ".portolan"
-            portolan_dir.mkdir(exist_ok=True)
-            (portolan_dir / "metadata.yaml").write_text('license: "CC-BY-4.0"\n')
-            catalog_data = {
-                "type": "Catalog",
-                "stac_version": "1.0.0",
-                "id": "portolan-catalog",
-                "description": "Test catalog",
-                "links": [],
-            }
-            (tmp_path / "catalog.json").write_text(json.dumps(catalog_data))
+            _write_test_catalog(tmp_path)
 
             collection_dir = tmp_path / "collection"
             collection_dir.mkdir(exist_ok=True)
@@ -570,18 +582,7 @@ class TestCsvSkipHypothesis:
         tmp_dir = tempfile.mkdtemp()
         tmp_path = Path(tmp_dir)
         try:
-            # Set up catalog
-            portolan_dir = tmp_path / ".portolan"
-            portolan_dir.mkdir(exist_ok=True)
-            (portolan_dir / "metadata.yaml").write_text('license: "CC-BY-4.0"\n')
-            catalog_data = {
-                "type": "Catalog",
-                "stac_version": "1.0.0",
-                "id": "portolan-catalog",
-                "description": "Test catalog",
-                "links": [],
-            }
-            (tmp_path / "catalog.json").write_text(json.dumps(catalog_data))
+            _write_test_catalog(tmp_path)
 
             collection_dir = tmp_path / "collection"
             collection_dir.mkdir(exist_ok=True)
@@ -759,20 +760,7 @@ class TestAdr0028AssetTracking:
 
         # Create valid GeoJSON
         geojson = collection_dir / "data.geojson"
-        geojson.write_text(
-            json.dumps(
-                {
-                    "type": "FeatureCollection",
-                    "features": [
-                        {
-                            "type": "Feature",
-                            "geometry": {"type": "Point", "coordinates": [-122.4, 37.8]},
-                            "properties": {"name": "Test"},
-                        }
-                    ],
-                }
-            )
-        )
+        _write_test_point_geojson(geojson)
 
         # Mock prepare_item and finalize_items to simulate successful geo file processing
         # Per Issue #281: add_files now calls prepare_item + finalize_items
@@ -947,22 +935,16 @@ class TestUpdateItemWithAsset:
 
         # Create initial item.json
         item_json_path = item_dir / f"{item_id}.json"
-        initial_item = {
-            "type": "Feature",
-            "stac_version": "1.0.0",
-            "id": item_id,
-            "geometry": {"type": "Point", "coordinates": [-122.4, 37.8]},
-            "bbox": [-122.4, 37.8, -122.4, 37.8],
-            "properties": {"datetime": "2024-01-01T00:00:00Z"},
-            "links": [],
-            "assets": {
+        initial_item = _minimal_item(
+            item_id,
+            {
                 "data": {
                     "href": "./data.parquet",
                     "type": "application/vnd.apache.parquet",
                     "roles": ["data"],
                 }
             },
-        }
+        )
         item_json_path.write_text(json.dumps(initial_item, indent=2))
 
         # Create versions.json with correct schema (dict-based assets, not list)
@@ -1047,20 +1029,7 @@ class TestUpdateItemWithAsset:
 
         # Create item.json but no data files
         item_json_path = item_dir / f"{item_id}.json"
-        item_json_path.write_text(
-            json.dumps(
-                {
-                    "type": "Feature",
-                    "stac_version": "1.0.0",
-                    "id": item_id,
-                    "geometry": {"type": "Point", "coordinates": [-122.4, 37.8]},
-                    "bbox": [-122.4, 37.8, -122.4, 37.8],
-                    "properties": {"datetime": "2024-01-01T00:00:00Z"},
-                    "links": [],
-                    "assets": {},
-                }
-            )
-        )
+        item_json_path.write_text(json.dumps(_minimal_item(item_id, {})))
 
         with caplog.at_level(logging.WARNING):
             _update_item_with_asset(
@@ -1090,20 +1059,7 @@ class TestAddFilesCodePaths:
         collection_dir = tmp_path / "collection"
         collection_dir.mkdir(parents=True)
         real_file = collection_dir / "data.geojson"
-        real_file.write_text(
-            json.dumps(
-                {
-                    "type": "FeatureCollection",
-                    "features": [
-                        {
-                            "type": "Feature",
-                            "geometry": {"type": "Point", "coordinates": [-122.4, 37.8]},
-                            "properties": {"name": "Test"},
-                        }
-                    ],
-                }
-            )
-        )
+        _write_test_point_geojson(real_file)
 
         # Create a symlink
         link_dir = tmp_path / "links"
@@ -1136,20 +1092,7 @@ class TestAddFilesCodePaths:
         collection_dir.mkdir(parents=True)
 
         geojson = collection_dir / "data.geojson"
-        geojson.write_text(
-            json.dumps(
-                {
-                    "type": "FeatureCollection",
-                    "features": [
-                        {
-                            "type": "Feature",
-                            "geometry": {"type": "Point", "coordinates": [-122.4, 37.8]},
-                            "properties": {"name": "Test"},
-                        }
-                    ],
-                }
-            )
-        )
+        _write_test_point_geojson(geojson)
 
         # Per Issue #281: add_files now calls prepare_item + finalize_items
         with (
@@ -1205,20 +1148,7 @@ class TestAddFilesCodePaths:
         collection_dir.mkdir(parents=True)
 
         geojson = collection_dir / "data.geojson"
-        geojson.write_text(
-            json.dumps(
-                {
-                    "type": "FeatureCollection",
-                    "features": [
-                        {
-                            "type": "Feature",
-                            "geometry": {"type": "Point", "coordinates": [-122.4, 37.8]},
-                            "properties": {"name": "Test"},
-                        }
-                    ],
-                }
-            )
-        )
+        _write_test_point_geojson(geojson)
 
         with (
             patch("portolan_cli.add.prepare_item") as mock_add,
@@ -1242,20 +1172,7 @@ class TestAddFilesCodePaths:
         collection_dir.mkdir(parents=True)
 
         geojson = collection_dir / "data.geojson"
-        geojson.write_text(
-            json.dumps(
-                {
-                    "type": "FeatureCollection",
-                    "features": [
-                        {
-                            "type": "Feature",
-                            "geometry": {"type": "Point", "coordinates": [-122.4, 37.8]},
-                            "properties": {"name": "Test"},
-                        }
-                    ],
-                }
-            )
-        )
+        _write_test_point_geojson(geojson)
 
         # Per Issue #281: add_files now calls prepare_item + finalize_items
         with (
@@ -1291,20 +1208,7 @@ class TestAddFilesCodePaths:
 
         # Create both geo and non-geo files in same directory
         geojson = source_dir / "data.geojson"
-        geojson.write_text(
-            json.dumps(
-                {
-                    "type": "FeatureCollection",
-                    "features": [
-                        {
-                            "type": "Feature",
-                            "geometry": {"type": "Point", "coordinates": [-122.4, 37.8]},
-                            "properties": {"name": "Test"},
-                        }
-                    ],
-                }
-            )
-        )
+        _write_test_point_geojson(geojson)
 
         csv_file = source_dir / "metadata.csv"
         csv_file.write_text("name,value\ntest,100\n")
@@ -1315,20 +1219,7 @@ class TestAddFilesCodePaths:
 
         # Create item.json
         item_json = item_dir / "data.json"
-        item_json.write_text(
-            json.dumps(
-                {
-                    "type": "Feature",
-                    "stac_version": "1.0.0",
-                    "id": "data",
-                    "geometry": {"type": "Point", "coordinates": [-122.4, 37.8]},
-                    "bbox": [-122.4, 37.8, -122.4, 37.8],
-                    "properties": {"datetime": "2024-01-01T00:00:00Z"},
-                    "links": [],
-                    "assets": {},
-                }
-            )
-        )
+        item_json.write_text(json.dumps(_minimal_item("data", {})))
 
         # Create primary data file
         primary_file = item_dir / "data.parquet"
@@ -1504,20 +1395,7 @@ class TestMixedFormatIntegration:
 
         # Create valid GeoJSON
         geojson = collection_dir / "data.geojson"
-        geojson.write_text(
-            json.dumps(
-                {
-                    "type": "FeatureCollection",
-                    "features": [
-                        {
-                            "type": "Feature",
-                            "geometry": {"type": "Point", "coordinates": [-122.4, 37.8]},
-                            "properties": {"name": "Test"},
-                        }
-                    ],
-                }
-            )
-        )
+        _write_test_point_geojson(geojson)
 
         # Per Issue #281: add_files now calls prepare_item + finalize_items
         with (
@@ -1554,18 +1432,7 @@ class TestMixedFormatIntegration:
         tmp_dir = tempfile.mkdtemp()
         tmp_path = Path(tmp_dir)
         try:
-            # Set up catalog
-            portolan_dir = tmp_path / ".portolan"
-            portolan_dir.mkdir(exist_ok=True)
-            (portolan_dir / "metadata.yaml").write_text('license: "CC-BY-4.0"\n')
-            catalog_data = {
-                "type": "Catalog",
-                "stac_version": "1.0.0",
-                "id": "portolan-catalog",
-                "description": "Test catalog",
-                "links": [],
-            }
-            (tmp_path / "catalog.json").write_text(json.dumps(catalog_data))
+            _write_test_catalog(tmp_path)
 
             collection_dir = tmp_path / "collection"
             collection_dir.mkdir(exist_ok=True)
@@ -1580,24 +1447,7 @@ class TestMixedFormatIntegration:
 
             # Create GeoJSONs
             for i in range(num_geo):
-                geojson = collection_dir / f"geo_{i}.geojson"
-                geojson.write_text(
-                    json.dumps(
-                        {
-                            "type": "FeatureCollection",
-                            "features": [
-                                {
-                                    "type": "Feature",
-                                    "geometry": {
-                                        "type": "Point",
-                                        "coordinates": [-122.4 + i, 37.8],
-                                    },
-                                    "properties": {"name": f"Point {i}"},
-                                }
-                            ],
-                        }
-                    )
-                )
+                write_point_geojson(collection_dir / f"geo_{i}.geojson", i)
 
             # Per Issue #281: add_files now calls prepare_item + finalize_items
             with (
