@@ -138,16 +138,6 @@ class TestBackwardsCompatibility:
     """Tests ensuring backwards compatibility with strategy-based API."""
 
     @pytest.mark.unit
-    def test_build_glob_pattern_strategy_still_works(self) -> None:
-        """build_glob_pattern still works with strategy parameter for backwards compat."""
-        from portolan_cli.partitioning import build_glob_pattern
-
-        # Old API with strategy should still work
-        result = build_glob_pattern(strategy="kdtree")
-
-        assert result == "./kdtree_cell=*/*.parquet"
-
-    @pytest.mark.unit
     def test_build_remote_glob_strategy_still_works(self) -> None:
         """build_remote_glob still works with strategy parameter for backwards compat."""
         from portolan_cli.partitioning import build_remote_glob

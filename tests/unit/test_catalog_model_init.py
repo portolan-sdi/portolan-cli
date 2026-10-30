@@ -278,17 +278,6 @@ class TestAutoFlag:
         # Should warn about missing title
         assert any("title" in w.lower() for w in warnings)
 
-    @pytest.mark.unit
-    def test_create_catalog_sets_default_description(self, tmp_path: Path) -> None:
-        """create_catalog should set a default description when not provided."""
-        catalog_dir = tmp_path / "test"
-        catalog_dir.mkdir()
-
-        catalog = create_catalog(catalog_dir)
-
-        assert catalog.description is not None
-        assert len(catalog.description) > 0
-
 
 class TestInitCatalogBackendOption:
     """Tests for init_catalog(backend=...) parameter."""

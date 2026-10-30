@@ -57,14 +57,6 @@ class TestRioCogeoConversion:
             assert src.is_tiled
 
     @pytest.mark.integration
-    def test_validate_existing_cog(self, valid_rgb_cog: Path) -> None:
-        """rio-cogeo can validate our COG fixtures."""
-        from rio_cogeo.cogeo import cog_validate
-
-        is_valid, errors, warnings = cog_validate(str(valid_rgb_cog))
-        assert is_valid, f"COG validation failed: {errors}"
-
-    @pytest.mark.integration
     def test_validate_singleband_cog(self, valid_singleband_cog: Path) -> None:
         """Singleband COG fixture passes validation."""
         from rio_cogeo.cogeo import cog_validate

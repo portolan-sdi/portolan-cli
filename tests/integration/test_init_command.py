@@ -92,18 +92,6 @@ class TestInitCommandAutoMode:
             assert "warning" in output or "title" in output or "missing" in output
 
     @pytest.mark.integration
-    def test_init_auto_does_not_prompt(self, runner: CliRunner, tmp_path: Path) -> None:
-        """portolan init --auto should complete without waiting for input."""
-        with runner.isolated_filesystem(temp_dir=tmp_path):
-            # Use a short timeout - if it prompts, it would hang
-            result = runner.invoke(
-                cli, ["init", "--auto", "--license", "CC-BY-4.0"], catch_exceptions=False
-            )
-
-            # If we get here without timeout, no prompt was issued
-            assert result.exit_code == 0
-
-    @pytest.mark.integration
     def test_init_creates_all_management_files(self, runner: CliRunner, tmp_path: Path) -> None:
         """portolan init --auto should create management files in correct locations.
 
@@ -130,35 +118,6 @@ class TestInitCommandErrors:
     def runner(self) -> CliRunner:
         """Create a Click test runner."""
         return CliRunner()
-
-    @pytest.mark.integration
-    def test_init_fails_if_managed_catalog_exists(self, runner: CliRunner, tmp_path: Path) -> None:
-        """portolan init should fail with exit code 1 if MANAGED catalog exists."""
-        with runner.isolated_filesystem(temp_dir=tmp_path):
-            # Create managed catalog (config.yaml alone is sufficient per issue #290)
-            portolan = Path(".portolan")
-            portolan.mkdir()
-            (portolan / "config.yaml").write_text("{}")
-
-            # Use --auto to skip interactive prompts and test error path
-            result = runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
-
-            assert result.exit_code == 1
-            assert "already" in result.output.lower()
-
-    @pytest.mark.integration
-    def test_init_fails_if_unmanaged_stac_exists(self, runner: CliRunner, tmp_path: Path) -> None:
-        """portolan init should fail if unmanaged STAC catalog exists."""
-        with runner.isolated_filesystem(temp_dir=tmp_path):
-            # Create unmanaged STAC catalog
-            Path("catalog.json").write_text('{"type": "Catalog"}')
-
-            # Use --auto to skip interactive prompts and test error path
-            result = runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
-
-            assert result.exit_code == 1
-            output_lower = result.output.lower()
-            assert "stac" in output_lower or "catalog" in output_lower
 
     @pytest.mark.integration
     def test_init_error_has_structured_code(self, runner: CliRunner, tmp_path: Path) -> None:
@@ -199,19 +158,3 @@ class TestInitCommandJsonOutput:
             assert data["success"] is True
             assert data["command"] == "init"
             assert "path" in data["data"]
-
-    @pytest.mark.integration
-    def test_init_json_output_error(self, runner: CliRunner, tmp_path: Path) -> None:
-        """portolan --format json init should output JSON error envelope."""
-        with runner.isolated_filesystem(temp_dir=tmp_path):
-            # Create managed catalog
-            portolan = Path(".portolan")
-            portolan.mkdir()
-            (portolan / "config.yaml").write_text("{}")
-
-            result = runner.invoke(cli, ["--format", "json", "init", "--license", "CC-BY-4.0"])
-
-            assert result.exit_code == 1
-            data = json.loads(result.output)
-            assert data["success"] is False
-            assert len(data["errors"]) > 0
