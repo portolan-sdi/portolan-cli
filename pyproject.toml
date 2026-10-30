@@ -80,9 +80,6 @@ iceberg = [
     "shapely>=2.0.0",
     "pygeohash>=1.2.0",
 ]
-e2e = [
-    "boto3>=1.35.0",
-]
 aws = [
     # obstore.auth.boto3 wraps a botocore session, which reads every credential
     # mechanism an AWS profile can name. Optional, because a static key pair and

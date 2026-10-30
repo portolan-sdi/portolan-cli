@@ -3754,9 +3754,6 @@ docs = [
     { name = "pymdown-extensions" },
     { name = "zensical" },
 ]
-e2e = [
-    { name = "boto3" },
-]
 iceberg = [
     { name = "pygeohash" },
     { name = "pyiceberg", extra = ["sql-sqlite"] },
@@ -3782,7 +3779,6 @@ requires-dist = [
     { name = "aiohttp", specifier = ">=3.14.4" },
     { name = "antimeridian", specifier = ">=0.3.11" },
     { name = "boto3", marker = "extra == 'aws'", specifier = ">=1.35.0" },
-    { name = "boto3", marker = "extra == 'e2e'", specifier = ">=1.35.0" },
     { name = "botocore", marker = "extra == 'aws'", specifier = ">=1.35.0" },
     { name = "certifi", specifier = ">=2026.10.19" },
     { name = "click", specifier = ">=8.4,<8.6" },
@@ -3840,7 +3836,7 @@ requires-dist = [
     { name = "vulture", marker = "extra == 'dev'", specifier = ">=2.14" },
     { name = "zensical", marker = "extra == 'docs'", specifier = "==0.0.67" },
 ]
-provides-extras = ["iceberg", "e2e", "aws", "dev", "pmtiles", "thumbnails", "docs"]
+provides-extras = ["iceberg", "aws", "dev", "pmtiles", "thumbnails", "docs"]
 
 [package.metadata.requires-dev]
 dev = [

@@ -1,15 +1,13 @@
-"""E2E test fixtures for iceberg backend with Docker (REST catalog + RustFS).
+"""E2E test fixtures for the Iceberg backend against the compose stack.
 
-Session-scoped Docker lifecycle: starts docker-compose before tests,
-tears down after. Provides REST catalog and RustFS S3 client fixtures.
+The lifecycle and the inspection helpers live in ``tests/iceberg_stack.py``.
+This file turns them into fixtures and adds the PyIceberg catalog that the
+current backend still takes at construction.
 """
 
 from __future__ import annotations
 
-import shutil
-import subprocess
-import time
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -17,102 +15,67 @@ import pytest
 from pyiceberg.catalog import load_catalog
 
 from portolan_cli.backends.iceberg.backend import IcebergBackend
+from tests.iceberg_stack import (
+    S3_HOST,
+    IcebergLane,
+    RestAdmin,
+    compose_down,
+    compose_up,
+    docker_lane,
+    require_docker,
+)
 
-COMPOSE_FILE = Path(__file__).parent / "docker-compose.yml"
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+    from pathlib import Path
 
-REST_URI = "http://localhost:8181"
-S3_ENDPOINT = "http://localhost:9000"
-S3_ACCESS_KEY = "rustfsadmin"
-S3_SECRET_KEY = "rustfsadmin"
-
-
-def _wait_for_service(url: str, timeout: int = 60) -> None:
-    """Poll a URL until it responds with 2xx or timeout."""
-    import urllib.error
-    import urllib.request
-
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        try:
-            resp = urllib.request.urlopen(url, timeout=5)
-            if resp.status < 400:
-                return
-        except (urllib.error.URLError, OSError):
-            pass
-        time.sleep(2)
-    raise TimeoutError(f"Service at {url} not ready after {timeout}s")
-
-
-def require_docker() -> None:
-    """Skip the test when the docker binary is absent.
-
-    A machine without Docker raised FileNotFoundError from subprocess, which
-    reported each e2e test as an error. CI installs Docker, so the e2e jobs
-    still run these tests.
-    """
-    if shutil.which("docker") is None:
-        pytest.skip("the e2e tests need the docker binary on PATH")
+    from pyiceberg.catalog import Catalog
 
 
 @pytest.fixture(scope="session")
-def docker_services():
+def iceberg_lane() -> IcebergLane:
+    """The lane every e2e test in this session writes to."""
+    return docker_lane()
+
+
+@pytest.fixture(scope="session")
+def docker_services(iceberg_lane: IcebergLane) -> Iterator[None]:
     """Start REST catalog + RustFS via docker-compose, tear down after session."""
     require_docker()
-    subprocess.run(
-        ["docker", "compose", "-f", str(COMPOSE_FILE), "up", "-d", "--wait"],
-        check=True,
-        timeout=120,
-        capture_output=True,
-    )
-
+    compose_up()
     try:
-        _wait_for_service(f"{REST_URI}/v1/config", timeout=60)
-        _wait_for_service(f"{S3_ENDPOINT}/health/live", timeout=60)
         yield
     finally:
-        subprocess.run(
-            ["docker", "compose", "-f", str(COMPOSE_FILE), "down", "-v"],
-            check=True,
-            timeout=60,
-            capture_output=True,
-        )
+        compose_down()
+
+
+@pytest.fixture(scope="session")
+def rest_admin(docker_services: None, iceberg_lane: IcebergLane) -> RestAdmin:
+    """The product's REST client, pointed at the running stack."""
+    _ = docker_services
+    return RestAdmin(iceberg_lane)
 
 
 @pytest.fixture
-def rest_catalog(docker_services):  # noqa: ARG001
+def rest_catalog(docker_services: None, iceberg_lane: IcebergLane) -> Catalog:
     """PyIceberg catalog pointing at the dockerized REST catalog + RustFS."""
-    _ = docker_services  # Fixture dependency: ensures Docker services are running
+    _ = docker_services
     return load_catalog(
         "e2e-test",
         **{
             "type": "rest",
-            "uri": REST_URI,
-            "s3.endpoint": S3_ENDPOINT,
-            "s3.access-key-id": S3_ACCESS_KEY,
-            "s3.secret-access-key": S3_SECRET_KEY,
+            "uri": iceberg_lane.uri,
+            "s3.endpoint": f"http://{S3_HOST}",
+            "s3.access-key-id": iceberg_lane.key,
+            "s3.secret-access-key": iceberg_lane.secret,
         },
     )
 
 
 @pytest.fixture
-def rest_iceberg_backend(rest_catalog):
+def rest_iceberg_backend(rest_catalog: Catalog) -> IcebergBackend:
     """IcebergBackend with REST catalog injected."""
     return IcebergBackend(catalog=rest_catalog)
-
-
-@pytest.fixture
-def rustfs_client(docker_services):  # noqa: ARG001
-    """boto3 S3 client for direct RustFS verification."""
-    _ = docker_services  # Fixture dependency: ensures Docker services are running
-    import boto3
-
-    return boto3.client(
-        "s3",
-        endpoint_url=S3_ENDPOINT,
-        aws_access_key_id=S3_ACCESS_KEY,
-        aws_secret_access_key=S3_SECRET_KEY,
-        region_name="us-east-1",
-    )
 
 
 def write_test_parquet(path: Path, rows: int = 3) -> Path:

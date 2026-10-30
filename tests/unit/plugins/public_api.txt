@@ -22,6 +22,8 @@ PostAddContext
 PostAddItemContext
 PullResult
 RASTER_EXTENSIONS
+RetryConfig
+S3Settings
 SchemaFingerprint
 SchemaInfo
 SourceLink
@@ -32,6 +34,7 @@ aggregate_table_extension
 compute_checksum
 convert_raster
 convert_vector
+delete_file
 describe_raster_item
 describe_vector_item
 detail
@@ -52,8 +55,11 @@ inspect_cog
 inspect_geoparquet
 is_geojson
 is_geoparquet
+is_transient_status
 parse_version
 partition_vector_file
+resolve_s3_settings
+retry_with_backoff
 run_layer_extraction
 sanitize_published_string
 span
