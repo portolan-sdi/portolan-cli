@@ -124,12 +124,12 @@ class TestUnrecognizedFileClassification:
 
             category, skip_reason, skip_message = classify_file(test_file)
 
-            if category == FileCategory.UNKNOWN:
-                assert skip_reason == SkipReasonType.UNKNOWN_FORMAT, (
-                    f"Expected UNKNOWN_FORMAT skip reason, got {skip_reason}"
-                )
-                assert skip_message is not None
-                assert "unknown" in skip_message.lower()
+            assert category == FileCategory.UNKNOWN
+            assert skip_reason == SkipReasonType.UNKNOWN_FORMAT, (
+                f"Expected UNKNOWN_FORMAT skip reason, got {skip_reason}"
+            )
+            assert skip_message is not None
+            assert "unknown" in skip_message.lower()
 
 
 @pytest.mark.unit
