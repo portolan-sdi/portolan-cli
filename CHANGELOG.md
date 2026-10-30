@@ -1,3 +1,59 @@
+## v0.9.0 (2026-10-30)
+
+### BREAKING CHANGE
+
+- `check --json` reports spec_version as "0.2.0" instead of
+"0.1.0", and generation stamps the 0.2.0 profile schema URI in stac_extensions.
+A consumer that matches on the 0.1.0 string or URI has to accept 0.2.0.
+
+### Feat
+
+- **push**: add --verify to repair objects that disagree with the manifest (#967)
+- ask for a P0 to P3 priority in the docs issue form (#1029)
+- **cli**: add log flags, stage spans, and a timings meta block (#1004)
+- **plugins**: add the extractor hook and the LayerSource driver (#975)
+- **plugins**: add format handlers and remove FormatType (#974)
+- **plugins**: add the plugin machinery for commands, enrichment, and backends (#958)
+- **sync**: resolve the AWS profile through botocore (#873)
+- **docs**: read the brand kit instead of restating it (#895)
+- **docs**: generate the CLI reference from the Click tree (#890)
+
+### Fix
+
+- **ci**: preserve runtime protocols during mutation instrumentation (#1085)
+- **ci**: read mutant names from mutmut file result (#1084)
+- **ci**: isolate mutation workers from baseline async state (#1083)
+- **ci**: exclude performance tests from mutation selection (#1082)
+- harden the guardrails and close the #1035 defect backlog (#1057)
+- **add**: keep same-stem GeoParquet and PMTiles under distinct asset keys (#1031)
+- open the skills sync pull request as the org sync app (#1030)
+- reduce a 3D GeoParquet bbox with to_2d_bbox at both remaining call sites (#868)
+- **ci**: run the nightly mutation sweep to completion again (#1021)
+- **arcgis**: skip tiles-only MapServer layers without Query capability (#1011)
+- **check**: report invalid live base URLs without tracebacks (#985)
+- **docs**: mark CARTO endpoint examples as code (#986)
+- **docs**: point security reports to the correct organization (#984)
+- **extract**: keep original query params in WMS style/legend URLs (#911)
+- **push**: upload the local current snapshot that differs from the remote (#964)
+- **push**: upload every file beside an intermediate catalog (#954)
+- **iceberg**: match extension v1.1.0 and correct the collection's assets (#887)
+- **cli**: let AWS_PROFILE name the profile (#904)
+- **crs**: accept a WGS84 coordinate that rounds past its bound (#886)
+- **extract**: forward --timeout to arcgis feature-page requests (#899)
+- **imageserver**: keep the mask of a float cache, and repair the resume state
+- **imageserver**: repair the merge fallout and the review findings
+- **ci**: pull the MinIO images from quay.io (#877)
+- **imageserver**: extract tiled imagery layers and explain failed tiles
+
+### Refactor
+
+- **iceberg**: register the Iceberg backend as a built-in plugin (#973)
+- make portolan_cli importable without the CLI shell (#948)
+
+### Perf
+
+- one RunState per command, counter scale gates, and cheaper add, check, and thumbnails (#1072)
+
 ## v0.8.0 (2026-08-31)
 
 Released as 1.0.0a0 and 1.0.0b0 before the renumber to the 0.x line.
