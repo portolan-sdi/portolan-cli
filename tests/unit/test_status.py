@@ -61,6 +61,23 @@ def _create_versions_file(
     )
 
 
+def _single_version_file(assets: dict[str, Asset]) -> VersionsFile:
+    """Return a VersionsFile with one 1.0.0 version that records ASSETS."""
+    return VersionsFile(
+        spec_version="1.0.0",
+        current_version="1.0.0",
+        versions=[
+            Version(
+                version="1.0.0",
+                created=datetime.now(UTC),
+                breaking=False,
+                assets=assets,
+                changes=list(assets),
+            )
+        ],
+    )
+
+
 class TestDetectModifiedFiles:
     """Tests for detecting files modified since last version."""
 
@@ -78,24 +95,14 @@ class TestDetectModifiedFiles:
 
         # Create versions.json with matching checksum
         checksum = hashlib.sha256(content).hexdigest()
-        versions_file = VersionsFile(
-            spec_version="1.0.0",
-            current_version="1.0.0",
-            versions=[
-                Version(
-                    version="1.0.0",
-                    created=datetime.now(UTC),
-                    breaking=False,
-                    assets={
-                        "data.parquet": Asset(
-                            sha256=checksum,
-                            size_bytes=len(content),
-                            href="collection/data.parquet",
-                        )
-                    },
-                    changes=["data.parquet"],
+        versions_file = _single_version_file(
+            {
+                "data.parquet": Asset(
+                    sha256=checksum,
+                    size_bytes=len(content),
+                    href="collection/data.parquet",
                 )
-            ],
+            }
         )
 
         modified = detect_modified_files(collection_path, versions_file)
@@ -114,24 +121,14 @@ class TestDetectModifiedFiles:
 
         # Create versions.json with OLD checksum
         old_checksum = hashlib.sha256(b"old content").hexdigest()
-        versions_file = VersionsFile(
-            spec_version="1.0.0",
-            current_version="1.0.0",
-            versions=[
-                Version(
-                    version="1.0.0",
-                    created=datetime.now(UTC),
-                    breaking=False,
-                    assets={
-                        "data.parquet": Asset(
-                            sha256=old_checksum,
-                            size_bytes=100,
-                            href="collection/data.parquet",
-                        )
-                    },
-                    changes=["data.parquet"],
+        versions_file = _single_version_file(
+            {
+                "data.parquet": Asset(
+                    sha256=old_checksum,
+                    size_bytes=100,
+                    href="collection/data.parquet",
                 )
-            ],
+            }
         )
 
         modified = detect_modified_files(collection_path, versions_file)
@@ -147,24 +144,14 @@ class TestDetectModifiedFiles:
         collection_path.mkdir()
 
         # Create versions.json referencing a file that doesn't exist
-        versions_file = VersionsFile(
-            spec_version="1.0.0",
-            current_version="1.0.0",
-            versions=[
-                Version(
-                    version="1.0.0",
-                    created=datetime.now(UTC),
-                    breaking=False,
-                    assets={
-                        "missing.parquet": Asset(
-                            sha256=_sha256("content"),
-                            size_bytes=100,
-                            href="collection/missing.parquet",
-                        )
-                    },
-                    changes=["missing.parquet"],
+        versions_file = _single_version_file(
+            {
+                "missing.parquet": Asset(
+                    sha256=_sha256("content"),
+                    size_bytes=100,
+                    href="collection/missing.parquet",
                 )
-            ],
+            }
         )
 
         modified = detect_modified_files(collection_path, versions_file)
@@ -182,24 +169,14 @@ class TestDetectDeletedFiles:
         collection_path = tmp_path / "collection"
         collection_path.mkdir()
 
-        versions_file = VersionsFile(
-            spec_version="1.0.0",
-            current_version="1.0.0",
-            versions=[
-                Version(
-                    version="1.0.0",
-                    created=datetime.now(UTC),
-                    breaking=False,
-                    assets={
-                        "deleted.parquet": Asset(
-                            sha256=_sha256("content"),
-                            size_bytes=100,
-                            href="collection/deleted.parquet",
-                        )
-                    },
-                    changes=["deleted.parquet"],
+        versions_file = _single_version_file(
+            {
+                "deleted.parquet": Asset(
+                    sha256=_sha256("content"),
+                    size_bytes=100,
+                    href="collection/deleted.parquet",
                 )
-            ],
+            }
         )
 
         deleted = detect_deleted_files(collection_path, versions_file)
@@ -214,24 +191,14 @@ class TestDetectDeletedFiles:
         collection_path.mkdir()
         (collection_path / "data.parquet").write_bytes(b"content")
 
-        versions_file = VersionsFile(
-            spec_version="1.0.0",
-            current_version="1.0.0",
-            versions=[
-                Version(
-                    version="1.0.0",
-                    created=datetime.now(UTC),
-                    breaking=False,
-                    assets={
-                        "data.parquet": Asset(
-                            sha256=_sha256("content"),
-                            size_bytes=100,
-                            href="collection/data.parquet",
-                        )
-                    },
-                    changes=["data.parquet"],
+        versions_file = _single_version_file(
+            {
+                "data.parquet": Asset(
+                    sha256=_sha256("content"),
+                    size_bytes=100,
+                    href="collection/data.parquet",
                 )
-            ],
+            }
         )
 
         deleted = detect_deleted_files(collection_path, versions_file)
@@ -250,19 +217,7 @@ class TestDetectUntrackedFiles:
         collection_path.mkdir()
         (collection_path / "untracked.parquet").write_bytes(b"content")
 
-        versions_file = VersionsFile(
-            spec_version="1.0.0",
-            current_version="1.0.0",
-            versions=[
-                Version(
-                    version="1.0.0",
-                    created=datetime.now(UTC),
-                    breaking=False,
-                    assets={},
-                    changes=[],
-                )
-            ],
-        )
+        versions_file = _single_version_file({})
 
         untracked = detect_untracked_files(collection_path, versions_file)
         assert untracked == ["untracked.parquet"]
@@ -276,24 +231,14 @@ class TestDetectUntrackedFiles:
         collection_path.mkdir()
         (collection_path / "data.parquet").write_bytes(b"content")
 
-        versions_file = VersionsFile(
-            spec_version="1.0.0",
-            current_version="1.0.0",
-            versions=[
-                Version(
-                    version="1.0.0",
-                    created=datetime.now(UTC),
-                    breaking=False,
-                    assets={
-                        "data.parquet": Asset(
-                            sha256=_sha256("content"),
-                            size_bytes=100,
-                            href="collection/data.parquet",
-                        )
-                    },
-                    changes=["data.parquet"],
+        versions_file = _single_version_file(
+            {
+                "data.parquet": Asset(
+                    sha256=_sha256("content"),
+                    size_bytes=100,
+                    href="collection/data.parquet",
                 )
-            ],
+            }
         )
 
         untracked = detect_untracked_files(collection_path, versions_file)
@@ -308,19 +253,7 @@ class TestDetectUntrackedFiles:
         collection_path.mkdir()
         (collection_path / "versions.json").write_text("{}")
 
-        versions_file = VersionsFile(
-            spec_version="1.0.0",
-            current_version="1.0.0",
-            versions=[
-                Version(
-                    version="1.0.0",
-                    created=datetime.now(UTC),
-                    breaking=False,
-                    assets={},
-                    changes=[],
-                )
-            ],
-        )
+        versions_file = _single_version_file({})
 
         untracked = detect_untracked_files(collection_path, versions_file)
         assert "versions.json" not in untracked
@@ -334,19 +267,7 @@ class TestDetectUntrackedFiles:
         collection_path.mkdir()
         (collection_path / "subdir").mkdir()
 
-        versions_file = VersionsFile(
-            spec_version="1.0.0",
-            current_version="1.0.0",
-            versions=[
-                Version(
-                    version="1.0.0",
-                    created=datetime.now(UTC),
-                    breaking=False,
-                    assets={},
-                    changes=[],
-                )
-            ],
-        )
+        versions_file = _single_version_file({})
 
         untracked = detect_untracked_files(collection_path, versions_file)
         assert untracked == []
@@ -379,19 +300,7 @@ class TestDetectUntrackedFiles:
         collection_path.mkdir()
         (collection_path / "collection.json").write_text('{"type": "Collection"}')
 
-        versions_file = VersionsFile(
-            spec_version="1.0.0",
-            current_version="1.0.0",
-            versions=[
-                Version(
-                    version="1.0.0",
-                    created=datetime.now(UTC),
-                    breaking=False,
-                    assets={},
-                    changes=[],
-                )
-            ],
-        )
+        versions_file = _single_version_file({})
 
         untracked = detect_untracked_files(collection_path, versions_file)
         assert "collection.json" not in untracked
@@ -405,19 +314,7 @@ class TestDetectUntrackedFiles:
         collection_path.mkdir()
         (collection_path / "README.md").write_text("# Collection")
 
-        versions_file = VersionsFile(
-            spec_version="1.0.0",
-            current_version="1.0.0",
-            versions=[
-                Version(
-                    version="1.0.0",
-                    created=datetime.now(UTC),
-                    breaking=False,
-                    assets={},
-                    changes=[],
-                )
-            ],
-        )
+        versions_file = _single_version_file({})
 
         untracked = detect_untracked_files(collection_path, versions_file)
         assert "README.md" not in untracked
@@ -436,19 +333,7 @@ class TestDetectUntrackedFiles:
         # Create a non-STAC JSON file (should be reported as untracked)
         (collection_path / "config.json").write_text('{"setting": "value"}')
 
-        versions_file = VersionsFile(
-            spec_version="1.0.0",
-            current_version="1.0.0",
-            versions=[
-                Version(
-                    version="1.0.0",
-                    created=datetime.now(UTC),
-                    breaking=False,
-                    assets={},
-                    changes=[],
-                )
-            ],
-        )
+        versions_file = _single_version_file({})
 
         untracked = detect_untracked_files(collection_path, versions_file)
         assert "item-2020.json" not in untracked
@@ -463,19 +348,7 @@ class TestDetectUntrackedFiles:
         collection_path.mkdir()
         (collection_path / "metadata.yaml").write_text("title: My Collection")
 
-        versions_file = VersionsFile(
-            spec_version="1.0.0",
-            current_version="1.0.0",
-            versions=[
-                Version(
-                    version="1.0.0",
-                    created=datetime.now(UTC),
-                    breaking=False,
-                    assets={},
-                    changes=[],
-                )
-            ],
-        )
+        versions_file = _single_version_file({})
 
         untracked = detect_untracked_files(collection_path, versions_file)
         assert "metadata.yaml" not in untracked
