@@ -28,15 +28,15 @@ dependencies = [
     "antimeridian>=0.3.11", # RFC 7946 compliant antimeridian handling for STAC bbox
     "click>=8.4,<8.6", # PYSEC-2026-2132 fix; 8.4 makes ParamType generic (temporal.FlexibleDateTime subscripts it)
     "defusedxml>=0.7.1", # Safe XML parsing (XXE protection) for CSW/ISO 19139 metadata
-    "duckdb>=1.5.6,<1.5.7", # Floor skips 1.5.5, which segfaults in ST_Read_Meta on malformed input (duckdb/duckdb-spatial#860)
+    "duckdb>=1.5.6,<2.0.1", # Floor skips 1.5.5, which segfaults in ST_Read_Meta on malformed input (duckdb/duckdb-spatial#860)
     "geopandas>=1.0.0", # Reads GeoParquet for the thumbnail floor, which every collection needs (Issue #683). 1.0 adds GeoDataFrame.from_arrow, which the thumbnail reads with
     "geoparquet-io>=1.7.0", # Keeps schema metadata keys on write (gpio#1280) and drops whole-table DuckDB round-trips in sort, bbox and repair (gpio#1285)
     "httpx>=0.27.0", # HTTP client for ArcGIS REST API discovery
     "matplotlib>=3.8.0", # Renders the deterministic thumbnail floor. Core, not optional: PTL-VIZ-001 is an ERROR, so a default install must be able to produce a conformant catalog (#518 Track 1, #683)
-    "obstore>=0.8.2", # Cloud object storage (S3, GCS, Azure) via Rust bindings
+    "obstore>=0.12.1", # Cloud object storage; 0.12.1 preserves version in get/head metadata (obstore#807). SHA-256 HEAD support remains blocked (#982)
     "python-dotenv>=1.0.0", # Load .env files for credentials (Issue #356)
     "numpy>=1.24.0", # Array ops (transitive via rasterio, but we import directly for thumbnails)
-    "pyarrow>=12.0.0,<26.0.0",
+    "pyarrow>=12.0.0,<27.0.0",
     "pyproj>=3.0.0", # CRS transformations (transitive via rasterio, but we import directly)
     "pystac>=1.10.0", # STAC catalog/collection/item creation
     "stac-geoparquet>=0.6.0", # Generate items.parquet for efficient STAC queries (optional)
@@ -127,7 +127,7 @@ thumbnails = [
 docs = [
     # Pinned exactly: zensical is alpha with a compiled core, so a floor
     # constraint is not a constraint. Dependabot offers reviewable bumps.
-    "zensical==0.0.67",
+    "zensical==0.0.71",
     "mkdocstrings-python>=1.0.0", # pulls mkdocstrings itself as its own dependency
     "pymdown-extensions>=11.0", # zensical requires >=11.0; fixes filename=None in highlight
 ]
