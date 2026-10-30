@@ -1,8 +1,8 @@
 """Tests for iceberg backend discoverability as a built-in backend.
 
 After the merge, iceberg is a built-in backend, not a plugin.
-These tests verify that the backend is importable and discoverable
-via get_backend("iceberg").
+These tests verify that get_backend("iceberg") finds the backend.
+test_import.py checks that the backend module imports.
 """
 
 from __future__ import annotations

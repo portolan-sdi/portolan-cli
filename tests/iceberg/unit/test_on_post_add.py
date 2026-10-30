@@ -17,6 +17,7 @@ from portolan_cli.backends.iceberg.stac_generator import (
     STAC_ICEBERG_EXTENSION,
     STAC_TABLE_EXTENSION,
 )
+from tests.iceberg.conftest import publish_boundaries
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -72,20 +73,9 @@ def _make_context(
     }
 
 
-def _publish(iceberg_backend, parquet_file) -> None:
-    """Publish the one-column test schema to the boundaries collection."""
-    iceberg_backend.publish(
-        collection="boundaries",
-        assets={"item1/data.parquet": str(parquet_file)},
-        schema={"columns": ["id"], "types": {"id": "int64"}, "hash": "x"},
-        breaking=False,
-        message="test",
-    )
-
-
 def _publish_and_run_post_add(iceberg_backend, parquet_file, catalog_root, item_dir, collection):
     """Publish one collection and run the post-add hook over it with no remote."""
-    _publish(iceberg_backend, parquet_file)
+    publish_boundaries(iceberg_backend, parquet_file)
     context = _make_context(catalog_root, item_dir, collection, remote=None)
     with patch("portolan_cli.backends.iceberg.backend.upload_file", create=True):
         iceberg_backend.on_post_add(context)
@@ -95,7 +85,7 @@ def _publish_and_upload(
     iceberg_backend, parquet_file, catalog_root, item_dir, collection, remote
 ) -> MagicMock:
     """Publish, run the post-add hook with a remote, and return the upload mock."""
-    _publish(iceberg_backend, parquet_file)
+    publish_boundaries(iceberg_backend, parquet_file)
     context = _make_context(catalog_root, item_dir, collection, remote=remote)
     with patch("portolan_cli.sync.upload.upload_file") as mock_upload:
         mock_upload.return_value = MagicMock(success=True)
@@ -140,7 +130,7 @@ def test_on_post_add_logs_warning_when_stac_update_fails(
     """STAC enrichment failures must surface as a warning with traceback, not be swallowed."""
     catalog_root, item_dir, collection = catalog_with_stac
 
-    _publish(iceberg_backend, parquet_file)
+    publish_boundaries(iceberg_backend, parquet_file)
 
     context = _make_context(catalog_root, item_dir, collection, remote=None)
 
@@ -188,7 +178,7 @@ def test_on_post_add_no_upload_when_remote_is_none(
     """on_post_add should not upload when remote is None."""
     catalog_root, item_dir, collection = catalog_with_stac
 
-    _publish(iceberg_backend, parquet_file)
+    publish_boundaries(iceberg_backend, parquet_file)
 
     context = _make_context(catalog_root, item_dir, collection, remote=None)
 
