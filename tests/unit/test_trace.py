@@ -345,6 +345,8 @@ class TestOutput:
             pass
         meta = trace.meta()
         json.dumps(meta)
+        assert meta is not None
+        assert meta["timings"][0]["attrs"] == {"path": str(Path("/x/y"))}
 
 
 class TestEnableFromEnv:

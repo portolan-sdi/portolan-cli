@@ -1134,16 +1134,12 @@ class TestMalformedInputHandling:
         empty_csv = tmp_path / "empty.csv"
         empty_csv.write_text("")
 
-        # Should either succeed with empty table or raise a clear error
-        # gpio.convert() behavior on empty files may vary
-        try:
-            output = convert_tabular(empty_csv, tmp_path)
-            # If it succeeds, verify output exists
-            assert output.exists()
-        except Exception as e:
-            # If it fails, error should be descriptive (not a crash)
-            assert "empty" in str(e).lower() or "no data" in str(e).lower() or True
-            # Accept any exception as long as it doesn't crash
+        # An empty CSV converts to an empty table, not an error
+        output = convert_tabular(empty_csv, tmp_path)
+
+        assert output == tmp_path / "empty.parquet"
+        assert output.exists()
+        # Accept any exception as long as it doesn't crash
 
     def test_csv_with_header_only_handled(self, tmp_path: Path) -> None:
         """CSV with only headers (no data rows) should be handled."""

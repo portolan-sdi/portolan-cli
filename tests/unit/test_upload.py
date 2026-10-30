@@ -1267,7 +1267,9 @@ class TestOutputIntegration:
     """Tests for integration with portolan_cli.output module."""
 
     @pytest.mark.unit
-    def test_upload_file_uses_output_functions(self, temp_file: Path, capsys: object) -> None:
+    def test_upload_file_uses_output_functions(
+        self, temp_file: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
         """Upload should use portolan_cli.output for logging."""
         from portolan_cli.sync.upload import upload_file
 
@@ -1279,14 +1281,16 @@ class TestOutputIntegration:
                 {"AWS_ACCESS_KEY_ID": "test", "AWS_SECRET_ACCESS_KEY": "test"},
             ),
         ):
-            upload_file(
+            result = upload_file(
                 source=temp_file,
                 destination="s3://mybucket/data.parquet",
             )
 
-        # The output module uses click.echo which writes to stdout/stderr
-        # Capture output to mark capsys as used (vulture)
-        _ = capsys  # Fixture available for debugging if needed
+        assert result.success is True
+        # The output module uses click.echo, so the lines reach stdout
+        out = capsys.readouterr().out
+        assert "Uploading test_data.parquet (0.00 MB) -> data.parquet" in out
+        assert "Upload complete" in out
 
 
 # =============================================================================

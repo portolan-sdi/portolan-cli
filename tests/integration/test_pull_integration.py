@@ -546,9 +546,10 @@ class TestPullMalformedDataErrors:
                 ],
             )
 
-        # Should either succeed (treating malformed as empty) or fail gracefully
-        # The important thing is it doesn't crash unexpectedly
-        assert result.exit_code in [0, 1]
+        # The command reaches pull and reports its result
+        assert result.exit_code == 0, result.output
+        mock_pull.assert_called_once()
+        assert "Already up to date" in result.output
 
     @pytest.mark.integration
     def test_pull_with_malformed_remote_data_structure(

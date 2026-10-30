@@ -40,7 +40,7 @@ class TestLicenseGap:
 
     def test_a_link_does_not_rescue_a_missing_license(self) -> None:
         """A license link is not a license. PTL-LIC-001 still fires."""
-        assert license_gap(None, has_license_link=True) is not None
+        assert license_gap(None, has_license_link=True) == "no license is declared"
 
     @pytest.mark.parametrize(
         "placeholder",
@@ -108,7 +108,9 @@ class TestLicenseGap:
 
     def test_a_link_does_not_rescue_a_misspelled_identifier(self) -> None:
         """A license link only rescues 'other'. PTL-LIC-001 still fires on a typo."""
-        assert license_gap("cc-by-4.0", has_license_link=True) is not None
+        assert license_gap("cc-by-4.0", has_license_link=True) == (
+            "license 'cc-by-4.0' is misspelled; SPDX ids are case-sensitive, write 'CC-BY-4.0'"
+        )
 
 
 class TestResolveLicense:

@@ -71,10 +71,12 @@ class TestUnrecognizedFileClassification:
             category, skip_reason, skip_message = classify_file(test_file)
 
             # Should be classified as UNKNOWN (unless it matches something by chance)
-            # Most generated extensions should be UNKNOWN
             # GEO_ASSET files are primary data - they have no skip_reason
             # (they're not skipped, they're processed)
-            if category not in (FileCategory.UNKNOWN, FileCategory.GEO_ASSET):
+            if category is FileCategory.UNKNOWN:
+                assert skip_reason is SkipReasonType.UNKNOWN_FORMAT
+                assert skip_message == f"Unknown file extension: {ext}"
+            elif category is not FileCategory.GEO_ASSET:
                 assert skip_reason is not None, (
                     f"Extension {ext} classified as {category} but should have skip_reason"
                 )

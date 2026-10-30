@@ -145,8 +145,10 @@ class TestNonGeospatialCsvSkip:
                 collection_id="collection",
             )
 
-            # Should have attempted to prepare the GeoJSON
-            assert mock_prepare.called, "Should have called prepare_item for GeoJSON"
+            # prepare_item decides geometry, so it sees both files once
+            prepared = sorted(c.kwargs["path"] for c in mock_prepare.call_args_list)
+            assert prepared == sorted([geojson_file, non_geo_csv])
+            assert failures == []
 
     @pytest.mark.unit
     def test_add_files_error_message_is_user_friendly(
@@ -183,6 +185,8 @@ class TestNonGeospatialCsvSkip:
             )
         except Exception as e:
             pytest.fail(f"add_files raised an exception for non-geo CSV: {e}")
+        assert added == []
+        assert [f.path for f in failures] == [non_geo_csv]
 
 
 class TestMixedDirectoryProcessing:
@@ -302,9 +306,13 @@ class TestCsvGeometryDetection:
                 collection_id="collection",
             )
 
-            # Should attempt to add the CSV (whether it succeeds depends on geoparquet-io)
-            # The key is it's not preemptively skipped
-            # mock_add.called would be True if CSV was attempted
+        mock_add.assert_called_once()
+        assert mock_add.call_args.kwargs["path"] == geo_csv
+        assert (skipped, failures) == ([], [])
+
+        # Should attempt to add the CSV (whether it succeeds depends on geoparquet-io)
+        # The key is it's not preemptively skipped
+        # mock_add.called would be True if CSV was attempted
 
     @pytest.mark.unit
     def test_empty_csv_is_skipped(
@@ -359,8 +367,12 @@ class TestCsvGeometryDetection:
                 collection_id="collection",
             )
 
-            # Should attempt to process the WKT CSV
-            # (success depends on geoparquet-io)
+        mock_add.assert_called_once()
+        assert mock_add.call_args.kwargs["path"] == wkt_csv
+        assert (skipped, failures) == ([], [])
+
+        # Should attempt to process the WKT CSV
+        # (success depends on geoparquet-io)
 
 
 class TestWarningMessages:
@@ -484,10 +496,11 @@ class TestCsvSkipHypothesis:
                     catalog_root=tmp_path,
                     collection_id="collection",
                 )
-                # Should either be added (if somehow detected as geo) or skipped
-                assert len(added) == 0 or len(skipped) >= 0
             except Exception as e:
                 pytest.fail(f"add_files raised for non-geo CSV: {e}")
+            # A lone non-geo CSV is a failure that names the file, never an item
+            assert added == []
+            assert [f.path for f in failures] == [csv_file]
         finally:
             shutil.rmtree(tmp_dir, ignore_errors=True)
 
@@ -532,7 +545,9 @@ class TestCsvSkipHypothesis:
                 write_point_geojson(geojson_file, i)
                 geojson_paths.append(geojson_file)
 
-            add_mixed_directory_without_raising(collection_dir, tmp_path, "test")
+            prepared = add_mixed_directory_without_raising(collection_dir, tmp_path, "test")
+            # prepare_item decides geometry, so it sees every CSV and GeoJSON once
+            assert prepared == sorted(collection_dir.iterdir())
         finally:
             shutil.rmtree(tmp_dir, ignore_errors=True)
 
@@ -588,6 +603,8 @@ class TestCsvSkipHypothesis:
                 )
             except Exception as e:
                 pytest.fail(f"add_files raised for CSV content: {e}")
+            assert added == []
+            assert [f.path for f in failures] == [csv_file]
         finally:
             shutil.rmtree(tmp_dir, ignore_errors=True)
 
@@ -666,7 +683,9 @@ class TestTsvSupport:
             )
 
             # Should attempt to process
-            assert mock_add.called, "Should have called prepare_item for geo TSV"
+            mock_add.assert_called_once()
+            assert mock_add.call_args.kwargs["path"] == geo_tsv
+            assert (skipped, failures) == ([], [])
 
     @pytest.mark.unit
     def test_iter_files_with_sidecars_includes_tsv(self, tmp_path: Path) -> None:
@@ -771,8 +790,10 @@ class TestAdr0028AssetTracking:
                     collection_id="collection",
                 )
 
-            # Should process geo file
-            assert mock_add.called, "Should have called prepare_item for geo file"
+            # Should process geo file; prepare_item decides geometry, so it sees both
+            prepared = sorted(c.kwargs["path"] for c in mock_add.call_args_list)
+            assert prepared == sorted([geojson, metadata_csv])
+            assert failures == []
 
     @pytest.mark.unit
     def test_non_geo_only_directory_logs_warning(
@@ -1105,7 +1126,8 @@ class TestAddFilesCodePaths:
             )
 
             # Should have called prepare_item with the resolved path
-            assert mock_add.called, "Should have called prepare_item for symlink"
+            mock_add.assert_called_once()
+            assert mock_add.call_args.kwargs["path"] == real_file.resolve()
 
     @pytest.mark.unit
     def test_duplicate_file_skipping(self, initialized_catalog: Path, tmp_path: Path) -> None:
@@ -1256,6 +1278,7 @@ class TestAddFilesCodePaths:
 
             # Should have inferred collection_id using nested inference
             mock_infer.assert_called_once()
+            assert mock_add.call_args.kwargs["collection_id"] == "my-collection"
 
     @pytest.mark.unit
     def test_deferred_non_geo_processing_with_geo_file(
@@ -1592,5 +1615,7 @@ class TestMixedFormatIntegration:
                     )
                 except Exception as e:
                     pytest.fail(f"add_files raised for mixed formats: {e}")
+                # prepare_item decides geometry, so it sees every file once
+                assert mock_add.call_count == num_csv + num_tsv + num_geo
         finally:
             shutil.rmtree(tmp_dir, ignore_errors=True)

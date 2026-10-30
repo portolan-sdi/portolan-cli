@@ -1521,21 +1521,6 @@ class TestPermissionEdgeCases:
         finally:
             Path(subdir).chmod(0o755)
 
-    def test_scan_stat_oserror_emits_warning(self, tmp_path: Path) -> None:
-        """When entry.stat() raises OSError, emit a warning instead of silent skip.
-
-        The stat() OSError behavior is tested via broken symlinks in
-        TestBrokenSymlinkEdgeCases, where stat() fails because the symlink
-        target doesn't exist. This test is kept as a marker for edge cases.
-        """
-        # stat() OSError handling is tested via broken symlinks:
-        # - TestBrokenSymlinkEdgeCases.test_scan_broken_symlink_emits_warning
-        # The current implementation detects broken symlinks specifically,
-        # which covers the main stat() failure case.
-        pytest.skip(
-            "stat() OSError is tested via broken symlink tests in TestBrokenSymlinkEdgeCases"
-        )
-
 
 @pytest.mark.unit
 @pytest.mark.skipif(sys.platform == "win32", reason="Symlink tests not supported on Windows")

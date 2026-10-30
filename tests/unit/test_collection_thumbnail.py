@@ -431,7 +431,11 @@ class TestNonGeospatialCollections:
     @pytest.mark.unit
     def test_missing_collection_is_skipped(self, tmp_path: Path) -> None:
         """A collection id with no collection.json on disk must not raise."""
-        ensure_collection_thumbnails(tmp_path, {"ghost"})
+        with patch("portolan_cli.collection_thumbnail.ensure_collection_thumbnail") as one:
+            ensure_collection_thumbnails(tmp_path, {"ghost"}, generate=True)
+
+        one.assert_not_called()
+        assert list(tmp_path.iterdir()) == []
 
 
 @pytest.mark.unit

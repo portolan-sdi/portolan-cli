@@ -114,10 +114,10 @@ class TestGpioConversion:
         """geoparquet-io can read existing GeoParquet files."""
         import geoparquet_io as gpio
 
-        # Should not raise
         result = gpio.read(str(valid_points_parquet))
-        # Verify we can access the data
-        assert result is not None
+        # The fixture holds 1000 Open Buildings footprints
+        assert result.num_rows == 1000
+        assert result.geometry_column == "geometry"
 
 
 class TestGpioErrorHandling:

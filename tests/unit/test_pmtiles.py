@@ -1383,26 +1383,6 @@ class TestGeneratePMTilesForCollection:
         assert not any(".thumb." in k for k in latest)
 
 
-# Integration tests that require tippecanoe
-@pytest.mark.skipif(
-    shutil.which("tippecanoe") is None,
-    reason="tippecanoe not installed",
-)
-class TestPMTilesIntegration:
-    """Integration tests that actually generate PMTiles.
-
-    These tests require tippecanoe to be installed and are skipped
-    if tippecanoe is not available.
-    """
-
-    @pytest.mark.integration
-    def test_generates_pmtiles_from_geoparquet(self, tmp_path: Path) -> None:
-        """Actually generates PMTiles from a real GeoParquet file."""
-        # This test would use a real fixture and verify the output
-        # Skipped for now as it requires a real GeoParquet file
-        pytest.skip("Requires real GeoParquet fixture")
-
-
 def _make_collection(catalog_root: Path, coll_id: str, config: str = "") -> Path:
     """Create a catalog with one collection containing collection.json."""
     portolan_dir = catalog_root / ".portolan"

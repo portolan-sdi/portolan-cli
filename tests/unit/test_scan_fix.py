@@ -978,13 +978,6 @@ class TestApplyShapefileRenameEdgeCases:
 class TestRollbackRenames:
     """Tests for _rollback_renames function."""
 
-    def test_rollback_empty_list(self) -> None:
-        """Rollback with empty list should do nothing."""
-        from portolan_cli.scan.fix import _rollback_renames
-
-        # Should not raise
-        _rollback_renames([])
-
     def test_rollback_restores_original_names(self, tmp_path: Path) -> None:
         """Rollback should restore files to original names."""
         from portolan_cli.scan.fix import _rollback_renames
@@ -1108,21 +1101,3 @@ class TestApplySafeFixesOSErrorPaths:
         # Should have proposed but not applied
         assert len(proposed) == 1
         assert len(applied) == 0
-
-
-# =============================================================================
-# Tests for UnsafeFixes (placeholder - not in scope for issue #62)
-# =============================================================================
-
-
-@pytest.mark.unit
-class TestUnsafeFixes:
-    """Tests for unsafe fix operations.
-
-    NOTE: Unsafe fixes are NOT in scope for issue #62.
-    These tests are placeholders for future implementation.
-    """
-
-    def test_placeholder(self) -> None:
-        """Placeholder test - unsafe fix tests to be implemented later."""
-        pytest.skip("Unsafe fix tests not in scope for issue #62")

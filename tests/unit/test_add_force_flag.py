@@ -11,6 +11,7 @@ Behavior:
 from __future__ import annotations
 
 import json
+import os
 import time
 from pathlib import Path
 from unittest.mock import patch
@@ -327,11 +328,11 @@ class TestWarnIfSourceNewer:
             output = temp_path / "output.parquet"
             source = temp_path / "source.shp"
 
-            # Create output first (older)
             output.write_text("old")
-            time.sleep(0.05)
-            # Create source second (newer)
             source.write_text("new")
+            # Pin the mtimes: the source is newer than the output
+            os.utime(output, (1_000_000, 1_000_000))
+            os.utime(source, (2_000_000, 2_000_000))
 
             with patch("portolan_cli.output.warn") as mock_warn:
                 _warn_if_source_newer(source, output)
@@ -348,11 +349,11 @@ class TestWarnIfSourceNewer:
             source = temp_path / "source.shp"
             output = temp_path / "output.parquet"
 
-            # Create source first (older)
             source.write_text("old")
-            time.sleep(0.05)
-            # Create output second (newer)
             output.write_text("new")
+            # Pin the mtimes: the output is newer than the source
+            os.utime(source, (1_000_000, 1_000_000))
+            os.utime(output, (2_000_000, 2_000_000))
 
             with patch("portolan_cli.output.warn") as mock_warn:
                 _warn_if_source_newer(source, output)

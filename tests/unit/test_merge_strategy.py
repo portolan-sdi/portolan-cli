@@ -27,7 +27,12 @@ class TestMergeStrategyEnum:
     @pytest.mark.unit
     def test_merge_strategy_has_smart_default(self) -> None:
         """MergeStrategy.SMART should be the default strategy."""
-        assert MergeStrategy.SMART is not None
+        import inspect
+
+        from portolan_cli.add import add_files
+
+        default = inspect.signature(add_files).parameters["merge_strategy"].default
+        assert default is MergeStrategy.SMART
 
     @pytest.mark.unit
     def test_merge_strategy_has_all_options(self) -> None:

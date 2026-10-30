@@ -354,7 +354,6 @@ class TestConvertFileSkip:
         assert result.format_to is None
         assert result.error is None
         assert result.format_from == "GeoParquet"
-        assert result.duration_ms >= 0
 
     @pytest.mark.unit
     def test_skip_cog(self, valid_rgb_cog: Path) -> None:
@@ -495,7 +494,7 @@ class TestConvertFileVector:
         assert result.format_from == "GeoJSON"
         assert result.format_to == "GeoParquet"
         assert result.error is None
-        assert result.duration_ms >= 0
+        assert result.duration_ms > 0
 
     @pytest.mark.unit
     def test_convert_vector_output_in_source_dir_by_default(
@@ -1641,7 +1640,7 @@ class TestConvertFileEdgeCases:
 
         result = convert_file(geojson, output_dir=tmp_path)
 
-        assert result.duration_ms >= 0
+        assert result.duration_ms > 0
 
     @pytest.mark.unit
     def test_format_from_never_empty(self, tmp_path: Path) -> None:
