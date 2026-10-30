@@ -1,14 +1,19 @@
+<!-- Commitizen writes the version and section headings. They keep its
+format, so the docs Vale check skips heading case in this file. -->
+<!-- vale Portolan-Mechanics.Headings = NO -->
+
 ## v0.9.0 (2026-10-30)
 
 Some entries come from pull requests whose title type hides a user-facing
-change, such as `chore:`, `test:`, or `build:`. Others split one squash commit
-into the changes it carries.
+change, such as `chore:`, `test:`, or `build:`. Others list each change of one
+squash commit as its own entry.
 
 ### BREAKING CHANGE
 
 - `check --json` reports spec_version as "0.2.0" instead of
 "0.1.0", and generation stamps the 0.2.0 profile schema URI in stac_extensions.
-A consumer that matches on the 0.1.0 string or URI has to accept 0.2.0.
+A consumer that matches on the 0.1.0 string or URI has to accept 0.2.0
+(#885, via #880)
 - Python 3.11 is the minimum version. 0.8.0 supported Python 3.10 (#1063)
 - `add` publishes one version per collection. Companion files, thumbnails, and
 PMTiles join that version. Before, each companion file made its own version
@@ -17,20 +22,22 @@ in versions.json (#1072)
 ### Feat
 
 - **thumbnails**: use Esri World Gray Canvas as the default basemap, and add `thumbnails.basemap.api_key` and `PORTOLAN_THUMBNAILS_BASEMAP_API_KEY` for a keyed provider (#1072)
-- **config**: let a collection config.yaml set `backend`, and use the backend of the collection that each command acts on (#1072)
+- **config**: let a collection config.yaml set `backend`. Each command reads `backend` from the collection that it acts on (#1072)
 - **push**: add --verify to repair objects that disagree with the manifest (#967)
 - ask for a P0 to P3 priority in the docs issue form (#1029)
-- **cli**: add log flags, stage spans, and a timings meta block (#1004)
+- **cli**: add log flags and stage spans, and report stage times in the `meta.timings` block of JSON output (#1004)
 - **plugins**: add the extractor hook and the LayerSource driver (#975)
 - **plugins**: add format handlers and remove FormatType (#974)
 - **plugins**: add the plugin machinery for commands, enrichment, and backends (#958)
+- **check**: report a linked file that the publish host does not serve as PTL-LIV-006 in `check --live` (#935, #954)
+- **check**: validate each STAC extension that an object declares, as PTL-EXT-000 to PTL-EXT-002 (#954)
 - **sync**: resolve the AWS profile through botocore (#873)
 - **docs**: read the brand kit instead of restating it (#895)
 - **docs**: generate the CLI reference from the Click tree (#890)
 
 ### Fix
 
-- **add**: keep a GeoParquet file when a CSV with the same stem sits beside it. `add` deleted the GeoParquet (#1072)
+- **add**: keep a GeoParquet file when a CSV with the same stem is in the same directory. `add` deleted the GeoParquet (#1072)
 - **add**: never overwrite a file that the conversion did not create, including the output of a 0.8.0 add (#1072)
 - **add**: embed band statistics in each COG that `add` writes. Each such COG failed the band-statistics check (#748, #1072)
 - **add**: commit the versions of an add when a later PMTiles, mirror, or thumbnail step fails (#1072)
@@ -38,21 +45,17 @@ in versions.json (#1072)
 - **add**: write no empty version on a no-op `add --force` (#1072)
 - **add**: walk each real directory once during discovery. A directory symlink to the catalog root made `add` convert one GeoJSON 41 times (#970)
 - **cog**: write lossless COGs (DEFLATE, LZW, ZSTD, RAW) through the GDAL driver, accept `RAW`, keep nodata per band, and handle a band with no valid pixels (#1072)
-- **thumbnails**: honor `max_size`, keep polygon holes, draw PMTiles points upright, and draw data east of 180° or north of 85° (#1072)
+- **thumbnails**: honor `max_size` and keep polygon holes. The thumbnail read 2 of 21 row groups (#1072)
+- **thumbnails**: draw PMTiles points upright, and draw data east of 180° or north of 85° (#1072)
 - **config**: store a negative number with `config set KEY -1`, and accept `1e-3`, `-.5`, and `+.25` (#1072)
 - **check**: apply the catalog `conversion` overrides to `check sub/` (#1072)
 - **logging**: redact credentials in URLs in log output (#1072)
 - **partitioning**: pass partition sizing to geoparquet-io 1.6, and make S2 partitioning work again (#956)
 - **imageserver**: keep the resume fallback for a start time that is not a string (#1063)
-- **ci**: preserve runtime protocols during mutation instrumentation (#1085)
-- **ci**: read mutant names from mutmut file result (#1084)
-- **ci**: isolate mutation workers from baseline async state (#1083)
-- **ci**: exclude performance tests from mutation selection (#1082)
 - harden the guardrails and close the #1035 defect backlog (#1057)
 - **add**: keep same-stem GeoParquet and PMTiles under distinct asset keys (#1031)
 - open the skills sync pull request as the org sync app (#1030)
 - reduce a 3D GeoParquet bbox with to_2d_bbox at both remaining call sites (#868)
-- **ci**: run the nightly mutation sweep to completion again (#1021)
 - **arcgis**: skip tiles-only MapServer layers without Query capability (#1011)
 - **check**: report invalid live base URLs without tracebacks (#985)
 - **docs**: mark CARTO endpoint examples as code (#986)
@@ -71,7 +74,7 @@ in versions.json (#1072)
 
 ### Refactor
 
-- **iceberg**: register the Iceberg backend as a built-in plugin (#973)
+- **iceberg**: load Iceberg versioning as a built-in plugin (#973)
 - make portolan_cli importable without the CLI shell (#948)
 
 ### Perf
@@ -88,7 +91,8 @@ in versions.json (#1072)
 ### Build
 
 - raise the floors to geoparquet-io 1.7.0, DuckDB 1.5.6, shapely 2.1.0, geopandas 1.0.0, and obstore 0.12.1. Allow PyArrow 26 and DuckDB 2.0 (#956, #1072, #1097)
-- adopt rashid 0.1.8 and pyiceberg 0.12.0 (#885)
+- raise the rashid floor to 0.2.0 and allow versions below 0.4.0. 0.8.0 required rashid below 0.2.0 (#885, #954, #1026)
+- adopt pyiceberg 0.12.0 (#885)
 
 ## v0.8.0 (2026-08-31)
 
