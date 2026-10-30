@@ -156,10 +156,14 @@ def test_every_test_cell_measures_coverage() -> None:
     assert "cov_args" not in step["run"]
 
 
-@pytest.mark.parametrize("job", ["test", "iceberg-test"])
+@pytest.mark.parametrize("job", ["test", "iceberg-test", "iceberg-e2e"])
 def test_every_cell_uploads_its_coverage_report(job: str) -> None:
     jobs = _jobs("ci.yml")
-    prefix = {"test": "coverage-", "iceberg-test": "coverage-iceberg-"}[job]
+    prefix = {
+        "test": "coverage-",
+        "iceberg-test": "coverage-iceberg-",
+        "iceberg-e2e": "coverage-e2e-",
+    }[job]
     expected = [f"{prefix}{c['os']}-{c['python-version']}" for c in _cells(jobs[job])]
 
     assert coverage_artifacts(jobs[job]) == expected
@@ -167,7 +171,11 @@ def test_every_cell_uploads_its_coverage_report(job: str) -> None:
 
 def test_diff_cover_reads_the_report_of_every_cell() -> None:
     jobs = _jobs("ci.yml")
-    names = coverage_artifacts(jobs["test"]) + coverage_artifacts(jobs["iceberg-test"])
+    names = (
+        coverage_artifacts(jobs["test"])
+        + coverage_artifacts(jobs["iceberg-test"])
+        + coverage_artifacts(jobs["iceberg-e2e"])
+    )
     downloads = [
         step
         for step in jobs["diff-cover"]["steps"]
@@ -175,7 +183,7 @@ def test_diff_cover_reads_the_report_of_every_cell() -> None:
     ]
     run = _run_text(jobs["diff-cover"])
 
-    assert len(names) == 15
+    assert len(names) == 18
     assert len(set(names)) == len(names)
     assert [step["with"] for step in downloads] == [
         {"pattern": COVERAGE_PATTERN, "path": "coverage"}
@@ -208,7 +216,7 @@ def test_diff_cover_gates_the_changed_lines() -> None:
     job = jobs["diff-cover"]
     run = _run_text(job)
 
-    assert job["needs"] == ["test", "iceberg-test"]
+    assert job["needs"] == ["test", "iceberg-test", "iceberg-e2e"]
     assert job["if"] == (
         "always() && github.event_name == 'pull_request' && needs.test.result == 'success'"
     )

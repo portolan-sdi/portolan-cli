@@ -511,6 +511,36 @@ class TestVectorCollectionLevelAsset:
             f"relative iceberg href {href!r} wrongly flagged MISSING: {report.to_dict()}"
         )
 
+    def test_iceberg_metadata_asset_with_the_registered_media_type_not_missing(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """The backend writes its metadata asset as ``application/vnd.apache.iceberg+json``.
+
+        That is the media type the STAC Iceberg extension registers, and the
+        one ``IcebergBackend.on_post_add`` writes since #887. A relative href
+        under it is a table location, not a local file.
+        """
+        catalog_dir = tmp_path / "catalog"
+        catalog_dir.mkdir()
+        _write_catalog_json(catalog_dir)
+        collection_dir = catalog_dir / "agriculture"
+        collection_dir.mkdir()
+        _write_collection_json(
+            collection_dir,
+            collection_id="agriculture",
+            extra_assets={
+                "iceberg": {
+                    "href": "warehouse/portolake/agriculture/metadata/v3.metadata.json",
+                    "type": "application/vnd.apache.iceberg+json",
+                    "roles": ["metadata"],
+                }
+            },
+        )
+
+        report = scan_catalog_metadata(catalog_dir)
+        assert report.missing_count == 0, report.to_dict()
+
     def test_iceberg_warehouse_files_inside_collection_not_orphaned(
         self,
         tmp_path: Path,

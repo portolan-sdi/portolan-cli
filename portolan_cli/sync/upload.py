@@ -740,6 +740,92 @@ def _resolve_s3_region(
     return _try_infer_region_from_bucket(bucket)
 
 
+@dataclass(frozen=True)
+class S3Settings:
+    """The S3 settings that ``upload_file`` resolves, for another S3 client.
+
+    The Iceberg backend builds a DuckDB S3 secret from these, so one shell
+    setup serves the STAC upload and the Iceberg warehouse. ``endpoint`` is
+    the value as resolved, with or without a scheme. ``repr`` hides the
+    secret key and the session token.
+    """
+
+    endpoint: str | None
+    use_ssl: bool
+    region: str | None
+    access_key: str | None
+    secret_key: str | None = field(repr=False)
+    session_token: str | None = field(repr=False)
+
+
+def resolve_s3_settings(*, profile: str | None = None, bucket: str | None = None) -> S3Settings:
+    """Resolve the S3 endpoint, key pair, and region the way ``upload_file`` does.
+
+    The order is the one ``_create_s3_store`` applies: ``PORTOLAN_S3_ENDPOINT``
+    and ``PORTOLAN_S3_USE_SSL``, then the AWS endpoint variables and the
+    profile; ``AWS_ACCESS_KEY_ID`` and ``AWS_SECRET_ACCESS_KEY``, then the
+    profile; ``AWS_REGION``, then the profile, then the bucket name.
+
+    Args:
+        profile: AWS profile name, or None for the environment and the
+            default profile.
+        bucket: A bucket name whose prefix may name the region, or None.
+
+    Returns:
+        The resolved settings. Each value is None when nothing supplies it.
+    """
+    endpoint, use_ssl = _resolve_s3_endpoint_settings(None, None, profile)
+    access_key, secret_key, session_token, profile_region = _resolve_s3_credentials(profile)
+    if profile_region is None:
+        profile_region = _read_profile_setting(_effective_profile(profile), "region")
+    region = _resolve_s3_region(None, profile_region, bucket or "")
+    return S3Settings(
+        endpoint=endpoint,
+        use_ssl=use_ssl,
+        region=region,
+        access_key=access_key,
+        secret_key=secret_key,
+        session_token=session_token,
+    )
+
+
+def delete_file(
+    url: str,
+    *,
+    profile: str | None = None,
+    s3_endpoint: str | None = None,
+    s3_region: str | None = None,
+    s3_use_ssl: bool | None = None,
+) -> None:
+    """Delete one object, through the same store setup as ``upload_file``.
+
+    The Iceberg backend's prune removes the data files that no kept snapshot
+    names. obstore is allowed in this module only, so the helper lives here.
+
+    Args:
+        url: The object URL, such as ``s3://bucket/prefix/file.parquet``.
+        profile: AWS profile name, or None.
+        s3_endpoint: Custom S3-compatible endpoint, or None.
+        s3_region: S3 region, or None.
+        s3_use_ssl: Whether the endpoint speaks HTTPS, or None for the default.
+
+    Raises:
+        ValueError: The URL has no supported scheme, or names a bucket and no object.
+    """
+    bucket_url, key = parse_object_store_url(url)
+    if not key:
+        raise ValueError(f"{url} names no object inside its bucket")
+    store, _ = _setup_store_and_kwargs(
+        bucket_url,
+        profile,
+        1,
+        s3_endpoint=s3_endpoint,
+        s3_region=s3_region,
+        s3_use_ssl=s3_use_ssl,
+    )
+    obs.delete(store, key)
+
+
 def _normalize_s3_endpoint(endpoint: str) -> str:
     """Remove an optional scheme from an S3-compatible endpoint."""
     if endpoint.startswith("https://"):

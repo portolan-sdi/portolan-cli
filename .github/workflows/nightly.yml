@@ -573,7 +573,7 @@ jobs:
           command: uv python install 3.11
 
       - name: Install dependencies
-        run: uv sync --extra iceberg --extra dev --extra e2e
+        run: uv sync --all-extras
 
       - name: Start Docker services
         run: docker compose -f tests/iceberg/e2e/docker-compose.yml up -d --wait

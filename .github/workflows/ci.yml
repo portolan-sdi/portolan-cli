@@ -468,8 +468,9 @@ jobs:
     # but never blocks (codecov.yml), so this job is the gate.
     #
     # Every cell of the test and Iceberg matrices uploads a coverage report
-    # named coverage-<os>-<python> or coverage-iceberg-<os>-<python>. This
-    # job downloads every artifact that matches coverage-* and passes all
+    # named coverage-<os>-<python>, coverage-iceberg-<os>-<python>, or
+    # coverage-e2e-<os>-<python>. This job downloads every artifact that
+    # matches coverage-* and passes all
     # the reports to diff-cover. diff-cover marks a line as missed only when
     # every report that measures the file misses it. Thus a line that only
     # Windows or macOS runs counts as covered. relative_files in
@@ -482,7 +483,7 @@ jobs:
     # min(90, median rounded down to a multiple of 5), so 90. This matches
     # the portolan-ops norm for Python repos.
     name: Diff Coverage
-    needs: [test, iceberg-test]
+    needs: [test, iceberg-test, iceberg-e2e]
     if: always() && github.event_name == 'pull_request' && needs.test.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -529,15 +530,21 @@ jobs:
           exit "$status"
 
   iceberg-e2e:
-    name: Iceberg E2E Tests (Python ${{ matrix.python-version }})
+    name: Iceberg E2E Tests (Python ${{ matrix.python-version }} / ${{ matrix.os }})
     needs: changes
     if: needs.changes.outputs.iceberg == 'true' || github.event_name == 'push'
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
+        # Docker runs on the Linux runners only. The os key exists so this
+        # job's coverage artifact names follow the coverage-<os>-<python>
+        # shape that diff-cover and tests/docs/test_ci_wiring.py expect.
+        os: [ubuntu-latest]
         python-version: ['3.11', '3.12', '3.13']
+    env:
+      AWS_EC2_METADATA_DISABLED: "true"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -562,7 +569,7 @@ jobs:
           timeout_minutes: 15
           max_attempts: 3
           retry_wait_seconds: 15
-          command: uv sync --extra iceberg --extra dev --extra e2e
+          command: uv sync --all-extras
 
       - name: Start Docker services
         run: docker compose -f tests/iceberg/e2e/docker-compose.yml up -d --wait
@@ -573,8 +580,19 @@ jobs:
       - name: Wait for RustFS
         run: timeout 60 bash -c 'until curl -sf http://localhost:9000/health/live; do sleep 2; done'
 
+      # The writes of the Iceberg backend run only here, so this job's
+      # coverage must reach diff-cover, or a change to the write path can
+      # never meet the floor on its changed lines.
       - name: Run E2E tests (fast tier, excludes e2e_slow)
-        run: uv run pytest tests/iceberg/e2e/ -v --tb=long -m "e2e and not e2e_slow" --timeout=120
+        run: uv run pytest tests/iceberg/e2e/ -v --tb=long -m "e2e and not e2e_slow" --timeout=120 --cov=portolan_cli --cov-report=xml
+
+      - name: Upload coverage XML
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-e2e-${{ matrix.os }}-${{ matrix.python-version }}
+          path: coverage.xml
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Docker logs (on failure)
         if: failure()
