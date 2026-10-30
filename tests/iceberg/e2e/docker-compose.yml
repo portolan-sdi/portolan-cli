@@ -23,7 +23,7 @@ services:
   # September 2026 (#919). RustFS applies a bucket policy and refuses an
   # anonymous read of a private bucket.
   rustfs:
-    image: rustfs/rustfs:1.0.1@sha256:1803faef57627e2d9c2e7d89d655d712ddded5389040054987163043fecb6a3c
+    image: rustfs/rustfs:1.0.3@sha256:9ca9559533b537d10482fe923288b676ad08f92a7069d9a17327fbae3cab688b
     ports:
       - "9000:9000"
     environment:
@@ -42,7 +42,7 @@ services:
   # connection or a wrong key, stops this service, so the REST catalog does not
   # start against a server with no buckets.
   rustfs-init:
-    image: amazon/aws-cli:2.38.2@sha256:5d39fd52f236ed01c5c25fba66c9aebcfc6cbb88e7bb1b727c5fe1f150540597
+    image: amazon/aws-cli:2.38.4@sha256:de807aa682dd3f45d6de5f431b93762691c53f1134b318936dda39f99e321244
     depends_on:
       rustfs:
         condition: service_healthy
