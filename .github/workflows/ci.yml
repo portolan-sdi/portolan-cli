@@ -488,13 +488,16 @@ jobs:
     # The coverage gate on the lines a pull request changes. Codecov reports
     # but never blocks (codecov.yml), so this job is the gate.
     #
-    # Only the ubuntu-latest 3.11 cell of the test matrix and of the Iceberg
-    # matrix uploads a coverage report, named coverage-ubuntu-latest-3.11 and
-    # coverage-iceberg-ubuntu-latest-3.11. This job downloads every artifact
-    # that matches coverage-* and passes the two reports to diff-cover. A line
-    # that only Windows or macOS runs shows as missed in the diff-cover
-    # summary. relative_files in [tool.coverage.run] writes paths relative to
-    # the checkout, so the reports match the checkout here.
+    # Only the ubuntu-latest 3.11 cell of the test matrix, of the Iceberg
+    # matrix, and of the Iceberg e2e matrix uploads a coverage report, named
+    # coverage-ubuntu-latest-3.11, coverage-iceberg-ubuntu-latest-3.11, and
+    # coverage-e2e-ubuntu-latest-3.11. This job downloads every artifact
+    # that matches coverage-* and passes the three reports to diff-cover.
+    # diff-cover marks a line as missed only when every report that measures
+    # the file misses it, so a line that only the e2e job runs counts as
+    # covered. A line that only Windows or macOS runs shows as missed in the
+    # diff-cover summary. relative_files in [tool.coverage.run] writes paths
+    # relative to the checkout, so the reports match the checkout here.
     #
     # FLOOR comes from the last five merged pull requests that changed
     # portolan_cli, measured with the marker sets of the two coverage cells:
@@ -502,7 +505,7 @@ jobs:
     # min(90, median rounded down to a multiple of 5), so 90. This matches
     # the portolan-ops norm for Python repos.
     name: Diff Coverage
-    needs: [test, iceberg-test]
+    needs: [test, iceberg-test, iceberg-e2e]
     if: always() && github.event_name == 'pull_request' && needs.test.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -549,15 +552,21 @@ jobs:
           exit "$status"
 
   iceberg-e2e:
-    name: Iceberg E2E Tests (Python ${{ matrix.python-version }})
+    name: Iceberg E2E Tests (Python ${{ matrix.python-version }} / ${{ matrix.os }})
     needs: changes
     if: needs.changes.outputs.iceberg == 'true' || github.event_name == 'push'
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
+        # Docker runs on the Linux runners only. The os key exists so this
+        # job's coverage artifact names follow the coverage-<os>-<python>
+        # shape that diff-cover and tests/docs/test_ci_wiring.py expect.
+        os: [ubuntu-latest]
         python-version: ['3.11', '3.12', '3.13']
+    env:
+      AWS_EC2_METADATA_DISABLED: "true"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -582,7 +591,7 @@ jobs:
           timeout_minutes: 15
           max_attempts: 3
           retry_wait_seconds: 15
-          command: uv sync --extra iceberg --extra dev --extra e2e
+          command: uv sync --all-extras
 
       - name: Start Docker services
         run: docker compose -f tests/iceberg/e2e/docker-compose.yml up -d --wait
@@ -593,8 +602,31 @@ jobs:
       - name: Wait for RustFS
         run: timeout 60 bash -c 'until curl -sf http://localhost:9000/health/live; do sleep 2; done'
 
+      # The writes of the Iceberg backend run only here, so this job's
+      # coverage must reach diff-cover, or a change to the write path can
+      # never meet the floor on its changed lines. Only the ubuntu-latest
+      # 3.11 cell measures coverage, as in the test and iceberg-test jobs.
       - name: Run E2E tests (fast tier, excludes e2e_slow)
-        run: uv run pytest tests/iceberg/e2e/ -v --tb=long -m "e2e and not e2e_slow" --timeout=120
+        env:
+          MATRIX_OS: ${{ matrix.os }}
+          MATRIX_PYTHON: ${{ matrix.python-version }}
+        shell: bash
+        run: |
+          coverage=()
+          if [ "$MATRIX_OS" = "ubuntu-latest" ] && [ "$MATRIX_PYTHON" = "3.11" ]; then
+            coverage=(--cov=portolan_cli --cov-report=xml)
+          fi
+          uv run pytest tests/iceberg/e2e/ -v --tb=long -m "e2e and not e2e_slow" --timeout=120 "${coverage[@]}"
+
+      # Only the ubuntu-latest 3.11 cell uploads a report.
+      - name: Upload coverage XML
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-e2e-${{ matrix.os }}-${{ matrix.python-version }}
+          path: coverage.xml
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Docker logs (on failure)
         if: failure()
