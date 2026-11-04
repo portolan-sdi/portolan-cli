@@ -493,24 +493,30 @@ def test_prune_deletes_the_data_files_only_the_victims_reach(
     assert sorted(deleted) == sorted([gone, deletes])
 
 
+def _prune_oldest_with_files(
+    lake: Lake, monkeypatch: pytest.MonkeyPatch, files: list[str]
+) -> list[str]:
+    """Give version 1.0.0's snapshot ``files``, prune it, and return what was deleted."""
+    first = lake.metadata()["refs"]["v1.0.0"]["snapshot-id"]
+    lake.connection.files[("portolake", "roads", first)] = [
+        ("DATA", "ADDED", "EXISTING", url) for url in files
+    ]
+    deleted: list[str] = []
+    monkeypatch.setattr("portolan_cli.api.delete_file", lambda url, **kwargs: deleted.append(url))
+    lake.backend.prune("roads", keep=2, dry_run=False)
+    return deleted
+
+
 def test_prune_never_deletes_a_file_outside_the_table_location(
     lake: Lake, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     """The manifests name the files. A path outside the table is skipped, not deleted."""
     _three_versions(lake)
-    first = lake.metadata()["refs"]["v1.0.0"]["snapshot-id"]
     inside = "s3://warehouse/portolake/roads/data/gone.parquet"
     elsewhere = "s3://warehouse/portolake/other/data/theirs.parquet"
     traversal = "s3://warehouse/portolake/roads/../other/data/theirs.parquet"
-    lake.connection.files[("portolake", "roads", first)] = [
-        ("DATA", "ADDED", "EXISTING", inside),
-        ("DATA", "ADDED", "EXISTING", elsewhere),
-        ("DATA", "ADDED", "EXISTING", traversal),
-    ]
-    deleted: list[str] = []
-    monkeypatch.setattr("portolan_cli.api.delete_file", lambda url, **kwargs: deleted.append(url))
 
-    lake.backend.prune("roads", keep=2, dry_run=False)
+    deleted = _prune_oldest_with_files(lake, monkeypatch, [inside, elsewhere, traversal])
 
     assert deleted == [inside]
     assert elsewhere in caplog.text
@@ -523,14 +529,10 @@ def test_prune_deletes_nothing_when_the_catalog_moves_the_table_location(
     """The location comes from the catalog too. One that is not <warehouse>/ns/name is refused."""
     _three_versions(lake)
     lake.metadata()["location"] = "s3://warehouse"
-    first = lake.metadata()["refs"]["v1.0.0"]["snapshot-id"]
-    lake.connection.files[("portolake", "roads", first)] = [
-        ("DATA", "ADDED", "EXISTING", "s3://warehouse/other/data/theirs.parquet")
-    ]
-    deleted: list[str] = []
-    monkeypatch.setattr("portolan_cli.api.delete_file", lambda url, **kwargs: deleted.append(url))
 
-    lake.backend.prune("roads", keep=2, dry_run=False)
+    deleted = _prune_oldest_with_files(
+        lake, monkeypatch, ["s3://warehouse/other/data/theirs.parquet"]
+    )
 
     assert deleted == []
     assert "deleted no file" in caplog.text
