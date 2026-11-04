@@ -144,6 +144,24 @@ def publish_version(
     return published
 
 
+def check_backend_starts(state: RunState) -> None:
+    """Build the catalog's backend once, before a run writes anything.
+
+    A backend that cannot start, for example the Iceberg backend without
+    ``PORTOLAN_ICEBERG_URI`` in the environment, raises here. ``add`` calls
+    this first, so a failed add leaves no half-written collection behind.
+    The backend is built again per collection at finalization; this call
+    only reads its settings. A collection-level ``backend`` override is
+    checked when that collection is finalized.
+    """
+    name = state.setting("backend") or "file"
+    if name == "file":
+        return
+    from portolan_cli.backends import get_backend
+
+    get_backend(name, catalog_root=state.catalog_root)
+
+
 def _schema_fingerprint(staged: StagedVersion) -> SchemaFingerprint | None:
     if staged.schema is None:
         return None

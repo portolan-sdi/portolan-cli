@@ -1,31 +1,48 @@
-"""Tests for iceberg backend discoverability as a built-in backend.
-
-After the merge, iceberg is a built-in backend, not a plugin.
-These tests verify that get_backend("iceberg") finds the backend.
-test_import.py checks that the backend module imports.
-"""
+"""``get_backend("iceberg")`` builds the backend from the environment, with no network."""
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import pytest
 
+if TYPE_CHECKING:
+    from pathlib import Path
 
-@pytest.mark.unit
-def test_get_backend_returns_iceberg_backend(tmp_path):
-    """get_backend("iceberg") should return an IcebergBackend instance."""
+pytestmark = pytest.mark.unit
+
+
+def test_get_backend_returns_an_iceberg_backend_when_the_uri_is_set(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from portolan_cli.backends import get_backend
     from portolan_cli.backends.iceberg import IcebergBackend
 
-    # A catalog root keeps the SQLite catalog out of the working directory.
+    # A port nothing listens on: construction must not connect.
+    monkeypatch.setenv("PORTOLAN_ICEBERG_URI", "http://127.0.0.1:9")
+
     backend = get_backend("iceberg", catalog_root=tmp_path)
+
     assert isinstance(backend, IcebergBackend)
 
 
-@pytest.mark.unit
-def test_iceberg_backend_satisfies_versioning_protocol():
-    """IcebergBackend should satisfy the VersioningBackend protocol."""
+def test_get_backend_without_the_uri_names_the_variable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from portolan_cli.backends import get_backend
+
+    monkeypatch.delenv("PORTOLAN_ICEBERG_URI", raising=False)
+
+    with pytest.raises(ValueError, match="PORTOLAN_ICEBERG_URI") as info:
+        get_backend("iceberg", catalog_root=tmp_path)
+
+    assert str(info.value).startswith("The iceberg backend needs PORTOLAN_ICEBERG_URI")
+
+
+def test_iceberg_backend_satisfies_the_versioning_protocol() -> None:
     from portolan_cli.backends.iceberg import IcebergBackend
     from portolan_cli.backends.protocol import VersioningBackend
 
     backend = IcebergBackend.__new__(IcebergBackend)
+
     assert isinstance(backend, VersioningBackend)

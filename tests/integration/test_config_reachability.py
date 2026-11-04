@@ -23,7 +23,6 @@ import json
 import os
 import re
 import shutil
-import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from unittest import mock
@@ -526,30 +525,20 @@ def test_without_ignored_files_the_geojson_is_added(catalog: Path, run_cli: RunC
 
 @_tests("backend")
 @_forms()
-@pytest.mark.skipif(
-    sys.platform == "win32", reason="PyIceberg SQL catalog warehouse paths break on Windows"
-)
-def test_backend_iceberg_writes_the_iceberg_fields(
+def test_backend_iceberg_routes_add_to_the_iceberg_backend(
     form: str, catalog: Path, run_cli: RunCli
 ) -> None:
-    pytest.importorskip("pyiceberg")
+    """The setting selects the backend. Without a catalog URI the add names the variable.
+
+    The write itself runs against the compose stack in ``tests/iceberg/e2e``.
+    """
     source = _copy(POINTS_PARQUET, catalog / "roads" / "roads.parquet")
     configure(run_cli, catalog, form, {"backend": ("iceberg", "iceberg")})
 
-    _add(run_cli, catalog, source)
+    result = run_cli("add", "--portolan-dir", str(catalog), str(source), expect=None)
 
-    collection = _load(catalog / "roads" / "collection.json")
-    assert sorted(k for k in collection if k.startswith("iceberg:")) == ICEBERG_FIELDS
-
-
-# The default SQLite catalog URI is a local path, so the collection omits
-# iceberg:catalog_uri (#939).
-ICEBERG_FIELDS = [
-    "iceberg:catalog_type",
-    "iceberg:current_snapshot_id",
-    "iceberg:format_version",
-    "iceberg:table_id",
-]
+    assert result.exit_code == 1, result.output
+    assert "PORTOLAN_ICEBERG_URI" in result.output
 
 
 # ---------------------------------------------------------------------------
