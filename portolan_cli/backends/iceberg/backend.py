@@ -514,7 +514,11 @@ class IcebergBackend:
             {"action": "remove-properties", "removals": [property_key(v.version) for v in victims]}
         )
         updates.append({"action": "remove-snapshots", "snapshot-ids": victim_ids})
-        after = self._commit(namespace, name, loaded, updates)
+        # Guarded on main: a writer that moved main since the read makes the
+        # commit fail with a 409 instead of removing the snapshot it now needs.
+        after = self._commit(
+            namespace, name, loaded, updates, main_at=current_snapshot_id(loaded.metadata)
+        )
         self._delete_orphans(namespace, name, location_before, victim_ids, after)
         return victims
 
@@ -777,17 +781,14 @@ def _snapshots_to_remove(
 ) -> list[int]:
     """The snapshots prune removes, in the order the metadata lists them.
 
-    The tagged snapshot of each removed version goes. So does every untagged
-    snapshot older than the oldest kept version: the delete snapshot of a
-    truncate, which DuckDB commits before the append, reaches the data
-    files of the version before it and would keep them alive. A snapshot
-    ``main`` points at, and any snapshot carrying a tag, always stays.
+    The tagged snapshot of each removed version goes. So does every
+    unreferenced snapshot older than the oldest kept version: the delete
+    snapshot of a truncate, which DuckDB commits before the append, reaches
+    the data files of the version before it and would keep them alive. A
+    snapshot that any ref points at, a branch or a tag, stays unless it is
+    the tag of a removed version. ``main`` always stays.
     """
-    tagged = {
-        int(ref["snapshot-id"])
-        for ref in metadata.get("refs", {}).values()
-        if ref.get("type") == "tag"
-    }
+    referenced = {int(ref["snapshot-id"]) for ref in metadata.get("refs", {}).values()}
     victim_tags = {snapshot_id_of(metadata, v.version) for v in victims}
     kept_ids = {snapshot_id_of(metadata, version) for version in kept}
     timestamps = {
@@ -801,7 +802,7 @@ def _snapshots_to_remove(
         if snapshot_id == main:
             continue
         if snapshot_id in victim_tags or (
-            snapshot_id not in tagged
+            snapshot_id not in referenced
             and oldest_kept is not None
             and int(snapshot["timestamp-ms"]) < oldest_kept
         ):
@@ -869,6 +870,13 @@ def _inside_table(
     ``<namespace>/<name>``, the layout every catalog this backend targets
     uses, and each URL has to sit in that bucket under ``<location>/data/``
     with no dot segment. Anything else is skipped and logged.
+
+    The settings name no bucket or prefix, so there is no anchor the
+    catalog cannot change. What remains: a catalog that names another
+    bucket the credential can reach, with a ``<namespace>/<name>/data/``
+    directory in it, can make a prune delete files there. A configured
+    warehouse prefix would close that, and is a follow-up with the
+    ``config.yaml`` keys.
     """
     location = _split_url(str(metadata.get("location") or ""))
     if location is None or location[2][-2:] != [namespace, name]:

@@ -447,6 +447,22 @@ def test_prune_removes_the_tags_the_records_and_the_snapshots(lake: Lake) -> Non
     assert {s["snapshot-id"] for s in lake.metadata()["snapshots"]}.isdisjoint(victims)
 
 
+def test_prune_is_guarded_on_main_and_keeps_a_snapshot_a_branch_points_at(lake: Lake) -> None:
+    _three_versions(lake)
+    metadata = lake.metadata()
+    first = metadata["refs"]["v1.0.0"]["snapshot-id"]
+    delete_snapshot = metadata["snapshots"][1]["snapshot-id"]
+    metadata["refs"]["audit"] = {"snapshot-id": delete_snapshot, "type": "branch"}
+
+    lake.backend.prune("roads", keep=1, dry_run=False)
+
+    commit = lake.commits[-1]
+    assert commit["requirements"] == _guard(metadata["current-snapshot-id"])
+    removed = next(u for u in commit["updates"] if u["action"] == "remove-snapshots")
+    assert first in removed["snapshot-ids"]
+    assert delete_snapshot not in removed["snapshot-ids"]
+
+
 def test_prune_keeps_the_current_version_even_when_it_is_old(lake: Lake) -> None:
     _three_versions(lake)
     lake.backend.rollback("roads", "1.0.0")
