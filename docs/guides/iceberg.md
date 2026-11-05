@@ -117,11 +117,24 @@ window, so the tag is what keeps a version alive.
 
 Any Iceberg client reads the table. `collection.json` names the current
 metadata file in `iceberg:metadata_location`, and a serverless reader opens it
-with DuckDB:
+with DuckDB. The metadata file names its data files as `s3://` paths, so the
+reader tells DuckDB which endpoint serves that bucket. A public catalog needs
+no key, and an unsigned request is enough:
 
 ```sql
 INSTALL iceberg; LOAD iceberg; INSTALL httpfs; LOAD httpfs;
+CREATE SECRET store (TYPE s3, ENDPOINT 's3.example.org', URL_STYLE 'path', REGION 'us-east-1');
 SELECT count(*) FROM iceberg_scan('https://s3.example.org/my-warehouse/portolake/buildings/metadata/00003-....metadata.json');
+```
+
+A catalog's maintenance rewrites the metadata file after a while, so the URL
+written at `add` time names an older file. That file still answers, and it
+reads the version `add` published. A public catalog also answers reads by
+name through its public endpoint, with no credential:
+
+```sql
+ATTACH 'handle/my-catalog' AS lake (TYPE iceberg, ENDPOINT 'https://public-catalog.example.org', AUTHORIZATION_TYPE 'none');
+SELECT count(*) FROM lake.portolake.buildings;
 ```
 
 Through the catalog, with the same variables the CLI uses:
