@@ -94,9 +94,10 @@ def test_prune_forgets_the_versions_and_keeps_the_current_rows(
     kept_files = _reachable(iceberg_stack, "prune", [newest])
     objects_after = set(iceberg_stack.objects("prune"))
     deleted = objects_before - objects_after
-    assert all(f"s3://warehouse/{key}" not in kept_files for key in deleted)
+    bucket = iceberg_stack.lane.bucket_url
+    assert all(f"{bucket}{key}" not in kept_files for key in deleted)
     assert {
-        f"s3://warehouse/{key}" for key in objects_after if key.endswith((".parquet", ".puffin"))
+        f"{bucket}{key}" for key in objects_after if key.endswith((".parquet", ".puffin"))
     } <= kept_files
     _ = old_snapshots
 

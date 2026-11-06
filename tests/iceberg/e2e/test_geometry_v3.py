@@ -73,8 +73,9 @@ def test_a_crs84_file_with_null_geometries_keeps_every_row(
     )
 
     # OGC:CRS84 is the default CRS of the Iceberg geometry type, and a catalog
-    # may store it implicit or explicit. Both forms mean the same CRS.
-    assert _geometry_type(iceberg_stack, "housing") in ("geometry", "geometry(OGC:CRS84)")
+    # may store it implicit or explicit. Both forms mean the same CRS. A hosted
+    # catalog stored it as geometry(ogc:crs84) on 2026-11-06, so the case is ignored.
+    assert _geometry_type(iceberg_stack, "housing").lower() in ("geometry", "geometry(ogc:crs84)")
     assert iceberg_stack.row_count("housing") == 501
     assert iceberg_stack.rows("housing", "SELECT count(*) FROM t WHERE geometry IS NULL") == [(25,)]
 

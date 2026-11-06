@@ -35,7 +35,7 @@ def test_the_data_files_and_the_metadata_files_are_in_the_bucket(
     ), keys
     assert any(key.endswith(".metadata.json") for key in keys), keys
     assert iceberg_stack.load_table("s3-check").metadata_location.startswith(
-        f"s3://warehouse/{iceberg_stack.namespace}/s3-check/metadata/"
+        f"{iceberg_stack.lane.bucket_url}{iceberg_stack.namespace}/s3-check/metadata/"
     )
 
 
