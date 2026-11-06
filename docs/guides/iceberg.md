@@ -1,20 +1,20 @@
 # Iceberg
 
-Portolan publishes cloud-native files under STAC. The Iceberg backend adds an
+Portolan publishes cloud-native files under STAC. The Iceberg storage layer adds an
 Apache Iceberg table per collection, in an Iceberg REST catalog you already
 run, for teams that want ACID commits, concurrent writers, and version
 history as table snapshots.
 
 DuckDB writes the tables. Portolan talks to the catalog over its REST API for
 the parts DuckDB has no statement for: the version record, rollback, and
-snapshot expiry. No extra package is needed.
+snapshot expiry. You install no extra package.
 
 ## When to use it
 
-Reach for the Iceberg backend when all of these hold.
+Use the Iceberg storage layer when all of these are true.
 
-- You run an Iceberg REST catalog, hosted or your own, with an S3-compatible
-  object store behind it.
+- You have an Iceberg REST catalog with an S3-compatible object store. The
+  catalog is hosted or your own.
 - You want ACID commits and concurrent writers on a table.
 - You want version history as Iceberg snapshots, with rollback and expiry.
 - You accept a second copy of the rows, inside the warehouse.
@@ -24,14 +24,14 @@ server, and every other part of Portolan assumes it.
 
 ## Point the CLI at the catalog
 
-The backend reads its catalog from environment variables, so a secret never
+The CLI reads the catalog settings from environment variables, so a secret never
 lands in a file the catalog publishes.
 
 | Variable | Meaning | Default |
 |----------|---------|---------|
 | `PORTOLAN_ICEBERG_URI` | The REST catalog, such as `https://catalog.example.org`. Required. | |
 | `PORTOLAN_ICEBERG_WAREHOUSE` | The warehouse name the catalog serves. The catalog's documentation gives it. | unset |
-| `PORTOLAN_ICEBERG_NAMESPACE` | The namespace that holds one table per collection. | `portolake` |
+| `PORTOLAN_ICEBERG_NAMESPACE` | The namespace of the tables. Each collection gets one table. | `portolake` |
 | `PORTOLAN_ICEBERG_AUTH` | `oauth2`, `bearer`, or `none`. | inferred from the credential |
 | `PORTOLAN_ICEBERG_CLIENT_ID`, `PORTOLAN_ICEBERG_CLIENT_SECRET` | The OAuth2 client credentials. | |
 | `PORTOLAN_ICEBERG_OAUTH2_SERVER_URI` | The token endpoint. | `<uri>/v1/oauth/tokens` |
@@ -105,19 +105,22 @@ partitioned by identity on those columns, and the rows read from the
 The GeoParquet file stays where it is, as its own asset on the collection. The
 table is a second copy of the rows, inside the warehouse.
 
-## How a version is recorded
+## Version record
 
-Version `1.2.0` of a collection is the table property `portolan.version.1.2.0`,
-whose value records the assets, the schema, and the message, and the tag
-`v1.2.0` on the snapshot that holds its rows. The two land in one commit after
-the rows. A hosted catalog's maintenance expires untagged snapshots after a
+Version `1.2.0` of a collection has two parts:
+
+- The table property `portolan.version.1.2.0`. Its value records the assets,
+  the schema, and the message.
+- The tag `v1.2.0`. It points at the snapshot with the rows of that version.
+
+Portolan writes the property and the tag in one commit after the rows. A hosted catalog's maintenance expires untagged snapshots after a
 window, so the tag is what keeps a version alive.
 
 ## Read the table
 
 Any Iceberg client reads the table. `collection.json` names the current
 metadata file in `iceberg:metadata_location`, and a serverless reader opens it
-with DuckDB. The metadata file names its data files as `s3://` paths, so the
+with DuckDB. The metadata file lists its data files as `s3://` paths, so the
 reader tells DuckDB which endpoint serves that bucket. A public catalog needs
 no key, and an unsigned request is enough:
 
@@ -159,8 +162,8 @@ Rollback moves the table's `main` branch to the tagged snapshot. No row is
 copied. The next `add` continues from the newest version number.
 
 Prune removes the records, the tags, and the snapshots of the older versions,
-keeps the `--keep` newest and the current one, then deletes the data files no
-remaining snapshot reaches.
+keeps the `--keep` newest and the current one. Then it deletes each data file
+that the remaining snapshots do not use.
 
 ## Iceberg fields on the collection
 
@@ -197,17 +200,17 @@ collection. Neither reads the warehouse.
 
 DuckDB writes merge-on-read: a replaced data file stays in the warehouse,
 hidden by a deletion vector, and the current snapshot still lists it. Prune
-removes versions from the catalog and deletes only a file no snapshot reaches,
-so it reclaims no space until the catalog's own maintenance compacts the
-table.
+removes versions from the catalog. It deletes a data file only when no
+remaining snapshot uses it. Prune frees no space until the maintenance
+of the catalog compacts the table.
 
-A table the earlier PyIceberg-based backend wrote (format version 2, records
+A table that the earlier PyIceberg-based Portolan wrote (format version 2, records
 in the snapshot summaries) is read-only. `version list` and `version current`
 read it; `add`, `rollback`, and `prune` refuse it. Publish the collection again
 to get a format version 3 table.
 
-A column that changes type between two adds refuses the add, because the table
-keeps its history. A new column is added to the table.
+`add` refuses a column whose type changes between two adds, because the
+table keeps its history. `add` appends a new column to the table.
 
 `portolan check` reports no drift between the collection and the table. No
 check compares them yet.
