@@ -67,6 +67,7 @@ portolan = "portolan_cli:cli"
 [project.entry-points."portolan.commands"]
 "version.rollback" = "portolan_cli.backends.iceberg.cli:rollback"
 "version.prune" = "portolan_cli.backends.iceberg.cli:prune"
+"version.refresh" = "portolan_cli.backends.iceberg.cli:refresh"
 
 [project.urls]
 "Homepage" = "https://github.com/portolan-sdi/portolan-cli"
@@ -172,6 +173,7 @@ markers = [
     "slow: Takes > 5 seconds",
     "e2e: End-to-end tests requiring Docker (REST catalog + RustFS)",
     "e2e_slow: Extended E2E tests (concurrency stress, large datasets) - nightly only",
+    "lakehousebox: Reads the public proof catalog on LakehouseBox with no credential (network nightly)",
 ]
 
 [tool.coverage.run]

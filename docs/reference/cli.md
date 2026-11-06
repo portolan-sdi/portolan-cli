@@ -44,6 +44,7 @@ This page is generated from the shipped Click command tree.
 - `portolan version current`
 - `portolan version list`
 - `portolan version prune`
+- `portolan version refresh`
 - `portolan version rollback`
 
 ## Full Reference
@@ -1824,6 +1825,42 @@ portolan version prune [OPTIONS] COLLECTION
 | ---- | ---- | ----------- | ------- |
 | `--keep`, `-k` | integer range (`1` and above) | Number of recent versions to keep. | `5` |
 | `--dry-run` | boolean | Show what would be pruned without deleting. | `False` |
+| `--catalog` | path | Path to catalog root (default: auto-detect). | None |
+| `--json` | boolean | Output as JSON. | `False` |
+| `--help` | boolean | Show this message and exit. | `False` |
+
+##### portolan version refresh { #portolan-version-refresh data-toc-label='refresh' }
+
+Rewrite the Iceberg fields of a collection from its table.
+
+The maintenance of a hosted catalog writes a new table metadata file.
+This command reads the table again and writes the current
+iceberg:metadata_location and the other Iceberg fields into
+collection.json. With a remote configured, it also uploads
+collection.json.
+
+```text
+Examples:
+    portolan version refresh boundaries
+    portolan version refresh boundaries --json
+```
+
+**Usage:**
+
+```text
+portolan version refresh [OPTIONS] COLLECTION
+```
+
+**Arguments:**
+
+| Name | Type | Required |
+| ---- | ---- | -------- |
+| `COLLECTION` | text | yes |
+
+**Options:**
+
+| Name | Type | Description | Default |
+| ---- | ---- | ----------- | ------- |
 | `--catalog` | path | Path to catalog root (default: auto-detect). | None |
 | `--json` | boolean | Output as JSON. | `False` |
 | `--help` | boolean | Show this message and exit. | `False` |
