@@ -4,20 +4,23 @@ Lane A is the docker-compose stack in ``tests/iceberg/e2e/docker-compose.yml``:
 the Apache REST fixture on port 8181 and RustFS on port 9000. It is
 deterministic and needs no secret, so it is the catalog of PR CI. A second
 lane, a hosted REST catalog service, reuses the same helpers with its own
-endpoint and credential; it arrives with the backend rewrite.
+endpoint and credential.
 
-This module holds no fixture. ``tests/iceberg/e2e/conftest.py`` declares the
-fixtures and calls these functions, so a test in another directory can do
-the same later without a second copy of the compose lifecycle.
+This module holds no fixture. ``tests/conftest.py`` declares the fixtures
+and calls these functions, so a test in any directory gets the stack
+without a second copy of the compose lifecycle. Each test gets its own
+namespace, named by ``new_namespace``, and the fixture drops it with its
+tables afterwards.
 
 The helpers go through the product's own REST client
 (``portolan_cli.backends.iceberg.rest``) and through DuckDB's ``httpfs``, not
-through boto3, so the tests exercise the same S3 settings the backend will
-use and need no extra dependency.
+through boto3, so the tests exercise the same S3 settings the backend uses
+and need no extra dependency.
 """
 
 from __future__ import annotations
 
+import secrets
 import shutil
 import subprocess
 import time
@@ -25,6 +28,7 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import duckdb
 import pytest
@@ -39,6 +43,10 @@ S3_HOST = "localhost:9000"
 S3_KEY = "rustfsadmin"
 S3_SECRET = "rustfsadmin"  # noqa: S105  # the fixture's published test credential
 WAREHOUSE_BUCKET = "warehouse"
+
+#: Set on the process by the stack fixture. The CLI harness keeps the
+#: ``PORTOLAN_ICEBERG_*`` variables when it is set, and strips them otherwise.
+STACK_SENTINEL = "PORTOLAN_TEST_ICEBERG_STACK"
 
 
 @dataclass(frozen=True)
@@ -82,6 +90,33 @@ def docker_lane() -> IcebergLane:
         secret=S3_SECRET,
         bucket=WAREHOUSE_BUCKET,
     )
+
+
+def new_namespace() -> str:
+    """Return a namespace name no other test uses: ``t`` and ten hex digits."""
+    return "t" + secrets.token_hex(5)
+
+
+def stack_environment(lane: IcebergLane, namespace: str) -> dict[str, str]:
+    """Return the variables that point the backend at ``lane`` and ``namespace``.
+
+    The backend reads ``PORTOLAN_ICEBERG_*`` and the S3 conventions of
+    ``upload_file``. The sentinel tells the CLI harness to keep them.
+    """
+    env = {
+        "PORTOLAN_ICEBERG_URI": lane.uri,
+        "PORTOLAN_ICEBERG_NAMESPACE": namespace,
+        "PORTOLAN_ICEBERG_AUTH": "none",
+        "PORTOLAN_S3_ENDPOINT": lane.s3_host,
+        "PORTOLAN_S3_USE_SSL": "true" if lane.s3_use_ssl else "false",
+        "AWS_ACCESS_KEY_ID": lane.key,
+        "AWS_SECRET_ACCESS_KEY": lane.secret,
+        "AWS_REGION": "us-east-1",
+        STACK_SENTINEL: "1",
+    }
+    if lane.warehouse:
+        env["PORTOLAN_ICEBERG_WAREHOUSE"] = lane.warehouse
+    return env
 
 
 def require_docker() -> None:
@@ -151,6 +186,20 @@ class RestAdmin:
         self.catalog.drop_namespace(namespace)
 
 
+def _connection(lane: IcebergLane, *, iceberg: bool) -> duckdb.DuckDBPyConnection:
+    connection = duckdb.connect()
+    connection.execute("LOAD httpfs")
+    if iceberg:
+        connection.execute("LOAD iceberg")
+        connection.execute("LOAD spatial")
+    connection.execute(
+        "CREATE SECRET lane (TYPE s3, KEY_ID ?, SECRET ?, ENDPOINT ?, URL_STYLE 'path', "
+        "USE_SSL ?, REGION 'us-east-1')",
+        [lane.key, lane.secret, lane.s3_host, lane.s3_use_ssl],
+    )
+    return connection
+
+
 def warehouse_objects(lane: IcebergLane, prefix: str) -> list[str]:
     """Return the object keys under ``prefix`` in the lane's warehouse bucket.
 
@@ -158,14 +207,8 @@ def warehouse_objects(lane: IcebergLane, prefix: str) -> list[str]:
     uses, so a test that finds a file here proves the warehouse is readable
     the way DuckDB reads it.
     """
-    connection = duckdb.connect()
+    connection = _connection(lane, iceberg=False)
     try:
-        connection.execute("LOAD httpfs")
-        connection.execute(
-            "CREATE SECRET lane (TYPE s3, KEY_ID ?, SECRET ?, ENDPOINT ?, URL_STYLE 'path', "
-            "USE_SSL ?, REGION 'us-east-1')",
-            [lane.key, lane.secret, lane.s3_host, lane.s3_use_ssl],
-        )
         pattern = f"s3://{lane.bucket}/{prefix}**"
         rows = connection.execute("SELECT file FROM glob(?)", [pattern]).fetchall()
     finally:
@@ -174,25 +217,54 @@ def warehouse_objects(lane: IcebergLane, prefix: str) -> list[str]:
     return sorted(str(row[0]).removeprefix(head) for row in rows)
 
 
-def scan_row_count(lane: IcebergLane, metadata_location: str) -> int:
-    """Return the row count of an Iceberg table read from its metadata file.
+def scan_rows(
+    lane: IcebergLane, metadata_location: str, sql: str = "SELECT count(*) FROM t"
+) -> list[tuple[Any, ...]]:
+    """Run ``sql`` over the table read from its metadata file, as ``t``.
 
     This is the reader path a user has: ``iceberg_scan`` over the metadata
     location the collection publishes, with no catalog server.
     """
-    connection = duckdb.connect()
+    connection = _connection(lane, iceberg=True)
     try:
-        connection.execute("LOAD httpfs")
-        connection.execute("LOAD iceberg")
-        connection.execute(
-            "CREATE SECRET lane (TYPE s3, KEY_ID ?, SECRET ?, ENDPOINT ?, URL_STYLE 'path', "
-            "USE_SSL ?, REGION 'us-east-1')",
-            [lane.key, lane.secret, lane.s3_host, lane.s3_use_ssl],
-        )
-        row = connection.execute(
-            "SELECT count(*) FROM iceberg_scan(?)", [metadata_location]
-        ).fetchone()
+        # A view definition takes no bound parameter; the location is a quoted literal.
+        location = metadata_location.replace("'", "''")
+        connection.execute(f"CREATE VIEW t AS SELECT * FROM iceberg_scan('{location}')")
+        return connection.execute(sql).fetchall()
     finally:
         connection.close()
-    assert row is not None
-    return int(row[0])
+
+
+def scan_row_count(lane: IcebergLane, metadata_location: str) -> int:
+    """Return the row count of an Iceberg table read from its metadata file."""
+    rows = scan_rows(lane, metadata_location)
+    return int(rows[0][0])
+
+
+@dataclass(frozen=True)
+class IcebergStack:
+    """One test's view of the stack: the lane, its namespace, and the admin client."""
+
+    lane: IcebergLane
+    namespace: str
+    admin: RestAdmin
+
+    def load_table(self, name: str) -> LoadTableResult:
+        """The ``loadTable`` answer for a collection's table."""
+        return self.admin.load_table(self.namespace, name)
+
+    def metadata(self, name: str) -> dict[str, Any]:
+        """The metadata document of a collection's table."""
+        return self.load_table(name).metadata
+
+    def objects(self, name: str, prefix: str = "") -> list[str]:
+        """The warehouse objects of a collection's table, under ``prefix``."""
+        return warehouse_objects(self.lane, f"{self.namespace}/{name}/{prefix}")
+
+    def row_count(self, name: str) -> int:
+        """The row count of the table as a serverless reader sees it."""
+        return scan_row_count(self.lane, self.load_table(name).metadata_location)
+
+    def rows(self, name: str, sql: str) -> list[tuple[Any, ...]]:
+        """Run ``sql`` over the table read as ``t`` from its metadata file."""
+        return scan_rows(self.lane, self.load_table(name).metadata_location, sql)

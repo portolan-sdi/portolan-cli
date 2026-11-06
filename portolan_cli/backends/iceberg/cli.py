@@ -3,8 +3,8 @@
 Only the Iceberg backend implements rollback and prune. portolan-cli declares
 these commands as ``version.rollback`` and ``version.prune`` in the
 ``portolan.commands`` entry point group, the same way an outside plugin adds a
-command. The module imports Click and ``portolan_cli.api`` only, and no
-pyiceberg.
+command. The module imports Click and ``portolan_cli.api`` only, and
+neither DuckDB nor httpx.
 """
 
 from __future__ import annotations
@@ -33,20 +33,28 @@ class BackendRequiredError(Exception):
         )
 
 
-def require_iceberg_backend(catalog_path: Path, command_name: str) -> VersioningBackend:
+def require_iceberg_backend(
+    catalog_path: Path, command_name: str, collection: str | None = None
+) -> VersioningBackend:
     """Load the iceberg backend or raise BackendRequiredError.
+
+    The backend is a per-collection setting, and ``add``, ``push``, and
+    ``pull`` read it for the collection they act on. This guard reads it
+    the same way (#1059), so a collection that sets ``backend: iceberg``
+    under a file-backend catalog gets its rollback and prune.
 
     Args:
         catalog_path: Path to catalog root.
         command_name: Name of the command (for error messages).
+        collection: The collection the command acts on, or None.
 
     Returns:
         The iceberg VersioningBackend instance.
 
     Raises:
-        BackendRequiredError: If the current backend is not 'iceberg'.
+        BackendRequiredError: If the collection's backend is not 'iceberg'.
     """
-    backend_name = api.get_setting("backend", catalog_path=catalog_path)
+    backend_name = api.get_setting("backend", catalog_path=catalog_path, collection=collection)
     if backend_name != "iceberg":
         raise BackendRequiredError(command_name, "iceberg", backend_name)
     backend: VersioningBackend = api.get_backend("iceberg", catalog_root=catalog_path)
@@ -70,7 +78,7 @@ def _fail(command: str, error_type: str, message: str, *, use_json: bool) -> NoR
 
 
 def _iceberg_backend(
-    ctx: click.Context, catalog_path: Path | None, json_flag: bool, name: str
+    ctx: click.Context, catalog_path: Path | None, json_flag: bool, name: str, collection: str
 ) -> Any:
     """Resolve the catalog root and the iceberg backend, or exit with an error."""
     command = f"version {name}"
@@ -85,10 +93,10 @@ def _iceberg_backend(
                 use_json=use_json,
             )
     try:
-        return require_iceberg_backend(catalog_path, name)
+        return require_iceberg_backend(catalog_path, name, collection)
     except (BackendRequiredError, ValueError) as e:
         # get_backend raises ValueError when the backend cannot start, for
-        # example without the iceberg extra.
+        # example without PORTOLAN_ICEBERG_URI in the environment.
         _fail(command, "BackendError", str(e), use_json=use_json)
 
 
@@ -125,7 +133,7 @@ def rollback(
         portolan version rollback boundaries 2.0.0 --json
     """
     use_json = _use_json(ctx, json_output)
-    backend = _iceberg_backend(ctx, catalog_path, json_output, "rollback")
+    backend = _iceberg_backend(ctx, catalog_path, json_output, "rollback", collection)
 
     try:
         restored = backend.rollback(collection, target_version)
@@ -178,7 +186,7 @@ def prune(
         portolan version prune boundaries --dry-run      # Preview without deleting
     """
     use_json = _use_json(ctx, json_output)
-    backend = _iceberg_backend(ctx, catalog_path, json_output, "prune")
+    backend = _iceberg_backend(ctx, catalog_path, json_output, "prune", collection)
 
     try:
         pruned = backend.prune(collection, keep=keep, dry_run=dry_run)

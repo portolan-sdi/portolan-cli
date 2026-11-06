@@ -24,8 +24,8 @@ errors watched the raster extension sit at v1.1.0 and stayed green.
 from __future__ import annotations
 
 import json
+import os
 import shutil
-import sys
 import urllib.request
 from collections import Counter
 from collections.abc import Callable, Iterator, Mapping
@@ -33,6 +33,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from unittest import mock
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -42,10 +43,13 @@ from rashid import RulesConfig, Severity, validate
 from rashid.data.reader import LocalOnlyReader
 
 from tests.catalog_invariants import check_catalog_invariants
+from tests.iceberg_stack import new_namespace, stack_environment
 from tests.known_upstream import GPIO_WFS_OOM
 from tests.properties.test_rebuild_idempotence import shrink_geoparquet
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from tests.catalog_invariants import RunCli
     from tests.conftest import CliHarness
 
@@ -91,6 +95,9 @@ class Scenario:
     # its issue (tests/catalog_invariants.py).
     known_invariants: Mapping[str, str] = field(default_factory=dict)
     marks: tuple[pytest.MarkDecorator, ...] = ()
+    # The build writes to the Iceberg REST stack of tests/iceberg_stack.py, in
+    # a namespace of its own that is dropped after the module.
+    needs_stack: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -354,11 +361,8 @@ def build_sibling_pmtiles(root: Path, run: RunCli) -> None:
 
 def build_iceberg(root: Path, run: RunCli) -> None:
     """Add a GeoParquet on the Iceberg backend, with the default SQLite catalog (#939)."""
-    pytest.importorskip("pyiceberg")
-    if sys.platform == "win32":
-        pytest.skip("PyIceberg SQL catalog warehouse paths break on Windows")
     roads = _copy(POINTS, root / "roads" / "roads.parquet")
-    # The run_cli harness hides a developer's PyIceberg config.
+    # The iceberg_stack fixture points PORTOLAN_ICEBERG_* at the compose stack.
     _init(root, run)
     run("config", "set", "backend", "iceberg", cwd=root)
     _add(root, run, roads)
@@ -583,6 +587,9 @@ SCENARIOS: dict[str, Scenario] = {
             # The incubating Iceberg extension is not in rashid's registry.
             "PTL-EXT-002": 1,
         },
+        # The write needs the REST catalog of the compose stack.
+        marks=(pytest.mark.e2e,),
+        needs_stack=True,
     ),
     "realdata-fieldmaps-boundaries": _realdata_row(REALDATA / "fieldmaps-boundaries.parquet"),
     "realdata-nwi-wetlands": _realdata_row(REALDATA / "nwi-wetlands.parquet"),
@@ -631,9 +638,29 @@ SCENARIOS: dict[str, Scenario] = {
 # ---------------------------------------------------------------------------
 
 
+@contextmanager
+def _stack_environment(row: Scenario, request: pytest.FixtureRequest) -> Iterator[None]:
+    """Point the backend at a namespace of the stack while a row that needs it builds.
+
+    The session fixtures start the stack. The namespace is dropped with its
+    tables when the module ends.
+    """
+    if not row.needs_stack:
+        yield
+        return
+    lane = request.getfixturevalue("iceberg_lane")
+    admin = request.getfixturevalue("rest_admin")
+    namespace = new_namespace()
+    request.addfinalizer(lambda: admin.drop_namespace(namespace))
+    with mock.patch.dict(os.environ, stack_environment(lane, namespace)):
+        yield
+
+
 @pytest.fixture(scope="module")
 def build_scenario(
-    tmp_path_factory: pytest.TempPathFactory, cli_harness: type[CliHarness]
+    tmp_path_factory: pytest.TempPathFactory,
+    cli_harness: type[CliHarness],
+    request: pytest.FixtureRequest,
 ) -> Builds:
     """Build each scenario once per module, in the test that first asks for it.
 
@@ -650,7 +677,8 @@ def build_scenario(
             harness = cli_harness(base)
             root = base / "catalog"
             try:
-                SCENARIOS[name].build(root, harness)
+                with _stack_environment(SCENARIOS[name], request):
+                    SCENARIOS[name].build(root, harness)
                 built[name] = (root, sorted(harness.roots | {root.resolve()}))
             except BaseException as exc:  # noqa: BLE001 - cached and raised again
                 built[name] = exc

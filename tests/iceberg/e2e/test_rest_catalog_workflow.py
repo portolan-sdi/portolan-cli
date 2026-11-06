@@ -1,7 +1,9 @@
-"""E2E tests for full version lifecycle against REST catalog + RustFS.
+"""The version lifecycle against the REST catalog and the object store of the stack.
 
-These tests exercise IcebergBackend.publish/list/rollback/prune
-against a real Iceberg REST catalog server with S3 storage.
+Each test gets its own namespace on the compose stack through
+``iceberg_stack``, builds the backend from the environment the fixture
+set, and reads the result back the two ways a user has: the ``loadTable``
+document, and DuckDB's ``iceberg_scan`` over the metadata file.
 """
 
 from __future__ import annotations
@@ -12,118 +14,107 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
-from tests.iceberg.e2e.conftest import write_test_parquet
-from tests.iceberg_stack import warehouse_objects
+from portolan_cli.backends.iceberg.backend import IcebergBackend
+from portolan_cli.backends.iceberg.versioning import property_key, tag_name
+from tests.iceberg.e2e.conftest import SCHEMA, publish_rows, write_test_parquet
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from portolan_cli.backends.iceberg.backend import IcebergBackend
-    from tests.iceberg_stack import IcebergLane
+    from tests.iceberg_stack import IcebergStack
+
+pytestmark = pytest.mark.e2e
 
 
-@pytest.mark.e2e
-def test_publish_to_rest_catalog(rest_iceberg_backend: IcebergBackend, tmp_path: Path) -> None:
-    """Publish data via REST catalog; verify table is queryable."""
-    asset = write_test_parquet(tmp_path / "data.parquet")
+def test_publish_creates_a_v3_table_with_the_record_and_the_tag(
+    iceberg_stack: IcebergStack, tmp_path: Path
+) -> None:
+    backend = publish_rows(tmp_path, "rest-publish", 3, message="First version via REST")
 
-    version = rest_iceberg_backend.publish(
-        collection="rest-publish",
-        assets={"data.parquet": str(asset)},
-        schema={"columns": ["id", "val"], "types": {"id": "int64", "val": "string"}, "hash": "h1"},
-        breaking=False,
-        message="First version via REST",
-    )
-
-    assert version.version == "1.0.0"
-    assert version.message == "First version via REST"
-
-
-@pytest.mark.e2e
-def test_version_lifecycle_rest(rest_iceberg_backend: IcebergBackend, tmp_path: Path) -> None:
-    """Full lifecycle: publish v1->v2->v3, list, rollback to v1, prune."""
-    collection = "lifecycle"
-
-    # Publish 3 versions
-    for i in range(1, 4):
-        asset = write_test_parquet(tmp_path / f"data_v{i}.parquet", rows=i)
-        rest_iceberg_backend.publish(
-            collection=collection,
-            assets={f"data_v{i}.parquet": str(asset)},
-            schema={"columns": ["id", "val"], "types": {}, "hash": f"h{i}"},
-            breaking=False,
-            message=f"Version {i}",
-        )
-
-    # List -- should have 3 versions oldest-first
-    versions = rest_iceberg_backend.list_versions(collection)
-    assert len(versions) == 3
-    assert versions[0].version == "1.0.0"
-    assert versions[2].version == "1.2.0"
-
-    # Rollback to 1.0.0
-    restored = rest_iceberg_backend.rollback(collection, "1.0.0")
-    assert restored.version == "1.0.0"
-
-    # Verify current is 1.0.0
-    current = rest_iceberg_backend.get_current_version(collection)
+    metadata = iceberg_stack.metadata("rest-publish")
+    assert metadata["format-version"] == 3
+    assert property_key("1.0.0") in metadata["properties"]
+    assert metadata["properties"]["portolan.record"] == "1"
+    assert metadata["refs"][tag_name("1.0.0")]["type"] == "tag"
+    assert metadata["refs"][tag_name("1.0.0")]["snapshot-id"] == metadata["current-snapshot-id"]
+    assert iceberg_stack.row_count("rest-publish") == 3
+    current = backend.get_current_version("rest-publish")
     assert current.version == "1.0.0"
+    assert current.message == "First version via REST"
+    assert current.assets["data.parquet"].href == "rest-publish/data.parquet"
 
 
-@pytest.mark.e2e
-def test_schema_evolution_rest(rest_iceberg_backend: IcebergBackend, tmp_path: Path) -> None:
-    """Add a column in v2 -- Iceberg schema evolution should work via REST."""
-    collection = "schema-evo"
+def test_a_later_publish_replaces_the_rows_and_a_rollback_restores_them(
+    iceberg_stack: IcebergStack, tmp_path: Path
+) -> None:
+    """Three publishes of 1, 2, and 3 rows under one key: each version holds its own rows."""
+    for rows in (1, 2, 3):
+        backend = publish_rows(tmp_path, "lifecycle", rows, message=f"{rows} rows")
 
-    # v1: {id, val}
-    asset1 = write_test_parquet(tmp_path / "v1.parquet")
-    rest_iceberg_backend.publish(
-        collection=collection,
-        assets={"v1.parquet": str(asset1)},
-        schema={"columns": ["id", "val"], "types": {}, "hash": "h1"},
-        breaking=False,
-        message="v1",
-    )
+    versions = backend.list_versions("lifecycle")
+    assert [v.version for v in versions] == ["1.0.0", "1.1.0", "1.2.0"]
+    assert iceberg_stack.row_count("lifecycle") == 3
 
-    # v2: {id, val, extra} -- new column
-    table2 = pa.table(
+    restored = backend.rollback("lifecycle", "1.0.0")
+
+    assert restored.version == "1.0.0"
+    assert backend.get_current_version("lifecycle").version == "1.0.0"
+    # main moved, so a serverless reader of the metadata file sees the old rows.
+    assert iceberg_stack.row_count("lifecycle") == 1
+    assert [v.version for v in backend.list_versions("lifecycle")] == ["1.0.0", "1.1.0", "1.2.0"]
+
+
+def test_a_publish_after_a_rollback_continues_from_the_newest_version(
+    iceberg_stack: IcebergStack, tmp_path: Path
+) -> None:
+    publish_rows(tmp_path, "after-rollback", 1)
+    backend = publish_rows(tmp_path, "after-rollback", 2)
+    backend.rollback("after-rollback", "1.0.0")
+    # The rows come from the local files. A pull restores the file of 1.0.0.
+    write_test_parquet(tmp_path / "after-rollback" / "data.parquet", rows=1)
+
+    version = backend.publish("after-rollback", {}, SCHEMA, False, "keep the old rows")
+
+    assert version.version == "1.2.0"
+    # The merged asset set came from the current version, 1.0.0, with one row.
+    assert iceberg_stack.row_count("after-rollback") == 1
+
+
+def test_a_new_column_evolves_the_table_schema(iceberg_stack: IcebergStack, tmp_path: Path) -> None:
+    backend = publish_rows(tmp_path, "schema-evo", 2)
+    wider = pa.table(
         {
             "id": pa.array([10, 20], type=pa.int64()),
             "val": pa.array(["a", "b"], type=pa.string()),
             "extra": pa.array([1.0, 2.0], type=pa.float64()),
         }
     )
-    v2_path = tmp_path / "v2.parquet"
-    pq.write_table(table2, v2_path)
+    path = tmp_path / "schema-evo" / "data.parquet"
+    pq.write_table(wider, path)
 
-    version = rest_iceberg_backend.publish(
-        collection=collection,
-        assets={"v2.parquet": str(v2_path)},
-        schema={"columns": ["id", "val", "extra"], "types": {}, "hash": "h2"},
-        breaking=False,
-        message="v2 with extra column",
-    )
+    version = backend.publish("schema-evo", {"data.parquet": str(path)}, SCHEMA, False, "v2")
+
     assert version.version == "1.1.0"
+    fields = {
+        f["name"]: f["type"] for f in iceberg_stack.metadata("schema-evo")["schemas"][-1]["fields"]
+    }
+    assert fields == {"id": "long", "val": "string", "extra": "double"}
+    assert iceberg_stack.rows("schema-evo", "SELECT sum(extra) FROM t") == [(3.0,)]
 
 
-@pytest.mark.e2e
-def test_data_stored_in_rustfs(
-    rest_iceberg_backend: IcebergBackend, iceberg_lane: IcebergLane, tmp_path: Path
+def test_the_merged_asset_set_is_what_the_table_holds(
+    iceberg_stack: IcebergStack, tmp_path: Path
 ) -> None:
-    """After publish, Parquet data files should exist in RustFS warehouse bucket."""
-    asset = write_test_parquet(tmp_path / "rustfs_check.parquet")
+    """A second file joins the rows of the first. A removal drops them."""
+    backend = IcebergBackend(catalog_root=tmp_path)
+    (tmp_path / "merge").mkdir()
+    first = write_test_parquet(tmp_path / "merge" / "a.parquet", rows=2)
+    backend.publish("merge", {"a.parquet": str(first)}, SCHEMA, False, "a")
+    second = write_test_parquet(tmp_path / "merge" / "b.parquet", rows=3, start=100)
 
-    rest_iceberg_backend.publish(
-        collection="rustfs-check",
-        assets={"rustfs_check.parquet": str(asset)},
-        schema={"columns": ["id", "val"], "types": {}, "hash": "h1"},
-        breaking=False,
-        message="Check RustFS",
-    )
+    backend.publish("merge", {"b.parquet": str(second)}, SCHEMA, False, "a+b")
+    assert iceberg_stack.row_count("merge") == 5
 
-    keys = warehouse_objects(iceberg_lane, "portolake/")
-
-    # Should have at least data files and metadata
-    assert len(keys) > 0, "No objects found in warehouse bucket"
-    has_parquet = any(k.endswith(".parquet") for k in keys)
-    assert has_parquet, f"No parquet files in warehouse: {keys}"
+    backend.publish("merge", {}, SCHEMA, False, "b", removed={"a.parquet"})
+    assert iceberg_stack.row_count("merge") == 3
+    assert iceberg_stack.rows("merge", "SELECT min(id) FROM t") == [(100,)]

@@ -86,7 +86,7 @@ def test_api_import_loads_no_heavy_dependency() -> None:
     A plugin imports the API at module level, so its cost lands on every
     hook call that loads the plugin.
     """
-    heavy = ["click", "rasterio", "pyarrow", "pyiceberg", "pystac", "geopandas"]
+    heavy = ["click", "rasterio", "pyarrow", "duckdb", "httpx", "pystac", "geopandas"]
     code = (
         f"import sys, portolan_cli.api\nprint(sorted(m for m in {heavy!r} if m in sys.modules))\n"
     )

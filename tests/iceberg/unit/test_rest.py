@@ -22,6 +22,7 @@ from portolan_cli.backends.iceberg.rest import (
     RestCatalogError,
 )
 from portolan_cli.extract.common.retry import RetryConfig
+from tests.iceberg.fake_lake import FakeCatalog
 
 pytestmark = pytest.mark.unit
 
@@ -29,89 +30,12 @@ BASE = "http://catalog.test"
 NO_WAIT = RetryConfig(max_attempts=3, initial_delay=0.0, max_delay=0.0)
 
 
-class FakeServer:
-    """The subset of the Iceberg REST catalog the client uses."""
+class FakeServer(FakeCatalog):
+    """The fake catalog, with the vended credential the client tests look for."""
 
     def __init__(self, *, prefix: str | None = None, prefix_in: str = "overrides") -> None:
-        self.prefix = prefix
-        self.prefix_in = prefix_in
-        self.namespaces: set[str] = set()
-        self.tables: dict[tuple[str, str], dict[str, Any]] = {}
-        self.requests: list[httpx.Request] = []
-        self.failures: list[int] = []  # statuses to return before the real answer
-        self.commit_status: int | None = None
-
-    def add_table(self, namespace: str, name: str, metadata: dict[str, Any]) -> None:
-        self.namespaces.add(namespace)
-        self.tables[(namespace, name)] = {
-            "metadata-location": f"s3://warehouse/{namespace}/{name}/metadata/v1.metadata.json",
-            "metadata": metadata,
-            "config": {"s3.access-key-id": "vended-key"},
-        }
-
-    def _base(self) -> str:
-        return f"/v1/{self.prefix}" if self.prefix else "/v1"
-
-    def __call__(self, request: httpx.Request) -> httpx.Response:  # noqa: C901, PLR0911
-        self.requests.append(request)
-        if self.failures:
-            return httpx.Response(self.failures.pop(0), json={"error": {"message": "later"}})
-        path = request.url.path
-        if path == "/v1/config":
-            body: dict[str, Any] = {"defaults": {}, "overrides": {}}
-            if self.prefix:
-                body[self.prefix_in] = {"prefix": self.prefix}
-            return httpx.Response(200, json=body)
-        base = self._base()
-        if not path.startswith(f"{base}/namespaces"):
-            return httpx.Response(404, json={"error": {"message": f"no route {path}"}})
-        parts = path[len(f"{base}/namespaces") :].strip("/").split("/")
-        if parts == [""]:
-            if request.method == "POST":
-                namespace = json.loads(request.content)["namespace"][0]
-                if namespace in self.namespaces:
-                    return httpx.Response(409, json={"error": {"message": "exists"}})
-                self.namespaces.add(namespace)
-                return httpx.Response(200, json={"namespace": [namespace]})
-            return httpx.Response(405)
-        namespace = parts[0]
-        if len(parts) == 1:
-            if request.method == "HEAD":
-                return httpx.Response(204 if namespace in self.namespaces else 404)
-            if request.method == "DELETE":
-                self.namespaces.discard(namespace)
-                return httpx.Response(204)
-            return httpx.Response(405)
-        if parts[1] != "tables":
-            return httpx.Response(404)
-        if len(parts) == 2:
-            names = [n for (ns, n) in self.tables if ns == namespace]
-            return httpx.Response(
-                200, json={"identifiers": [{"namespace": [namespace], "name": n} for n in names]}
-            )
-        key = (namespace, parts[2])
-        if request.method == "HEAD":
-            return httpx.Response(204 if key in self.tables else 404)
-        if key not in self.tables:
-            return httpx.Response(404, json={"error": {"message": "NoSuchTableException"}})
-        if request.method == "GET":
-            return httpx.Response(200, json=self.tables[key])
-        if request.method == "DELETE":
-            del self.tables[key]
-            return httpx.Response(204)
-        if request.method == "POST":
-            if self.commit_status is not None:
-                return httpx.Response(self.commit_status, json={"error": {"message": "conflict"}})
-            table = self.tables[key]
-            table["metadata-location"] = table["metadata-location"].replace("v1", "v2")
-            return httpx.Response(
-                200,
-                json={
-                    "metadata-location": table["metadata-location"],
-                    "metadata": table["metadata"],
-                },
-            )
-        return httpx.Response(405)
+        super().__init__(prefix=prefix or "", prefix_in=prefix_in)
+        self.table_config = {"s3.access-key-id": "vended-key"}
 
 
 def _client(server: FakeServer, **kwargs: Any) -> RestCatalog:
@@ -351,7 +275,8 @@ def test_namespace_names_are_url_encoded() -> None:
 
 def test_commit_table_sends_requirements_and_updates_verbatim() -> None:
     server = FakeServer()
-    server.add_table("ns", "t", {"table-uuid": "u"})
+    # The requirements below name this uuid and this snapshot; the fake checks them.
+    server.add_table("ns", "t", {"table-uuid": "u", "current-snapshot-id": 7})
     requirements: list[dict[str, Any]] = [
         {"type": "assert-table-uuid", "uuid": "u"},
         {"type": "assert-ref-snapshot-id", "ref": "main", "snapshot-id": 7},

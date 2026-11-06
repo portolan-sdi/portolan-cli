@@ -1,87 +1,82 @@
-"""E2E tests for concurrent access via REST catalog.
+"""Two writers on the stack: different collections both land, and a reader never sees nothing.
 
-These tests verify that Iceberg's optimistic concurrency control works
-correctly when multiple threads publish simultaneously.
-
-Marked as e2e_slow -- runs only in nightly CI.
+Marked ``e2e_slow``, so the nightly runs them. Each thread builds its own
+backend, because a DuckDB connection serves one thread.
 """
 
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import TYPE_CHECKING
 
 import pytest
 
-from tests.iceberg.e2e.conftest import write_test_parquet
+from portolan_cli.backends.iceberg.backend import IcebergBackend
+from tests.iceberg.e2e.conftest import SCHEMA, write_test_parquet
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from portolan_cli.api import Version
+    from tests.iceberg_stack import IcebergStack
+
+pytestmark = [pytest.mark.e2e, pytest.mark.e2e_slow]
 
 
-@pytest.mark.e2e
-@pytest.mark.e2e_slow
-def test_concurrent_publish_different_collections(rest_iceberg_backend, tmp_path):
-    """Two threads publishing to different collections should both succeed."""
-    results = {}
+def test_concurrent_publishes_to_different_collections_both_succeed(
+    iceberg_stack: IcebergStack, tmp_path: Path
+) -> None:
+    _ = iceberg_stack
 
-    def publish_to(collection_name: str, index: int):
-        asset = write_test_parquet(tmp_path / f"{collection_name}.parquet", rows=index + 1)
-        return rest_iceberg_backend.publish(
-            collection=collection_name,
-            assets={f"{collection_name}.parquet": str(asset)},
-            schema={"columns": ["id", "val"], "types": {}, "hash": f"h{index}"},
-            breaking=False,
-            message=f"Concurrent write to {collection_name}",
-        )
+    def publish_to(collection: str, rows: int) -> Version:
+        (tmp_path / collection).mkdir()
+        asset = write_test_parquet(tmp_path / collection / "data.parquet", rows=rows)
+        backend = IcebergBackend(catalog_root=tmp_path)
+        return backend.publish(collection, {"data.parquet": str(asset)}, SCHEMA, False, "c")
 
     with ThreadPoolExecutor(max_workers=2) as pool:
         futures = {
-            pool.submit(publish_to, f"concurrent-a-{id(tmp_path)}", 0): "a",
-            pool.submit(publish_to, f"concurrent-b-{id(tmp_path)}", 1): "b",
+            pool.submit(publish_to, "concurrent-a", 1): "a",
+            pool.submit(publish_to, "concurrent-b", 2): "b",
         }
-        for future in as_completed(futures):
-            label = futures[future]
-            results[label] = future.result()
+        results = {futures[f]: f.result() for f in as_completed(futures)}
 
     assert results["a"].version == "1.0.0"
     assert results["b"].version == "1.0.0"
 
 
-@pytest.mark.e2e
-@pytest.mark.e2e_slow
-def test_concurrent_read_during_write(rest_iceberg_backend, tmp_path):
-    """Reader should see consistent state during concurrent write."""
-    collection = f"read-write-{id(tmp_path)}"
-
-    # Seed with v1
-    asset = write_test_parquet(tmp_path / "seed.parquet")
-    rest_iceberg_backend.publish(
-        collection=collection,
-        assets={"seed.parquet": str(asset)},
-        schema={"columns": ["id", "val"], "types": {}, "hash": "h0"},
-        breaking=False,
-        message="Seed",
+def test_a_reader_during_a_write_sees_the_old_or_the_new_version(
+    iceberg_stack: IcebergStack, tmp_path: Path
+) -> None:
+    _ = iceberg_stack
+    (tmp_path / "read-write").mkdir()
+    seed = write_test_parquet(tmp_path / "read-write" / "data.parquet", rows=1)
+    IcebergBackend(catalog_root=tmp_path).publish(
+        "read-write",
+        {"data.parquet": str(seed)},
+        SCHEMA,
+        False,
+        "seed",
     )
 
-    read_results = []
-
-    def writer():
-        a = write_test_parquet(tmp_path / "w.parquet", rows=5)
-        return rest_iceberg_backend.publish(
-            collection=collection,
-            assets={"w.parquet": str(a)},
-            schema={"columns": ["id", "val"], "types": {}, "hash": "h1"},
-            breaking=False,
-            message="Write during read",
+    def writer() -> Version:
+        asset = write_test_parquet(tmp_path / "read-write" / "data.parquet", rows=5)
+        return IcebergBackend(catalog_root=tmp_path).publish(
+            "read-write",
+            {"data.parquet": str(asset)},
+            SCHEMA,
+            False,
+            "second",
         )
 
-    def reader():
-        versions = rest_iceberg_backend.list_versions(collection)
-        read_results.append(len(versions))
-        return versions
+    def reader() -> int:
+        return len(IcebergBackend(catalog_root=tmp_path).list_versions("read-write"))
 
     with ThreadPoolExecutor(max_workers=2) as pool:
-        fw = pool.submit(writer)
-        fr = pool.submit(reader)
-        fw.result()
-        fr.result()
+        write = pool.submit(writer)
+        read = pool.submit(reader)
+        write.result()
+        seen = read.result()
 
-    # Reader should see either 1 (pre-write) or 2 (post-write), never 0
-    assert read_results[0] in (1, 2), f"Expected 1 or 2 versions, reader saw {read_results[0]}"
+    assert seen in (1, 2)
+    assert len(IcebergBackend(catalog_root=tmp_path).list_versions("read-write")) == 2

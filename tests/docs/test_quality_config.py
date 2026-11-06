@@ -98,8 +98,8 @@ OBJECT_STORE_IMPORTERS = frozenset(
 )
 
 # Delete only. Lower these numbers when a name or a clone goes away.
-VULTURE_WHITELIST_NAMES = 96
-JSCPD_BASELINE_FINGERPRINTS = 546
+VULTURE_WHITELIST_NAMES = 92
+JSCPD_BASELINE_FINGERPRINTS = 511
 
 
 def _pyproject() -> dict[str, Any]:

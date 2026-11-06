@@ -34,18 +34,18 @@ def test_backend_comes_from_a_builtin_hook_module() -> None:
     assert "iceberg" in results["builtin:iceberg"]
 
 
-def test_missing_extra_keeps_the_install_hint(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Without pyiceberg, `get_backend` names the extra to install."""
+def test_a_missing_catalog_uri_names_the_variable(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Without ``PORTOLAN_ICEBERG_URI``, `get_backend` names the variable to set."""
     from portolan_cli.backends import get_backend
 
-    monkeypatch.setitem(sys.modules, "portolan_cli.backends.iceberg.backend", None)
+    monkeypatch.delenv("PORTOLAN_ICEBERG_URI", raising=False)
 
     with pytest.raises(ValueError) as excinfo:
         get_backend("iceberg")
 
     assert str(excinfo.value) == (
-        "The 'iceberg' backend requires the iceberg extra. "
-        "Install it with: pip install portolan-cli[iceberg]"
+        "The iceberg backend needs PORTOLAN_ICEBERG_URI, the Iceberg REST catalog "
+        "to write to, for example https://catalog.example.org."
     )
 
 
@@ -81,12 +81,12 @@ def test_none_keeps_the_iceberg_commands() -> None:
     assert "version rollback [OPTIONS] COLLECTION TARGET_VERSION" in result.output
 
 
-def test_command_and_hook_modules_load_without_pyiceberg() -> None:
-    """The hook and command modules import neither pyiceberg nor pyarrow."""
+def test_command_and_hook_modules_load_without_the_writer() -> None:
+    """The hook and command modules import neither DuckDB nor httpx nor pyarrow."""
     code = (
         "import sys\n"
         "import portolan_cli.backends.iceberg.cli, portolan_cli.backends.iceberg.hooks\n"
-        "print(sorted(m for m in ('pyiceberg', 'pyarrow') if m in sys.modules))\n"
+        "print(sorted(m for m in ('duckdb', 'httpx', 'pyarrow') if m in sys.modules))\n"
     )
 
     result = subprocess.run(

@@ -1,13 +1,16 @@
-"""Tests for IcebergBackend.on_post_add() hook.
+"""``IcebergBackend.on_post_add``: the Iceberg fields on collection.json and the remote upload.
 
-Moved from portolan-cli's test_remote_upload_on_add.py. The on_post_add hook
-combines STAC extension metadata update and remote STAC metadata upload.
+The hook runs after ``add`` published the version. It merges the
+``table:*`` and ``iceberg:*`` fields into the collection document on disk,
+adds the extension URLs and the Iceberg metadata asset, and uploads the
+STAC files when a remote is configured. The table is on the fake lake.
 """
 
 from __future__ import annotations
 
+import json
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, patch
 
 import pystac
@@ -17,443 +20,178 @@ from portolan_cli.backends.iceberg.stac_generator import (
     STAC_ICEBERG_EXTENSION,
     STAC_TABLE_EXTENSION,
 )
-from tests.iceberg.conftest import publish_boundaries
+from tests.iceberg.fake_lake import Lake
 
 if TYPE_CHECKING:
     from pathlib import Path
 
+pytestmark = pytest.mark.unit
 
-@pytest.fixture
-def catalog_with_stac(tmp_path: Path) -> tuple[Path, Path, pystac.Collection]:
-    """Create a catalog with STAC files for on_post_add testing.
 
-    Returns (catalog_root, item_dir, collection).
-    """
-    catalog_root = tmp_path / "catalog"
-    catalog_root.mkdir()
-    (catalog_root / "catalog.json").write_text('{"type": "Catalog"}')
-
-    collection_dir = catalog_root / "boundaries"
-    collection_dir.mkdir()
-    (collection_dir / "collection.json").write_text('{"type": "Collection"}')
-
+def _catalog_with_stac(lake: Lake) -> tuple[Path, pystac.Collection]:
+    """Write a catalog.json, a collection.json with hook fields, and an item."""
+    root = lake.root
+    (root / "catalog.json").write_text('{"type": "Catalog"}', encoding="utf-8")
+    collection_dir = root / "roads"
+    collection_dir.mkdir(exist_ok=True)
+    (collection_dir / "collection.json").write_text(
+        json.dumps(
+            {
+                "type": "Collection",
+                "id": "roads",
+                "stac_extensions": ["https://example.org/ext/v1.0.0/schema.json"],
+                "example:enriched": True,
+                "links": [{"rel": "root", "href": "../catalog.json"}],
+                "assets": {"data": {"href": "./roads.parquet", "roles": ["data"]}},
+            }
+        ),
+        encoding="utf-8",
+    )
     item_dir = collection_dir / "item1"
-    item_dir.mkdir()
-    (item_dir / "data.parquet").write_bytes(b"fake parquet")
-    (item_dir / "item1.json").write_text('{"type": "Feature"}')
-
+    item_dir.mkdir(exist_ok=True)
+    (item_dir / "item1.json").write_text('{"type": "Feature"}', encoding="utf-8")
     collection = pystac.Collection(
-        id="boundaries",
+        id="roads",
         description="test",
         extent=pystac.Extent(
             spatial=pystac.SpatialExtent(bboxes=[[-180, -90, 180, 90]]),
             temporal=pystac.TemporalExtent(intervals=[[None, None]]),
         ),
     )
+    return item_dir, collection
 
-    return catalog_root, item_dir, collection
 
-
-def _make_context(
-    catalog_root: Path,
-    item_dir: Path,
-    collection: pystac.Collection,
-    remote: str | None = "gs://test-bucket/catalog",
-) -> dict:
-    """Build a PostAddContext dict for testing."""
+def _context(lake: Lake, item_dir: Path, collection: pystac.Collection, remote: str | None) -> Any:
     return {
-        "catalog_root": catalog_root,
-        "collection_id": "boundaries",
-        "collection_dir": catalog_root / "boundaries",
+        "catalog_root": lake.root,
+        "collection_id": "roads",
+        "collection_dir": lake.root / "roads",
         "collection": collection,
         "item_id": "item1",
         "item_dir": item_dir,
-        "asset_files": {"data.parquet": (item_dir / "data.parquet", "abc", 1024)},
+        "asset_files": {"roads.parquet": (lake.root / "roads" / "roads.parquet", "abc", 1024)},
         "remote": remote,
+        "items": [{"item_id": "item1", "item_dir": item_dir, "asset_files": {}}],
     }
 
 
-def _publish_and_run_post_add(iceberg_backend, parquet_file, catalog_root, item_dir, collection):
-    """Publish one collection and run the post-add hook over it with no remote."""
-    publish_boundaries(iceberg_backend, parquet_file)
-    context = _make_context(catalog_root, item_dir, collection, remote=None)
-    with patch("portolan_cli.backends.iceberg.backend.upload_file", create=True):
-        iceberg_backend.on_post_add(context)
-
-
-def _publish_and_upload(
-    iceberg_backend, parquet_file, catalog_root, item_dir, collection, remote
-) -> MagicMock:
-    """Publish, run the post-add hook with a remote, and return the upload mock."""
-    publish_boundaries(iceberg_backend, parquet_file)
-    context = _make_context(catalog_root, item_dir, collection, remote=remote)
-    with patch("portolan_cli.sync.upload.upload_file") as mock_upload:
-        mock_upload.return_value = MagicMock(success=True)
-        iceberg_backend.on_post_add(context)
-    return mock_upload
-
-
-@pytest.mark.integration
-def test_on_post_add_updates_stac_extensions(iceberg_backend, parquet_file, catalog_with_stac):
-    """on_post_add should update collection extra_fields with STAC extension metadata."""
-    catalog_root, item_dir, collection = catalog_with_stac
-
-    # Publish so get_stac_metadata has data
-    iceberg_backend.publish(
-        collection="boundaries",
-        assets={"item1/data.parquet": str(parquet_file)},
-        schema={
-            "columns": ["id", "name", "value"],
-            "types": {"id": "int64", "name": "string", "value": "float64"},
-            "hash": "abc",
-        },
-        breaking=False,
-        message="test",
-    )
-
-    context = _make_context(catalog_root, item_dir, collection, remote=None)
-
-    with patch("portolan_cli.backends.iceberg.backend.upload_file", create=True):
-        iceberg_backend.on_post_add(context)
-
-    # Collection should have table:columns in extra_fields
-    assert "table:columns" in collection.extra_fields
-    # Extensions should be set via pystac attribute, not extra_fields
-    assert STAC_TABLE_EXTENSION in collection.stac_extensions
-    assert STAC_ICEBERG_EXTENSION in collection.stac_extensions
-
-
-@pytest.mark.integration
-def test_on_post_add_logs_warning_when_stac_update_fails(
-    iceberg_backend, parquet_file, catalog_with_stac, caplog
-):
-    """STAC enrichment failures must surface as a warning with traceback, not be swallowed."""
-    catalog_root, item_dir, collection = catalog_with_stac
-
-    publish_boundaries(iceberg_backend, parquet_file)
-
-    context = _make_context(catalog_root, item_dir, collection, remote=None)
-
-    with (
-        patch(
-            "portolan_cli.backends.iceberg.stac_generator.generate_collection_metadata",
-            side_effect=RuntimeError("boom"),
-        ),
-        caplog.at_level(logging.WARNING, logger="portolan_cli.backends.iceberg.backend"),
-    ):
-        # Best-effort enrichment: the add must not fail if STAC update fails.
-        iceberg_backend.on_post_add(context)
-
-    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
-    assert any("boundaries" in r.getMessage() for r in warnings)
-    # exc_info must be attached so the traceback reaches the logs.
-    assert any(r.exc_info is not None for r in warnings)
-
-
-@pytest.mark.integration
-def test_on_post_add_uploads_stac_metadata_when_remote_set(
-    iceberg_backend, parquet_file, catalog_with_stac
-):
-    """on_post_add should upload STAC metadata when remote is configured."""
-    catalog_root, item_dir, collection = catalog_with_stac
-
-    mock_upload = _publish_and_upload(
-        iceberg_backend,
-        parquet_file,
-        catalog_root,
-        item_dir,
-        collection,
-        remote="gs://test-bucket/catalog",
-    )
-
-    assert mock_upload.call_count >= 1
-    destinations = [call.kwargs["destination"] for call in mock_upload.call_args_list]
-    assert any("item1.json" in d for d in destinations)
-
-
-@pytest.mark.integration
-def test_on_post_add_no_upload_when_remote_is_none(
-    iceberg_backend, parquet_file, catalog_with_stac
-):
-    """on_post_add should not upload when remote is None."""
-    catalog_root, item_dir, collection = catalog_with_stac
-
-    publish_boundaries(iceberg_backend, parquet_file)
-
-    context = _make_context(catalog_root, item_dir, collection, remote=None)
-
-    with patch("portolan_cli.sync.upload.upload_file") as mock_upload:
-        iceberg_backend.on_post_add(context)
-
-    mock_upload.assert_not_called()
-
-
-@pytest.mark.integration
-def test_on_post_add_uploads_correct_remote_paths(iceberg_backend, parquet_file, catalog_with_stac):
-    """Remote paths should follow the correct pattern for STAC metadata."""
-    catalog_root, item_dir, collection = catalog_with_stac
-
-    mock_upload = _publish_and_upload(
-        iceberg_backend,
-        parquet_file,
-        catalog_root,
-        item_dir,
-        collection,
-        remote="gs://test-bucket/catalog",
-    )
-
-    destinations = [call.kwargs["destination"] for call in mock_upload.call_args_list]
-    assert "gs://test-bucket/catalog/boundaries/item1/item1.json" in destinations
-    assert "gs://test-bucket/catalog/boundaries/collection.json" in destinations
-    assert "gs://test-bucket/catalog/catalog.json" in destinations
-    # Data files should NOT be uploaded
-    assert "gs://test-bucket/catalog/boundaries/item1/data.parquet" not in destinations
-
-
-@pytest.mark.integration
-def test_on_post_add_strips_trailing_slash(iceberg_backend, parquet_file, catalog_with_stac):
-    """Trailing slash in remote URL should be stripped to avoid double-slash."""
-    catalog_root, item_dir, collection = catalog_with_stac
-
-    mock_upload = _publish_and_upload(
-        iceberg_backend,
-        parquet_file,
-        catalog_root,
-        item_dir,
-        collection,
-        remote="gs://test-bucket/catalog/",
-    )
-
-    destinations = [call.kwargs["destination"] for call in mock_upload.call_args_list]
-    assert all("//" not in d.split("://")[1] for d in destinations)
-
-
-@pytest.mark.integration
-def test_on_post_add_no_data_files_uploaded(iceberg_backend, parquet_file, catalog_with_stac):
-    """on_post_add should never upload data files -- Iceberg manages them."""
-    catalog_root, item_dir, collection = catalog_with_stac
-
-    mock_upload = _publish_and_upload(
-        iceberg_backend,
-        parquet_file,
-        catalog_root,
-        item_dir,
-        collection,
-        remote="gs://test-bucket/catalog",
-    )
-
-    destinations = [call.kwargs["destination"] for call in mock_upload.call_args_list]
-    assert not any("data.parquet" in d for d in destinations)
-
-
-# --- Extension and asset merge behavior ---
-
-
-@pytest.mark.integration
-def test_on_post_add_merges_stac_extensions(iceberg_backend, parquet_file, catalog_with_stac):
-    """on_post_add should merge portolake extensions into collection.stac_extensions."""
-    catalog_root, item_dir, collection = catalog_with_stac
-    collection.stac_extensions = [STAC_TABLE_EXTENSION]
-
-    _publish_and_run_post_add(iceberg_backend, parquet_file, catalog_root, item_dir, collection)
-
-    assert STAC_TABLE_EXTENSION in collection.stac_extensions
-    assert STAC_ICEBERG_EXTENSION in collection.stac_extensions
-
-
-@pytest.mark.integration
-def test_on_post_add_preserves_existing_extensions(
-    iceberg_backend, parquet_file, catalog_with_stac
-):
-    """on_post_add should preserve third-party extensions already on the collection."""
-    catalog_root, item_dir, collection = catalog_with_stac
-    projection_ext = "https://stac-extensions.github.io/projection/v2.0.0/schema.json"
-    collection.stac_extensions = [projection_ext]
-
-    _publish_and_run_post_add(iceberg_backend, parquet_file, catalog_root, item_dir, collection)
-
-    assert projection_ext in collection.stac_extensions
-    assert STAC_TABLE_EXTENSION in collection.stac_extensions
-    assert STAC_ICEBERG_EXTENSION in collection.stac_extensions
-
-
-@pytest.mark.integration
-def test_on_post_add_no_duplicate_extensions(iceberg_backend, parquet_file, catalog_with_stac):
-    """on_post_add should not create duplicate extension entries."""
-    catalog_root, item_dir, collection = catalog_with_stac
-    collection.stac_extensions = [STAC_TABLE_EXTENSION, STAC_ICEBERG_EXTENSION]
-
-    _publish_and_run_post_add(iceberg_backend, parquet_file, catalog_root, item_dir, collection)
-
-    assert len(collection.stac_extensions) == len(set(collection.stac_extensions))
-
-
-@pytest.mark.integration
-def test_on_post_add_leaves_the_data_asset_alone(iceberg_backend, parquet_file, catalog_with_stac):
-    """An asset already keyed "data" survives (issue #883).
-
-    The backend used to assign assets["data"] the warehouse directory, typed
-    application/x-iceberg. A generated catalog keys its GeoParquet asset by
-    filename, so there the assignment added a second asset carrying the same
-    "data" role. A collection that does use the "data" key, such as a
-    hand-authored one, lost it.
-    """
-    catalog_root, item_dir, collection = catalog_with_stac
-    collection.assets["data"] = pystac.Asset(
-        href="./roads.parquet",
-        media_type="application/vnd.apache.parquet",
-        roles=["data"],
-    )
-
-    _publish_and_run_post_add(iceberg_backend, parquet_file, catalog_root, item_dir, collection)
-
-    assert collection.assets["data"].href == "./roads.parquet"
-    assert collection.assets["data"].media_type == "application/vnd.apache.parquet"
-    assert collection.assets["data"].roles == ["data"]
-
-
-@pytest.mark.integration
-def test_on_post_add_writes_no_iceberg_asset_for_a_local_warehouse(
-    iceberg_backend, parquet_file, catalog_with_stac
-):
-    """A local warehouse gets no asset, because no reader can fetch the file.
-
-    The extension says to add the asset only when the metadata.json is a
-    document a reader can fetch. The default SQLite catalog writes a file://
-    location, which also carries the absolute path of the machine that ran the
-    command.
-    """
-    catalog_root, item_dir, collection = catalog_with_stac
-
-    _publish_and_run_post_add(iceberg_backend, parquet_file, catalog_root, item_dir, collection)
-
-    assert "iceberg" not in collection.assets
-    assert "iceberg:metadata_location" not in collection.extra_fields
-    assert collection.extra_fields["iceberg:catalog_type"] == "sql"
-    assert collection.extra_fields["iceberg:table_id"] == "portolake.boundaries"
-
-
-@pytest.mark.integration
-def test_on_post_add_adds_the_iceberg_metadata_asset_when_fetchable(
-    iceberg_backend, parquet_file, catalog_with_stac, monkeypatch
-):
-    """An https metadata.json becomes its own asset, with the metadata role.
-
-    A reader opens the table from this file with no catalog service, which is
-    what the convention asks for. The role is "metadata" alone, because the
-    GeoParquet file keeps the data role.
-    """
-    from portolan_cli.backends.iceberg import stac_generator
-
-    published = "https://data.example.org/warehouse/boundaries/metadata/v3.metadata.json"
-    real = stac_generator.generate_collection_metadata
-
-    def _published(table):
-        meta = real(table)
-        meta["iceberg:metadata_location"] = published
-        return meta
-
-    monkeypatch.setattr(stac_generator, "generate_collection_metadata", _published)
-
-    catalog_root, item_dir, collection = catalog_with_stac
-    _publish_and_run_post_add(iceberg_backend, parquet_file, catalog_root, item_dir, collection)
-
-    asset = collection.assets["iceberg"]
-    assert asset.href == published
-    assert asset.media_type == "application/vnd.apache.iceberg+json"
-    assert asset.roles == ["metadata"]
-    assert collection.extra_fields["iceberg:metadata_location"] == published
-
-
-@pytest.mark.integration
-def test_on_post_add_preserves_existing_assets(iceberg_backend, parquet_file, catalog_with_stac):
-    """on_post_add should leave every asset already on the collection alone."""
-    catalog_root, item_dir, collection = catalog_with_stac
-    collection.assets["thumbnail"] = pystac.Asset(
-        href="https://example.com/thumb.png",
-        media_type="image/png",
-        roles=["thumbnail"],
-    )
-    collection.assets["data"] = pystac.Asset(
-        href="./roads.parquet",
-        media_type="application/vnd.apache.parquet",
-        roles=["data"],
-    )
-
-    _publish_and_run_post_add(iceberg_backend, parquet_file, catalog_root, item_dir, collection)
-
-    assert "thumbnail" in collection.assets
-    assert collection.assets["data"].href == "./roads.parquet"
-
-
-@pytest.mark.integration
-def test_on_post_add_keeps_fields_an_enrichment_hook_wrote(
-    iceberg_backend, parquet_file, catalog_with_stac
-):
-    """The hook merges into the JSON on disk and keeps plugin fields (#947).
-
-    The enrichment hooks write to collection.json and the item files before
-    the backend publishes. The in-memory collection never sees those fields.
-    A pystac save from memory would drop them from the files and the upload.
-    """
-    import json
-
-    catalog_root, item_dir, collection = catalog_with_stac
-    collection_json = catalog_root / "boundaries" / "collection.json"
-    item_json = item_dir / "item1.json"
-    collection_json.write_text(
-        json.dumps({"type": "Collection", "id": "boundaries", "sci:citation": "Agency (2026)"})
-    )
-    item_json.write_text(json.dumps({"type": "Feature", "id": "item1", "sci:doi": "10.1/x"}))
-
-    _publish_and_run_post_add(iceberg_backend, parquet_file, catalog_root, item_dir, collection)
-
-    written = json.loads(collection_json.read_text())
-    assert written["sci:citation"] == "Agency (2026)"
-    assert written["iceberg:table_id"] == "portolake.boundaries"
-    assert STAC_TABLE_EXTENSION in written["stac_extensions"]
-    assert STAC_ICEBERG_EXTENSION in written["stac_extensions"]
-    assert json.loads(item_json.read_text()) == {
-        "type": "Feature",
-        "id": "item1",
-        "sci:doi": "10.1/x",
+def _run(
+    lake: Lake, remote: str | None = None
+) -> tuple[dict[str, Any], pystac.Collection, MagicMock]:
+    item_dir, collection = _catalog_with_stac(lake)
+    lake.publish()
+    with patch("portolan_cli.sync.upload.upload_file") as upload:
+        upload.return_value = MagicMock(success=True)
+        lake.backend.on_post_add(_context(lake, item_dir, collection, remote))
+    document = json.loads((lake.root / "roads" / "collection.json").read_text(encoding="utf-8"))
+    return document, collection, upload
+
+
+# --- the fields ---
+
+
+def test_the_fields_describe_a_v3_table_in_a_rest_catalog(lake: Lake) -> None:
+    document, _, _ = _run(lake)
+
+    assert document["iceberg:catalog_type"] == "rest"
+    assert document["iceberg:catalog_uri"] == "https://catalog.example.org"
+    assert document["iceberg:authorization_type"] == "none"
+    assert document["iceberg:table_id"] == "portolake.roads"
+    assert document["iceberg:format_version"] == 3
+    assert document["iceberg:current_snapshot_id"] == str(lake.metadata()["current-snapshot-id"])
+    assert document["table:columns"] == [
+        {"name": "id", "type": "int64"},
+        {"name": "name", "type": "string"},
+        {"name": "geometry", "type": "geometry"},
+    ]
+    assert document["table:primary_geometry"] == "geometry"
+
+
+def test_the_row_count_is_queried_not_read_from_the_summary(lake: Lake) -> None:
+    document, _, _ = _run(lake)
+
+    assert document["table:row_count"] == 3
+    assert any(s.startswith('SELECT count(*) FROM lake."portolake"."roads"') for s in lake.sql)
+
+
+def test_the_metadata_asset_points_at_the_https_location(lake: Lake) -> None:
+    document, collection, _ = _run(lake)
+
+    location = document["iceberg:metadata_location"]
+    assert location.startswith("https://s3.example.org/warehouse/portolake/roads/metadata/")
+    assert document["assets"]["iceberg"] == {
+        "href": location,
+        "type": "application/vnd.apache.iceberg+json",
+        "roles": ["metadata"],
+        "description": "Apache Iceberg table metadata, read with DuckDB iceberg_scan()",
     }
+    assert collection.assets["iceberg"].href == location
 
 
-@pytest.mark.integration
-def test_on_post_add_keeps_the_structural_links(iceberg_backend, parquet_file, catalog_with_stac):
-    """The hook must leave ``root`` and ``parent`` alone (issue #940).
+def test_an_unfetchable_location_gets_the_fields_but_no_asset(tmp_path: Path) -> None:
+    """An s3:// location is not a document a reader can fetch (PTL-AST-002)."""
+    lake = Lake(tmp_path, use_ssl=False)
 
-    The hook used to call ``normalize_hrefs`` and ``save(SELF_CONTAINED)``.
-    pystac points ``root`` at the object it saves, so that made the collection
-    its own root and dropped ``parent``. ``portolan check`` then reported
-    PTL-LNK-001 and PTL-LNK-006 on every collection the backend wrote.
+    document, _, _ = _run(lake)
 
-    #958 replaced that save with ``_merge_into_collection_json``, which fixed it
-    as a side effect of keeping the fields an enrichment hook writes. This test
-    pins the links, so a later change to how the hook writes cannot bring the
-    finding back without failing here.
-    """
-    import json
+    assert document["iceberg:metadata_location"].startswith("s3://warehouse/")
+    assert "iceberg" not in document["assets"]
 
-    catalog_root, item_dir, collection = catalog_with_stac
-    collection_json = catalog_root / "boundaries" / "collection.json"
-    collection_json.write_text(
-        json.dumps(
-            {
-                "type": "Collection",
-                "id": "boundaries",
-                "links": [
-                    {"rel": "root", "href": "../catalog.json", "type": "application/json"},
-                    {"rel": "parent", "href": "../catalog.json", "type": "application/json"},
-                ],
-            }
-        )
+
+def test_the_extensions_are_added_once_and_the_others_kept(lake: Lake) -> None:
+    document, collection, _ = _run(lake)
+    lake.backend.on_post_add(_context(lake, lake.root / "roads" / "item1", collection, None))
+    again = json.loads((lake.root / "roads" / "collection.json").read_text(encoding="utf-8"))
+
+    assert document["stac_extensions"] == [
+        "https://example.org/ext/v1.0.0/schema.json",
+        STAC_TABLE_EXTENSION,
+        STAC_ICEBERG_EXTENSION,
+    ]
+    assert again["stac_extensions"] == document["stac_extensions"]
+    assert collection.stac_extensions.count(STAC_TABLE_EXTENSION) == 1
+
+
+def test_the_hook_fields_the_data_asset_and_the_links_survive(lake: Lake) -> None:
+    """The merge edits the file on disk. A pystac save would drop the hook fields (#947)."""
+    document, _, _ = _run(lake)
+
+    assert document["example:enriched"] is True
+    assert document["assets"]["data"] == {"href": "./roads.parquet", "roles": ["data"]}
+    assert document["links"] == [{"rel": "root", "href": "../catalog.json"}]
+
+
+def test_a_failure_in_the_fields_is_logged_and_does_not_raise(
+    lake: Lake, caplog: pytest.LogCaptureFixture
+) -> None:
+    item_dir, collection = _catalog_with_stac(lake)
+    (lake.root / "roads" / "collection.json").unlink()
+    lake.publish()
+
+    with caplog.at_level(logging.WARNING):
+        lake.backend.on_post_add(_context(lake, item_dir, collection, None))
+
+    assert "Could not update STAC extensions for collection roads" in caplog.text
+
+
+# --- the upload ---
+
+
+def test_the_stac_files_go_to_the_remote_and_the_data_does_not(lake: Lake) -> None:
+    _, _, upload = _run(lake, remote="gs://bucket/catalog/")
+
+    destinations = [call.kwargs["destination"] for call in upload.call_args_list]
+    assert destinations == [
+        "gs://bucket/catalog/roads/item1/item1.json",
+        "gs://bucket/catalog/roads/collection.json",
+        "gs://bucket/catalog/catalog.json",
+    ]
+    assert not any(
+        str(call.kwargs["source"]).endswith(".parquet") for call in upload.call_args_list
     )
 
-    _publish_and_run_post_add(iceberg_backend, parquet_file, catalog_root, item_dir, collection)
 
-    rels = {link["rel"]: link["href"] for link in json.loads(collection_json.read_text())["links"]}
+def test_no_remote_means_no_upload(lake: Lake) -> None:
+    _, _, upload = _run(lake, remote=None)
 
-    assert rels.get("parent") == "../catalog.json"
-    assert rels.get("root") == "../catalog.json"
+    upload.assert_not_called()

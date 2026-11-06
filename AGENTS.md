@@ -104,10 +104,9 @@ uvx jscpd@5.2.1 portolan_cli tests \
   --baseline .jscpd-baseline.json \
   --fail-on-new-clones 0            # Duplicate code
 
-# Iceberg backend development
-uv sync --extra iceberg --extra dev     # Install with iceberg deps
-uv run pytest tests/iceberg/ -m unit    # Run iceberg unit tests
-uv run pytest tests/iceberg/ -m "not e2e and not e2e_slow"  # All iceberg tests (no Docker)
+# Iceberg backend development (DuckDB writes through a REST catalog; no extra needed)
+uv run pytest tests/iceberg/ -m "not e2e and not e2e_slow"  # Iceberg unit tests (no Docker)
+uv run pytest tests/ -m "e2e and not e2e_slow"              # Iceberg e2e tests (Docker compose stack)
 
 # Commits (use commitizen for conventional commits)
 uv run cz commit                        # Interactive commit
@@ -127,7 +126,7 @@ portolan-cli/
 │   └── backends/
 │       ├── json_file.py   # MVP file-based backend (always available)
 │       ├── protocol.py    # VersioningBackend protocol definition
-│       └── iceberg/       # Iceberg backend (requires [iceberg] extra)
+│       └── iceberg/       # Iceberg backend (DuckDB writer + REST catalog client)
 ├── tests/                 # Test suite
 │   ├── fixtures/          # Test data files
 │   ├── specs/             # Human-written test specifications
@@ -136,7 +135,7 @@ portolan-cli/
 │   ├── network/           # Tests requiring network (mocked locally)
 │   ├── benchmark/         # Performance measurements
 │   ├── snapshot/          # Snapshot tests
-│   └── iceberg/           # Iceberg backend tests (unit, integration, e2e)
+│   └── iceberg/           # Iceberg backend tests (unit on a fake catalog, e2e on Docker)
 ├── docs/                  # PUBLIC documentation (Zensical) - tutorials, user guides
 └── .github/workflows/     # CI/CD pipelines
 ```
