@@ -101,7 +101,7 @@ subsystem table below and the path-scoped rules for each.
   which resolves the name CLI flag > config > `"file"`.
 - Iceberg is a built-in plugin. `backends/iceberg/` imports only
   `portolan_cli.api` and `portolan_cli.hookspecs` (the boundary test enforces
-  it). `version rollback` and `version prune` live in
+  it). `version rollback`, `version prune`, and `version refresh` live in
   `backends/iceberg/cli.py` and load through `portolan.commands` entry points
   in `pyproject.toml`.
 - **Lifecycle hooks are Protocol methods (#977).** `on_post_add`, `pull`,

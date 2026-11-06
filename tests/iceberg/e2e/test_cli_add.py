@@ -63,20 +63,25 @@ def test_add_writes_the_iceberg_fields_of_a_v3_table(
 
     assert document["iceberg:catalog_type"] == "rest"
     assert document["iceberg:catalog_uri"] == iceberg_stack.lane.uri
-    assert document["iceberg:authorization_type"] == "none"
+    assert document["iceberg:authorization_type"] == iceberg_stack.lane.authorization_type
     assert document["iceberg:table_id"] == f"{iceberg_stack.namespace}.roads"
     assert document["iceberg:format_version"] == 3
     assert document["iceberg:current_snapshot_id"] == str(metadata["current-snapshot-id"])
-    assert (
-        document["iceberg:metadata_location"] == iceberg_stack.load_table("roads").metadata_location
+    location = iceberg_stack.lane.published_location(
+        iceberg_stack.load_table("roads").metadata_location
     )
+    assert document["iceberg:metadata_location"] == location
     assert document["table:row_count"] == iceberg_stack.row_count("roads")
     assert document["table:primary_geometry"] == "geometry"
     assert any(
         c["name"] == "geometry" and c["type"] == "geometry" for c in document["table:columns"]
     )
     # An s3:// location is not fetchable over the web, so no asset names it (PTL-AST-002).
-    assert "iceberg" not in document["assets"]
+    # An https location is, so the asset names it.
+    if location.startswith("https://"):
+        assert document["assets"]["iceberg"]["href"] == location
+    else:
+        assert "iceberg" not in document["assets"]
     assert {"schema.json" in url for url in document["stac_extensions"]} == {True}
     assert (catalog / "roads" / "README.md").exists()
 
@@ -118,3 +123,31 @@ def test_a_second_add_of_the_same_file_keeps_one_row_per_feature(
 
     assert iceberg_stack.row_count("roads") == before
     assert _collection(catalog)["table:row_count"] == before
+
+
+def test_refresh_follows_a_new_metadata_file(catalog: Path, iceberg_stack: IcebergStack) -> None:
+    """A property commit writes a new metadata file, as the maintenance of a catalog does."""
+    before = _collection(catalog)["iceberg:metadata_location"]
+    iceberg_stack.admin.catalog.commit_table(
+        iceberg_stack.namespace,
+        "roads",
+        requirements=[],
+        updates=[{"action": "set-properties", "updates": {"maintenance.run": "1"}}],
+    )
+    moved = iceberg_stack.lane.published_location(
+        iceberg_stack.load_table("roads").metadata_location
+    )
+
+    result = _run("version", "refresh", "roads", "--json", "--catalog", str(catalog))
+
+    data = assert_one_json_document(result.output)["data"]
+    assert moved != before
+    assert data == {
+        "collection": "roads",
+        "previous_location": before,
+        "metadata_location": moved,
+        "changed": True,
+        "remote": None,
+    }
+    assert _collection(catalog)["iceberg:metadata_location"] == moved
+    assert _collection(catalog)["table:row_count"] == iceberg_stack.row_count("roads")
