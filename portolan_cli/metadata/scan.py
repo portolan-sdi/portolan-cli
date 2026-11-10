@@ -100,7 +100,11 @@ _SYSTEM_FILES = frozenset(
 # , not this scanner.
 _NON_LOCAL_MEDIA_TYPES = frozenset(
     {
+        # The shape the backend wrote before #887.
         "application/x-iceberg",
+        # The media type the STAC Iceberg extension registers for the
+        # metadata asset, which IcebergBackend.on_post_add writes now.
+        "application/vnd.apache.iceberg+json",
     }
 )
 

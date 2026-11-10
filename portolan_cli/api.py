@@ -24,7 +24,11 @@ Groups:
   ``LayerMetadata``, ``SourceLink``, ``LayerSourceOptions``,
   ``EmptyLayerError``, ``ExtractedMetadata``, ``run_layer_extraction``,
   ``extractor_from``.
-- Remote storage: ``upload_file``, ``download_file``, ``PullResult``.
+- Remote storage: ``upload_file``, ``download_file``, ``delete_file``,
+  ``PullResult``, ``S3Settings``, ``resolve_s3_settings``.
+- Retries: ``RetryConfig``, ``retry_with_backoff``, ``is_transient_status``.
+  A backend that talks to a catalog server over HTTP retries with the same
+  rule the extractors apply.
 - Terminal output: ``success``, ``info``, ``warn``, ``error``, ``detail``.
 - JSON output for commands: ``success_envelope``, ``error_envelope``,
   ``ErrorDetail``. A command writes ``envelope.to_json()`` to stdout.
@@ -62,6 +66,11 @@ if TYPE_CHECKING:
     )
     from portolan_cli.errors import InvalidOutputError
     from portolan_cli.extract.common.report import ExtractionReport
+    from portolan_cli.extract.common.retry import (
+        RetryConfig,
+        is_transient_status,
+        retry_with_backoff,
+    )
     from portolan_cli.extract.common.source import (
         Discovery,
         EmptyLayerError,
@@ -100,7 +109,7 @@ if TYPE_CHECKING:
     from portolan_cli.sync.checksums import compute_checksum
     from portolan_cli.sync.download import download_file
     from portolan_cli.sync.pull import PullResult
-    from portolan_cli.sync.upload import upload_file
+    from portolan_cli.sync.upload import S3Settings, delete_file, resolve_s3_settings, upload_file
     from portolan_cli.trace import span
     from portolan_cli.versions import Asset, SchemaInfo, Version, parse_version
 
@@ -128,6 +137,8 @@ __all__ = [
     "PostAddItemContext",
     "PullResult",
     "RASTER_EXTENSIONS",
+    "RetryConfig",
+    "S3Settings",
     "SchemaFingerprint",
     "SchemaInfo",
     "SourceLink",
@@ -138,6 +149,7 @@ __all__ = [
     "compute_checksum",
     "convert_raster",
     "convert_vector",
+    "delete_file",
     "describe_raster_item",
     "describe_vector_item",
     "detail",
@@ -158,8 +170,11 @@ __all__ = [
     "inspect_geoparquet",
     "is_geojson",
     "is_geoparquet",
+    "is_transient_status",
     "parse_version",
     "partition_vector_file",
+    "resolve_s3_settings",
+    "retry_with_backoff",
     "run_layer_extraction",
     "sanitize_published_string",
     "span",
@@ -197,6 +212,8 @@ _EXPORTS = {
     "PostAddItemContext": "portolan_cli.backends.protocol",
     "PullResult": "portolan_cli.sync.pull",
     "RASTER_EXTENSIONS": "portolan_cli.format_families",
+    "RetryConfig": "portolan_cli.extract.common.retry",
+    "S3Settings": "portolan_cli.sync.upload",
     "SchemaFingerprint": "portolan_cli.backends.protocol",
     "SchemaInfo": "portolan_cli.versions",
     "SourceLink": "portolan_cli.extract.common.source",
@@ -207,6 +224,7 @@ _EXPORTS = {
     "compute_checksum": "portolan_cli.sync.checksums",
     "convert_raster": "portolan_cli.preparation",
     "convert_vector": "portolan_cli.preparation",
+    "delete_file": "portolan_cli.sync.upload",
     "describe_raster_item": "portolan_cli.preparation",
     "describe_vector_item": "portolan_cli.preparation",
     "detail": "portolan_cli.output",
@@ -227,8 +245,11 @@ _EXPORTS = {
     "inspect_geoparquet": "portolan_cli.inspect",
     "is_geojson": "portolan_cli.format_families",
     "is_geoparquet": "portolan_cli.formats",
+    "is_transient_status": "portolan_cli.extract.common.retry",
     "parse_version": "portolan_cli.versions",
     "partition_vector_file": "portolan_cli.partitioning",
+    "resolve_s3_settings": "portolan_cli.sync.upload",
+    "retry_with_backoff": "portolan_cli.extract.common.retry",
     "run_layer_extraction": "portolan_cli.extract.common.source",
     "sanitize_published_string": "portolan_cli.extract.common.urls",
     "span": "portolan_cli.trace",
