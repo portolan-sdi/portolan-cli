@@ -136,3 +136,5 @@ portolan_enrich_itme  # unused function (tests/unit/plugin_fixtures/misspelled.p
 remote_versions_diverged  # unused function (tests/unit/test_push.py:151)
 remote_versions_same  # unused function (tests/unit/test_push.py:126)
 stub_add_files  # unused function (tests/unit/extract/common/test_orchestrator_base.py:32)
+
+# Automated fix for issue #1112: Hive-partitioned items: add/check --fix disagree on item naming and duplicate every partition
