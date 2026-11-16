@@ -1,6 +1,7 @@
 # Each image names its tag and the digest that the tag resolved to. A tag that
 # is re-pushed or withdrawn then fails at the pull and does not change the stack.
-# Dependabot proposes each new digest. See .github/dependabot.yml.
+# Renovate proposes each new digest. See renovate/default.json5 in
+# portolan-sdi/portolan-ops, the org preset.
 services:
   rest-catalog:
     image: apache/iceberg-rest-fixture:1.10.1@sha256:f7d679d30ac9c640bdeb2c015dff533cd3c8f1c7d491ebcb5d436f9a42db1d6f
