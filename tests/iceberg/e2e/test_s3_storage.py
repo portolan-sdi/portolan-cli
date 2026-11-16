@@ -6,16 +6,27 @@ in RustFS S3-compatible storage after publishing through the REST catalog.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
 from tests.iceberg.e2e.conftest import write_test_parquet
+from tests.iceberg_stack import scan_row_count, warehouse_objects
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from portolan_cli.backends.iceberg.backend import IcebergBackend
+    from tests.iceberg_stack import IcebergLane, RestAdmin
 
 
 @pytest.mark.e2e
-def test_parquet_files_in_s3(rest_iceberg_backend, rustfs_client, tmp_path):
-    """boto3 list_objects finds Parquet data files in warehouse bucket."""
+def test_parquet_files_in_s3(
+    rest_iceberg_backend: IcebergBackend, iceberg_lane: IcebergLane, tmp_path: Path
+) -> None:
+    """A DuckDB listing finds Parquet data files in the warehouse bucket."""
     asset = write_test_parquet(tmp_path / "s3_data.parquet")
 
     rest_iceberg_backend.publish(
@@ -26,15 +37,16 @@ def test_parquet_files_in_s3(rest_iceberg_backend, rustfs_client, tmp_path):
         message="S3 parquet check",
     )
 
-    response = rustfs_client.list_objects_v2(Bucket="warehouse", Prefix="portolake/s3-parquet/")
-    contents = response.get("Contents", [])
-    parquet_keys = [obj["Key"] for obj in contents if obj["Key"].endswith(".parquet")]
+    keys = warehouse_objects(iceberg_lane, "portolake/s3-parquet/")
+    parquet_keys = [key for key in keys if key.endswith(".parquet")]
 
-    assert len(parquet_keys) > 0, f"No parquet files under portolake/s3-parquet/: {contents}"
+    assert len(parquet_keys) > 0, f"No parquet files under portolake/s3-parquet/: {keys}"
 
 
 @pytest.mark.e2e
-def test_iceberg_metadata_in_s3(rest_iceberg_backend, rustfs_client, tmp_path):
+def test_iceberg_metadata_in_s3(
+    rest_iceberg_backend: IcebergBackend, iceberg_lane: IcebergLane, tmp_path: Path
+) -> None:
     """Iceberg metadata JSON and manifest files should exist in S3."""
     asset = write_test_parquet(tmp_path / "meta_check.parquet")
 
@@ -46,11 +58,7 @@ def test_iceberg_metadata_in_s3(rest_iceberg_backend, rustfs_client, tmp_path):
         message="Metadata check",
     )
 
-    response = rustfs_client.list_objects_v2(
-        Bucket="warehouse", Prefix="portolake/s3-metadata/metadata/"
-    )
-    contents = response.get("Contents", [])
-    keys = [obj["Key"] for obj in contents]
+    keys = warehouse_objects(iceberg_lane, "portolake/s3-metadata/metadata/")
 
     has_metadata_json = any(k.endswith(".metadata.json") for k in keys)
     assert has_metadata_json, f"No metadata.json files found: {keys}"
@@ -58,8 +66,17 @@ def test_iceberg_metadata_in_s3(rest_iceberg_backend, rustfs_client, tmp_path):
 
 @pytest.mark.e2e
 @pytest.mark.e2e_slow
-def test_large_dataset_s3(rest_iceberg_backend, rest_catalog, tmp_path):
-    """10K-row table round-trips correctly through S3."""
+def test_large_dataset_s3(
+    rest_iceberg_backend: IcebergBackend,
+    rest_admin: RestAdmin,
+    iceberg_lane: IcebergLane,
+    tmp_path: Path,
+) -> None:
+    """10K-row table round-trips through S3, read back the way a user reads it.
+
+    DuckDB's ``iceberg_scan`` over the metadata location, with no catalog
+    server, is the reader path the collection publishes.
+    """
     rows = 10_000
     table = pa.table(
         {
@@ -78,7 +95,6 @@ def test_large_dataset_s3(rest_iceberg_backend, rest_catalog, tmp_path):
         message="Large dataset",
     )
 
-    # Read back from Iceberg table via REST catalog
-    iceberg_table = rest_catalog.load_table("portolake.s3-large")
-    result = iceberg_table.scan().to_arrow()
-    assert result.num_rows == rows, f"Expected {rows} rows, got {result.num_rows}"
+    loaded = rest_admin.load_table("portolake", "s3-large")
+    count = scan_row_count(iceberg_lane, loaded.metadata_location)
+    assert count == rows, f"Expected {rows} rows, got {count}"

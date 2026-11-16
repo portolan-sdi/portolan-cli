@@ -6,15 +6,24 @@ against a real Iceberg REST catalog server with S3 storage.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
 from tests.iceberg.e2e.conftest import write_test_parquet
+from tests.iceberg_stack import warehouse_objects
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from portolan_cli.backends.iceberg.backend import IcebergBackend
+    from tests.iceberg_stack import IcebergLane
 
 
 @pytest.mark.e2e
-def test_publish_to_rest_catalog(rest_iceberg_backend, tmp_path):
+def test_publish_to_rest_catalog(rest_iceberg_backend: IcebergBackend, tmp_path: Path) -> None:
     """Publish data via REST catalog; verify table is queryable."""
     asset = write_test_parquet(tmp_path / "data.parquet")
 
@@ -31,7 +40,7 @@ def test_publish_to_rest_catalog(rest_iceberg_backend, tmp_path):
 
 
 @pytest.mark.e2e
-def test_version_lifecycle_rest(rest_iceberg_backend, tmp_path):
+def test_version_lifecycle_rest(rest_iceberg_backend: IcebergBackend, tmp_path: Path) -> None:
     """Full lifecycle: publish v1->v2->v3, list, rollback to v1, prune."""
     collection = "lifecycle"
 
@@ -62,7 +71,7 @@ def test_version_lifecycle_rest(rest_iceberg_backend, tmp_path):
 
 
 @pytest.mark.e2e
-def test_schema_evolution_rest(rest_iceberg_backend, tmp_path):
+def test_schema_evolution_rest(rest_iceberg_backend: IcebergBackend, tmp_path: Path) -> None:
     """Add a column in v2 -- Iceberg schema evolution should work via REST."""
     collection = "schema-evo"
 
@@ -98,7 +107,9 @@ def test_schema_evolution_rest(rest_iceberg_backend, tmp_path):
 
 
 @pytest.mark.e2e
-def test_data_stored_in_rustfs(rest_iceberg_backend, rustfs_client, tmp_path):
+def test_data_stored_in_rustfs(
+    rest_iceberg_backend: IcebergBackend, iceberg_lane: IcebergLane, tmp_path: Path
+) -> None:
     """After publish, Parquet data files should exist in RustFS warehouse bucket."""
     asset = write_test_parquet(tmp_path / "rustfs_check.parquet")
 
@@ -110,9 +121,7 @@ def test_data_stored_in_rustfs(rest_iceberg_backend, rustfs_client, tmp_path):
         message="Check RustFS",
     )
 
-    response = rustfs_client.list_objects_v2(Bucket="warehouse", Prefix="portolake/")
-    contents = response.get("Contents", [])
-    keys = [obj["Key"] for obj in contents]
+    keys = warehouse_objects(iceberg_lane, "portolake/")
 
     # Should have at least data files and metadata
     assert len(keys) > 0, "No objects found in warehouse bucket"
