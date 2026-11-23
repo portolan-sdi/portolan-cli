@@ -4,11 +4,20 @@ from __future__ import annotations
 
 import importlib
 import logging
+import os
 import sys
 import types
 from typing import TYPE_CHECKING, Any
 
 from portolan_cli.lazy_exports import lazy_exports
+
+# PyArrow 26 bundles mimalloc 3.3.1. On Linux it commits each arena eagerly
+# and asks for transparent huge pages, so each touched arena chunk stays
+# resident in 2 MiB pages. That added about 45 MB to the peak RSS of a
+# 3,984-raster add. mimalloc reads the option once, when PyArrow loads, so it
+# must be set before any import of pyarrow. A value the user sets wins.
+# tests/unit/test_arrow_allocator.py checks the option.
+os.environ.setdefault("MIMALLOC_ARENA_EAGER_COMMIT", "0")
 
 # A library user who sets no handler sees no Portolan records (issue #991).
 logging.getLogger(__name__).addHandler(logging.NullHandler())
