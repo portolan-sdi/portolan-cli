@@ -88,6 +88,30 @@ class TestBucketInvariants:
         }
         assert live_buckets == {Bucket.EXTERNAL}
 
+    def test_expose_headers_requirement_names_no_header_list(self) -> None:
+        """The exposed-header list belongs to rashid and the spec, not to this table.
+
+        rashid 0.2 and 0.3 require five exposed headers. Spec v0.3.0 requires
+        three, and two of them differ from the old list. A list copied here
+        drifts from both. ``check --fix`` prints this sentence in place of
+        rashid's hint, so a wrong list is the only text the user sees. rashid's
+        finding message names the headers that the host omits.
+        """
+        requirement = RULE_REMEDIATION["PTL-LIV-004"].requirement
+        named = [
+            header
+            for header in (
+                "Content-Type",
+                "Content-Length",
+                "Content-Range",
+                "Accept-Ranges",
+                "ETag",
+            )
+            if header in requirement
+        ]
+        assert named == []
+        assert "Access-Control-Expose-Headers" in requirement
+
     def test_unserved_link_target_is_a_push_not_a_host_setting(self) -> None:
         remediation = RULE_REMEDIATION["PTL-LIV-006"]
         assert remediation.bucket is Bucket.INSTRUCT

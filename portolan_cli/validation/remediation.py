@@ -405,9 +405,11 @@ RULE_REMEDIATION: dict[str, Remediation] = {
     "PTL-LIV-003": _external(
         "Configure the host to send Access-Control-Allow-Origin so browsers can read the assets."
     ),
+    # No header list here. The required list changes between rashid and spec
+    # versions, and rashid's finding message names the headers the host omits.
     "PTL-LIV-004": _external(
-        "Configure the host to expose Content-Length and Content-Range via "
-        "Access-Control-Expose-Headers."
+        "Configure the host to expose the range response headers that the finding names "
+        "via Access-Control-Expose-Headers."
     ),
     "PTL-LIV-005": _external(
         "Configure the host to answer CORS preflight (OPTIONS) requests for asset URLs."
