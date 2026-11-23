@@ -91,6 +91,15 @@ jobs:
       - name: Install dependencies
         run: uv sync --all-extras
 
+      - name: Drop the page cache
+        # Peak RSS counts the library pages that each scenario maps. When uv
+        # unpacks the wheels in this job, the new files stay in the page
+        # cache, and the scenarios mapped about 50 to 80 MB more of them than
+        # after a cache restore. uv 0.13.9 could not use the restored cache,
+        # so from 2026-11-17 every nightly unpacked all 209 wheels. Drop the
+        # cache, so each run reads the libraries from disk the same way.
+        run: sync && echo 3 | sudo tee /proc/sys/vm/drop_caches
+
       - name: Run the scenarios against the committed baseline
         env:
           RECORD_BASELINE: ${{ inputs.record-baseline }}
