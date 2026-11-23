@@ -153,8 +153,12 @@ class TestLiveMetadataExtraction:
 
 # South African national data portal — services live in a NationalDatasets folder.
 SA_ROOT = "https://nspdr.dlrrd.gov.za/server/rest/services"
-# JRC federated server — ALL services are in folders, zero top-level services.
-JRC_ROOT = "https://arcgis-maps.jrc.ec.europa.eu/federated_server/rest/services"
+# US Census Bureau TIGERweb: zero top-level services, every service in a public
+# folder, no token. It replaced the JRC federated server, which gained a
+# top-level service and token-protected folders in November 2026.
+TIGERWEB_ROOT = "https://tigerweb.geo.census.gov/arcgis/rest/services"
+# The current TIGER/Line map service. TIGERweb has published it for years.
+TIGERWEB_CURRENT = "TIGERweb/tigerWMS_Current"
 
 
 def _list_services_or_skip(root: str, *, timeout: float = 60.0) -> ServicesRootDiscoveryResult:
@@ -205,15 +209,18 @@ def test_sa_root_traverses_folders() -> None:
 
 @pytest.mark.network
 @pytest.mark.slow
-def test_jrc_root_has_only_folder_services() -> None:
-    # JRC root has ZERO top-level services; everything is in folders.
-    result = _list_services_or_skip(JRC_ROOT, timeout=60.0)
+def test_folder_only_root_surfaces_every_service_through_folders() -> None:
+    # The TIGERweb root lists ZERO top-level services; every service is in a folder.
+    result = _list_services_or_skip(TIGERWEB_ROOT, timeout=60.0)
     # A total outage can leave the root reachable but every folder un-traversed,
     # yielding zero services (an outage, not a regression). Gate on "nothing
-    # surfaced": routinely secured system folders (e.g. Utilities, which returns
-    # 499 Token Required on healthy servers too) land in folders_skipped and must
-    # NOT skip this test, so a non-empty folders_skipped alone is not enough.
+    # surfaced": one failed folder lands in folders_skipped and must NOT skip
+    # this test, so a non-empty folders_skipped alone is not enough.
     if not result.services and result.coverage is not None and result.coverage.folders_skipped:
-        pytest.skip("live JRC endpoint degraded; no services surfaced")
+        pytest.skip("live TIGERweb endpoint degraded; no services surfaced")
     assert len(result.services) > 0
+    # Each name carries its folder, so recursion found every service.
     assert all("/" in s.name for s in result.services)
+    assert result.coverage is not None
+    assert "TIGERweb" in result.coverage.folders_visited
+    assert TIGERWEB_CURRENT in {s.name for s in result.services}
