@@ -47,7 +47,6 @@ version_list_cmd  # unused function (portolan_cli/cli.py:6539)
 
 # --- portolan_cli/backends ---
 __getattr__  # unused function (portolan_cli/backends/iceberg/__init__.py:34)
-add_spatial_columns  # unused function (portolan_cli/backends/iceberg/spatial.py:84)
 portolan_backends  # unused function (portolan_cli/backends/iceberg/hooks.py:46, 5 more)
 
 # --- portolan_cli/extract ---
@@ -87,11 +86,6 @@ daemon_threads  # unused variable (tests/replay_server.py:131)
 
 # --- tests/fixtures ---
 convert_to_geoparquet  # unused function (tests/fixtures/generate.py:444)
-
-# --- tests/iceberg ---
-_.__str__  # unused attribute (tests/iceberg/unit/test_stac_generator.py:622)
-_exported_catalog  # unused function (tests/iceberg/unit/test_config_isolation.py:16)
-_isolate_pyiceberg_config  # unused function (tests/iceberg/conftest.py:19)
 
 # --- tests/integration ---
 _.side_effect  # unused attribute (tests/integration/test_clone_ergonomics_integration.py:217, 101 more)

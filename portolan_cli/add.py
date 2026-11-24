@@ -1316,10 +1316,13 @@ def add_files(
         skipped_paths: List of paths that were skipped (unchanged or non-geospatial).
         failures: List of AddFailure for files that could not be processed.
     """
-    from portolan_cli.version_ops import owned_run
+    from portolan_cli.version_ops import check_backend_starts, owned_run
 
     # Every footer read of the run goes through the run memo (formats.in_run).
     with owned_run(catalog_root, state) as state, in_run(state):
+        # Before any write: a backend that cannot start fails the add here,
+        # so a failed add leaves no half-written collection behind.
+        check_backend_starts(state)
         skipped: list[Path] = []
 
         # Track which nested collections have had their catalogs set up

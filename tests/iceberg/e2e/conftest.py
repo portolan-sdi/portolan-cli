@@ -1,90 +1,75 @@
-"""E2E test fixtures for the Iceberg backend against the compose stack.
+"""Helpers for the e2e tests against the compose stack.
 
-The lifecycle and the inspection helpers live in ``tests/iceberg_stack.py``.
-This file turns them into fixtures and adds the PyIceberg catalog that the
-current backend still takes at construction.
+The fixtures live in ``tests/conftest.py`` (``iceberg_stack`` and the ones
+it builds on), so a test in any directory can use the stack. This file
+holds the file writers the e2e tests share.
 """
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING
 
+import duckdb
 import pyarrow as pa
 import pyarrow.parquet as pq
-import pytest
-from pyiceberg.catalog import load_catalog
 
 from portolan_cli.backends.iceberg.backend import IcebergBackend
-from tests.iceberg_stack import (
-    S3_HOST,
-    IcebergLane,
-    RestAdmin,
-    compose_down,
-    compose_up,
-    docker_lane,
-    require_docker,
-)
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
     from pathlib import Path
 
-    from pyiceberg.catalog import Catalog
+    from portolan_cli.backends.protocol import SchemaFingerprint
 
 
-@pytest.fixture(scope="session")
-def iceberg_lane() -> IcebergLane:
-    """The lane every e2e test in this session writes to."""
-    return docker_lane()
-
-
-@pytest.fixture(scope="session")
-def docker_services(iceberg_lane: IcebergLane) -> Iterator[None]:
-    """Start REST catalog + RustFS via docker-compose, tear down after session."""
-    require_docker()
-    compose_up()
-    try:
-        yield
-    finally:
-        compose_down()
-
-
-@pytest.fixture(scope="session")
-def rest_admin(docker_services: None, iceberg_lane: IcebergLane) -> RestAdmin:
-    """The product's REST client, pointed at the running stack."""
-    _ = docker_services
-    return RestAdmin(iceberg_lane)
-
-
-@pytest.fixture
-def rest_catalog(docker_services: None, iceberg_lane: IcebergLane) -> Catalog:
-    """PyIceberg catalog pointing at the dockerized REST catalog + RustFS."""
-    _ = docker_services
-    return load_catalog(
-        "e2e-test",
-        **{
-            "type": "rest",
-            "uri": iceberg_lane.uri,
-            "s3.endpoint": f"http://{S3_HOST}",
-            "s3.access-key-id": iceberg_lane.key,
-            "s3.secret-access-key": iceberg_lane.secret,
-        },
-    )
-
-
-@pytest.fixture
-def rest_iceberg_backend(rest_catalog: Catalog) -> IcebergBackend:
-    """IcebergBackend with REST catalog injected."""
-    return IcebergBackend(catalog=rest_catalog)
-
-
-def write_test_parquet(path: Path, rows: int = 3) -> Path:
-    """Write a simple Parquet file for testing. Returns the path."""
+def write_test_parquet(path: Path, rows: int = 3, *, start: int = 0) -> Path:
+    """Write a Parquet file with ``id`` and ``val`` columns and no geometry."""
     table = pa.table(
         {
-            "id": pa.array(range(rows), type=pa.int64()),
-            "val": pa.array([f"row_{i}" for i in range(rows)], type=pa.string()),
+            "id": pa.array(range(start, start + rows), type=pa.int64()),
+            "val": pa.array([f"row_{i}" for i in range(start, start + rows)], type=pa.string()),
         }
     )
     pq.write_table(table, path)
     return path
+
+
+def write_geo_parquet(
+    path: Path, *, crs: str = "OGC:CRS84", rows: int = 5, origin: tuple[float, float] = (0.0, 0.0)
+) -> Path:
+    """Write a GeoParquet file of points typed with ``crs``, through DuckDB spatial.
+
+    DuckDB writes the ``geo`` key with the CRS, and reads the column back as
+    ``GEOMETRY('<crs>')``, which is what the backend copies into the table.
+    """
+    if not re.fullmatch(r"[A-Za-z]+:[A-Za-z0-9]+", crs):
+        raise ValueError(f"not an authority:code CRS: {crs!r}")
+    target = str(path).replace("'", "''")
+    connection = duckdb.connect()
+    try:
+        connection.execute("LOAD spatial")
+        connection.execute(
+            # The type parameter and the COPY target must be literals; the CRS
+            # is checked above and the path is quoted.
+            f"COPY (SELECT i AS id, ST_Point(? + i, ? + i)::GEOMETRY('{crs}') AS geometry "  # noqa: S608
+            f"FROM range(?) r(i)) TO '{target}' (FORMAT parquet)",
+            [origin[0], origin[1], rows],
+        )
+    finally:
+        connection.close()
+    return path
+
+
+#: A schema fingerprint for the ``id``/``val`` files of ``write_test_parquet``.
+SCHEMA: SchemaFingerprint = {"columns": ["id", "val"], "types": {"id": "int64"}, "hash": "h1"}
+
+
+def publish_rows(
+    tmp_path: Path, collection: str, rows: int, *, message: str = "m"
+) -> IcebergBackend:
+    """Publish ``rows`` rows under the one asset key ``data.parquet`` and return the backend."""
+    backend = IcebergBackend(catalog_root=tmp_path)
+    (tmp_path / collection).mkdir(exist_ok=True)
+    asset = write_test_parquet(tmp_path / collection / "data.parquet", rows=rows)
+    backend.publish(collection, {"data.parquet": str(asset)}, SCHEMA, False, message)
+    return backend

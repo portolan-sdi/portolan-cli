@@ -1,7 +1,8 @@
 """Hook implementations of the built-in Iceberg plugin (#947).
 
-The module imports no pyiceberg. The factory imports the backend when a
-catalog asks for it, so a catalog on the ``file`` backend does not pay for it.
+The module imports neither DuckDB nor httpx. The factory imports the
+backend when a catalog asks for it, so a catalog on the ``file`` backend
+does not pay for them, and ``portolan --help`` loads neither.
 """
 
 from __future__ import annotations
@@ -16,7 +17,7 @@ if TYPE_CHECKING:
 
 
 def iceberg_backend(catalog_root: Path | None = None) -> Any:
-    """Create an ``IcebergBackend``.
+    """Create an ``IcebergBackend`` from the ``PORTOLAN_ICEBERG_*`` environment.
 
     Args:
         catalog_root: Catalog root the backend reads and writes.
@@ -25,15 +26,12 @@ def iceberg_backend(catalog_root: Path | None = None) -> Any:
         The backend.
 
     Raises:
-        ValueError: Without the iceberg extra.
+        ValueError: A required variable is missing. The message names it.
+            ``IcebergSettingsError`` is a ``ValueError``, so the command
+            reports it the way it reports any backend setup error.
     """
-    try:
-        from portolan_cli.backends.iceberg.backend import IcebergBackend
-    except ImportError as e:
-        raise ValueError(
-            "The 'iceberg' backend requires the iceberg extra. "
-            "Install it with: pip install portolan-cli[iceberg]"
-        ) from e
+    from portolan_cli.backends.iceberg.backend import IcebergBackend
+
     return IcebergBackend(catalog_root=catalog_root)
 
 

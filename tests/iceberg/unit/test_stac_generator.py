@@ -1,720 +1,289 @@
-"""Tests for STAC metadata generation from Iceberg tables (Phase 3 + 4).
+"""The STAC fields of a collection come from the ``loadTable`` document.
 
-Phase 3: table:* fields (STAC Table Extension) from Iceberg schema.
-Phase 4: iceberg:* fields (STAC Iceberg Extension) from catalog/table state.
+``generate_collection_metadata`` reads the table metadata a REST catalog
+returns, plus the row count the backend queried, and returns the
+``table:*`` and ``iceberg:*`` fields of the STAC Iceberg extension v1.1.0.
+No pyiceberg object is involved, so the tests build the document by hand.
 """
 
 from __future__ import annotations
 
-import struct
-from unittest.mock import MagicMock
+from typing import Any
 
-import pyarrow as pa
-import pyarrow.parquet as pq
 import pytest
 
+from portolan_cli.backends.iceberg.rest import LoadTableResult
+from portolan_cli.backends.iceberg.settings import IcebergSettings, StorageSettings
+from portolan_cli.backends.iceberg.stac_generator import (
+    STAC_ICEBERG_EXTENSION,
+    STAC_TABLE_EXTENSION,
+    generate_collection_metadata,
+    https_metadata_location,
+    iceberg_type_to_str,
+)
 
-def _make_wkb_point(x: float, y: float) -> bytes:
-    """Create a WKB point (little-endian)."""
-    return struct.pack("<BIdd", 1, 1, x, y)
-
-
-# --- Row count from snapshot metadata (issue #436) ---
-
-
-@pytest.mark.unit
-def test_row_count_reads_from_snapshot_summary_without_materializing():
-    """row_count should come from the snapshot's total-records, not a table scan.
-
-    Materializing the table (table.scan().to_arrow()) is wasteful for the large
-    data Iceberg targets; the count must be read from O(1) snapshot metadata.
-    """
-    from portolan_cli.backends.iceberg.stac_generator import _get_row_count
-
-    table = MagicMock()
-    table.current_snapshot.return_value.summary.additional_properties = {"total-records": "123456"}
-
-    assert _get_row_count(table) == 123456
-    # The whole point of the fix: no full materialization.
-    table.scan.assert_not_called()
+pytestmark = pytest.mark.unit
 
 
-@pytest.mark.unit
-def test_row_count_zero_for_empty_table():
-    """row_count should be 0 when the table has no current snapshot (empty table)."""
-    from portolan_cli.backends.iceberg.stac_generator import _get_row_count
-
-    table = MagicMock()
-    table.current_snapshot.return_value = None
-
-    assert _get_row_count(table) == 0
-    table.scan.assert_not_called()
-
-
-@pytest.mark.unit
-def test_row_count_falls_back_when_total_records_absent():
-    """row_count should fall back to a metadata count when total-records is missing.
-
-    Not every catalog/writer populates total-records; we must still produce a
-    count rather than crash, while avoiding a full materialization.
-    """
-    from portolan_cli.backends.iceberg.stac_generator import _get_row_count
-
-    table = MagicMock()
-    table.current_snapshot.return_value.summary.additional_properties = {}
-    table.scan.return_value.count.return_value = 42
-
-    assert _get_row_count(table) == 42
-    table.scan.return_value.count.assert_called_once_with()
-
-
-# --- Phase 3: STAC Table Extension fields ---
-
-
-@pytest.mark.integration
-def test_table_row_count_empty_table_returns_zero(iceberg_catalog):
-    """table:row_count should be 0 for a table created without any data (no snapshot)."""
-    from pyiceberg.schema import Schema
-    from pyiceberg.types import LongType, NestedField
-
-    from portolan_cli.backends.iceberg.backend import NAMESPACE
-    from portolan_cli.backends.iceberg.stac_generator import generate_table_metadata
-
-    iceberg_catalog.create_namespace_if_not_exists(NAMESPACE)
-    schema = Schema(NestedField(field_id=1, name="id", field_type=LongType(), required=False))
-    table = iceberg_catalog.create_table(f"{NAMESPACE}.empty", schema=schema)
-
-    metadata = generate_table_metadata(table)
-
-    assert metadata["table:row_count"] == 0
-
-
-@pytest.mark.integration
-def test_table_columns_from_iceberg_schema(iceberg_backend, iceberg_catalog, tmp_path):
-    """table:columns should list all non-spatial columns with types."""
-    table_data = pa.table(
-        {
-            "id": pa.array([1, 2], type=pa.int64()),
-            "name": pa.array(["a", "b"], type=pa.string()),
-            "value": pa.array([1.5, 2.5], type=pa.float64()),
-        }
-    )
-    path = tmp_path / "data.parquet"
-    pq.write_table(table_data, path)
-
-    iceberg_backend.publish(
-        collection="buildings",
-        assets={"data.parquet": str(path)},
-        schema={"columns": ["id", "name", "value"], "types": {}, "hash": "h1"},
-        breaking=False,
-        message="v1",
+def _storage(*, endpoint: str | None = "s3.example.org", use_ssl: bool = True) -> StorageSettings:
+    return StorageSettings(
+        kind="s3",
+        endpoint=endpoint,
+        use_ssl=use_ssl,
+        region="us-east-1",
+        url_style="path" if endpoint else "vhost",
+        key_id="k",
+        secret="s",  # noqa: S106  # a test value
+        session_token=None,
     )
 
-    from portolan_cli.backends.iceberg.stac_generator import generate_table_metadata
 
-    table = iceberg_catalog.load_table("portolake.buildings")
-    metadata = generate_table_metadata(table)
-
-    assert "table:columns" in metadata
-    columns = metadata["table:columns"]
-    col_names = [c["name"] for c in columns]
-    assert "id" in col_names
-    assert "name" in col_names
-    assert "value" in col_names
-
-    # Each column should have name and type
-    for col in columns:
-        assert "name" in col
-        assert "type" in col
-
-
-@pytest.mark.integration
-def test_table_columns_have_correct_types(iceberg_backend, iceberg_catalog, tmp_path):
-    """table:columns types should map from Iceberg types."""
-    table_data = pa.table(
-        {
-            "id": pa.array([1], type=pa.int64()),
-            "score": pa.array([9.5], type=pa.float64()),
-            "label": pa.array(["x"], type=pa.string()),
-        }
-    )
-    path = tmp_path / "data.parquet"
-    pq.write_table(table_data, path)
-
-    iceberg_backend.publish(
-        collection="typed",
-        assets={"data.parquet": str(path)},
-        schema={"columns": [], "types": {}, "hash": "h1"},
-        breaking=False,
-        message="v1",
+def _settings(
+    *, uri: str = "https://catalog.example.org", auth: str = "none", namespace: str = "portolake"
+) -> IcebergSettings:
+    return IcebergSettings(
+        uri=uri,
+        warehouse="wh",
+        namespace=namespace,
+        auth=auth,  # type: ignore[arg-type]
+        oauth2_server_uri=None,
+        client_id=None,
+        client_secret=None,
+        token=None,
+        storage=_storage(),
     )
 
-    from portolan_cli.backends.iceberg.stac_generator import generate_table_metadata
 
-    table = iceberg_catalog.load_table("portolake.typed")
-    metadata = generate_table_metadata(table)
-
-    col_map = {c["name"]: c["type"] for c in metadata["table:columns"]}
-    assert col_map["id"] == "int64"
-    assert col_map["score"] == "float64"
-    assert col_map["label"] == "string"
-
-
-@pytest.mark.integration
-def test_table_row_count(iceberg_backend, iceberg_catalog, tmp_path):
-    """table:row_count should reflect the number of rows in the current snapshot."""
-    table_data = pa.table({"id": pa.array([1, 2, 3, 4, 5], type=pa.int64())})
-    path = tmp_path / "data.parquet"
-    pq.write_table(table_data, path)
-
-    iceberg_backend.publish(
-        collection="counted",
-        assets={"data.parquet": str(path)},
-        schema={"columns": ["id"], "types": {}, "hash": "h1"},
-        breaking=False,
-        message="v1",
-    )
-
-    from portolan_cli.backends.iceberg.stac_generator import generate_table_metadata
-
-    table = iceberg_catalog.load_table("portolake.counted")
-    metadata = generate_table_metadata(table)
-
-    assert metadata["table:row_count"] == 5
-
-
-@pytest.mark.integration
-def test_table_primary_geometry_detected(iceberg_backend, iceberg_catalog, tmp_path):
-    """table:primary_geometry should be set when a geometry column exists."""
-    wkb_values = [_make_wkb_point(2.35, 48.85), _make_wkb_point(-73.99, 40.75)]
-    table_data = pa.table(
-        {
-            "id": pa.array([1, 2], type=pa.int64()),
-            "geometry": pa.array(wkb_values, type=pa.binary()),
-        }
-    )
-    path = tmp_path / "geo.parquet"
-    pq.write_table(table_data, path)
-
-    iceberg_backend.publish(
-        collection="geoplaces",
-        assets={"geo.parquet": str(path)},
-        schema={"columns": ["id", "geometry"], "types": {}, "hash": "h1"},
-        breaking=False,
-        message="v1",
-    )
-
-    from portolan_cli.backends.iceberg.stac_generator import generate_table_metadata
-
-    table = iceberg_catalog.load_table("portolake.geoplaces")
-    metadata = generate_table_metadata(table)
-
-    assert metadata["table:primary_geometry"] == "geometry"
-
-
-@pytest.mark.integration
-def test_table_primary_geometry_none_without_geometry(iceberg_backend, iceberg_catalog, tmp_path):
-    """table:primary_geometry should be None when no geometry column exists."""
-    table_data = pa.table({"id": pa.array([1, 2], type=pa.int64())})
-    path = tmp_path / "plain.parquet"
-    pq.write_table(table_data, path)
-
-    iceberg_backend.publish(
-        collection="plain",
-        assets={"plain.parquet": str(path)},
-        schema={"columns": ["id"], "types": {}, "hash": "h1"},
-        breaking=False,
-        message="v1",
-    )
-
-    from portolan_cli.backends.iceberg.stac_generator import generate_table_metadata
-
-    table = iceberg_catalog.load_table("portolake.plain")
-    metadata = generate_table_metadata(table)
-
-    assert metadata["table:primary_geometry"] is None
-
-
-@pytest.mark.integration
-def test_table_columns_exclude_spatial_derived(iceberg_backend, iceberg_catalog, tmp_path):
-    """table:columns should exclude portolake-derived columns (geohash_*, bbox_*)."""
-    wkb_values = [_make_wkb_point(2.35, 48.85)]
-    table_data = pa.table(
-        {
-            "id": pa.array([1], type=pa.int64()),
-            "geometry": pa.array(wkb_values, type=pa.binary()),
-        }
-    )
-    path = tmp_path / "geo.parquet"
-    pq.write_table(table_data, path)
-
-    iceberg_backend.publish(
-        collection="filtered",
-        assets={"geo.parquet": str(path)},
-        schema={"columns": ["id", "geometry"], "types": {}, "hash": "h1"},
-        breaking=False,
-        message="v1",
-    )
-
-    from portolan_cli.backends.iceberg.stac_generator import generate_table_metadata
-
-    table = iceberg_catalog.load_table("portolake.filtered")
-    metadata = generate_table_metadata(table)
-
-    col_names = [c["name"] for c in metadata["table:columns"]]
-    assert not any(n.startswith("geohash_") for n in col_names)
-    assert not any(n.startswith("bbox_") for n in col_names)
-
-
-@pytest.mark.integration
-def test_table_row_count_updates_after_publish(iceberg_backend, iceberg_catalog, tmp_path):
-    """table:row_count should update after publishing more data."""
-    t1 = pa.table({"id": pa.array([1, 2], type=pa.int64())})
-    p1 = tmp_path / "v1.parquet"
-    pq.write_table(t1, p1)
-
-    iceberg_backend.publish(
-        collection="growing",
-        assets={"data.parquet": str(p1)},
-        schema={"columns": ["id"], "types": {}, "hash": "h1"},
-        breaking=False,
-        message="v1",
-    )
-
-    t2 = pa.table({"id": pa.array([3, 4, 5], type=pa.int64())})
-    p2 = tmp_path / "v2.parquet"
-    pq.write_table(t2, p2)
-
-    iceberg_backend.publish(
-        collection="growing",
-        assets={"data.parquet": str(p2)},
-        schema={"columns": ["id"], "types": {}, "hash": "h1"},
-        breaking=False,
-        message="v2",
-    )
-
-    from portolan_cli.backends.iceberg.stac_generator import generate_table_metadata
-
-    table = iceberg_catalog.load_table("portolake.growing")
-    metadata = generate_table_metadata(table)
-
-    # Should have all rows from both publishes (append mode)
-    assert metadata["table:row_count"] == 5
-
-
-# --- Phase 4: STAC Iceberg Extension fields ---
-
-
-@pytest.mark.integration
-def test_iceberg_metadata_has_required_fields(iceberg_backend, iceberg_catalog, tmp_path):
-    """generate_collection_metadata should include all iceberg:* fields."""
-    table_data = pa.table({"id": pa.array([1, 2], type=pa.int64())})
-    path = tmp_path / "data.parquet"
-    pq.write_table(table_data, path)
-
-    iceberg_backend.publish(
-        collection="buildings",
-        assets={"data.parquet": str(path)},
-        schema={"columns": ["id"], "types": {}, "hash": "h1"},
-        breaking=False,
-        message="v1",
-    )
-
-    from portolan_cli.backends.iceberg.stac_generator import generate_collection_metadata
-
-    table = iceberg_catalog.load_table("portolake.buildings")
-    metadata = generate_collection_metadata(table)
-
-    assert "iceberg:catalog_type" in metadata
-    assert "iceberg:table_id" in metadata
-    assert "iceberg:format_version" in metadata
-    assert "iceberg:current_snapshot_id" in metadata
-    # iceberg:partition_spec and iceberg:metadata_location are both optional.
-    # This table is unpartitioned and the warehouse is local, so the extension
-    # says to omit the first and the second names no fetchable document.
-    assert "iceberg:partition_spec" not in metadata
-
-
-@pytest.mark.integration
-def test_iceberg_catalog_type(iceberg_backend, iceberg_catalog, tmp_path):
-    """iceberg:catalog_type should reflect the catalog backend type."""
-    table_data = pa.table({"id": pa.array([1], type=pa.int64())})
-    path = tmp_path / "data.parquet"
-    pq.write_table(table_data, path)
-
-    iceberg_backend.publish(
-        collection="typed",
-        assets={"data.parquet": str(path)},
-        schema={"columns": [], "types": {}, "hash": "h1"},
-        breaking=False,
-        message="v1",
-    )
-
-    from portolan_cli.backends.iceberg.stac_generator import generate_collection_metadata
-
-    table = iceberg_catalog.load_table("portolake.typed")
-    metadata = generate_collection_metadata(table)
-
-    assert metadata["iceberg:catalog_type"] == "sql"
-
-
-@pytest.mark.integration
-def test_iceberg_table_id(iceberg_backend, iceberg_catalog, tmp_path):
-    """iceberg:table_id should be the fully qualified table identifier."""
-    table_data = pa.table({"id": pa.array([1], type=pa.int64())})
-    path = tmp_path / "data.parquet"
-    pq.write_table(table_data, path)
-
-    iceberg_backend.publish(
-        collection="mydata",
-        assets={"data.parquet": str(path)},
-        schema={"columns": [], "types": {}, "hash": "h1"},
-        breaking=False,
-        message="v1",
-    )
-
-    from portolan_cli.backends.iceberg.stac_generator import generate_collection_metadata
-
-    table = iceberg_catalog.load_table("portolake.mydata")
-    metadata = generate_collection_metadata(table)
-
-    assert metadata["iceberg:table_id"] == "portolake.mydata"
-
-
-@pytest.mark.integration
-def test_iceberg_format_version(iceberg_backend, iceberg_catalog, tmp_path):
-    """iceberg:format_version should be an integer (1 or 2)."""
-    table_data = pa.table({"id": pa.array([1], type=pa.int64())})
-    path = tmp_path / "data.parquet"
-    pq.write_table(table_data, path)
-
-    iceberg_backend.publish(
-        collection="versioned",
-        assets={"data.parquet": str(path)},
-        schema={"columns": [], "types": {}, "hash": "h1"},
-        breaking=False,
-        message="v1",
-    )
-
-    from portolan_cli.backends.iceberg.stac_generator import generate_collection_metadata
-
-    table = iceberg_catalog.load_table("portolake.versioned")
-    metadata = generate_collection_metadata(table)
-
-    assert metadata["iceberg:format_version"] in (1, 2)
-
-
-@pytest.mark.integration
-def test_iceberg_current_snapshot_id(iceberg_backend, iceberg_catalog, tmp_path):
-    """iceberg:current_snapshot_id should be a numeric string.
-
-    A string, because an Iceberg snapshot id is 64-bit and a JSON parser that
-    stores numbers as doubles rounds it above 2^53 (extension v1.1.0).
-    """
-    table_data = pa.table({"id": pa.array([1], type=pa.int64())})
-    path = tmp_path / "data.parquet"
-    pq.write_table(table_data, path)
-
-    iceberg_backend.publish(
-        collection="snapped",
-        assets={"data.parquet": str(path)},
-        schema={"columns": [], "types": {}, "hash": "h1"},
-        breaking=False,
-        message="v1",
-    )
-
-    from portolan_cli.backends.iceberg.stac_generator import generate_collection_metadata
-
-    table = iceberg_catalog.load_table("portolake.snapped")
-    metadata = generate_collection_metadata(table)
-
-    assert isinstance(metadata["iceberg:current_snapshot_id"], str)
-    assert int(metadata["iceberg:current_snapshot_id"]) > 0
-
-
-@pytest.mark.integration
-def test_iceberg_partition_spec_absent_for_unpartitioned(
-    iceberg_backend, iceberg_catalog, tmp_path
-):
-    """The extension says to omit iceberg:partition_spec for an unpartitioned table."""
-    table_data = pa.table({"id": pa.array([1], type=pa.int64())})
-    path = tmp_path / "data.parquet"
-    pq.write_table(table_data, path)
-
-    iceberg_backend.publish(
-        collection="unpart",
-        assets={"data.parquet": str(path)},
-        schema={"columns": [], "types": {}, "hash": "h1"},
-        breaking=False,
-        message="v1",
-    )
-
-    from portolan_cli.backends.iceberg.stac_generator import generate_collection_metadata
-
-    table = iceberg_catalog.load_table("portolake.unpart")
-    metadata = generate_collection_metadata(table)
-
-    assert "iceberg:partition_spec" not in metadata
-
-
-@pytest.mark.integration
-def test_collection_metadata_includes_table_fields(iceberg_backend, iceberg_catalog, tmp_path):
-    """generate_collection_metadata should include both table:* and iceberg:* fields."""
-    table_data = pa.table(
-        {
-            "id": pa.array([1, 2], type=pa.int64()),
-            "name": pa.array(["a", "b"], type=pa.string()),
-        }
-    )
-    path = tmp_path / "data.parquet"
-    pq.write_table(table_data, path)
-
-    iceberg_backend.publish(
-        collection="combined",
-        assets={"data.parquet": str(path)},
-        schema={"columns": ["id", "name"], "types": {}, "hash": "h1"},
-        breaking=False,
-        message="v1",
-    )
-
-    from portolan_cli.backends.iceberg.stac_generator import generate_collection_metadata
-
-    table = iceberg_catalog.load_table("portolake.combined")
-    metadata = generate_collection_metadata(table)
-
-    # Layer 1: table:*
-    assert "table:columns" in metadata
-    assert "table:row_count" in metadata
-    assert "table:primary_geometry" in metadata
-
-    # Layer 2: iceberg:*
-    assert "iceberg:catalog_type" in metadata
-    assert "iceberg:table_id" in metadata
-
-    # stac_extensions and assets are no longer in the return dict --
-    # they are set via pystac APIs in on_post_add()
-    assert "stac_extensions" not in metadata
-    assert "assets" not in metadata
-
-
-@pytest.mark.integration
-def test_iceberg_snapshot_id_updates_after_publish(iceberg_backend, iceberg_catalog, tmp_path):
-    """iceberg:current_snapshot_id should change after a new publish."""
-    t1 = pa.table({"id": pa.array([1], type=pa.int64())})
-    p1 = tmp_path / "v1.parquet"
-    pq.write_table(t1, p1)
-
-    iceberg_backend.publish(
-        collection="updating",
-        assets={"data.parquet": str(p1)},
-        schema={"columns": ["id"], "types": {}, "hash": "h1"},
-        breaking=False,
-        message="v1",
-    )
-
-    from portolan_cli.backends.iceberg.stac_generator import generate_collection_metadata
-
-    table = iceberg_catalog.load_table("portolake.updating")
-    snap1 = generate_collection_metadata(table)["iceberg:current_snapshot_id"]
-
-    t2 = pa.table({"id": pa.array([2], type=pa.int64())})
-    p2 = tmp_path / "v2.parquet"
-    pq.write_table(t2, p2)
-
-    iceberg_backend.publish(
-        collection="updating",
-        assets={"data.parquet": str(p2)},
-        schema={"columns": ["id"], "types": {}, "hash": "h1"},
-        breaking=False,
-        message="v2",
-    )
-
-    table = iceberg_catalog.load_table("portolake.updating")
-    snap2 = generate_collection_metadata(table)["iceberg:current_snapshot_id"]
-
-    assert snap1 != snap2
-
-
-@pytest.mark.integration
-def test_get_stac_metadata_from_backend(iceberg_backend, tmp_path):
-    """IcebergBackend.get_stac_metadata() should return combined metadata."""
-    table_data = pa.table({"id": pa.array([1, 2, 3], type=pa.int64())})
-    path = tmp_path / "data.parquet"
-    pq.write_table(table_data, path)
-
-    iceberg_backend.publish(
-        collection="via-backend",
-        assets={"data.parquet": str(path)},
-        schema={"columns": ["id"], "types": {}, "hash": "h1"},
-        breaking=False,
-        message="v1",
-    )
-
-    metadata = iceberg_backend.get_stac_metadata("via-backend")
-
-    assert metadata["table:row_count"] == 3
-    assert "iceberg:table_id" in metadata
-    # stac_extensions no longer in return dict (set via pystac API in on_post_add)
-    assert "stac_extensions" not in metadata
-
-
-@pytest.mark.integration
-def test_generate_collection_metadata_excludes_stac_extensions(
-    iceberg_backend, iceberg_catalog, tmp_path
-):
-    """generate_collection_metadata should not include stac_extensions (pystac manages them)."""
-    table_data = pa.table({"id": pa.array([1], type=pa.int64())})
-    path = tmp_path / "data.parquet"
-    pq.write_table(table_data, path)
-
-    iceberg_backend.publish(
-        collection="no-ext",
-        assets={"data.parquet": str(path)},
-        schema={"columns": ["id"], "types": {}, "hash": "h1"},
-        breaking=False,
-        message="v1",
-    )
-
-    from portolan_cli.backends.iceberg.stac_generator import generate_collection_metadata
-
-    table = iceberg_catalog.load_table("portolake.no-ext")
-    metadata = generate_collection_metadata(table)
-
-    assert "stac_extensions" not in metadata
-
-
-@pytest.mark.integration
-def test_generate_collection_metadata_excludes_assets(iceberg_backend, iceberg_catalog, tmp_path):
-    """generate_collection_metadata should not include assets (pystac manages them)."""
-    table_data = pa.table({"id": pa.array([1], type=pa.int64())})
-    path = tmp_path / "data.parquet"
-    pq.write_table(table_data, path)
-
-    iceberg_backend.publish(
-        collection="no-assets",
-        assets={"data.parquet": str(path)},
-        schema={"columns": ["id"], "types": {}, "hash": "h1"},
-        breaking=False,
-        message="v1",
-    )
-
-    from portolan_cli.backends.iceberg.stac_generator import generate_collection_metadata
-
-    table = iceberg_catalog.load_table("portolake.no-assets")
-    metadata = generate_collection_metadata(table)
-
-    assert "assets" not in metadata
-
-
-class TestExtensionShape:
-    """The fields must match the STAC Iceberg extension v1.1.0 (issue #883)."""
-
-    @pytest.mark.unit
-    def test_partition_fields_use_the_extension_keys(self) -> None:
-        """A partition field is name/transform/source-id/field-id, not field/transform."""
-        from unittest.mock import MagicMock
-
-        from portolan_cli.backends.iceberg.stac_generator import _get_partition_spec
-
-        # MagicMock(name=...) names the mock itself, so the attribute is set after.
-        field = MagicMock(source_id=5, field_id=1000)
-        field.name = "geohash_3"
-        field.transform.__str__ = lambda self: "identity"  # type: ignore[method-assign]
-        table = MagicMock()
-        table.spec.return_value.fields = [field]
-
-        assert _get_partition_spec(table) == [
-            {"name": "geohash_3", "transform": "identity", "source-id": 5, "field-id": 1000}
+def _loaded(
+    *,
+    fields: list[dict[str, Any]] | None = None,
+    location: str = "s3://warehouse/portolake/roads/metadata/00001-abc.metadata.json",
+    current_snapshot: int | None = 42,
+    specs: list[dict[str, Any]] | None = None,
+    default_spec: int = 0,
+    format_version: int = 3,
+) -> LoadTableResult:
+    if fields is None:
+        fields = [
+            {"id": 1, "name": "id", "required": False, "type": "long"},
+            {"id": 2, "name": "name", "required": False, "type": "string"},
+            {"id": 3, "name": "geometry", "required": False, "type": "geometry(EPSG:25830)"},
         ]
-
-    @pytest.mark.unit
-    def test_an_unpartitioned_table_omits_the_partition_spec(self) -> None:
-        """The extension says to omit the field for an unpartitioned table."""
-        from unittest.mock import MagicMock
-
-        from portolan_cli.backends.iceberg.stac_generator import generate_collection_metadata
-
-        table = MagicMock()
-        table.catalog = MagicMock()
-        type(table.catalog).__name__ = "SqlCatalog"
-        table.catalog.properties = {}
-        table.spec.return_value.fields = []
-        table.metadata_location = "https://data.example.org/t/metadata/v1.metadata.json"
-        table.current_snapshot.return_value = None
-
-        assert "iceberg:partition_spec" not in generate_collection_metadata(table)
-
-    @pytest.mark.unit
-    @pytest.mark.parametrize(
-        ("uri", "published"),
-        [
-            ("sqlite:////tmp/tmp.4EuYh4nkoq/c/.portolan/iceberg.db", None),
-            ("https://rest.example.org/catalog?token=SECRET", "https://rest.example.org/catalog"),
+    metadata: dict[str, Any] = {
+        "format-version": format_version,
+        "table-uuid": "0a7b",
+        "current-schema-id": 1,
+        "schemas": [
+            {"schema-id": 0, "type": "struct", "fields": [fields[0]]},
+            {"schema-id": 1, "type": "struct", "fields": fields},
         ],
+        "default-spec-id": default_spec,
+        "partition-specs": specs if specs is not None else [{"spec-id": 0, "fields": []}],
+        "current-snapshot-id": current_snapshot if current_snapshot is not None else -1,
+        "refs": {},
+        "snapshots": [],
+        "properties": {},
+    }
+    return LoadTableResult(metadata_location=location, metadata=metadata, config={})
+
+
+def _generate(loaded: LoadTableResult | None = None, **kwargs: Any) -> dict[str, Any]:
+    options: dict[str, Any] = {
+        "settings": _settings(),
+        "collection": "roads",
+        "prefix": "",
+        "row_count": 7,
+    }
+    options.update(kwargs)
+    return generate_collection_metadata(loaded or _loaded(), **options)
+
+
+# --- table:* ---
+
+
+def test_columns_come_from_the_current_schema_with_logical_types() -> None:
+    fields = _generate()["table:columns"]
+
+    assert fields == [
+        {"name": "id", "type": "int64"},
+        {"name": "name", "type": "string"},
+        {"name": "geometry", "type": "geometry"},
+    ]
+
+
+def test_the_current_schema_is_the_one_named_by_current_schema_id() -> None:
+    """Schema 0 holds one column and schema 1 three. The document names schema 1."""
+    columns = _generate()["table:columns"]
+
+    assert len(columns) == 3
+
+
+@pytest.mark.parametrize(
+    ("iceberg_type", "expected"),
+    [
+        ("long", "int64"),
+        ("int", "int32"),
+        ("double", "float64"),
+        ("float", "float32"),
+        ("string", "string"),
+        ("boolean", "boolean"),
+        ("binary", "binary"),
+        ("date", "date"),
+        ("timestamp", "datetime"),
+        ("timestamptz", "datetime"),
+        ("timestamp_ns", "datetime"),
+        ("geometry(OGC:CRS84)", "geometry"),
+        ("geography(EPSG:4326)", "geography"),
+        ("decimal(10, 2)", "decimal"),
+        ({"type": "struct", "fields": []}, "struct"),
+        ({"type": "list", "element": "string"}, "list"),
+        ({"type": "map", "key": "string", "value": "long"}, "map"),
+    ],
+)
+def test_iceberg_type_strings_map_to_table_extension_types(
+    iceberg_type: str | dict[str, Any], expected: str
+) -> None:
+    assert iceberg_type_to_str(iceberg_type) == expected
+
+
+def test_row_count_is_the_one_the_backend_queried() -> None:
+    """The snapshot summary counts physical rows under merge-on-read, so it is not used."""
+    assert _generate(row_count=501)["table:row_count"] == 501
+
+
+def test_primary_geometry_is_the_first_geometry_typed_column() -> None:
+    fields = [
+        {"id": 1, "name": "id", "required": False, "type": "long"},
+        {"id": 2, "name": "shape", "required": False, "type": "geometry(EPSG:4326)"},
+        {"id": 3, "name": "geometry", "required": False, "type": "binary"},
+    ]
+
+    assert _generate(_loaded(fields=fields))["table:primary_geometry"] == "shape"
+
+
+def test_primary_geometry_is_none_without_a_geometry_column() -> None:
+    fields = [{"id": 1, "name": "id", "required": False, "type": "long"}]
+
+    assert _generate(_loaded(fields=fields))["table:primary_geometry"] is None
+
+
+# --- iceberg:* ---
+
+
+def test_the_catalog_fields_describe_a_rest_catalog() -> None:
+    metadata = _generate(prefix="ws-one")
+
+    assert metadata["iceberg:catalog_type"] == "rest"
+    assert metadata["iceberg:catalog_uri"] == "https://catalog.example.org"
+    assert metadata["iceberg:rest_prefix"] == "ws-one"
+    assert metadata["iceberg:authorization_type"] == "none"
+    assert metadata["iceberg:table_id"] == "portolake.roads"
+    assert metadata["iceberg:format_version"] == 3
+
+
+def test_an_empty_prefix_is_omitted() -> None:
+    assert "iceberg:rest_prefix" not in _generate(prefix="")
+
+
+@pytest.mark.parametrize(
+    ("auth", "published"), [("none", "none"), ("oauth2", "oauth2"), ("bearer", "oauth2")]
+)
+def test_the_authorization_type_is_in_the_extension_enum(auth: str, published: str) -> None:
+    """The enum holds none, oauth2, and sigv4. A static bearer token is an OAuth2 token."""
+    assert _generate(settings=_settings(auth=auth))["iceberg:authorization_type"] == published
+
+
+def test_a_credential_in_the_catalog_uri_is_dropped() -> None:
+    settings = _settings(uri="https://catalog.example.org?token=SECRET")
+
+    assert _generate(settings=settings)["iceberg:catalog_uri"] == "https://catalog.example.org"
+
+
+def test_the_table_id_uses_the_configured_namespace() -> None:
+    assert _generate(settings=_settings(namespace="lake"))["iceberg:table_id"] == "lake.roads"
+
+
+def test_the_partition_spec_is_the_default_spec_in_extension_shape() -> None:
+    specs = [
+        {"spec-id": 0, "fields": []},
+        {
+            "spec-id": 1,
+            "fields": [
+                {"name": "region", "transform": "identity", "source-id": 2, "field-id": 1000}
+            ],
+        },
+    ]
+
+    metadata = _generate(_loaded(specs=specs, default_spec=1))
+
+    assert metadata["iceberg:partition_spec"] == [
+        {"name": "region", "transform": "identity", "source-id": 2, "field-id": 1000}
+    ]
+
+
+def test_an_unpartitioned_table_omits_the_partition_spec() -> None:
+    assert "iceberg:partition_spec" not in _generate()
+
+
+def test_the_snapshot_id_is_a_string() -> None:
+    """A 64-bit id loses precision in a JSON parser that stores numbers as doubles."""
+    assert _generate(_loaded(current_snapshot=9007199254740993))["iceberg:current_snapshot_id"] == (
+        "9007199254740993"
     )
-    def test_catalog_uri_holds_no_local_path_or_credential(
-        self, uri: str, published: str | None
-    ) -> None:
-        """#939: a local SQLite path names the machine that ran the command."""
-        from unittest.mock import MagicMock
 
-        from portolan_cli.backends.iceberg.stac_generator import generate_collection_metadata
 
-        table = MagicMock()
-        type(table.catalog).__name__ = "SqlCatalog"
-        table.catalog.properties = {"uri": uri}
-        table.spec.return_value.fields = []
-        table.metadata_location = "file:///tmp/c/.portolan/warehouse/t/metadata/v1.metadata.json"
-        table.current_snapshot.return_value = None
+def test_a_table_with_no_snapshot_omits_the_snapshot_id() -> None:
+    assert "iceberg:current_snapshot_id" not in _generate(_loaded(current_snapshot=None))
 
-        metadata = generate_collection_metadata(table)
 
-        assert metadata.get("iceberg:catalog_uri") == published
-        assert "iceberg:metadata_location" not in metadata
+# --- metadata location ---
 
-    @pytest.mark.unit
-    def test_an_unrecognized_catalog_class_raises(self) -> None:
-        """A catalog type outside the extension enum must fail loudly, not emit 'unknown'."""
-        from unittest.mock import MagicMock
 
-        from portolan_cli.backends.iceberg.stac_generator import _get_catalog_type
+def test_an_s3_location_becomes_https_on_a_path_style_endpoint() -> None:
+    location = "s3://warehouse/portolake/roads/metadata/00001-abc.metadata.json"
 
-        table = MagicMock()
-        table.catalog = MagicMock()
-        type(table.catalog).__name__ = "SomeFutureCatalog"
-        table.catalog.properties = {}
+    assert https_metadata_location(location, _storage()) == (
+        "https://s3.example.org/warehouse/portolake/roads/metadata/00001-abc.metadata.json"
+    )
 
-        with pytest.raises(ValueError, match="SomeFutureCatalog"):
-            _get_catalog_type(table)
 
-    @pytest.mark.unit
-    def test_a_catalog_type_property_outside_the_enum_raises(self) -> None:
-        from unittest.mock import MagicMock
+def test_an_s3_location_stays_s3_without_an_https_endpoint() -> None:
+    location = "s3://warehouse/t/metadata/v1.metadata.json"
 
-        from portolan_cli.backends.iceberg.stac_generator import _get_catalog_type
+    assert https_metadata_location(
+        location, _storage(endpoint="localhost:9000", use_ssl=False)
+    ) == (location)
+    assert https_metadata_location(location, _storage(endpoint=None)) == location
 
-        table = MagicMock()
-        table.catalog = MagicMock()
-        type(table.catalog).__name__ = "SomeFutureCatalog"
-        table.catalog.properties = {"type": "nessie"}
 
-        with pytest.raises(ValueError, match="nessie"):
-            _get_catalog_type(table)
+def test_the_published_location_is_the_https_form() -> None:
+    metadata = _generate()
 
-    @pytest.mark.unit
-    def test_geometry_types_report_their_logical_name(self) -> None:
-        """table:columns carries the logical type, not the parameterized Iceberg string."""
-        from pyiceberg.types import GeographyType, GeometryType
+    assert metadata["iceberg:metadata_location"] == (
+        "https://s3.example.org/warehouse/portolake/roads/metadata/00001-abc.metadata.json"
+    )
 
-        from portolan_cli.backends.iceberg.stac_generator import _iceberg_type_to_str
 
-        assert _iceberg_type_to_str(GeometryType("EPSG:4326")) == "geometry"
-        assert _iceberg_type_to_str(GeographyType("EPSG:4326")) == "geography"
+def test_a_local_location_is_omitted() -> None:
+    """#939: a file path names the machine that ran the command."""
+    loaded = _loaded(location="file:///tmp/c/.portolan/warehouse/t/metadata/v1.metadata.json")
 
-    @pytest.mark.unit
-    def test_the_extension_uri_is_the_canonical_one(self) -> None:
-        from portolan_cli.backends.iceberg.stac_generator import STAC_ICEBERG_EXTENSION
+    assert "iceberg:metadata_location" not in _generate(loaded)
 
-        assert STAC_ICEBERG_EXTENSION == (
-            "https://schemas.portolan-sdi.org/incubating/iceberg/v1.1.0/schema.json"
-        )
+
+# --- extensions ---
+
+
+def test_the_extension_uris_are_the_canonical_ones() -> None:
+    assert STAC_TABLE_EXTENSION == "https://stac-extensions.github.io/table/v1.2.0/schema.json"
+    assert STAC_ICEBERG_EXTENSION == (
+        "https://schemas.portolan-sdi.org/incubating/iceberg/v1.1.0/schema.json"
+    )
+
+
+def test_the_fields_hold_neither_assets_nor_extensions() -> None:
+    """Assets and stac_extensions go through the collection document, not these fields."""
+    metadata = _generate()
+
+    assert "assets" not in metadata
+    assert "stac_extensions" not in metadata

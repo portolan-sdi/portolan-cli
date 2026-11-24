@@ -33,7 +33,7 @@ flowchart TD
     subgraph BK["Backends layer"]
         proto["protocol.py<br/>VersioningBackend Protocol"]
         jsonbk["json_file.py JsonFileBackend (default)"]
-        iceberg["iceberg IcebergBackend (optional extra)"]
+        iceberg["iceberg IcebergBackend (DuckDB writer, REST catalog)"]
         proto -.implements.-> jsonbk
         proto -.implements.-> iceberg
     end
@@ -94,8 +94,9 @@ subsystem table below and the path-scoped rules for each.
   `check_drift`. `backends/__init__.py` `get_backend(name)` is the factory.
   It resolves names through the `portolan_backends` hook (#947). Two built-in
   hook modules register `"file"` -> `JsonFileBackend` and `"iceberg"` ->
-  `IcebergBackend` (needs the `[iceberg]` extra, in
-  `backends/iceberg/hooks.py`). A plugin can add a name. A built-in name always
+  `IcebergBackend` (in `backends/iceberg/hooks.py`; DuckDB writes the tables
+  through the Iceberg REST catalog that `PORTOLAN_ICEBERG_URI` names). A
+  plugin can add a name. A built-in name always
   wins a collision. The CLI reaches a backend only through `version_ops.py`,
   which resolves the name CLI flag > config > `"file"`.
 - Iceberg is a built-in plugin. `backends/iceberg/` imports only

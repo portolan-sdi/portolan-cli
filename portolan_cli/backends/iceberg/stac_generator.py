@@ -1,248 +1,191 @@
-"""STAC metadata generation from Iceberg table state.
+"""The STAC fields of a collection, from the ``loadTable`` document.
 
-Layer 1 (Phase 3): STAC Table Extension fields (table:columns, table:row_count,
-table:primary_geometry) extracted from Iceberg table schema and manifests.
+Layer 1 is the STAC Table extension: ``table:columns``, ``table:row_count``,
+``table:primary_geometry``. Layer 2 is the STAC Iceberg extension v1.1.0:
+``iceberg:catalog_type``, ``iceberg:catalog_uri``, ``iceberg:rest_prefix``,
+``iceberg:authorization_type``, ``iceberg:table_id``,
+``iceberg:format_version``, ``iceberg:partition_spec``,
+``iceberg:metadata_location``, ``iceberg:current_snapshot_id``.
 
-Layer 2 (Phase 4): STAC Iceberg Extension fields (iceberg:catalog_type,
-iceberg:table_id, iceberg:current_snapshot_id, etc.) from catalog and table state.
+Everything comes from the table metadata document the REST catalog returns
+and from the backend settings. No table object of any library is involved.
+The row count is an argument, because the backend queries it: under
+DuckDB's merge-on-read writes the snapshot summary's ``total-records``
+counts physical rows, including the rows a deletion vector hides, so it is
+not the row count a reader sees (duckdb/duckdb-iceberg#1659).
 """
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from pyiceberg.types import (
-    BinaryType,
-    BooleanType,
-    DateType,
-    DoubleType,
-    FloatType,
-    GeographyType,
-    GeometryType,
-    IntegerType,
-    LongType,
-    StringType,
-    TimestampType,
-    TimestamptzType,
-)
-
 from portolan_cli.api import sanitize_published_string
 
 if TYPE_CHECKING:
-    from pyiceberg.table import Table
-
-# Columns added by portolake spatial processing — exclude from table:columns
-_DERIVED_PREFIXES = ("geohash_", "bbox_")
-
-# Map Iceberg types to STAC Table Extension type strings
-_TYPE_MAP: dict[type, str] = {
-    LongType: "int64",
-    IntegerType: "int32",
-    DoubleType: "float64",
-    FloatType: "float32",
-    StringType: "string",
-    BooleanType: "boolean",
-    BinaryType: "binary",
-    DateType: "date",
-    TimestampType: "datetime",
-    TimestamptzType: "datetime",
-    # The logical type, with no parameter. The Iceberg schema carries the CRS
-    # in its own type string, as geometry(EPSG:4326); the two are different
-    # fields and neither belongs in the other.
-    GeometryType: "geometry",
-    GeographyType: "geography",
-}
+    from portolan_cli.backends.iceberg.rest import LoadTableResult
+    from portolan_cli.backends.iceberg.settings import IcebergSettings, StorageSettings
 
 STAC_TABLE_EXTENSION = "https://stac-extensions.github.io/table/v1.2.0/schema.json"
-# The Iceberg extension a collection published as an Iceberg table declares.
-# portolan-spec pins it under incubating/iceberg, next to the partition
-# extension, and serves it from the same host.
+#: The Iceberg extension a collection published as an Iceberg table declares.
+#: portolan-spec pins it under incubating/iceberg, next to the partition
+#: extension, and serves it from the same host.
 STAC_ICEBERG_EXTENSION = "https://schemas.portolan-sdi.org/incubating/iceberg/v1.1.0/schema.json"
 
-# Map PyIceberg catalog class names to catalog type strings
-_CATALOG_TYPE_MAP: dict[str, str] = {
-    "SqlCatalog": "sql",
-    "RestCatalog": "rest",
-    "GlueCatalog": "glue",
-    "HiveCatalog": "hive",
-    "DynamoDbCatalog": "dynamodb",
+# Iceberg primitive type names to STAC Table extension type names. A
+# parameterized type (``decimal(10, 2)``, ``geometry(EPSG:25830)``) maps by
+# the name before the parenthesis. The CRS is a field of its own in the
+# Iceberg schema and does not belong in the type string.
+_TYPE_MAP: dict[str, str] = {
+    "long": "int64",
+    "int": "int32",
+    "double": "float64",
+    "float": "float32",
+    "string": "string",
+    "boolean": "boolean",
+    "binary": "binary",
+    "date": "date",
+    "timestamp": "datetime",
+    "timestamptz": "datetime",
+    "timestamp_ns": "datetime",
+    "timestamptz_ns": "datetime",
+    "geometry": "geometry",
+    "geography": "geography",
+    "decimal": "decimal",
+    "uuid": "uuid",
 }
 
-
-def _iceberg_type_to_str(iceberg_type: Any) -> str:
-    """Convert an Iceberg type to a STAC-friendly type string."""
-    return _TYPE_MAP.get(type(iceberg_type), str(iceberg_type))
-
-
-def _is_derived_column(name: str) -> bool:
-    """Check if a column name is a portolake-derived spatial column."""
-    return any(name.startswith(prefix) for prefix in _DERIVED_PREFIXES)
+# The extension enumerates none, oauth2, and sigv4. A static bearer token is
+# an OAuth2 access token an identity provider minted, so a reader uses the
+# oauth2 mode with it.
+_AUTHORIZATION: dict[str, str] = {"none": "none", "oauth2": "oauth2", "bearer": "oauth2"}
 
 
-def _detect_primary_geometry(field_names: list[str]) -> str | None:
-    """Detect the primary geometry column name."""
-    for name in ("geometry", "geom"):
-        if name in field_names:
-            return name
-    return None
+def iceberg_type_to_str(iceberg_type: str | dict[str, Any]) -> str:
+    """Return the STAC Table extension type name of an Iceberg schema type."""
+    if isinstance(iceberg_type, dict):
+        return str(iceberg_type.get("type", "struct"))
+    name = iceberg_type.split("(", 1)[0].split("[", 1)[0].strip()
+    return _TYPE_MAP.get(name, iceberg_type)
 
 
-def _get_row_count(table: Table) -> int:
-    """Return the total row count via O(1) snapshot metadata.
+def _is_geometry_type(iceberg_type: str | dict[str, Any]) -> bool:
+    return iceberg_type_to_str(iceberg_type) in ("geometry", "geography")
 
-    Iceberg records ``total-records`` (net of deletes) in each snapshot's
-    summary, so we read that instead of materializing the whole table — the
-    data the Iceberg backend targets can be 100K+ rows, and this runs on
-    every ``on_post_add``. Returns 0 for an empty table (no current snapshot),
-    and falls back to a metadata-only file count for the rare catalog/writer
-    that doesn't populate ``total-records``.
+
+def _current_schema_fields(metadata: dict[str, Any]) -> list[dict[str, Any]]:
+    schemas = metadata.get("schemas") or []
+    current_id = metadata.get("current-schema-id")
+    for schema in schemas:
+        if schema.get("schema-id") == current_id:
+            return list(schema.get("fields", []))
+    if schemas:
+        return list(schemas[-1].get("fields", []))
+    return list((metadata.get("schema") or {}).get("fields", []))
+
+
+def _default_partition_fields(metadata: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return the fields of the default spec in the shape the extension defines."""
+    default_id = metadata.get("default-spec-id", 0)
+    for spec in metadata.get("partition-specs") or []:
+        if spec.get("spec-id") == default_id:
+            return [
+                {
+                    "name": field["name"],
+                    "transform": field["transform"],
+                    "source-id": field["source-id"],
+                    "field-id": field["field-id"],
+                }
+                for field in spec.get("fields", [])
+            ]
+    return []
+
+
+def https_metadata_location(location: str, storage: StorageSettings | None) -> str:
+    """Return the HTTPS form of an ``s3://`` location when the store serves one.
+
+    A path-style endpoint over TLS serves ``s3://bucket/key`` at
+    ``https://<endpoint>/bucket/key``, and a reader with no S3 client reads
+    the metadata file from that URL. Any other location is returned as is.
     """
-    snapshot = table.current_snapshot()
-    if snapshot is None:
-        return 0
-    if snapshot.summary is not None:
-        total_records = snapshot.summary.additional_properties.get("total-records")
-        if total_records is not None:
-            return int(total_records)
-    # Falls back to file record_count metadata; only materializes data files
-    # that carry unmerged positional deletes (see DataScan.count).
-    return int(table.scan().count())
+    if storage is None or storage.endpoint is None or not storage.use_ssl:
+        return location
+    if not location.startswith("s3://"):
+        return location
+    return f"https://{storage.endpoint}/{location[len('s3://') :]}"
 
 
-def generate_table_metadata(table: Table) -> dict[str, Any]:
-    # portolan-cli also generates table:* from GeoParquet source metadata.
-    # This version reflects the Iceberg table state and takes precedence
-    # when the Iceberg backend is active (applied via on_post_add hook).
-    """Generate STAC Table Extension fields from an Iceberg table.
-
-    Returns a dict with:
-        - table:columns: list of {name, type} dicts
-        - table:row_count: total rows in current snapshot
-        - table:primary_geometry: geometry column name or None
-    """
-    schema = table.schema()
-
-    columns = []
-    field_names = []
-    for field in schema.fields:
-        field_names.append(field.name)
-        if _is_derived_column(field.name):
-            continue
-        columns.append(
-            {
-                "name": field.name,
-                "type": _iceberg_type_to_str(field.field_type),
-            }
-        )
-
-    row_count = _get_row_count(table)
-    primary_geometry = _detect_primary_geometry(field_names)
-
+def generate_table_metadata(loaded: LoadTableResult, *, row_count: int) -> dict[str, Any]:
+    """Return the ``table:*`` fields of the table."""
+    fields = _current_schema_fields(loaded.metadata)
+    primary_geometry = next(
+        (str(field["name"]) for field in fields if _is_geometry_type(field["type"])), None
+    )
     return {
-        "table:columns": columns,
+        "table:columns": [
+            {"name": str(field["name"]), "type": iceberg_type_to_str(field["type"])}
+            for field in fields
+        ],
         "table:row_count": row_count,
         "table:primary_geometry": primary_geometry,
     }
 
 
-def _get_catalog_type(table: Table) -> str:
-    """Extract the catalog type string from a table's catalog reference.
+def generate_collection_metadata(
+    loaded: LoadTableResult,
+    *,
+    settings: IcebergSettings,
+    collection: str,
+    prefix: str,
+    row_count: int,
+) -> dict[str, Any]:
+    """Return the ``table:*`` and ``iceberg:*`` fields of a collection.
 
-    The extension enumerates the value, so an unrecognized catalog cannot be
-    described. Emitting "unknown" produced a collection that failed the schema
-    it declared, and hid the real problem: a catalog class this backend has
-    never seen.
+    Args:
+        loaded: The ``loadTable`` response of the collection's table.
+        settings: The backend settings, for the catalog URI, the namespace,
+            the authorization mode, and the object store.
+        collection: The collection id, which is the table name.
+        prefix: The REST prefix ``GET /v1/config`` returned, or ``""``.
+        row_count: The row count the backend queried.
+
+    Returns:
+        The fields, ready to merge into ``collection.json``. Assets and
+        ``stac_extensions`` are not among them: the backend sets those on
+        the document itself.
     """
-    catalog = table.catalog
-    class_name = type(catalog).__name__
-    if class_name in _CATALOG_TYPE_MAP:
-        return _CATALOG_TYPE_MAP[class_name]
-    declared = catalog.properties.get("type")
-    if declared in _CATALOG_TYPE_MAP.values():
-        return str(declared)
-    raise ValueError(
-        f"Unrecognized Iceberg catalog {class_name!r} (type property: {declared!r}). "
-        f"The STAC Iceberg extension allows only {sorted(set(_CATALOG_TYPE_MAP.values()))}."
-    )
+    metadata = generate_table_metadata(loaded, row_count=row_count)
+    document = loaded.metadata
 
+    metadata["iceberg:catalog_type"] = "rest"
+    # A credential in the URI query is dropped. A local URI has no safe form.
+    catalog_uri = sanitize_published_string(settings.uri)
+    if catalog_uri:
+        metadata["iceberg:catalog_uri"] = catalog_uri
+    if prefix:
+        metadata["iceberg:rest_prefix"] = prefix
+    metadata["iceberg:authorization_type"] = _AUTHORIZATION[settings.auth]
+    metadata["iceberg:table_id"] = f"{settings.namespace}.{collection}"
+    metadata["iceberg:format_version"] = int(document.get("format-version", 0))
 
-def _get_catalog_uri(table: Table) -> str | None:
-    """Extract the catalog URI from a table's catalog reference."""
-    catalog = table.catalog
-    uri = catalog.properties.get("uri")
-    return str(uri) if uri is not None else None
-
-
-def _get_table_id(table: Table) -> str:
-    """Get the fully qualified table identifier (namespace.name)."""
-    name_tuple = table.name()
-    return ".".join(name_tuple)
-
-
-def _get_partition_spec(table: Table) -> list[dict[str, Any]]:
-    """Extract the partition spec in the shape the extension defines.
-
-    The entry is keyed ``name``/``transform``/``source-id``/``field-id``. The
-    partition field name can differ from the source column name, and the
-    earlier ``field`` key carried the source column, so a renamed field or a
-    parameterized transform such as ``bucket[16]`` could not be described.
-    """
-    spec = table.spec()
-    return [
-        {
-            "name": field.name,
-            "transform": str(field.transform),
-            "source-id": field.source_id,
-            "field-id": field.field_id,
-        }
-        for field in spec.fields
-    ]
-
-
-def generate_collection_metadata(table: Table) -> dict[str, Any]:
-    """Generate combined STAC metadata from an Iceberg table.
-
-    Combines Layer 1 (table:*) and Layer 2 (iceberg:*) fields.
-
-    Returns a dict suitable for merging into pystac.Collection extra_fields.
-    """
-    # Layer 1: table:* fields
-    metadata = generate_table_metadata(table)
-
-    # Layer 2: iceberg:* fields
-    metadata["iceberg:catalog_type"] = _get_catalog_type(table)
-    metadata["iceberg:table_id"] = _get_table_id(table)
-    metadata["iceberg:format_version"] = table.format_version
-    # The field describes a partition spec. The extension says to omit it for
-    # an unpartitioned table, so an empty list says nothing and is left out.
-    partition_spec = _get_partition_spec(table)
+    # The extension says to omit the field for an unpartitioned table.
+    partition_spec = _default_partition_fields(document)
     if partition_spec:
         metadata["iceberg:partition_spec"] = partition_spec
 
-    # Omit a local location. A file:// or sqlite:// path is the absolute path
-    # of the machine that ran the command, so publishing it leaks the layout of
-    # that machine and names a document no reader can fetch (issue #939). A
-    # credential in a catalog URI query is dropped too.
-    catalog_uri = _get_catalog_uri(table)
-    published_uri = sanitize_published_string(catalog_uri) if catalog_uri else None
-    if published_uri:
-        metadata["iceberg:catalog_uri"] = published_uri
-
-    location = table.metadata_location
-    published_location = sanitize_published_string(location) if location else None
+    # A file:// location is the absolute path of the machine that ran the
+    # command (#939), so it is left out. An s3:// location becomes https when
+    # the store serves it that way, which is what a serverless reader needs.
+    published_location = sanitize_published_string(
+        https_metadata_location(loaded.metadata_location, settings.storage)
+    )
     if published_location:
         metadata["iceberg:metadata_location"] = published_location
 
-    # A string: an Iceberg snapshot id is 64-bit, and a JSON parser that stores
-    # numbers as doubles rounds it above 2^53. A table with no snapshot has no
-    # id to report, and the field is optional, so it is omitted rather than null.
-    snap = table.current_snapshot()
-    if snap is not None:
-        metadata["iceberg:current_snapshot_id"] = str(snap.snapshot_id)
-
-    # Assets and stac_extensions are NOT included here — they must be set
-    # via pystac's first-class APIs (collection.assets, collection.stac_extensions)
-    # because pystac ignores extra_fields for these during serialization.
-    # See on_post_add() in backend.py for how they are applied.
+    # A string: an Iceberg snapshot id is 64-bit, and a JSON parser that
+    # stores numbers as doubles rounds it above 2^53. A table with no
+    # snapshot has no id, and the field is optional, so it is omitted.
+    current = document.get("current-snapshot-id")
+    if current is not None and int(current) != -1:
+        metadata["iceberg:current_snapshot_id"] = str(int(current))
 
     return metadata

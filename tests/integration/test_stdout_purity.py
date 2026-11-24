@@ -19,7 +19,6 @@ from __future__ import annotations
 import ast
 import json
 import shutil
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -207,26 +206,26 @@ def test_extract_arcgis_writes_one_document(
 
 @pytest.fixture
 def iceberg_catalog(tmp_path: Path, run_cli: RunCli) -> Path:
-    """A catalog on the Iceberg backend with one collection at version 1.0.0."""
-    pytest.importorskip("pyiceberg")
+    """A catalog on the Iceberg backend, with no catalog URI in the environment.
+
+    The commands then fail at the backend setup, and that failure must still
+    be one JSON document. The success path runs against the compose stack
+    in ``tests/iceberg/e2e``.
+    """
     root = tmp_path / "lake"
     (root / "roads").mkdir(parents=True)
     shutil.copy(POINTS, root / "roads" / "roads.parquet")
     run_cli("init", str(root), "--auto", "--license", "CC-BY-4.0")
     run_cli("config", "set", "backend", "iceberg", cwd=root)
-    run_cli("add", "--portolan-dir", str(root), str(root / "roads" / "roads.parquet"))
     return root
 
 
 @pytest.mark.parametrize(
     ("args", "expect"),
     [
-        pytest.param(("version", "rollback", "roads", "1.0.0", "--json"), 0, id="rollback"),
-        pytest.param(("version", "prune", "roads", "--dry-run", "--json"), 0, id="prune"),
+        pytest.param(("version", "rollback", "roads", "1.0.0", "--json"), 1, id="rollback"),
+        pytest.param(("version", "prune", "roads", "--dry-run", "--json"), 1, id="prune"),
     ],
-)
-@pytest.mark.skipif(
-    sys.platform == "win32", reason="PyIceberg SQL catalog warehouse paths break on Windows"
 )
 def test_iceberg_commands_write_one_document(
     args: tuple[str, ...], expect: int, iceberg_catalog: Path, run_cli: RunCli
@@ -235,6 +234,7 @@ def test_iceberg_commands_write_one_document(
 
     assert_one_json_document(result.stdout)
     assert result.exit_code == expect, result.output
+    assert "PORTOLAN_ICEBERG_URI" in result.stdout
 
 
 def test_the_module_patches_nothing() -> None:

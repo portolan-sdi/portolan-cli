@@ -185,8 +185,11 @@ _DUCKDB_EXTENSIONS: tuple[tuple[str, str | None], ...] = (
     ("spatial", None),
     ("httpfs", None),
     ("encodings", None),
-    # The Iceberg backend attaches a REST catalog through this one.
+    # The Iceberg backend attaches a REST catalog through this one. Its
+    # initialization loads avro, and installs it when absent, so avro must
+    # be in the cache too (seen on a fresh CI runner, 2026-11-04).
     ("iceberg", None),
+    ("avro", None),
     ("h3", "community"),
     ("geography", "community"),
     ("a5", "community"),

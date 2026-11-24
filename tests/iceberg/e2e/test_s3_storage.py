@@ -1,8 +1,4 @@
-"""E2E tests for S3 storage verification via RustFS.
-
-Verifies that Iceberg data and metadata files are correctly stored
-in RustFS S3-compatible storage after publishing through the REST catalog.
-"""
+"""The data and the metadata land in the warehouse bucket, where DuckDB reads them."""
 
 from __future__ import annotations
 
@@ -12,71 +8,41 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
-from tests.iceberg.e2e.conftest import write_test_parquet
-from tests.iceberg_stack import scan_row_count, warehouse_objects
+from portolan_cli.backends.iceberg.backend import IcebergBackend
+from tests.iceberg.e2e.conftest import SCHEMA, write_test_parquet
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from portolan_cli.backends.iceberg.backend import IcebergBackend
-    from tests.iceberg_stack import IcebergLane, RestAdmin
+    from tests.iceberg_stack import IcebergStack
+
+pytestmark = pytest.mark.e2e
 
 
-@pytest.mark.e2e
-def test_parquet_files_in_s3(
-    rest_iceberg_backend: IcebergBackend, iceberg_lane: IcebergLane, tmp_path: Path
+def test_the_data_files_and_the_metadata_files_are_in_the_bucket(
+    iceberg_stack: IcebergStack, tmp_path: Path
 ) -> None:
-    """A DuckDB listing finds Parquet data files in the warehouse bucket."""
-    asset = write_test_parquet(tmp_path / "s3_data.parquet")
+    backend = IcebergBackend(catalog_root=tmp_path)
+    (tmp_path / "s3-check").mkdir()
+    asset = write_test_parquet(tmp_path / "s3-check" / "data.parquet")
 
-    rest_iceberg_backend.publish(
-        collection="s3-parquet",
-        assets={"s3_data.parquet": str(asset)},
-        schema={"columns": ["id", "val"], "types": {}, "hash": "h1"},
-        breaking=False,
-        message="S3 parquet check",
+    backend.publish("s3-check", {"data.parquet": str(asset)}, SCHEMA, False, "S3")
+
+    keys = iceberg_stack.objects("s3-check")
+    assert any(
+        key.startswith(f"{iceberg_stack.namespace}/s3-check/data/") and key.endswith(".parquet")
+        for key in keys
+    ), keys
+    assert any(key.endswith(".metadata.json") for key in keys), keys
+    assert iceberg_stack.load_table("s3-check").metadata_location.startswith(
+        f"s3://warehouse/{iceberg_stack.namespace}/s3-check/metadata/"
     )
 
-    keys = warehouse_objects(iceberg_lane, "portolake/s3-parquet/")
-    parquet_keys = [key for key in keys if key.endswith(".parquet")]
 
-    assert len(parquet_keys) > 0, f"No parquet files under portolake/s3-parquet/: {keys}"
-
-
-@pytest.mark.e2e
-def test_iceberg_metadata_in_s3(
-    rest_iceberg_backend: IcebergBackend, iceberg_lane: IcebergLane, tmp_path: Path
-) -> None:
-    """Iceberg metadata JSON and manifest files should exist in S3."""
-    asset = write_test_parquet(tmp_path / "meta_check.parquet")
-
-    rest_iceberg_backend.publish(
-        collection="s3-metadata",
-        assets={"meta_check.parquet": str(asset)},
-        schema={"columns": ["id", "val"], "types": {}, "hash": "h1"},
-        breaking=False,
-        message="Metadata check",
-    )
-
-    keys = warehouse_objects(iceberg_lane, "portolake/s3-metadata/metadata/")
-
-    has_metadata_json = any(k.endswith(".metadata.json") for k in keys)
-    assert has_metadata_json, f"No metadata.json files found: {keys}"
-
-
-@pytest.mark.e2e
 @pytest.mark.e2e_slow
-def test_large_dataset_s3(
-    rest_iceberg_backend: IcebergBackend,
-    rest_admin: RestAdmin,
-    iceberg_lane: IcebergLane,
-    tmp_path: Path,
+def test_a_large_file_round_trips_through_the_bucket(
+    iceberg_stack: IcebergStack, tmp_path: Path
 ) -> None:
-    """10K-row table round-trips through S3, read back the way a user reads it.
-
-    DuckDB's ``iceberg_scan`` over the metadata location, with no catalog
-    server, is the reader path the collection publishes.
-    """
     rows = 10_000
     table = pa.table(
         {
@@ -84,17 +50,11 @@ def test_large_dataset_s3(
             "val": pa.array([f"row_{i}" for i in range(rows)], type=pa.string()),
         }
     )
-    path = tmp_path / "large.parquet"
+    (tmp_path / "s3-large").mkdir()
+    path = tmp_path / "s3-large" / "data.parquet"
     pq.write_table(table, path)
+    backend = IcebergBackend(catalog_root=tmp_path)
 
-    rest_iceberg_backend.publish(
-        collection="s3-large",
-        assets={"large.parquet": str(path)},
-        schema={"columns": ["id", "val"], "types": {}, "hash": "h1"},
-        breaking=False,
-        message="Large dataset",
-    )
+    backend.publish("s3-large", {"data.parquet": str(path)}, SCHEMA, False, "large")
 
-    loaded = rest_admin.load_table("portolake", "s3-large")
-    count = scan_row_count(iceberg_lane, loaded.metadata_location)
-    assert count == rows, f"Expected {rows} rows, got {count}"
+    assert iceberg_stack.row_count("s3-large") == rows

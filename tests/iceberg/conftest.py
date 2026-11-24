@@ -1,81 +1,35 @@
-"""Shared test fixtures for iceberg backend tests."""
+"""Shared fixtures for the Iceberg backend tests.
+
+The unit tests run on ``tests.iceberg.fake_lake``: a fake REST catalog and
+a fake DuckDB connection, with no network. The e2e tests under
+``tests/iceberg/e2e`` add the compose stack through ``tests/iceberg_stack.py``.
+A developer's ``PORTOLAN_ICEBERG_*`` exports are stripped at session start
+by ``tests/conftest.py``, so a unit test never reaches a real catalog.
+"""
 
 from __future__ import annotations
 
-import os
-import sys
+from typing import TYPE_CHECKING
 
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
-from pyiceberg.catalog import load_catalog
 
-# PyIceberg's SQL catalog resolves file:// warehouse URIs incorrectly on Windows,
-# producing paths like /C:/Users/... which PyArrow's local filesystem rejects.
-# Upstream: https://github.com/apache/iceberg-python/issues/1005 (closed, fix never merged)
-# PyIceberg doesn't run CI on Windows: https://github.com/apache/iceberg-python/issues/2477
+from tests.iceberg.fake_lake import Lake
 
-
-@pytest.fixture(autouse=True)
-def _isolate_pyiceberg_config(tmp_path, monkeypatch):
-    """Hide the developer's ~/.pyiceberg.yaml from every test in this suite.
-
-    PyIceberg reads a catalog definition from the first ``.pyiceberg.yaml`` it
-    finds, searching ``PYICEBERG_HOME``, then the home directory, then the
-    current directory. A developer who has ever pointed the CLI at a REST or
-    BigLake catalog has one in their home directory, and these tests then load
-    that catalog instead of the temporary SQLite one. The failure is remote and
-    credential-dependent, so it reproduces for one person and not for CI.
-
-    The fixture puts a stub ``.pyiceberg.yaml`` in ``PYICEBERG_HOME``, so the
-    search stops there. PyIceberg skips a file with no keys, so the stub holds
-    one key that PyIceberg does not read.
-
-    The home directory stays real. DuckDB keeps its extensions in
-    ``~/.duckdb``. An empty home directory made geoparquet-io download the
-    77 MB spatial extension again in each test.
-
-    PyIceberg also builds a catalog from ``PYICEBERG_CATALOG__{NAME}__{KEY}``
-    environment variables, and it reads them whatever the home directory holds.
-    A developer who exports one in the shell hits the same remote catalog, so
-    the fixture removes them too.
-    """
-    home = tmp_path / "pyiceberg-home"
-    home.mkdir()
-    (home / ".pyiceberg.yaml").write_text("portolan-test-isolation: true\n", encoding="utf-8")
-    monkeypatch.setenv("PYICEBERG_HOME", str(home))
-    for name in [n for n in os.environ if n.startswith("PYICEBERG_CATALOG__")]:
-        monkeypatch.delenv(name)
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 @pytest.fixture
-def iceberg_catalog(tmp_path):
-    """Create a temporary Iceberg catalog backed by SQLite."""
-    if sys.platform == "win32":
-        pytest.skip(
-            "PyIceberg SQL catalog warehouse paths broken on Windows"
-            " (https://github.com/apache/iceberg-python/issues/1005)"
-        )
-    warehouse_uri = (tmp_path / "warehouse").as_uri()
-    return load_catalog(
-        "test",
-        type="sql",
-        uri=f"sqlite:///{tmp_path}/catalog.db",
-        warehouse=warehouse_uri,
-    )
+def lake(tmp_path: Path) -> Lake:
+    """A backend on the fake catalog and the fake connection, rooted in ``tmp_path``."""
+    return Lake(tmp_path)
 
 
 @pytest.fixture
-def iceberg_backend(iceberg_catalog):
-    """Create an IcebergBackend using a temporary SQLite catalog."""
-    from portolan_cli.backends.iceberg.backend import IcebergBackend
-
-    return IcebergBackend(catalog=iceberg_catalog)
-
-
-@pytest.fixture
-def parquet_file(tmp_path):
-    """Create a simple Parquet file with 3 rows for testing."""
+def parquet_file(tmp_path: Path) -> Path:
+    """A Parquet file with three rows and no geometry."""
     table = pa.table(
         {
             "id": pa.array([1, 2, 3], type=pa.int64()),
@@ -86,29 +40,3 @@ def parquet_file(tmp_path):
     path = tmp_path / "test_data.parquet"
     pq.write_table(table, path)
     return path
-
-
-@pytest.fixture
-def parquet_file_v2(tmp_path):
-    """Create a second Parquet file with 5 rows (different data) for testing updates."""
-    table = pa.table(
-        {
-            "id": pa.array([10, 20, 30, 40, 50], type=pa.int64()),
-            "name": pa.array(["one", "two", "three", "four", "five"], type=pa.string()),
-            "value": pa.array([1.1, 2.2, 3.3, 4.4, 5.5], type=pa.float64()),
-        }
-    )
-    path = tmp_path / "test_data_v2.parquet"
-    pq.write_table(table, path)
-    return path
-
-
-def publish_boundaries(backend, parquet_file) -> None:
-    """Publish the one-column test schema to the boundaries collection."""
-    backend.publish(
-        collection="boundaries",
-        assets={"item1/data.parquet": str(parquet_file)},
-        schema={"columns": ["id"], "types": {"id": "int64"}, "hash": "x"},
-        breaking=False,
-        message="test",
-    )

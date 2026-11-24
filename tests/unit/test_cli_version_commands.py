@@ -457,7 +457,9 @@ class TestVersionRollbackCommand:
         assert data["success"] is False
 
 
-_MISSING_EXTRA = "The 'iceberg' backend requires the iceberg extra."
+_MISSING_EXTRA = (
+    "The iceberg backend needs PORTOLAN_ICEBERG_URI, the Iceberg REST catalog to write to."
+)
 
 
 @pytest.mark.unit

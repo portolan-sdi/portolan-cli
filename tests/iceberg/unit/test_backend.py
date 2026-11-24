@@ -1,576 +1,637 @@
-"""Tests for IcebergBackend implementation."""
+"""``IcebergBackend`` on the fake catalog and the fake DuckDB connection.
+
+Each test runs the real backend code. The catalog is ``FakeCatalog``, which
+applies the REST commits the backend sends, and DuckDB is
+``FakeConnection``, which turns the backend's SQL into snapshots on that
+catalog. The tests assert the SQL and the commit bodies, which is what a
+real catalog receives.
+"""
 
 from __future__ import annotations
 
-import sys
+import json
+from typing import TYPE_CHECKING, Any
 
-import pyarrow as pa
-import pyarrow.parquet as pq
 import pytest
 
+from portolan_cli.backends.iceberg.backend import (
+    LegacyTableError,
+    SchemaChangeError,
+)
+from portolan_cli.backends.iceberg.rest import CommitConflictError
+from portolan_cli.backends.iceberg.versioning import property_key, tag_name
 from portolan_cli.backends.protocol import VersioningBackend
+from tests.iceberg.fake_lake import POINTS, SCHEMA, Lake
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+pytestmark = pytest.mark.unit
 
 
-def _write_parquet(path, rows=None):
-    """Write a simple Parquet file for testing. Returns the path."""
-    if rows is None:
-        rows = {"id": [1], "val": ["x"]}
-    table = pa.table(rows)
-    pq.write_table(table, path)
-    return path
+def _guard(main_at: int) -> list[dict[str, Any]]:
+    """The requirements of a commit on the roads table, guarded on ``main``."""
+    return [
+        {"type": "assert-table-uuid", "uuid": "uuid-portolake-roads"},
+        {"type": "assert-ref-snapshot-id", "ref": "main", "snapshot-id": main_at},
+    ]
 
 
-# --- Constructor + Protocol ---
+# --- construction ---
 
 
-@pytest.mark.integration
-def test_isinstance_versioning_backend(iceberg_backend):
-    """IcebergBackend should satisfy the VersioningBackend protocol."""
-    assert isinstance(iceberg_backend, VersioningBackend)
+def test_the_backend_satisfies_the_protocol(lake: Lake) -> None:
+    assert isinstance(lake.backend, VersioningBackend)
 
 
-# --- Read Path ---
+def test_construction_makes_no_request_and_runs_no_sql(lake: Lake) -> None:
+    assert lake.catalog.requests == []
+    assert lake.connection.statements == []
 
 
-@pytest.mark.integration
-def test_list_versions_empty_when_no_table(iceberg_backend):
-    """list_versions returns empty list when collection doesn't exist."""
-    result = iceberg_backend.list_versions("nonexistent-collection")
-    assert result == []
+def test_an_empty_or_traversing_collection_name_is_refused(lake: Lake) -> None:
+    with pytest.raises(ValueError, match="empty"):
+        lake.backend.list_versions("")
+    with pytest.raises(ValueError, match="Invalid"):
+        lake.backend.list_versions("../other")
 
 
-@pytest.mark.integration
-def test_get_current_version_raises_when_no_table(iceberg_backend):
-    """get_current_version raises FileNotFoundError for missing collection."""
-    with pytest.raises(FileNotFoundError):
-        iceberg_backend.get_current_version("nonexistent-collection")
+# --- reads on a missing table ---
 
 
-# --- Write Path (publish) ---
+def test_list_versions_is_empty_without_a_table(lake: Lake) -> None:
+    assert lake.backend.list_versions("roads") == []
 
 
-@pytest.mark.integration
-def test_publish_creates_first_version_1_0_0(iceberg_backend, tmp_path):
-    """First published version should always be 1.0.0."""
-    asset = _write_parquet(tmp_path / "data.parquet")
+def test_get_current_version_raises_without_a_table(lake: Lake) -> None:
+    with pytest.raises(FileNotFoundError, match="roads"):
+        lake.backend.get_current_version("roads")
 
-    version = iceberg_backend.publish(
-        collection="test-collection",
-        assets={"data.parquet": str(asset)},
-        schema={"columns": ["id"], "types": {"id": "int64"}, "hash": "abc123"},
-        breaking=False,
-        message="Initial version",
-    )
+
+# --- the first publish ---
+
+
+def test_the_first_publish_creates_a_v3_table_from_the_file_schema(lake: Lake) -> None:
+    version = lake.publish()
+
     assert version.version == "1.0.0"
-    assert version.breaking is False
-    assert version.message == "Initial version"
+    assert version.message == "first"
+    assert version.changes == ["roads.parquet"]
+    assert version.assets["roads.parquet"].href == "roads/roads.parquet"
+    assert lake.sql[0].startswith("DESCRIBE SELECT * FROM read_parquet([")
+    assert lake.sql[1] == (
+        'CREATE TABLE lake."portolake"."roads" ("id" BIGINT, "name" VARCHAR, '
+        "\"geometry\" GEOMETRY('OGC:CRS84')) WITH ('format-version' = 3)"
+    )
+    assert lake.metadata()["format-version"] == 3
+    assert lake.catalog.columns("portolake", "roads") == [
+        ("id", "long"),
+        ("name", "string"),
+        ("geometry", "geometry(OGC:CRS84)"),
+    ]
 
 
-@pytest.mark.integration
-def test_publish_increments_minor_version(iceberg_backend, tmp_path):
-    """Non-breaking change should increment minor version."""
-    asset = _write_parquet(tmp_path / "data.parquet", {"id": [1], "val": ["v1"]})
+def test_the_first_publish_inserts_without_a_truncate(lake: Lake) -> None:
+    path = lake.source("roads", "roads.parquet")
 
-    iceberg_backend.publish(
-        collection="test-collection",
-        assets={"data.parquet": str(asset)},
-        schema={"columns": ["id"], "types": {"id": "int64"}, "hash": "h1"},
-        breaking=False,
-        message="v1",
+    lake.publish(assets={"roads.parquet": path})
+
+    writes = [s for s in lake.sql if s.startswith(("BEGIN", "TRUNCATE", "INSERT", "COMMIT"))]
+    assert writes == [
+        "BEGIN",
+        f'INSERT INTO lake."portolake"."roads" BY NAME SELECT * FROM read_parquet([\'{path}\'], '
+        "union_by_name = true, hive_partitioning = false)",
+        "COMMIT",
+    ]
+
+
+def test_the_version_record_is_one_commit_after_the_rows(lake: Lake) -> None:
+    """The property and the tag land together, guarded on the snapshot DuckDB made."""
+    version = lake.publish()
+
+    metadata = lake.metadata()
+    snapshot_id = metadata["current-snapshot-id"]
+    assert lake.commits[-1] == {
+        "requirements": _guard(snapshot_id),
+        "updates": [
+            {
+                "action": "set-properties",
+                "updates": {property_key("1.0.0"): metadata["properties"][property_key("1.0.0")]},
+            },
+            {
+                "action": "set-snapshot-ref",
+                "ref-name": tag_name("1.0.0"),
+                "type": "tag",
+                "snapshot-id": snapshot_id,
+            },
+        ],
+    }
+    record = json.loads(metadata["properties"][property_key("1.0.0")])
+    assert record["assets"]["roads.parquet"]["href"] == "roads/roads.parquet"
+    assert version.created.timestamp() * 1000 == metadata["snapshots"][-1]["timestamp-ms"]
+
+
+def test_the_namespace_is_created_once(lake: Lake) -> None:
+    lake.publish()
+    lake.publish(assets={"more.parquet": lake.source("roads", "more.parquet")}, message="second")
+
+    creates = [
+        r
+        for r in lake.catalog.requests
+        if r.method == "POST" and r.url.path.endswith("/namespaces")
+    ]
+    assert len(creates) == 1
+
+
+def test_a_publish_with_no_parquet_on_a_new_table_is_refused(lake: Lake) -> None:
+    path = lake.root / "roads" / "thumb.png"
+    path.parent.mkdir()
+    path.write_bytes(b"png")
+
+    with pytest.raises(ValueError, match="no Parquet data asset"):
+        lake.backend.publish("roads", {"thumb.png": str(path)}, SCHEMA, False, "m")
+
+    assert lake.sql == []
+
+
+def _two_files(lake: Lake) -> tuple[str, str]:
+    """Publish ``roads.parquet`` as 1.0.0 and return it with a second, unpublished file."""
+    first = lake.source("roads", "roads.parquet")
+    lake.publish(assets={"roads.parquet": first})
+    return first, lake.source("roads", "more.parquet")
+
+
+# --- later publishes ---
+
+
+def test_a_later_publish_replaces_the_rows_with_the_merged_asset_set(lake: Lake) -> None:
+    first, second = _two_files(lake)
+
+    version = lake.publish(assets={"more.parquet": second}, message="second")
+
+    assert version.version == "1.1.0"
+    assert sorted(version.assets) == ["more.parquet", "roads.parquet"]
+    writes = [s for s in lake.sql if s.startswith(("TRUNCATE", "INSERT"))][-2:]
+    assert writes[0] == 'TRUNCATE lake."portolake"."roads"'
+    assert f"'{first}', '{second}'" in writes[1]
+    assert [v.version for v in lake.backend.list_versions("roads")] == ["1.0.0", "1.1.0"]
+
+
+def test_a_breaking_publish_bumps_the_major(lake: Lake) -> None:
+    lake.publish()
+
+    version = lake.publish(breaking=True, message="breaking")
+
+    assert version.version == "2.0.0"
+    assert version.breaking is True
+
+
+def test_an_explicit_version_is_used_and_a_duplicate_is_refused(lake: Lake) -> None:
+    assert lake.publish(version="3.1.0").version == "3.1.0"
+
+    with pytest.raises(ValueError, match="3.1.0"):
+        lake.publish(version="3.1.0")
+
+
+def test_removed_assets_leave_the_record_and_the_rows(lake: Lake) -> None:
+    first, second = _two_files(lake)
+
+    version = lake.publish(
+        assets={"more.parquet": second}, removed={"roads.parquet"}, message="replace"
     )
 
-    _write_parquet(asset, {"id": [2], "val": ["v2"]})
-    v2 = iceberg_backend.publish(
-        collection="test-collection",
-        assets={"data.parquet": str(asset)},
-        schema={"columns": ["id"], "types": {"id": "int64"}, "hash": "h1"},
-        breaking=False,
-        message="v2",
-    )
-    assert v2.version == "1.1.0"
+    assert list(version.assets) == ["more.parquet"]
+    insert = [s for s in lake.sql if s.startswith("INSERT")][-1]
+    assert first not in insert
+    assert second in insert
 
 
-@pytest.mark.integration
-def test_publish_increments_major_on_breaking(iceberg_backend, tmp_path):
-    """Breaking change should increment major version."""
-    asset = _write_parquet(tmp_path / "data.parquet", {"id": [1], "val": ["v1"]})
+def test_a_publish_that_only_removes_truncates_and_tags_the_delete_snapshot(lake: Lake) -> None:
+    lake.publish()
 
-    iceberg_backend.publish(
-        collection="test-collection",
-        assets={"data.parquet": str(asset)},
-        schema={"columns": ["id"], "types": {"id": "int64"}, "hash": "h1"},
-        breaking=False,
-        message="v1",
+    version = lake.backend.publish("roads", {}, SCHEMA, False, "drop", removed={"roads.parquet"})
+
+    assert version.version == "1.1.0"
+    assert version.assets == {}
+    writes = [s for s in lake.sql if s.startswith(("TRUNCATE", "INSERT"))][-1:]
+    assert writes == ['TRUNCATE lake."portolake"."roads"']
+    assert lake.metadata()["snapshots"][-1]["summary"]["operation"] == "delete"
+    assert (
+        lake.metadata()["refs"]["v1.1.0"]["snapshot-id"] == lake.metadata()["current-snapshot-id"]
     )
 
-    _write_parquet(asset, {"id": [2], "val": ["v2"]})
-    v2 = iceberg_backend.publish(
-        collection="test-collection",
-        assets={"data.parquet": str(asset)},
-        schema={
-            "columns": ["id", "geom"],
-            "types": {"id": "int64", "geom": "geometry"},
-            "hash": "h2",
+
+def test_a_carried_over_asset_must_exist_locally(lake: Lake) -> None:
+    first = lake.source("roads", "roads.parquet")
+    lake.publish(assets={"roads.parquet": first})
+    (lake.root / "roads" / "roads.parquet").unlink()
+    second = lake.source("roads", "more.parquet")
+
+    with pytest.raises(ValueError, match="roads/roads.parquet"):
+        lake.publish(assets={"more.parquet": second})
+
+
+def test_mirrors_and_companions_are_not_table_rows(lake: Lake) -> None:
+    data = lake.source("roads", "roads.parquet")
+    mirror = lake.source("roads", "items.parquet", columns=[("id", "VARCHAR")])
+    thumb = lake.root / "roads" / "roads.thumb.jpg"
+    thumb.write_bytes(b"jpg")
+
+    version = lake.publish(
+        assets={"roads.parquet": data, "items.parquet": mirror, "roads.thumb.jpg": str(thumb)}
+    )
+
+    insert = [s for s in lake.sql if s.startswith("INSERT")][-1]
+    assert data in insert
+    assert mirror not in insert
+    assert "thumb" not in insert
+    assert sorted(version.assets) == ["items.parquet", "roads.parquet", "roads.thumb.jpg"]
+
+
+# --- schema evolution ---
+
+
+def test_a_new_column_is_added_before_the_rows(lake: Lake) -> None:
+    lake.publish()
+    wider = lake.source("roads", "wider.parquet", columns=[*POINTS, ("lanes", "INTEGER")])
+
+    lake.publish(assets={"wider.parquet": wider})
+
+    assert 'ALTER TABLE lake."portolake"."roads" ADD COLUMN "lanes" INTEGER' in lake.sql
+    assert lake.catalog.columns("portolake", "roads")[-1] == ("lanes", "int")
+
+
+def test_a_changed_column_type_refuses_the_publish_before_any_write(lake: Lake) -> None:
+    lake.publish()
+    changed = lake.source("roads", "changed.parquet", columns=[("id", "VARCHAR"), *POINTS[1:]])
+    snapshots = len(lake.metadata()["snapshots"])
+
+    with pytest.raises(SchemaChangeError, match="id"):
+        lake.publish(assets={"changed.parquet": changed}, removed={"roads.parquet"})
+
+    assert len(lake.metadata()["snapshots"]) == snapshots
+    assert not any(s.startswith(("TRUNCATE", "INSERT")) for s in lake.sql[-3:])
+
+
+# --- partitions ---
+
+
+def test_partition_keys_in_collection_json_make_an_identity_spec_and_a_hive_read(
+    lake: Lake,
+) -> None:
+    (lake.root / "roads").mkdir()
+    (lake.root / "roads" / "collection.json").write_text(
+        json.dumps({"partition:keys": [{"name": "region", "type": "string"}]}), encoding="utf-8"
+    )
+    path = lake.source("roads", "region=a/part.parquet", columns=[*POINTS, ("region", "VARCHAR")])
+
+    lake.publish(assets={"region=a/part.parquet": path})
+
+    assert "hive_partitioning = true" in lake.sql[0]
+    source_id = next(
+        f["id"] for f in lake.metadata()["schemas"][-1]["fields"] if f["name"] == "region"
+    )
+    spec_commit = lake.commits[0]
+    assert spec_commit["updates"] == [
+        {
+            "action": "add-spec",
+            "spec": {
+                "spec-id": 1,
+                "fields": [
+                    {
+                        "name": "region",
+                        "transform": "identity",
+                        "source-id": source_id,
+                        "field-id": 1000,
+                    }
+                ],
+            },
         },
-        breaking=True,
-        message="Breaking schema change",
-    )
-    assert v2.version == "2.0.0"
-    assert v2.breaking is True
+        {"action": "set-default-spec", "spec-id": -1},
+        {"action": "set-properties", "updates": {"portolan.record": "1"}},
+    ]
+    assert lake.metadata()["default-spec-id"] == 1
 
 
-@pytest.mark.integration
-def test_publish_stores_assets_and_schema(iceberg_backend, tmp_path):
-    """Published version should contain correct assets and schema."""
-    asset = _write_parquet(tmp_path / "data.parquet", {"id": [1, 2], "name": ["a", "b"]})
+def test_an_unpartitioned_collection_gets_only_the_record_marker(lake: Lake) -> None:
+    lake.publish()
 
-    version = iceberg_backend.publish(
-        collection="test-collection",
-        assets={"data.parquet": str(asset)},
-        schema={
-            "columns": ["id", "name"],
-            "types": {"id": "int64", "name": "string"},
-            "hash": "schema_hash",
-        },
-        breaking=False,
-        message="With schema",
-    )
-    assert "data.parquet" in version.assets
-    assert version.assets["data.parquet"].size_bytes > 0
-    assert version.assets["data.parquet"].sha256 != ""
-    assert version.schema is not None
-    assert version.schema.type == "schema_hash"
+    assert lake.commits[0]["updates"] == [
+        {"action": "set-properties", "updates": {"portolan.record": "1"}}
+    ]
 
 
-@pytest.mark.integration
-def test_publish_tracks_changes(iceberg_backend, tmp_path):
-    """Published version should list changed assets."""
-    f1 = _write_parquet(tmp_path / "a.parquet", {"id": [1], "x": ["a"]})
-    f2 = _write_parquet(tmp_path / "b.parquet", {"id": [2], "x": ["b"]})
-
-    version = iceberg_backend.publish(
-        collection="test-collection",
-        assets={"a.parquet": str(f1), "b.parquet": str(f2)},
-        schema={"columns": [], "types": {}, "hash": "h"},
-        breaking=False,
-        message="Two assets",
-    )
-    assert set(version.changes) == {"a.parquet", "b.parquet"}
+# --- concurrency ---
 
 
-# --- Read After Write ---
+def test_a_main_that_moved_between_the_rows_and_the_record_is_a_conflict(lake: Lake) -> None:
+    lake.publish()
+    original = lake.catalog.add_snapshot
+
+    def racing(ns: str, name: str, operation: str) -> int:
+        snapshot_id = original(ns, name, operation)
+        if operation == "append":
+            original(ns, name, "append")  # another writer lands right after
+        return snapshot_id
+
+    lake.catalog.add_snapshot = racing  # type: ignore[method-assign, assignment]
+
+    with pytest.raises(CommitConflictError):
+        lake.publish(message="second")
 
 
-@pytest.mark.integration
-def test_get_current_version_after_publish(iceberg_backend, tmp_path):
-    """get_current_version should return the latest published version."""
-    asset = _write_parquet(tmp_path / "data.parquet")
-
-    iceberg_backend.publish(
-        collection="test-collection",
-        assets={"data.parquet": str(asset)},
-        schema={"columns": [], "types": {}, "hash": "h"},
-        breaking=False,
-        message="v1",
-    )
-    current = iceberg_backend.get_current_version("test-collection")
-    assert current.version == "1.0.0"
+# --- current and rollback ---
 
 
-@pytest.mark.integration
-def test_list_versions_ordered_oldest_first(iceberg_backend, tmp_path):
-    """list_versions should return versions in chronological order."""
-    asset = _write_parquet(tmp_path / "data.parquet")
+def test_the_current_version_follows_main(lake: Lake) -> None:
+    lake.publish()
+    lake.publish(message="second")
 
-    iceberg_backend.publish(
-        collection="test-collection",
-        assets={"data.parquet": str(asset)},
-        schema={"columns": [], "types": {}, "hash": "h"},
-        breaking=False,
-        message="v1",
-    )
-
-    _write_parquet(asset, {"id": [2], "val": ["v2"]})
-    iceberg_backend.publish(
-        collection="test-collection",
-        assets={"data.parquet": str(asset)},
-        schema={"columns": [], "types": {}, "hash": "h"},
-        breaking=False,
-        message="v2",
-    )
-
-    versions = iceberg_backend.list_versions("test-collection")
-    assert len(versions) == 2
-    assert versions[0].version == "1.0.0"
-    assert versions[1].version == "1.1.0"
-    assert versions[0].created <= versions[1].created
+    assert lake.backend.get_current_version("roads").version == "1.1.0"
 
 
-# --- Rollback ---
+def test_rollback_moves_main_to_the_tagged_snapshot(lake: Lake) -> None:
+    lake.publish()
+    lake.publish(message="second")
+    before = lake.metadata()["current-snapshot-id"]
+    target = lake.metadata()["refs"]["v1.0.0"]["snapshot-id"]
+
+    restored = lake.backend.rollback("roads", "1.0.0")
+
+    assert restored.version == "1.0.0"
+    assert lake.commits[-1] == {
+        "requirements": _guard(before),
+        "updates": [
+            {
+                "action": "set-snapshot-ref",
+                "ref-name": "main",
+                "type": "branch",
+                "snapshot-id": target,
+            }
+        ],
+    }
+    assert lake.backend.get_current_version("roads").version == "1.0.0"
+    assert [v.version for v in lake.backend.list_versions("roads")] == ["1.0.0", "1.1.0"]
 
 
-@pytest.mark.integration
-def test_rollback_restores_target_version(iceberg_backend, tmp_path):
-    """Rollback should set current snapshot to the target version."""
-    asset = _write_parquet(tmp_path / "data.parquet")
+def test_a_publish_after_a_rollback_bumps_from_the_newest_version(lake: Lake) -> None:
+    lake.publish()
+    lake.publish(message="second")
+    lake.backend.rollback("roads", "1.0.0")
 
-    iceberg_backend.publish(
-        collection="test-collection",
-        assets={"data.parquet": str(asset)},
-        schema={"columns": [], "types": {}, "hash": "h"},
-        breaking=False,
-        message="v1",
-    )
+    version = lake.publish(message="third")
 
-    _write_parquet(asset, {"id": [2], "val": ["v2"]})
-    iceberg_backend.publish(
-        collection="test-collection",
-        assets={"data.parquet": str(asset)},
-        schema={"columns": [], "types": {}, "hash": "h"},
-        breaking=False,
-        message="v2",
-    )
-
-    rolled = iceberg_backend.rollback("test-collection", "1.0.0")
-    assert rolled.version == "1.0.0"
-
-    current = iceberg_backend.get_current_version("test-collection")
-    assert current.version == "1.0.0"
+    assert version.version == "1.2.0"
+    assert sorted(version.assets) == ["roads.parquet"]
 
 
-@pytest.mark.integration
-def test_rollback_preserves_target_assets(iceberg_backend, tmp_path):
-    """Rollback should restore the target version's asset metadata."""
-    asset = _write_parquet(tmp_path / "data.parquet", {"id": [1], "val": ["v1"]})
+def test_rollback_to_an_unknown_version_raises(lake: Lake) -> None:
+    lake.publish()
 
-    iceberg_backend.publish(
-        collection="test-collection",
-        assets={"data.parquet": str(asset)},
-        schema={"columns": [], "types": {}, "hash": "h"},
-        breaking=False,
-        message="v1",
-    )
-    v1 = iceberg_backend.get_current_version("test-collection")
-
-    _write_parquet(asset, {"id": [2], "val": ["v2"]})
-    iceberg_backend.publish(
-        collection="test-collection",
-        assets={"data.parquet": str(asset)},
-        schema={"columns": [], "types": {}, "hash": "h"},
-        breaking=False,
-        message="v2",
-    )
-
-    rolled = iceberg_backend.rollback("test-collection", "1.0.0")
-    assert rolled.version == "1.0.0"
-    assert rolled.assets["data.parquet"].sha256 == v1.assets["data.parquet"].sha256
+    with pytest.raises(ValueError, match="9.9.9"):
+        lake.backend.rollback("roads", "9.9.9")
 
 
-@pytest.mark.integration
-def test_rollback_nonexistent_version_raises_valueerror(iceberg_backend, tmp_path):
-    """Rollback to nonexistent version should raise ValueError."""
-    asset = _write_parquet(tmp_path / "data.parquet")
-
-    iceberg_backend.publish(
-        collection="test-collection",
-        assets={"data.parquet": str(asset)},
-        schema={"columns": [], "types": {}, "hash": "h"},
-        breaking=False,
-        message="v1",
-    )
-
-    with pytest.raises(ValueError, match="99.99.99"):
-        iceberg_backend.rollback("test-collection", "99.99.99")
+def test_rollback_without_a_table_raises_file_not_found(lake: Lake) -> None:
+    with pytest.raises(FileNotFoundError):
+        lake.backend.rollback("roads", "1.0.0")
 
 
-# --- Prune ---
+def test_an_untagged_main_reports_the_newest_version(lake: Lake) -> None:
+    """A snapshot another writer made is current, but it is not a Portolan version."""
+    lake.publish()
+    lake.catalog.add_snapshot("portolake", "roads", "append")
+
+    assert lake.backend.get_current_version("roads").version == "1.0.0"
 
 
-@pytest.mark.integration
-def test_prune_dry_run_returns_prunable(iceberg_backend, tmp_path):
-    """Prune with dry_run=True should return prunable versions without deleting."""
-    asset = _write_parquet(tmp_path / "data.parquet")
-
-    for i in range(4):
-        _write_parquet(asset, {"id": [i], "val": [f"v{i}"]})
-        iceberg_backend.publish(
-            collection="test-collection",
-            assets={"data.parquet": str(asset)},
-            schema={"columns": [], "types": {}, "hash": "h"},
-            breaking=False,
-            message=f"v{i}",
-        )
-
-    prunable = iceberg_backend.prune("test-collection", keep=2, dry_run=True)
-    assert len(prunable) == 2
-
-    versions = iceberg_backend.list_versions("test-collection")
-    assert len(versions) == 4
+# --- prune ---
 
 
-@pytest.mark.integration
-def test_prune_removes_old_versions(iceberg_backend, tmp_path):
-    """Prune should remove old versions."""
-    asset = _write_parquet(tmp_path / "data.parquet")
-
-    for i in range(4):
-        _write_parquet(asset, {"id": [i], "val": [f"v{i}"]})
-        iceberg_backend.publish(
-            collection="test-collection",
-            assets={"data.parquet": str(asset)},
-            schema={"columns": [], "types": {}, "hash": "h"},
-            breaking=False,
-            message=f"v{i}",
-        )
-
-    pruned = iceberg_backend.prune("test-collection", keep=2, dry_run=False)
-    assert len(pruned) == 2
-
-    remaining = iceberg_backend.list_versions("test-collection")
-    assert len(remaining) == 2
+def _three_versions(lake: Lake) -> None:
+    lake.publish()
+    lake.publish(message="second")
+    lake.publish(message="third")
 
 
-@pytest.mark.integration
-def test_prune_keeps_n_most_recent(iceberg_backend, tmp_path):
-    """Prune should keep the N most recent versions."""
-    asset = _write_parquet(tmp_path / "data.parquet")
+def test_prune_dry_run_names_the_victims_and_commits_nothing(lake: Lake) -> None:
+    _three_versions(lake)
+    commits = len(lake.commits)
 
-    for i in range(5):
-        _write_parquet(asset, {"id": [i], "val": [f"v{i}"]})
-        iceberg_backend.publish(
-            collection="test-collection",
-            assets={"data.parquet": str(asset)},
-            schema={"columns": [], "types": {}, "hash": "h"},
-            breaking=False,
-            message=f"v{i}",
-        )
+    pruned = lake.backend.prune("roads", keep=1, dry_run=True)
 
-    iceberg_backend.prune("test-collection", keep=3, dry_run=False)
-
-    remaining = iceberg_backend.list_versions("test-collection")
-    assert len(remaining) == 3
-    assert remaining[-1].version == "1.4.0"
-    assert remaining[-2].version == "1.3.0"
-    assert remaining[-3].version == "1.2.0"
+    assert [v.version for v in pruned] == ["1.0.0", "1.1.0"]
+    assert len(lake.commits) == commits
+    assert len(lake.backend.list_versions("roads")) == 3
 
 
-# --- Drift ---
+def test_prune_removes_the_tags_the_records_and_the_snapshots(lake: Lake) -> None:
+    _three_versions(lake)
+    metadata = lake.metadata()
+    newest = metadata["refs"]["v1.2.0"]["snapshot-id"]
+    newest_ms = next(s["timestamp-ms"] for s in metadata["snapshots"] if s["snapshot-id"] == newest)
+    # The two tagged victims and the two untagged delete snapshots before them.
+    victims = [s["snapshot-id"] for s in metadata["snapshots"] if s["timestamp-ms"] < newest_ms]
+    assert len(victims) == 4
+
+    pruned = lake.backend.prune("roads", keep=1, dry_run=False)
+
+    assert [v.version for v in pruned] == ["1.0.0", "1.1.0"]
+    assert lake.commits[-1]["updates"] == [
+        {"action": "remove-snapshot-ref", "ref-name": "v1.0.0"},
+        {"action": "remove-snapshot-ref", "ref-name": "v1.1.0"},
+        {"action": "remove-properties", "removals": [property_key("1.0.0"), property_key("1.1.0")]},
+        {"action": "remove-snapshots", "snapshot-ids": victims},
+    ]
+    assert [v.version for v in lake.backend.list_versions("roads")] == ["1.2.0"]
+    assert {s["snapshot-id"] for s in lake.metadata()["snapshots"]}.isdisjoint(victims)
 
 
-@pytest.mark.integration
-def test_check_drift_returns_report(iceberg_backend, tmp_path):
-    """check_drift should return a DriftReport."""
-    asset = _write_parquet(tmp_path / "data.parquet")
+def test_prune_is_guarded_on_main_and_keeps_a_snapshot_a_branch_points_at(lake: Lake) -> None:
+    _three_versions(lake)
+    metadata = lake.metadata()
+    first = metadata["refs"]["v1.0.0"]["snapshot-id"]
+    delete_snapshot = metadata["snapshots"][1]["snapshot-id"]
+    metadata["refs"]["audit"] = {"snapshot-id": delete_snapshot, "type": "branch"}
 
-    iceberg_backend.publish(
-        collection="test-collection",
-        assets={"data.parquet": str(asset)},
-        schema={"columns": [], "types": {}, "hash": "h"},
-        breaking=False,
-        message="v1",
+    lake.backend.prune("roads", keep=1, dry_run=False)
+
+    commit = lake.commits[-1]
+    assert commit["requirements"] == _guard(metadata["current-snapshot-id"])
+    removed = next(u for u in commit["updates"] if u["action"] == "remove-snapshots")
+    assert first in removed["snapshot-ids"]
+    assert delete_snapshot not in removed["snapshot-ids"]
+
+
+def test_prune_keeps_the_current_version_even_when_it_is_old(lake: Lake) -> None:
+    _three_versions(lake)
+    lake.backend.rollback("roads", "1.0.0")
+
+    pruned = lake.backend.prune("roads", keep=1, dry_run=False)
+
+    assert [v.version for v in pruned] == ["1.1.0"]
+    assert [v.version for v in lake.backend.list_versions("roads")] == ["1.0.0", "1.2.0"]
+
+
+def test_prune_with_nothing_beyond_keep_returns_nothing(lake: Lake) -> None:
+    _three_versions(lake)
+
+    assert lake.backend.prune("roads", keep=3, dry_run=False) == []
+    assert lake.backend.prune("missing", keep=1, dry_run=False) == []
+
+
+def test_prune_deletes_the_data_files_only_the_victims_reach(
+    lake: Lake, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Merge-on-read keeps an old data file live until something deletes it."""
+    _three_versions(lake)
+    metadata = lake.metadata()
+    first = metadata["refs"]["v1.0.0"]["snapshot-id"]
+    second = metadata["refs"]["v1.1.0"]["snapshot-id"]
+    third = metadata["refs"]["v1.2.0"]["snapshot-id"]
+    shared = "s3://warehouse/portolake/roads/data/shared.parquet"
+    gone = "s3://warehouse/portolake/roads/data/gone.parquet"
+    deletes = "s3://warehouse/portolake/roads/data/gone-deletes.puffin"
+    lake.connection.files[("portolake", "roads", first)] = [("DATA", "ADDED", "EXISTING", gone)]
+    lake.connection.files[("portolake", "roads", second)] = [
+        ("DATA", "EXISTING", "EXISTING", gone),
+        ("DELETE", "ADDED", "POSITION_DELETES", deletes),
+        ("DATA", "ADDED", "EXISTING", shared),
+    ]
+    lake.connection.files[("portolake", "roads", third)] = [
+        ("DATA", "EXISTING", "EXISTING", shared)
+    ]
+    deleted: list[str] = []
+    monkeypatch.setattr("portolan_cli.api.delete_file", lambda url, **kwargs: deleted.append(url))
+
+    lake.backend.prune("roads", keep=1, dry_run=False)
+
+    assert sorted(deleted) == sorted([gone, deletes])
+
+
+def _prune_oldest_with_files(
+    lake: Lake, monkeypatch: pytest.MonkeyPatch, files: list[str]
+) -> list[str]:
+    """Give version 1.0.0's snapshot ``files``, prune it, and return what was deleted."""
+    first = lake.metadata()["refs"]["v1.0.0"]["snapshot-id"]
+    lake.connection.files[("portolake", "roads", first)] = [
+        ("DATA", "ADDED", "EXISTING", url) for url in files
+    ]
+    deleted: list[str] = []
+    monkeypatch.setattr("portolan_cli.api.delete_file", lambda url, **kwargs: deleted.append(url))
+    lake.backend.prune("roads", keep=2, dry_run=False)
+    return deleted
+
+
+def test_prune_never_deletes_a_file_outside_the_table_location(
+    lake: Lake, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The manifests name the files. A path outside the table is skipped, not deleted."""
+    _three_versions(lake)
+    inside = "s3://warehouse/portolake/roads/data/gone.parquet"
+    elsewhere = "s3://warehouse/portolake/other/data/theirs.parquet"
+    traversal = "s3://warehouse/portolake/roads/../other/data/theirs.parquet"
+
+    deleted = _prune_oldest_with_files(lake, monkeypatch, [inside, elsewhere, traversal])
+
+    assert deleted == [inside]
+    assert elsewhere in caplog.text
+    assert traversal in caplog.text
+
+
+def test_prune_deletes_nothing_when_the_catalog_moves_the_table_location(
+    lake: Lake, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The location comes from the catalog too. One that is not <warehouse>/ns/name is refused."""
+    _three_versions(lake)
+    lake.metadata()["location"] = "s3://warehouse"
+
+    deleted = _prune_oldest_with_files(
+        lake, monkeypatch, ["s3://warehouse/other/data/theirs.parquet"]
     )
 
-    report = iceberg_backend.check_drift("test-collection")
+    assert deleted == []
+    assert "deleted no file" in caplog.text
+
+
+def test_a_record_href_that_leaves_the_catalog_is_refused(lake: Lake, tmp_path: Path) -> None:
+    """The record is catalog data. An href with .. must not read a file outside the catalog."""
+    lake.publish()
+    record = json.loads(lake.metadata()["properties"][property_key("1.0.0")])
+    record["assets"]["roads.parquet"]["href"] = "../../outside.parquet"
+    lake.metadata()["properties"][property_key("1.0.0")] = json.dumps(record)
+    (tmp_path / "outside.parquet").write_bytes(b"x")
+
+    with pytest.raises(ValueError, match="does not stay inside the catalog"):
+        lake.publish(assets={}, message="second")
+
+    with pytest.raises(ValueError, match="does not stay inside the catalog"):
+        lake.backend.pull(remote_url="gs://b/c", local_root=tmp_path / "pulled", collection="roads")
+
+
+def test_a_failed_file_delete_does_not_fail_the_prune(
+    lake: Lake, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    _three_versions(lake)
+    first = lake.metadata()["refs"]["v1.0.0"]["snapshot-id"]
+    lake.connection.files[("portolake", "roads", first)] = [
+        ("DATA", "ADDED", "EXISTING", "s3://warehouse/portolake/roads/data/gone.parquet")
+    ]
+
+    def refuse(url: str, **kwargs: Any) -> None:
+        raise OSError("access denied")
+
+    monkeypatch.setattr("portolan_cli.api.delete_file", refuse)
+
+    pruned = lake.backend.prune("roads", keep=2, dry_run=False)
+
+    assert [v.version for v in pruned] == ["1.0.0"]
+    assert "gone.parquet" in caplog.text
+
+
+# --- legacy tables ---
+
+
+def _legacy_table(lake: Lake) -> None:
+    lake.catalog.create_table(
+        "portolake", "old", [("id", "long"), ("geometry", "binary")], format_version=2
+    )
+    snapshot_id = lake.catalog.add_snapshot("portolake", "old", "append")
+    summary = lake.metadata("old")["snapshots"][-1]["summary"]
+    summary["portolake.version"] = "1.0.0"
+    summary["portolake.assets"] = json.dumps(
+        {"old.parquet": {"sha256": "a", "size_bytes": 1, "href": "old/old.parquet"}}
+    )
+    assert snapshot_id
+
+
+def test_a_legacy_table_is_listed_and_current_but_refuses_writes(lake: Lake) -> None:
+    _legacy_table(lake)
+
+    assert [v.version for v in lake.backend.list_versions("old")] == ["1.0.0"]
+    assert lake.backend.get_current_version("old").assets["old.parquet"].href == "old/old.parquet"
+    with pytest.raises(LegacyTableError, match="read-only"):
+        lake.publish("old")
+    with pytest.raises(LegacyTableError):
+        lake.backend.rollback("old", "1.0.0")
+    with pytest.raises(LegacyTableError):
+        lake.backend.prune("old", keep=1, dry_run=False)
+
+
+# --- drift and push ---
+
+
+def test_check_drift_reports_the_current_version(lake: Lake) -> None:
+    lake.publish()
+
+    report = lake.backend.check_drift("roads")
+
     assert report["has_drift"] is False
     assert report["local_version"] == "1.0.0"
-    assert report["remote_version"] == "1.0.0"
-    assert isinstance(report["message"], str)
+    assert lake.backend.check_drift("missing")["local_version"] is None
 
 
-@pytest.mark.integration
-def test_check_drift_no_collection(iceberg_backend):
-    """check_drift should handle missing collections."""
-    report = iceberg_backend.check_drift("nonexistent")
-    assert report["has_drift"] is False
-    assert report["local_version"] is None
-
-
-# --- Edge Cases ---
-
-
-@pytest.mark.integration
-def test_empty_collection_name_rejected(iceberg_backend):
-    """Empty collection name should raise ValueError."""
-    with pytest.raises(ValueError, match="[Ee]mpty"):
-        iceberg_backend.list_versions("")
-
-    with pytest.raises(ValueError, match="[Ee]mpty"):
-        iceberg_backend.list_versions("   ")
-
-
-@pytest.mark.integration
-def test_directory_traversal_rejected(iceberg_backend):
-    """Directory traversal attempts should raise ValueError."""
-    with pytest.raises(ValueError):
-        iceberg_backend.list_versions("../../etc/passwd")
-
-    with pytest.raises(ValueError):
-        iceberg_backend.list_versions("..")
-
-
-# --- catalog_root wiring ---
-
-
-@pytest.mark.skipif(
-    sys.platform == "win32",
-    reason="PyIceberg SQL catalog warehouse paths broken on Windows (apache/iceberg-python#1005)",
-)
-@pytest.mark.integration
-def test_backend_with_catalog_root_creates_files_in_correct_location(tmp_path):
-    """IcebergBackend(catalog_root=path) should create iceberg.db under path/.portolan/."""
-    from portolan_cli.backends.iceberg.backend import IcebergBackend
-
-    backend = IcebergBackend(catalog_root=tmp_path)
-    assert (tmp_path / ".portolan" / "iceberg.db").exists()
-
-    asset = _write_parquet(tmp_path / "data.parquet")
-    version = backend.publish(
-        collection="test-col",
-        assets={"data.parquet": str(asset)},
-        schema={"columns": [], "types": {}, "hash": "h"},
-        breaking=False,
-        message="test",
-    )
-    assert version.version == "1.0.0"
-
-
-# --- publish with removed parameter ---
-
-
-@pytest.mark.integration
-def test_publish_with_removed_excludes_assets(iceberg_backend, tmp_path):
-    """publish(removed={"asset"}) should exclude that asset from the new version."""
-    f1 = _write_parquet(tmp_path / "a.parquet", {"id": [1], "x": ["a"]})
-    f2 = _write_parquet(tmp_path / "b.parquet", {"id": [2], "x": ["b"]})
-
-    iceberg_backend.publish(
-        collection="test-collection",
-        assets={"a.parquet": str(f1), "b.parquet": str(f2)},
-        schema={"columns": [], "types": {}, "hash": "h"},
-        breaking=False,
-        message="v1 with two assets",
-    )
-
-    # Publish v2 removing one asset (no new data assets)
-    v2 = iceberg_backend.publish(
-        collection="test-collection",
-        assets={},
-        schema={"columns": [], "types": {}, "hash": "h"},
-        breaking=False,
-        message="remove b",
-        removed={"b.parquet"},
-    )
-    assert "a.parquet" in v2.assets
-    assert "b.parquet" not in v2.assets
-
-
-@pytest.mark.integration
-def test_publish_with_removed_and_new_assets(iceberg_backend, tmp_path):
-    """publish can add new assets and remove old ones in the same call."""
-    f1 = _write_parquet(tmp_path / "old.parquet", {"id": [1], "x": ["old"]})
-
-    iceberg_backend.publish(
-        collection="test-collection",
-        assets={"old.parquet": str(f1)},
-        schema={"columns": [], "types": {}, "hash": "h"},
-        breaking=False,
-        message="v1",
-    )
-
-    f2 = _write_parquet(tmp_path / "new.parquet", {"id": [2], "x": ["new"]})
-
-    v2 = iceberg_backend.publish(
-        collection="test-collection",
-        assets={"new.parquet": str(f2)},
-        schema={"columns": [], "types": {}, "hash": "h"},
-        breaking=False,
-        message="swap assets",
-        removed={"old.parquet"},
-    )
-    assert "new.parquet" in v2.assets
-    assert "old.parquet" not in v2.assets
-
-
-@pytest.mark.integration
-def test_get_current_version_returns_relative_hrefs(iceberg_backend, tmp_path):
-    """get_current_version() should return Version with relative hrefs."""
-    asset = _write_parquet(tmp_path / "data.parquet")
-
-    iceberg_backend.publish(
-        collection="boundaries",
-        assets={"item1/data.parquet": str(asset)},
-        schema={"columns": [], "types": {}, "hash": "h"},
-        breaking=False,
-        message="v1",
-    )
-
-    version = iceberg_backend.get_current_version("boundaries")
-    assert version.assets["item1/data.parquet"].href == "boundaries/item1/data.parquet"
-    assert not version.assets["item1/data.parquet"].href.startswith("/")
-
-
-@pytest.mark.integration
-def test_publish_stores_relative_hrefs(iceberg_backend, tmp_path):
-    """Published version assets should have catalog-root-relative hrefs."""
-    asset = _write_parquet(tmp_path / "data.parquet", {"id": [1], "name": ["test"]})
-
-    version = iceberg_backend.publish(
-        collection="boundaries",
-        assets={"item1/data.parquet": str(asset)},
-        schema={"columns": ["id"], "types": {"id": "int64"}, "hash": "h"},
-        breaking=False,
-        message="test relative hrefs",
-    )
-    asset_obj = version.assets["item1/data.parquet"]
-    assert asset_obj.href == "boundaries/item1/data.parquet"
-    assert not asset_obj.href.startswith("/")
-
-
-@pytest.mark.integration
-def test_publish_relative_hrefs_survive_merge(iceberg_backend, tmp_path):
-    """Relative hrefs should be preserved when merging with previous snapshot."""
-    f1 = _write_parquet(tmp_path / "a.parquet", {"id": [1], "x": ["a"]})
-    f2 = _write_parquet(tmp_path / "b.parquet", {"id": [2], "x": ["b"]})
-
-    iceberg_backend.publish(
-        collection="boundaries",
-        assets={"a.parquet": str(f1)},
-        schema={"columns": [], "types": {}, "hash": "h"},
-        breaking=False,
-        message="v1",
-    )
-
-    v2 = iceberg_backend.publish(
-        collection="boundaries",
-        assets={"b.parquet": str(f2)},
-        schema={"columns": [], "types": {}, "hash": "h"},
-        breaking=False,
-        message="v2 adds b",
-    )
-    assert v2.assets["a.parquet"].href == "boundaries/a.parquet"
-    assert v2.assets["b.parquet"].href == "boundaries/b.parquet"
-
-
-@pytest.mark.integration
-def test_publish_removed_nonexistent_asset_is_noop(iceberg_backend, tmp_path):
-    """Removing an asset that doesn't exist should not raise."""
-    f1 = _write_parquet(tmp_path / "data.parquet")
-
-    iceberg_backend.publish(
-        collection="test-collection",
-        assets={"data.parquet": str(f1)},
-        schema={"columns": [], "types": {}, "hash": "h"},
-        breaking=False,
-        message="v1",
-    )
-
-    v2 = iceberg_backend.publish(
-        collection="test-collection",
-        assets={},
-        schema={"columns": [], "types": {}, "hash": "h"},
-        breaking=False,
-        message="remove ghost",
-        removed={"ghost.parquet"},
-    )
-    assert "data.parquet" in v2.assets
-    assert len(v2.assets) == 1
+def test_push_is_blocked_with_a_message_for_each_case(lake: Lake) -> None:
+    assert lake.backend.supports_push() is False
+    assert "add" in lake.backend.push_blocked_message("gs://bucket/c").lower()
+    assert "not supported" in lake.backend.push_blocked_message(None).lower()

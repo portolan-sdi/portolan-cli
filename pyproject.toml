@@ -75,11 +75,11 @@ portolan = "portolan_cli:cli"
 "Source" = "https://github.com/portolan-sdi/portolan-cli"
 
 [project.optional-dependencies]
-iceberg = [
-    "pyiceberg[sql-sqlite]>=0.8.0",
-    "shapely>=2.0.0",
-    "pygeohash>=1.2.0",
-]
+# The Iceberg backend writes through DuckDB and talks to the REST catalog
+# through httpx. Both are core dependencies, so the extra is empty. It stays
+# so that `pip install "portolan-cli[iceberg]"` keeps working for a user who
+# installed it that way.
+iceberg = []
 aws = [
     # obstore.auth.boto3 wraps a botocore session, which reads every credential
     # mechanism an AWS profile can name. Optional, because a static key pair and
@@ -394,7 +394,7 @@ untyped_calls_exclude = ["pyarrow"]
 warn_unreachable = true
 
 [[tool.mypy.overrides]]
-module = ["pyarrow.*", "rasterio.*", "gitingest.*", "matplotlib.*", "pyiceberg.*", "shapely.*", "pygeohash.*", "geopandas.*", "contextily.*", "jsonschema.*"]
+module = ["pyarrow.*", "rasterio.*", "gitingest.*", "matplotlib.*", "shapely.*", "geopandas.*", "contextily.*", "jsonschema.*"]
 ignore_missing_imports = true
 
 # markdown ships no inline types. types-Markdown exists on PyPI, so mypy
@@ -430,7 +430,6 @@ paths = ["portolan_cli", "tests", "vulture_whitelist.py"]
 exclude = [
     "portolan_cli/backends/protocol.py", # Protocol method params are intentionally unused
     "portolan_cli/backends/json_file.py", # Stub methods raise NotImplementedError
-    "portolan_cli/backends/iceberg/backend.py", # Protocol methods + lifecycle hooks
 ]
 sort_by_size = true
 verbose = false
@@ -718,8 +717,6 @@ extend_exclude = [
 # - aiohttp: CVE-2026-111063 and others
 # - certifi: PYSEC-2026-4320
 # - cryptography: CVE-2026-39892
-# - duckdb: 1.5.5 segfaults in ST_Read_Meta on malformed input. See
-#   duckdb/duckdb-spatial#860
 # - lxml: CVE-2026-41066
 # - pillow: CVE-2026-40192, CVE-2026-112390 and others
 # - pygments: CVE-2026-4539
@@ -728,14 +725,10 @@ DEP002 = [
     "aiohttp",
     "certifi",
     "cryptography",
-    "duckdb",
     "lxml",
     "pillow",
     "pygments",
     "requests",
-    "pyiceberg",
-    "shapely",
-    "pygeohash",
     "boto3",
 ]
 

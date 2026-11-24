@@ -72,16 +72,23 @@ def test_every_job_feeds_ci_success() -> None:
 
 
 def test_iceberg_tests_run_when_core_python_changes() -> None:
-    """#977 merged because a core change skipped the Iceberg tests."""
+    """#977 merged because a core change skipped the Iceberg tests.
+
+    The Iceberg unit tests run in the test job, which takes every Python
+    change. The e2e job is the Iceberg gate and takes them too.
+    """
     jobs = _jobs("ci.yml")
 
-    assert jobs["iceberg-test"]["if"] == (
+    assert "iceberg-test" not in jobs
+    assert jobs["iceberg-e2e"]["if"] == (
         "needs.changes.outputs.iceberg == 'true' || needs.changes.outputs.python == 'true'"
         " || github.event_name == 'push'"
     )
-    # The Docker e2e job keeps the narrow filter. Nightly runs the full e2e suite.
-    assert jobs["iceberg-e2e"]["if"] == (
-        "needs.changes.outputs.iceberg == 'true' || github.event_name == 'push'"
+    run = _run_text(jobs["test"])
+    assert "--ignore=tests/iceberg/" not in run
+    assert "not e2e and not e2e_slow" in run
+    assert 'uv run pytest tests/ -v --tb=long -m "e2e and not e2e_slow"' in _run_text(
+        jobs["iceberg-e2e"]
     )
 
 
@@ -150,7 +157,6 @@ def _pytest_step(job: dict[str, Any], prefix: str) -> dict[str, Any]:
     ("job", "prefix", "flag"),
     [
         ("test", "Run tests", "--cov=portolan_cli --cov-report=xml"),
-        ("iceberg-test", "Run unit and integration tests", "--cov=portolan_cli/backends/iceberg"),
         ("iceberg-e2e", "Run E2E tests", "--cov=portolan_cli --cov-report=xml"),
     ],
 )
@@ -188,7 +194,6 @@ def test_only_the_linux_cell_measures_coverage(job: str, prefix: str, flag: str)
     ("job", "name"),
     [
         ("test", "coverage-ubuntu-latest-3.11"),
-        ("iceberg-test", "coverage-iceberg-ubuntu-latest-3.11"),
         ("iceberg-e2e", "coverage-e2e-ubuntu-latest-3.11"),
     ],
 )
@@ -198,13 +203,9 @@ def test_only_the_linux_cell_uploads_its_coverage_report(job: str, name: str) ->
     assert coverage_artifacts(jobs[job]) == [name]
 
 
-def test_diff_cover_reads_the_three_linux_reports() -> None:
+def test_diff_cover_reads_the_two_linux_reports() -> None:
     jobs = _jobs("ci.yml")
-    names = (
-        coverage_artifacts(jobs["test"])
-        + coverage_artifacts(jobs["iceberg-test"])
-        + coverage_artifacts(jobs["iceberg-e2e"])
-    )
+    names = coverage_artifacts(jobs["test"]) + coverage_artifacts(jobs["iceberg-e2e"])
     downloads = [
         step
         for step in jobs["diff-cover"]["steps"]
@@ -212,7 +213,7 @@ def test_diff_cover_reads_the_three_linux_reports() -> None:
     ]
     run = _run_text(jobs["diff-cover"])
 
-    assert len(names) == 3
+    assert len(names) == 2
     assert len(set(names)) == len(names)
     assert [step["with"] for step in downloads] == [
         {"pattern": COVERAGE_PATTERN, "path": "coverage"}
@@ -244,7 +245,7 @@ def test_diff_cover_gates_the_changed_lines() -> None:
     job = jobs["diff-cover"]
     run = _run_text(job)
 
-    assert job["needs"] == ["test", "iceberg-test", "iceberg-e2e"]
+    assert job["needs"] == ["test", "iceberg-e2e"]
     assert job["if"] == (
         "always() && github.event_name == 'pull_request' && needs.test.result == 'success'"
     )

@@ -1,32 +1,28 @@
-"""Basic import tests to verify iceberg backend package structure."""
+"""The Iceberg backend package imports with the core dependencies alone."""
 
 from __future__ import annotations
 
 import pytest
 
+pytestmark = pytest.mark.unit
 
-@pytest.mark.unit
-def test_import_iceberg_backend():
-    """Verify the iceberg backend can be imported and IcebergBackend is accessible."""
+
+def test_import_iceberg_backend() -> None:
     from portolan_cli.backends.iceberg import IcebergBackend
 
-    assert IcebergBackend is not None
     assert IcebergBackend.__name__ == "IcebergBackend"
 
 
-@pytest.mark.unit
-def test_import_iceberg_version():
-    """Verify __version__ is a string."""
+def test_import_iceberg_version() -> None:
     from portolan_cli.backends.iceberg import __version__
 
     assert isinstance(__version__, str)
 
 
-@pytest.mark.unit
-def test_import_dependencies():
-    """Verify core dependencies are importable."""
-    import pyarrow as pa
-    import pyiceberg
+def test_the_writer_and_the_client_are_core_dependencies() -> None:
+    """DuckDB writes the tables and httpx talks to the catalog. Neither is an extra."""
+    import duckdb
+    import httpx
 
-    assert pa is not None
-    assert pyiceberg is not None
+    assert duckdb.__version__
+    assert httpx.__version__

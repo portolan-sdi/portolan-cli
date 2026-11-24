@@ -22,6 +22,17 @@ from unittest import mock
 
 import pytest
 
+from tests.iceberg_stack import (
+    IcebergLane,
+    IcebergStack,
+    RestAdmin,
+    compose_down,
+    compose_up,
+    docker_lane,
+    new_namespace,
+    require_docker,
+    stack_environment,
+)
 from tests.network_guard import (
     NO_PROXY_KEYS,
     PROXY_KEYS,
@@ -219,6 +230,12 @@ def pytest_sessionfinish(session: pytest.Session) -> None:
         reporter.write_line("Write under tmp_path instead. New entries:", red=True)
         for path in sorted(after - before):
             reporter.write_line(f"  {path}", red=True)
+
+
+#: The prefix of the Iceberg backend's variables, stripped from every test.
+ICEBERG_ENV_PREFIX = "PORTOLAN_ICEBERG_"
+#: Set by the e2e stack fixture on the process, so the harness keeps the variables.
+ICEBERG_STACK_SENTINEL = "PORTOLAN_TEST_ICEBERG_STACK"
 
 
 def pytest_configure(config: pytest.Config) -> None:
@@ -1068,7 +1085,7 @@ class CliHarness:
 
         from portolan_cli.cli import cli
 
-        with _working_directory(cwd or self.base), self._pyiceberg_isolated():
+        with _working_directory(cwd or self.base), self._iceberg_isolated():
             result = CliRunner().invoke(cli, list(args), input=input, catch_exceptions=False)
         self.roots.update(
             path.parent.resolve()
@@ -1083,20 +1100,19 @@ class CliHarness:
         return result
 
     @contextmanager
-    def _pyiceberg_isolated(self) -> Iterator[None]:
-        """Hide the developer's PyIceberg config from the command.
+    def _iceberg_isolated(self) -> Iterator[None]:
+        """Hide a developer's Iceberg catalog from the command.
 
-        PyIceberg reads the first ``.pyiceberg.yaml`` it finds, and it reads
-        ``PYICEBERG_CATALOG__*`` variables. Either one replaces the local
-        SQLite catalog that the Iceberg backend defaults to.
-        ``tests/iceberg/conftest.py`` gives the full reason. The stub file holds
-        one key that PyIceberg does not read.
+        The Iceberg backend reads ``PORTOLAN_ICEBERG_*`` from the environment.
+        A developer who exported a catalog in the shell would make a test
+        write to it. The e2e stack sets the variables itself and marks the
+        process with ``PORTOLAN_TEST_ICEBERG_STACK=1``, which keeps them.
         """
-        stub = self.base / ".pyiceberg-home" / ".pyiceberg.yaml"
-        stub.parent.mkdir(parents=True, exist_ok=True)
-        stub.write_text("portolan-test-isolation: true\n", encoding="utf-8")
-        with mock.patch.dict(os.environ, {"PYICEBERG_HOME": str(stub.parent)}):
-            for name in [n for n in os.environ if n.startswith("PYICEBERG_CATALOG__")]:
+        if os.environ.get(ICEBERG_STACK_SENTINEL) == "1":
+            yield
+            return
+        with mock.patch.dict(os.environ):
+            for name in [n for n in os.environ if n.startswith(ICEBERG_ENV_PREFIX)]:
                 del os.environ[name]
             yield
 
@@ -1178,3 +1194,50 @@ def build_damaged_catalog(run_cli: CliHarness) -> Callable[[Path, str], Path]:
         return root
 
     return _register
+
+
+# ---------------------------------------------------------------------------
+# The Iceberg REST stack (tests/iceberg_stack.py)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="session")
+def iceberg_lane() -> IcebergLane:
+    """The lane every e2e test in this session writes to."""
+    return docker_lane()
+
+
+@pytest.fixture(scope="session")
+def docker_services(iceberg_lane: IcebergLane) -> Iterator[None]:
+    """Start the REST catalog and RustFS with docker compose, and stop them after the session."""
+    _ = iceberg_lane
+    require_docker()
+    compose_up()
+    try:
+        yield
+    finally:
+        compose_down()
+
+
+@pytest.fixture(scope="session")
+def rest_admin(docker_services: None, iceberg_lane: IcebergLane) -> RestAdmin:
+    """The product's REST client, pointed at the running stack."""
+    _ = docker_services
+    return RestAdmin(iceberg_lane)
+
+
+@pytest.fixture
+def iceberg_stack(
+    rest_admin: RestAdmin, iceberg_lane: IcebergLane, monkeypatch: pytest.MonkeyPatch
+) -> Iterator[IcebergStack]:
+    """A namespace of the stack for one test, with the backend's environment set.
+
+    The namespace and its tables are dropped afterwards, with their files.
+    """
+    namespace = new_namespace()
+    for name, value in stack_environment(iceberg_lane, namespace).items():
+        monkeypatch.setenv(name, value)
+    try:
+        yield IcebergStack(iceberg_lane, namespace, rest_admin)
+    finally:
+        rest_admin.drop_namespace(namespace)
