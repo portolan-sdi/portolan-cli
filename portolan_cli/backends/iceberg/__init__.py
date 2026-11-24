@@ -1,20 +1,13 @@
-"""Iceberg backend: lakehouse-grade versioning for Portolan catalogs.
+"""Iceberg backend: version history as Iceberg table snapshots.
 
-This subpackage provides enterprise-tier versioning for geospatial catalogs using
-Apache Iceberg for vector/tabular data (GeoParquet format).
+DuckDB writes one format version 3 table per collection through an Iceberg
+REST catalog. ``rest`` calls the catalog for the version record, rollback, and
+snapshot expiry. It integrates with portolan-cli as a built-in plugin (#947).
 
-It integrates with portolan-cli as a built-in plugin (#947), providing:
-- ACID transactions for concurrent writes
-- Version rollback and snapshot pruning
-- Automated schema evolution detection
-
-Install with: pip install portolan-cli[iceberg]
-
-``hooks`` registers the backend and ``cli`` holds ``version rollback`` and
-``version prune``. Both load without pyiceberg, so the package root imports
-nothing heavy. ``IcebergBackend`` loads on first access and needs the extra.
-
-Future: Icechunk support for array/raster data (COG, NetCDF, Zarr) is planned.
+``hooks`` registers the backend and ``cli`` holds ``version rollback``,
+``version prune``, and ``version refresh``. Neither imports DuckDB or httpx,
+so the package root imports nothing heavy. ``IcebergBackend`` loads on first
+access.
 """
 
 from __future__ import annotations

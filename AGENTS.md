@@ -107,6 +107,7 @@ uvx jscpd@5.2.1 portolan_cli tests \
 # Iceberg backend development (DuckDB writes through a REST catalog; no extra needed)
 uv run pytest tests/iceberg/ -m "not e2e and not e2e_slow"  # Iceberg unit tests (no Docker)
 uv run pytest tests/ -m "e2e and not e2e_slow"              # Iceberg e2e tests (Docker compose stack)
+PORTOLAN_TEST_ICEBERG_LANE=hosted uv run pytest tests/ -m "e2e and not e2e_slow"  # same, on the hosted catalog the PORTOLAN_ICEBERG_* variables name
 
 # Commits (use commitizen for conventional commits)
 uv run cz commit                        # Interactive commit
@@ -188,6 +189,7 @@ Always research before implementing:
 @pytest.mark.slow        # Takes > 5 seconds
 @pytest.mark.e2e         # End-to-end tests requiring Docker (REST catalog + RustFS)
 @pytest.mark.e2e_slow    # Extended E2E tests (concurrency stress, large datasets) - nightly only
+@pytest.mark.lakehousebox # Reads the public proof catalog on LakehouseBox, no credential (network nightly)
 ```
 
 ## Development Rules

@@ -60,6 +60,10 @@ def test_commands_are_entry_points_of_portolan_cli() -> None:
         "portolan-cli",
     )
     assert commands["version.prune"] == ("portolan_cli.backends.iceberg.cli:prune", "portolan-cli")
+    assert commands["version.refresh"] == (
+        "portolan_cli.backends.iceberg.cli:refresh",
+        "portolan-cli",
+    )
 
 
 def test_version_help_shows_builtin_plugin_help_text() -> None:

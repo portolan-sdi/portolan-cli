@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import json
 import logging
+from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
 
@@ -93,6 +94,19 @@ ITEMS_MIRROR = "items.parquet"
 
 class LegacyTableError(ValueError):
     """The table holds pyiceberg-era records. It is read-only here."""
+
+
+@dataclass(frozen=True)
+class RefreshResult:
+    """The metadata location on ``collection.json`` before and after ``refresh``."""
+
+    previous_location: str | None
+    metadata_location: str | None
+
+    @property
+    def changed(self) -> bool:
+        """Whether ``refresh`` wrote a different metadata location."""
+        return self.previous_location != self.metadata_location
 
 
 class SchemaChangeError(ValueError):
@@ -647,6 +661,34 @@ class IcebergBackend:
         _merge_into_collection_json(
             Path(collection_dir) / "collection.json", fields, extensions, assets
         )
+
+    def refresh(self, collection: str, *, remote: str | None = None) -> RefreshResult:
+        """Merge the current Iceberg fields into ``collection.json`` again.
+
+        The maintenance of a hosted catalog writes a new metadata file, so
+        the ``iceberg:metadata_location`` that ``add`` wrote names an older
+        file. The older file still reads the version ``add`` published. This
+        method reads the table again and writes the current fields. With a
+        remote, it also uploads ``collection.json``.
+
+        Raises:
+            FileNotFoundError: The collection has no ``collection.json``, or
+                the catalog has no table for it.
+        """
+        namespace, name = self._table(collection)
+        path = self._catalog_root / name / "collection.json"
+        if not path.is_file():
+            raise FileNotFoundError(f"No collection.json of collection '{name}' at {path}")
+        if self._load(namespace, name) is None:
+            raise FileNotFoundError(f"No Iceberg table {namespace}.{name} in the catalog")
+        previous = json.loads(path.read_text(encoding="utf-8")).get("iceberg:metadata_location")
+        self.write_stac_fields(name, path.parent)
+        current = json.loads(path.read_text(encoding="utf-8")).get("iceberg:metadata_location")
+        if remote is not None:
+            from portolan_cli.api import upload_file
+
+            upload_file(source=path, destination=f"{remote.rstrip('/')}/{name}/collection.json")
+        return RefreshResult(previous_location=previous, metadata_location=current)
 
     def on_post_add(self, context: PostAddContext) -> None:
         """After ``add``: write the Iceberg fields, then upload the STAC files to the remote."""

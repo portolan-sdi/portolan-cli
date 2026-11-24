@@ -3,7 +3,8 @@
 Covers:
 - ``portolan version current``
 - ``portolan version list``
-- ``portolan version rollback`` and ``portolan version prune``, which
+- ``portolan version rollback``, ``portolan version prune``, and
+  ``portolan version refresh``, which
   ``portolan_cli.backends.iceberg.cli`` provides through entry points (#947),
   with their iceberg backend guard
 - ``_check_backend_push_support`` — push routing
@@ -613,6 +614,101 @@ class TestVersionPruneCommand:
 
         assert result.exit_code == 1
         assert "prune failed badly" in result.output
+
+
+# ---------------------------------------------------------------------------
+# version refresh
+# ---------------------------------------------------------------------------
+
+
+_OLD = "https://s3.example.org/w/portolake/roads/metadata/00001-a.metadata.json"
+_NEW = "https://s3.example.org/w/portolake/roads/metadata/00002-b.metadata.json"
+
+
+def _refresh(
+    tmp_path: Path,
+    *,
+    previous: str = _OLD,
+    current: str = _NEW,
+    error: Exception | None = None,
+    remote: str | None = None,
+    root_args: tuple[str, ...] = (),
+    args: tuple[str, ...] = (),
+) -> tuple[Result, MagicMock]:
+    """Run ``version refresh roads`` with a mock backend and REMOTE as the remote setting."""
+    catalog_root = _make_iceberg_catalog(tmp_path)
+    backend = MagicMock()
+    backend.refresh.return_value.previous_location = previous
+    backend.refresh.return_value.metadata_location = current
+    backend.refresh.return_value.changed = previous != current
+    backend.refresh.side_effect = error
+    settings = {"backend": "iceberg", "remote": remote}
+    command = [*root_args, "version", "refresh", "roads", *args, "--catalog", str(catalog_root)]
+    with (
+        patch("portolan_cli.config.get_setting", side_effect=lambda key, **_: settings.get(key)),
+        patch("portolan_cli.backends.get_backend", return_value=backend),
+    ):
+        return CliRunner().invoke(cli, command), backend
+
+
+class TestVersionRefreshCommand:
+    """Tests for ``portolan version refresh``."""
+
+    @pytest.mark.unit
+    def test_refresh_reports_the_new_location(self, tmp_path: Path) -> None:
+        result, backend = _refresh(tmp_path)
+
+        assert result.exit_code == 0
+        assert f"Refreshed 'roads'. The metadata location is now {_NEW}" in result.output
+        backend.refresh.assert_called_once_with("roads", remote=None)
+
+    @pytest.mark.unit
+    def test_refresh_reports_a_current_collection(self, tmp_path: Path) -> None:
+        result, _ = _refresh(tmp_path, previous=_NEW)
+
+        assert result.exit_code == 0
+        assert f"'roads' is current. The metadata location is {_NEW}" in result.output
+
+    @pytest.mark.unit
+    def test_refresh_passes_the_remote_setting(self, tmp_path: Path) -> None:
+        result, backend = _refresh(tmp_path, remote="gs://bucket/catalog")
+
+        assert result.exit_code == 0
+        backend.refresh.assert_called_once_with("roads", remote="gs://bucket/catalog")
+        assert "Uploaded roads/collection.json to gs://bucket/catalog" in result.output
+
+    @pytest.mark.unit
+    def test_refresh_json_output(self, tmp_path: Path) -> None:
+        result, _ = _refresh(tmp_path, root_args=("--format", "json"))
+
+        assert result.exit_code == 0
+        assert json.loads(result.output)["data"] == {
+            "collection": "roads",
+            "previous_location": _OLD,
+            "metadata_location": _NEW,
+            "changed": True,
+            "remote": None,
+        }
+
+    @pytest.mark.unit
+    def test_refresh_error_json(self, tmp_path: Path) -> None:
+        missing = FileNotFoundError("No Iceberg table portolake.roads")
+
+        result, _ = _refresh(tmp_path, error=missing, args=("--json",))
+
+        assert result.exit_code == 1
+        assert json.loads(result.output)["errors"] == [
+            {"type": "FileNotFoundError", "message": "No Iceberg table portolake.roads"}
+        ]
+
+    @pytest.mark.unit
+    def test_refresh_needs_the_iceberg_backend(self, runner: CliRunner, tmp_path: Path) -> None:
+        catalog_root = _make_file_catalog(tmp_path)
+
+        result = runner.invoke(cli, ["version", "refresh", "roads", "--catalog", str(catalog_root)])
+
+        assert result.exit_code == 1
+        assert "'portolan version refresh' requires the 'iceberg' backend" in result.output
 
 
 # ---------------------------------------------------------------------------

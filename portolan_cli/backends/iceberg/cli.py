@@ -1,7 +1,7 @@
-"""``portolan version rollback`` and ``portolan version prune`` (#947).
+"""``portolan version rollback``, ``prune``, and ``refresh`` (#947).
 
-Only the Iceberg backend implements rollback and prune. portolan-cli declares
-these commands as ``version.rollback`` and ``version.prune`` in the
+Only the Iceberg backend implements these commands. portolan-cli declares
+them as ``version.rollback``, ``version.prune``, and ``version.refresh`` in the
 ``portolan.commands`` entry point group, the same way an outside plugin adds a
 command. The module imports Click and ``portolan_cli.api`` only, and
 neither DuckDB nor httpx.
@@ -210,3 +210,57 @@ def prune(
     api.info(f"{prefix}{action} {len(pruned)} version(s), keeping {keep}:")
     for v in pruned:
         api.detail(f"  {v.version}  {v.created.strftime('%Y-%m-%d %H:%M:%S')}")
+
+
+@click.command()
+@click.argument("collection")
+@_CATALOG_OPTION
+@click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
+@click.pass_context
+def refresh(
+    ctx: click.Context,
+    collection: str,
+    catalog_path: Path | None,
+    json_output: bool,
+) -> None:
+    r"""Rewrite the Iceberg fields of a collection from its table.
+
+    The maintenance of a hosted catalog writes a new table metadata file.
+    This command reads the table again and writes the current
+    iceberg:metadata_location and the other Iceberg fields into
+    collection.json. With a remote configured, it also uploads
+    collection.json.
+
+    \b
+    Examples:
+        portolan version refresh boundaries
+        portolan version refresh boundaries --json
+    """
+    use_json = _use_json(ctx, json_output)
+    backend = _iceberg_backend(ctx, catalog_path, json_output, "refresh", collection)
+    root = catalog_path if catalog_path is not None else api.find_catalog_root()
+    remote = api.get_setting("remote", catalog_path=root, collection=collection)
+
+    try:
+        result = backend.refresh(collection, remote=remote)
+    except Exception as e:  # noqa: BLE001 - any backend failure is reported
+        _fail("version refresh", type(e).__name__, str(e), use_json=use_json)
+
+    if use_json:
+        data = {
+            "collection": collection,
+            "previous_location": result.previous_location,
+            "metadata_location": result.metadata_location,
+            "changed": result.changed,
+            "remote": remote,
+        }
+        click.echo(api.success_envelope("version refresh", data).to_json())
+        return
+    if result.changed:
+        api.success(
+            f"Refreshed '{collection}'. The metadata location is now {result.metadata_location}"
+        )
+    else:
+        api.info(f"'{collection}' is current. The metadata location is {result.metadata_location}")
+    if remote is not None:
+        api.detail(f"Uploaded {collection}/collection.json to {remote}")

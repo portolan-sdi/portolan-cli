@@ -28,9 +28,10 @@ from tests.iceberg_stack import (
     RestAdmin,
     compose_down,
     compose_up,
-    docker_lane,
+    lane_is_hosted,
     new_namespace,
     require_docker,
+    select_lane,
     stack_environment,
 )
 from tests.network_guard import (
@@ -814,10 +815,12 @@ def network_guard(
     """Fail a test without the network marker that connects to a remote host.
 
     ``tests/network_guard.py`` describes the two layers. A test that expects a
-    block can read ``collect()`` and clear ``attempts``.
+    block can read ``collect()`` and clear ``attempts``. An e2e test in the
+    hosted lane writes to a remote catalog, so the guard lets it through.
     """
     guard = NetworkGuard(test=request.node.nodeid, sentinel=_sentinel_proxy)
-    if request.node.get_closest_marker("network") is not None:
+    hosted_e2e = lane_is_hosted(os.environ) and request.node.get_closest_marker("e2e") is not None
+    if request.node.get_closest_marker("network") is not None or hosted_e2e:
         yield guard
         return
     guard.install(monkeypatch)
@@ -1203,14 +1206,19 @@ def build_damaged_catalog(run_cli: CliHarness) -> Callable[[Path, str], Path]:
 
 @pytest.fixture(scope="session")
 def iceberg_lane() -> IcebergLane:
-    """The lane every e2e test in this session writes to."""
-    return docker_lane()
+    """The lane every e2e test in this session writes to (``tests/iceberg_stack.py``)."""
+    return select_lane(os.environ)
 
 
 @pytest.fixture(scope="session")
 def docker_services(iceberg_lane: IcebergLane) -> Iterator[None]:
-    """Start the REST catalog and RustFS with docker compose, and stop them after the session."""
-    _ = iceberg_lane
+    """Start the REST catalog and RustFS with docker compose, and stop them after the session.
+
+    The hosted lane starts nothing.
+    """
+    if iceberg_lane.name != "docker":
+        yield
+        return
     require_docker()
     compose_up()
     try:
@@ -1221,9 +1229,16 @@ def docker_services(iceberg_lane: IcebergLane) -> Iterator[None]:
 
 @pytest.fixture(scope="session")
 def rest_admin(docker_services: None, iceberg_lane: IcebergLane) -> RestAdmin:
-    """The product's REST client, pointed at the running stack."""
+    """The product's REST client, pointed at the running stack.
+
+    On a hosted catalog, it first drops the test namespaces that a stopped
+    run left behind.
+    """
     _ = docker_services
-    return RestAdmin(iceberg_lane)
+    admin = RestAdmin(iceberg_lane)
+    if iceberg_lane.name == "hosted":
+        admin.sweep()
+    return admin
 
 
 @pytest.fixture
@@ -1234,7 +1249,7 @@ def iceberg_stack(
 
     The namespace and its tables are dropped afterwards, with their files.
     """
-    namespace = new_namespace()
+    namespace = new_namespace(iceberg_lane)
     for name, value in stack_environment(iceberg_lane, namespace).items():
         monkeypatch.setenv(name, value)
     try:

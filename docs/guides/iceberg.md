@@ -151,7 +151,7 @@ SELECT count(*) FROM lake.portolake.buildings;
 ## Version commands
 
 `portolan version current` and `portolan version list` work with every storage
-layer. These two need Iceberg snapshots, so they work only here:
+layer. The commands below need the Iceberg table, so they work only here:
 
 ```bash
 portolan version rollback buildings 1.2.0
@@ -164,6 +164,15 @@ copied. The next `add` continues from the newest version number.
 Prune removes the records, the tags, and the snapshots of the older versions,
 keeps the `--keep` newest and the current one. Then it deletes each data file
 that the remaining snapshots do not use.
+
+The maintenance of a hosted catalog writes a new metadata file. Refresh
+writes the current `iceberg:metadata_location` and the other Iceberg fields
+into `collection.json`. With a remote configured, it also uploads
+`collection.json`:
+
+```bash
+portolan version refresh buildings
+```
 
 ## Iceberg fields on the collection
 

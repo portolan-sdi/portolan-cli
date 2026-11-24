@@ -43,7 +43,7 @@ from rashid import RulesConfig, Severity, validate
 from rashid.data.reader import LocalOnlyReader
 
 from tests.catalog_invariants import check_catalog_invariants
-from tests.iceberg_stack import new_namespace, stack_environment
+from tests.iceberg_stack import lane_is_hosted, new_namespace, stack_environment
 from tests.known_upstream import GPIO_WFS_OOM
 from tests.properties.test_rebuild_idempotence import shrink_geoparquet
 
@@ -98,6 +98,8 @@ class Scenario:
     # The build writes to the Iceberg REST stack of tests/iceberg_stack.py, in
     # a namespace of its own that is dropped after the module.
     needs_stack: bool = False
+    # Advisories added when the build writes to the hosted lane, by exact count.
+    hosted_advisories: Mapping[str, int] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -590,6 +592,9 @@ SCENARIOS: dict[str, Scenario] = {
         # The write needs the REST catalog of the compose stack.
         marks=(pytest.mark.e2e,),
         needs_stack=True,
+        # A hosted store serves the metadata file over HTTPS, so the collection
+        # gets the iceberg asset. That asset has no file:size or file:checksum.
+        hosted_advisories={"PTL-AST-003": 2},
     ),
     "realdata-fieldmaps-boundaries": _realdata_row(REALDATA / "fieldmaps-boundaries.parquet"),
     "realdata-nwi-wetlands": _realdata_row(REALDATA / "nwi-wetlands.parquet"),
@@ -650,7 +655,7 @@ def _stack_environment(row: Scenario, request: pytest.FixtureRequest) -> Iterato
         return
     lane = request.getfixturevalue("iceberg_lane")
     admin = request.getfixturevalue("rest_admin")
-    namespace = new_namespace()
+    namespace = new_namespace(lane)
     request.addfinalizer(lambda: admin.drop_namespace(namespace))
     with mock.patch.dict(os.environ, stack_environment(lane, namespace)):
         yield
@@ -830,7 +835,11 @@ class TestScenarioConformance:
             root, Severity.INFO, row.known_errors
         )
 
-        assert dict(observed) == dict(row.expected_advisories)
+        expected = dict(row.expected_advisories)
+        if row.needs_stack and lane_is_hosted(os.environ):
+            expected.update(row.hosted_advisories)
+
+        assert dict(observed) == expected
 
     def test_catalog_invariants_hold(self, name: str, build_scenario: Builds) -> None:
         """The invariants that fire are exactly the row's known ones.

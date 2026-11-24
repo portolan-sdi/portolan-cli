@@ -2,9 +2,19 @@
 
 Lane A is the docker-compose stack in ``tests/iceberg/e2e/docker-compose.yml``:
 the Apache REST fixture on port 8181 and RustFS on port 9000. It is
-deterministic and needs no secret, so it is the catalog of PR CI. A second
-lane, a hosted REST catalog service, reuses the same helpers with its own
-endpoint and credential.
+deterministic and needs no secret, so it is the catalog of PR CI.
+
+Lane B is a hosted REST catalog. ``PORTOLAN_TEST_ICEBERG_LANE=hosted`` selects
+it, and the lane reads the variables the backend itself reads
+(``PORTOLAN_ICEBERG_URI`` and the others in ``docs/guides/iceberg.md``). The
+public repository holds no credential for it. A maintainer runs it with the
+key pair of a test catalog exported in the shell::
+
+    PORTOLAN_TEST_ICEBERG_LANE=hosted uv run pytest tests/ -m "e2e and not e2e_slow"
+
+Each hosted test namespace is ``portolan_ci_<unix time>_<hex>``. A run that
+stops before its teardown leaves its namespace behind, so the next run drops
+each such namespace older than ``SWEEP_AFTER_SECONDS``.
 
 This module holds no fixture. ``tests/conftest.py`` declares the fixtures
 and calls these functions, so a test in any directory gets the stack
@@ -20,21 +30,26 @@ and need no extra dependency.
 
 from __future__ import annotations
 
+import re
 import secrets
 import shutil
 import subprocess
 import time
 import urllib.error
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import duckdb
+import httpx
 import pytest
 
-from portolan_cli.backends.iceberg.auth import NoAuth, TokenProvider
+from portolan_cli.backends.iceberg.auth import NoAuth, OAuth2ClientCredentials, TokenProvider
 from portolan_cli.backends.iceberg.rest import LoadTableResult, RestCatalog
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 COMPOSE_FILE = Path(__file__).parent / "iceberg" / "e2e" / "docker-compose.yml"
 
@@ -48,13 +63,21 @@ WAREHOUSE_BUCKET = "warehouse"
 #: ``PORTOLAN_ICEBERG_*`` variables when it is set, and strips them otherwise.
 STACK_SENTINEL = "PORTOLAN_TEST_ICEBERG_STACK"
 
+#: Selects the lane: ``docker`` (the default) or ``hosted``.
+LANE_VARIABLE = "PORTOLAN_TEST_ICEBERG_LANE"
+#: The bucket of the hosted warehouse, when its name differs from the warehouse.
+BUCKET_VARIABLE = "PORTOLAN_TEST_ICEBERG_BUCKET"
+#: The age after which a run drops a hosted test namespace that another run left.
+SWEEP_AFTER_SECONDS = 6 * 3600
+_HOSTED_NAMESPACE = re.compile(r"^portolan_ci_(\d+)_[0-9a-f]+$")
+
 
 @dataclass(frozen=True)
 class IcebergLane:
     """One REST catalog and the object store behind it.
 
     Attributes:
-        name: ``docker`` for the compose stack.
+        name: ``docker`` for the compose stack, ``hosted`` for a hosted catalog.
         uri: The REST catalog.
         warehouse: The warehouse name for ``GET /v1/config``, or None.
         s3_host: The S3 endpoint host, with an optional port and no scheme.
@@ -62,6 +85,9 @@ class IcebergLane:
         key: The S3 access key.
         secret: The S3 secret key.
         bucket: The bucket that holds the warehouse.
+        region: The S3 region.
+        client_id: The OAuth2 client id of the catalog, or None for no auth.
+        client_secret: The OAuth2 client secret of the catalog.
     """
 
     name: str
@@ -69,13 +95,42 @@ class IcebergLane:
     warehouse: str | None
     s3_host: str
     s3_use_ssl: bool
-    key: str
-    secret: str
+    key: str = field(repr=False)
+    secret: str = field(repr=False)
     bucket: str
+    region: str = "us-east-1"
+    client_id: str | None = None
+    client_secret: str | None = field(default=None, repr=False)
+
+    @property
+    def authorization_type(self) -> str:
+        """The ``iceberg:authorization_type`` that the backend writes on this lane."""
+        return "none" if self.client_id is None else "oauth2"
+
+    @property
+    def bucket_url(self) -> str:
+        """The ``s3://`` URL of the warehouse bucket, with a trailing slash."""
+        return f"s3://{self.bucket}/"
+
+    def published_location(self, location: str) -> str:
+        """Return the metadata location as ``collection.json`` publishes it.
+
+        An S3 endpoint over TLS serves the file over HTTPS, so the backend
+        writes the https form. The compose stack has no TLS.
+        """
+        if self.s3_use_ssl and location.startswith(self.bucket_url):
+            return f"https://{self.s3_host}/{location.removeprefix('s3://')}"
+        return location
 
     def token_provider(self) -> TokenProvider:
         """Return the catalog credential. The compose stack takes none."""
-        return NoAuth()
+        if self.client_id is None or self.client_secret is None:
+            return NoAuth()
+        return OAuth2ClientCredentials(
+            f"{self.uri.rstrip('/')}/v1/oauth/tokens",
+            client_id=self.client_id,
+            client_secret=self.client_secret,
+        )
 
 
 def docker_lane() -> IcebergLane:
@@ -92,8 +147,61 @@ def docker_lane() -> IcebergLane:
     )
 
 
-def new_namespace() -> str:
-    """Return a namespace name no other test uses: ``t`` and ten hex digits."""
+def hosted_lane(env: Mapping[str, str]) -> IcebergLane:
+    """Return the hosted catalog that the backend variables in ``env`` describe.
+
+    Skips the test when a required variable is unset.
+    """
+    required = (
+        "PORTOLAN_ICEBERG_URI",
+        "PORTOLAN_ICEBERG_WAREHOUSE",
+        "PORTOLAN_S3_ENDPOINT",
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+    )
+    missing = [name for name in required if not env.get(name)]
+    if missing:
+        pytest.skip(f"the hosted lane needs {', '.join(missing)}")
+    warehouse = env["PORTOLAN_ICEBERG_WAREHOUSE"]
+    return IcebergLane(
+        name="hosted",
+        uri=env["PORTOLAN_ICEBERG_URI"],
+        warehouse=warehouse,
+        s3_host=env["PORTOLAN_S3_ENDPOINT"],
+        s3_use_ssl=env.get("PORTOLAN_S3_USE_SSL", "true").lower() != "false",
+        key=env["AWS_ACCESS_KEY_ID"],
+        secret=env["AWS_SECRET_ACCESS_KEY"],
+        bucket=env.get(BUCKET_VARIABLE) or warehouse,
+        region=env.get("AWS_REGION") or "us-east-1",
+        client_id=env.get("PORTOLAN_ICEBERG_CLIENT_ID"),
+        client_secret=env.get("PORTOLAN_ICEBERG_CLIENT_SECRET"),
+    )
+
+
+def select_lane(env: Mapping[str, str]) -> IcebergLane:
+    """Return the lane that ``PORTOLAN_TEST_ICEBERG_LANE`` names in ``env``."""
+    name = env.get(LANE_VARIABLE, "docker")
+    if name == "docker":
+        return docker_lane()
+    if name == "hosted":
+        return hosted_lane(env)
+    raise pytest.UsageError(f"{LANE_VARIABLE} must be docker or hosted, not {name!r}")
+
+
+def lane_is_hosted(env: Mapping[str, str]) -> bool:
+    """Whether ``env`` selects the hosted lane."""
+    return env.get(LANE_VARIABLE) == "hosted"
+
+
+def new_namespace(lane: IcebergLane) -> str:
+    """Return a namespace name no other test uses.
+
+    The compose stack gets ``t`` and ten hex digits. A hosted catalog gets
+    ``portolan_ci_<unix time>_<hex>``, so a later run can drop a namespace
+    that a stopped run left behind.
+    """
+    if lane.name == "hosted":
+        return f"portolan_ci_{int(time.time())}_{secrets.token_hex(5)}"
     return "t" + secrets.token_hex(5)
 
 
@@ -106,16 +214,19 @@ def stack_environment(lane: IcebergLane, namespace: str) -> dict[str, str]:
     env = {
         "PORTOLAN_ICEBERG_URI": lane.uri,
         "PORTOLAN_ICEBERG_NAMESPACE": namespace,
-        "PORTOLAN_ICEBERG_AUTH": "none",
+        "PORTOLAN_ICEBERG_AUTH": "none" if lane.client_id is None else "oauth2",
         "PORTOLAN_S3_ENDPOINT": lane.s3_host,
         "PORTOLAN_S3_USE_SSL": "true" if lane.s3_use_ssl else "false",
         "AWS_ACCESS_KEY_ID": lane.key,
         "AWS_SECRET_ACCESS_KEY": lane.secret,
-        "AWS_REGION": "us-east-1",
+        "AWS_REGION": lane.region,
         STACK_SENTINEL: "1",
     }
     if lane.warehouse:
         env["PORTOLAN_ICEBERG_WAREHOUSE"] = lane.warehouse
+    if lane.client_id is not None and lane.client_secret is not None:
+        env["PORTOLAN_ICEBERG_CLIENT_ID"] = lane.client_id
+        env["PORTOLAN_ICEBERG_CLIENT_SECRET"] = lane.client_secret
     return env
 
 
@@ -171,7 +282,8 @@ class RestAdmin:
 
     def __init__(self, lane: IcebergLane) -> None:
         self.lane = lane
-        self.catalog = RestCatalog(lane.uri, auth=lane.token_provider(), warehouse=lane.warehouse)
+        self.auth = lane.token_provider()
+        self.catalog = RestCatalog(lane.uri, auth=self.auth, warehouse=lane.warehouse)
 
     def load_table(self, namespace: str, name: str) -> LoadTableResult:
         """Return the table's metadata location, metadata, and config."""
@@ -185,6 +297,32 @@ class RestAdmin:
             self.catalog.drop_table(namespace, name, purge=True)
         self.catalog.drop_namespace(namespace)
 
+    def list_namespaces(self) -> list[str]:
+        """Return the top-level namespaces of the catalog."""
+        prefix = self.catalog.prefix
+        path = f"/v1/{prefix}/namespaces" if prefix else "/v1/namespaces"
+        response = httpx.get(
+            self.lane.uri.rstrip("/") + path, headers=self.auth.headers(), timeout=30
+        )
+        response.raise_for_status()
+        return [".".join(parts) for parts in response.json().get("namespaces", [])]
+
+    def sweep(self, now: float | None = None) -> list[str]:
+        """Drop each hosted test namespace older than ``SWEEP_AFTER_SECONDS``.
+
+        Returns:
+            The namespaces dropped.
+        """
+        cutoff = (time.time() if now is None else now) - SWEEP_AFTER_SECONDS
+        stale = [
+            name
+            for name in self.list_namespaces()
+            if (match := _HOSTED_NAMESPACE.match(name)) and int(match.group(1)) < cutoff
+        ]
+        for name in stale:
+            self.drop_namespace(name)
+        return stale
+
 
 def _connection(lane: IcebergLane, *, iceberg: bool) -> duckdb.DuckDBPyConnection:
     connection = duckdb.connect()
@@ -194,8 +332,8 @@ def _connection(lane: IcebergLane, *, iceberg: bool) -> duckdb.DuckDBPyConnectio
         connection.execute("LOAD spatial")
     connection.execute(
         "CREATE SECRET lane (TYPE s3, KEY_ID ?, SECRET ?, ENDPOINT ?, URL_STYLE 'path', "
-        "USE_SSL ?, REGION 'us-east-1')",
-        [lane.key, lane.secret, lane.s3_host, lane.s3_use_ssl],
+        "USE_SSL ?, REGION ?)",
+        [lane.key, lane.secret, lane.s3_host, lane.s3_use_ssl, lane.region],
     )
     return connection
 
