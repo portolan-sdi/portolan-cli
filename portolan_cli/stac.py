@@ -1906,27 +1906,27 @@ def _has_file_size(asset: pystac.Asset) -> bool:
 
 
 def update_catalog_provenance(catalog_root: Path) -> None:
-    """Stamp the root catalog's sync time when the whole tree is a mirror (issue #684).
+    """Stamp the sync time on every catalog whose collections are all mirrors (issue #684).
 
     PTL-PRO-003 requires the top-level ``updated`` field on every mirror
-    collection, and on the root catalog too when every collection under it is a
-    mirror — at that point the catalog as a whole is a copy of data published
-    elsewhere. A tree that mixes official and mirrored collections leaves the
-    root alone, since the catalog is not wholly either one.
+    collection, and on every catalog, the root or a sub-catalog, whose
+    collections are all mirrors. A mirror sync sets ``updated`` "on every
+    catalog and collection it checks" (PORTO-CORE-057), and such a catalog is
+    a copy of data published elsewhere. A catalog that mixes official and
+    mirrored collections is left alone, since it is not wholly either one.
 
-    The value is the newest sync time among the collections, so the root reports
-    the freshness a consumer would compare against the source.
+    The value is the newest sync time among the collections under the catalog,
+    so it reports the freshness a consumer would compare against the source.
 
     Args:
         catalog_root: Root directory of the catalog.
     """
     import json
 
-    catalog_path = catalog_root / "catalog.json"
-    if not catalog_path.exists():
+    if not (catalog_root / "catalog.json").exists():
         return
 
-    stamps: list[str] = []
+    collections: list[tuple[Path, bool, str | None]] = []
     for collection_json in catalog_root.rglob("collection.json"):
         try:
             data = json.loads(collection_json.read_text(encoding="utf-8"))
@@ -1934,21 +1934,31 @@ def update_catalog_provenance(catalog_root: Path) -> None:
             continue
         if data.get("type") != "Collection":
             continue
-        if derive_provenance(data.get("providers")) != "mirror":
-            return
         updated = data.get("updated")
-        if isinstance(updated, str):
-            stamps.append(updated)
+        collections.append(
+            (
+                collection_json.parent,
+                derive_provenance(data.get("providers")) == "mirror",
+                updated if isinstance(updated, str) else None,
+            )
+        )
 
-    if not stamps:
-        return
-
-    try:
-        catalog_data = json.loads(catalog_path.read_text(encoding="utf-8"))
-        catalog_data["updated"] = max(stamps)
-        write_json_atomic(catalog_path, catalog_data)
-    except (json.JSONDecodeError, OSError):
-        pass
+    for catalog_path in catalog_root.rglob("catalog.json"):
+        directory = catalog_path.parent
+        under = [c for c in collections if c[0].is_relative_to(directory)]
+        if not under or not all(is_mirror for _, is_mirror, _ in under):
+            continue
+        stamps = [stamp for _, _, stamp in under if stamp is not None]
+        if not stamps:
+            continue
+        try:
+            catalog_data = json.loads(catalog_path.read_text(encoding="utf-8"))
+            if catalog_data.get("type") != "Catalog":
+                continue
+            catalog_data["updated"] = max(stamps)
+            write_json_atomic(catalog_path, catalog_data)
+        except (json.JSONDecodeError, OSError):
+            continue
 
 
 def add_via_link(
