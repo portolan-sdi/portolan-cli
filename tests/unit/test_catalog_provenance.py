@@ -122,9 +122,28 @@ class TestRoot:
         _collection(tmp_path / "roads", MIRROR, "2026-03-01T00:00:00Z")
         (tmp_path / "broken").mkdir()
         (tmp_path / "broken" / "collection.json").write_text("{", encoding="utf-8")
-        _catalog(tmp_path / "bad")
+        _collection(tmp_path / "bad" / "air", MIRROR, "2026-01-01T00:00:00Z")
         (tmp_path / "bad" / "catalog.json").write_text("{", encoding="utf-8")
 
         update_catalog_provenance(tmp_path)
 
         assert _updated(tmp_path) == "2026-03-01T00:00:00Z"
+        assert (tmp_path / "bad" / "catalog.json").read_text(encoding="utf-8") == "{"
+
+    def test_mirrors_with_no_sync_time_leave_the_root_alone(self, tmp_path: Path) -> None:
+        _catalog(tmp_path)
+        _collection(tmp_path / "roads", MIRROR, None)
+
+        update_catalog_provenance(tmp_path)
+
+        assert _updated(tmp_path) is None
+
+    def test_a_catalog_json_that_is_not_a_catalog_is_left_alone(self, tmp_path: Path) -> None:
+        _catalog(tmp_path)
+        _write(tmp_path / "env" / "catalog.json", {"type": "Feature", "id": "env"})
+        _collection(tmp_path / "env" / "air", MIRROR, "2026-01-01T00:00:00Z")
+
+        update_catalog_provenance(tmp_path)
+
+        assert _updated(tmp_path / "env") is None
+        assert _updated(tmp_path) == "2026-01-01T00:00:00Z"
