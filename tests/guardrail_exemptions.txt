@@ -5,7 +5,8 @@
 #   invariant<TAB>a build_damaged_catalog reason, verbatim
 #   config-key<TAB>key: why the reachability test cannot observe it
 
-xfail	#914	spec	tests/integration/test_generated_catalog_conformance.py PTL-EXT-001, PTL-PRT-001, PTL-SCH-001, PTL-AST-012 row partitioned
+xfail	#914	spec	tests/integration/test_generated_catalog_conformance.py PTL-EXT-001, PTL-PRT-001, PTL-SCH-001 row partitioned
+xfail	#1143	spec	tests/integration/test_generated_catalog_conformance.py PTL-AST-012 row partitioned
 
 invariant	catalog_invariants: file:size set to 1 for the __main__ test
 invariant	catalog_invariants: a clean root that proves the stale-exemption check

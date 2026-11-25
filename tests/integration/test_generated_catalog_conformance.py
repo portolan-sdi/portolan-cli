@@ -592,9 +592,9 @@ SCENARIOS: dict[str, Scenario] = {
             "PTL-EXT-001": "#914",
             "PTL-PRT-001": "#914",
             "PTL-SCH-001": "#914",
-            # The partition asset names its files with a glob, and PORTO-FMT-065
-            # says a data asset href MUST NOT contain `*`. Same root as above.
-            "PTL-AST-012": "#914",
+            # `add` writes the partition glob as a `data` asset href, and
+            # PORTO-FMT-065 says a data asset href MUST NOT contain `*`.
+            "PTL-AST-012": "#1143",
         },
         expected_advisories={
             **ONE_MIRROR,
