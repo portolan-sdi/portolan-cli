@@ -9,7 +9,7 @@ import posixpath
 import re
 from pathlib import Path, PurePath
 from typing import Any
-from urllib.parse import parse_qsl, urlencode, urlparse, urlsplit, urlunparse
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 
 def format_size(size_bytes: int) -> str:
@@ -82,21 +82,6 @@ def relative_href(from_dir: PurePath, to_file: PurePath) -> str:
         PurePath(to_file).as_posix(),
         PurePath(from_dir).as_posix(),
     )
-
-
-def is_absolute_href(href: str) -> bool:
-    """True for an href with a URI scheme or a leading slash, read as rashid reads it.
-
-    rashid 0.4 moved its helper into a private module, so the CLI keeps the same
-    rule here. An href that does not parse counts as absolute, so a caller
-    never resolves it against the catalog directory.
-    """
-    if href.startswith("/"):
-        return True
-    try:
-        return bool(urlsplit(href).scheme)
-    except ValueError:
-        return True
 
 
 def get_dict(data: dict[str, Any], key: str) -> dict[str, Any]:

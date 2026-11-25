@@ -21,9 +21,10 @@ import json
 from pathlib import Path, PurePath
 from typing import Any
 
+from rashid_core.api import is_absolute_href
+
 from portolan_cli.json_io import write_json_atomic
 from portolan_cli.stac_links import visible_stac_files
-from portolan_cli.utils import is_absolute_href
 
 #: Canonical filename for the AI/agent metadata file (uppercase, matching the
 #: cross-tool ``AGENTS.md`` convention — like ``README.md``).
@@ -54,7 +55,7 @@ def markdown_link_gap(stac_path: Path, data: dict[str, Any], *, rel: str, target
 
     Replicated rather than imported because rashid keeps ``_check_markdown_link``
     private. rashid#57 exported the COG predicate, the structural relations, and
-    the multihash helpers, so those now come from ``rashid.api``; this one still
+    the multihash helpers, so those now come from ``rashid_core.api``; this one still
     has no public counterpart. A change to PTL-FIL-002/-003 must land here too.
 
     Args:

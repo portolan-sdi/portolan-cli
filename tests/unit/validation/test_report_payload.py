@@ -12,7 +12,7 @@ import json
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from rashid.model import Finding, Report, Severity
+from rashid_core import Finding, Report, Severity
 
 from portolan_cli.metadata.fix import FixAction, FixReport, FixResult
 from portolan_cli.validation.remediation import Bucket

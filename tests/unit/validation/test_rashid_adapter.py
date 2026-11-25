@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 import yaml
-from rashid.model import Severity
+from rashid_core.model import Severity
 
 from portolan_cli.errors import InvalidLiveUrlError
 from portolan_cli.validation import run_check
@@ -244,7 +244,7 @@ def _capture_options(monkeypatch: Any) -> dict[str, Any]:
 
     def fake_validate(root: Path, **kwargs: Any) -> Any:
         captured.update(vars(kwargs["options"]))
-        from rashid.model import Report
+        from rashid_core import Report
 
         return Report(findings=[], files_checked=0)
 
@@ -262,7 +262,7 @@ class TestDataScope:
         assert captured["data_reader_factory"] is None
 
     def test_scope_local_uses_the_local_only_reader(self, tmp_path: Path, monkeypatch: Any) -> None:
-        from rashid.data.reader import LocalOnlyReader
+        from rashid_core.data.reader import LocalOnlyReader
 
         _minimal_catalog(tmp_path)
         captured = _capture_options(monkeypatch)

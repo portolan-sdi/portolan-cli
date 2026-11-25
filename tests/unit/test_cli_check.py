@@ -111,7 +111,7 @@ class TestCheckCommand:
         self, runner: CliRunner, valid_catalog: Path, extra_flags: list[str]
     ) -> None:
         """check --json reports the Portolan spec version across every scope (#566)."""
-        from rashid.schema import bundled_schema_versions
+        from rashid_core.schema import bundled_schema_versions
 
         expected = max(bundled_schema_versions()).removeprefix("v")
 
@@ -335,7 +335,7 @@ class TestCheckDataScope:
 
 def _empty_outcome() -> Any:
     """A CheckOutcome with a clean report and nothing else set."""
-    from rashid.model import Report
+    from rashid_core import Report
 
     from portolan_cli.validation.runner import CheckOutcome
 

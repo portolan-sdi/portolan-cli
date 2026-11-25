@@ -38,8 +38,8 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 import yaml
-from rashid import RulesConfig, Severity, ValidationOptions, validate
-from rashid.data.reader import LocalOnlyReader
+from rashid_core import RulesConfig, Severity, ValidationOptions, validate
+from rashid_core.data.reader import LocalOnlyReader
 
 from tests.catalog_invariants import check_catalog_invariants
 from tests.known_upstream import GPIO_WFS_OOM
@@ -728,7 +728,7 @@ def _validate(root: Path, **kwargs: Any) -> Any:
     the catalog tree and nowhere else. ``live`` stays off; it is the only pass
     that probes hosts by design. The extension pass still fetches a registered
     extension at a version rashid does not pin. A test that declares one stubs
-    ``rashid.extensions._fetch_schema``.
+    ``rashid_core.extensions.fetch_schema``.
     """
     return validate(
         root,
@@ -1422,12 +1422,12 @@ class TestTheGateCatchesTheDriftItWasBuiltFor:
         not pin. The stub makes that fetch fail, so the extension pass reports
         PTL-EXT-000 on every machine and the test stays offline.
         """
-        import rashid.extensions
+        import rashid_core.extensions
 
         def offline(uri: str) -> dict[str, Any]:
             raise OSError(f"offline test: {uri}")
 
-        monkeypatch.setattr(rashid.extensions, "fetch_schema", offline)
+        monkeypatch.setattr(rashid_core.extensions, "fetch_schema", offline)
         item_path = damaged / "imagery" / "scene-a" / "scene-a.json"
         item = _load(item_path)
         item["stac_extensions"] = [

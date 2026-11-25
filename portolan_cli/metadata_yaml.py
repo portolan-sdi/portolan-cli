@@ -289,7 +289,7 @@ def _validate_license(metadata: dict[str, Any]) -> list[str]:
     The verdict comes from :func:`portolan_cli.licensing.license_gap`, so this
     command, ``portolan add``, and ``portolan check`` all apply one policy to
     one SPDX list (issue #727). A license must be an identifier in
-    ``rashid.api.SPDX_LICENSE_IDS``, or the STAC 1.1 keyword ``other`` with a
+    ``rashid_core.api.SPDX_LICENSE_IDS``, or the STAC 1.1 keyword ``other`` with a
     link to the license text. STAC 1.1 no longer accepts the deprecated
     ``proprietary`` value (issue #568).
 

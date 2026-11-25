@@ -32,12 +32,13 @@ import os
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any
 
+from rashid_core.api import is_absolute_href
+
 from portolan_cli.constants import ROLE_COLLECTION_MIRROR
 from portolan_cli.json_io import write_json_atomic
 from portolan_cli.stac_links import owned_item_hrefs, resolve_href
 from portolan_cli.sync.checksums import file_fields, file_fields_from
 from portolan_cli.trace import count
-from portolan_cli.utils import is_absolute_href
 
 if TYPE_CHECKING:
     from collections.abc import Set as AbstractSet

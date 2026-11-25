@@ -8,7 +8,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from rashid.api import SHA2_256, encode_multihash
+from rashid_core.api import SHA2_256, encode_multihash
 
 from portolan_cli.trace import count
 
@@ -26,7 +26,7 @@ def multihash_sha256(digest_hex: str) -> str:
     function and digest length travel with the digest — so a bare hex digest (or
     a ``sha256:``-prefixed one) is not a valid value (issue #654).
 
-    The encoding comes from rashid, which also decodes the value when
+    The encoding comes from rashid_core, which also decodes the value when
     ``portolan check`` verifies it.
 
     Args:

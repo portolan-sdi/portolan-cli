@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from rashid.model import Finding, Severity
+from rashid_core.model import Finding, Severity
 
 from portolan_cli.metadata.fix import FixAction, FixResult
 from portolan_cli.validation import fixers as fixers_module

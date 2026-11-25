@@ -49,11 +49,10 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
 
-from rashid.api import STRUCTURAL_RELS, has_cog, links_of, roles_of
-from rashid.catalog import CatalogGraph, Node
+from rashid_core.api import STRUCTURAL_RELS, has_cog, is_absolute_href, links_of, roles_of
+from rashid_core.catalog import CatalogGraph, Node
 
 from portolan_cli.metadata.fix import FixAction, FixReport, FixResult
-from portolan_cli.utils import is_absolute_href
 from portolan_cli.validation.remediation import Bucket, remediation_of
 
 if TYPE_CHECKING:

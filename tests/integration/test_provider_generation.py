@@ -20,7 +20,7 @@ import pyarrow.parquet as pq
 import pytest
 import yaml
 from click.testing import CliRunner
-from rashid import Severity, ValidationOptions, validate
+from rashid_core import Severity, ValidationOptions, validate
 
 from portolan_cli.cli import cli
 

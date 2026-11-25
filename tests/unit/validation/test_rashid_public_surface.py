@@ -1,10 +1,11 @@
 """Every rashid name this package uses must come from rashid's public API.
 
-rashid's version range (``>=0.1.2,<0.2.0``) lets it refactor private modules in
-any patch release. An import of ``rashid.rules._common`` or ``rashid._multihash``
+rashid's version range lets it refactor private modules in any patch release.
+An import of ``rashid_core.rules._common`` or ``rashid_core._multihash``
 therefore turns a routine rashid patch into an ``ImportError`` at ``portolan
-check`` startup. rashid#57 promoted the names we need to ``rashid.api``; this
-test keeps the reach from growing back.
+check`` startup. rashid#57 promoted the names we need to ``rashid.api``, which
+is ``rashid_core.api`` since rashid 0.5.0 (rashid#341); this test keeps the
+reach from growing back.
 """
 
 from __future__ import annotations
@@ -26,13 +27,13 @@ def _rashid_modules(tree: ast.AST) -> list[str]:
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             modules.extend(
-                alias.name for alias in node.names if alias.name.split(".")[0] == "rashid"
+                alias.name for alias in node.names if alias.name.split(".")[0] == "rashid_core"
             )
         elif (
             isinstance(node, ast.ImportFrom)
             and node.level == 0
             and node.module
-            and node.module.split(".")[0] == "rashid"
+            and node.module.split(".")[0] == "rashid_core"
         ):
             modules.append(node.module)
     return modules
@@ -57,18 +58,20 @@ class TestRashidImportsArePublic:
             )
         assert private == [], (
             "These imports reach into rashid's private modules, which a rashid "
-            "patch release may rename or delete. Import from rashid.api instead:\n"
+            "patch release may rename or delete. Import from rashid_core.api instead:\n"
             + "\n".join(private)
         )
 
     def test_the_sweep_sees_the_imports_it_is_meant_to_grade(self) -> None:
         """A sweep that silently matched nothing would pass forever."""
         found = [module for path in _python_files() for module in _rashid_modules(_parsed(path))]
-        assert "rashid.api" in found
+        assert "rashid_core.api" in found
 
     def test_a_private_import_is_detected(self) -> None:
-        tree = ast.parse("from rashid.rules._common import links_of\nimport rashid._multihash\n")
-        assert _rashid_modules(tree) == ["rashid.rules._common", "rashid._multihash"]
+        tree = ast.parse(
+            "from rashid_core.rules._common import links_of\nimport rashid_core._multihash\n"
+        )
+        assert _rashid_modules(tree) == ["rashid_core.rules._common", "rashid_core._multihash"]
 
 
 def _parsed(path: Path) -> ast.AST:

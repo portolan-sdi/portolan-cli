@@ -12,11 +12,11 @@ generation causes on its own:
   ``license: other`` and no ``license_url``.
 
 ``license_gap`` answers whether either is about to happen, branch for branch
-against ``rashid.rules.license``, so generation and validation never disagree.
+against ``rashid_core.rules.license``, so generation and validation never disagree.
 It also catches the seeded TODO placeholder, which reaches ``collection.license``
 verbatim, and the deprecated ``proprietary`` value (PTL-LIC-003).
 
-Spelling is judged here too, against ``rashid.api.SPDX_LICENSE_IDS`` (issue
+Spelling is judged here too, against ``rashid_core.api.SPDX_LICENSE_IDS`` (issue
 #727). That is the same object PTL-LIC-001 validates against, published in
 rashid 0.1.4, so there is no second list to drift. Before it was public this
 module kept a 26-identifier subset, which rejected real licenses such as
@@ -33,7 +33,7 @@ import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 
-from rashid.api import SPDX_LICENSE_IDS, canonical_spdx_id
+from rashid_core.api import SPDX_LICENSE_IDS, canonical_spdx_id
 
 from portolan_cli.constants import TODO_MARKER
 from portolan_cli.errors import MissingLicenseError
@@ -109,7 +109,7 @@ def resolve_license(metadata: object) -> ResolvedLicense | None:
 def license_gap(license_id: str | None, *, has_license_link: bool) -> str | None:
     """Return why this license fails the validator, or None when it passes.
 
-    Mirrors ``rashid.rules.license`` branch for branch, so a collection this
+    Mirrors ``rashid_core.rules.license`` branch for branch, so a collection this
     function waves through is a collection ``portolan check`` accepts on the
     license rules. Spelling is checked against the list the rule itself uses,
     so a typo is reported here rather than after generation (issue #727).

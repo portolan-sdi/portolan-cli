@@ -34,7 +34,7 @@ flowchart TD
     SAFE --> SOUT
 
     CCLI["check CLI (cli.py:1094)"] --> RUN["validation.runner.run_check (runner.py:91)"]
-    RUN --> RASHID["rashid.validate: metadata + structural + data passes"]
+    RUN --> RASHID["rashid_core.validate: metadata + structural + data passes"]
     RUN --> GEO["scan.check.check_directory (scan/check.py:306), --geo-assets"]
     RASHID --> FIND["PTL-* findings"]
     GEO --> GSTAT{cloud-native status}
@@ -66,7 +66,7 @@ flowchart TD
 ## `check` delegates conformance to rashid
 
 `portolan_cli/validation/` is an adapter, not a rule engine. `run_check` builds
-rashid's config, calls `rashid.validate`, and returns a `CheckOutcome` of plain
+rashid's config, calls `rashid_core.validate`, and returns a `CheckOutcome` of plain
 data; rule ids are rashid's `PTL-*`, shown verbatim. Do not reintroduce
 Portolan-side conformance rules, the old `validation/rules.py` registry is gone.
 What stays on our side is the half rashid cannot see: source files on disk that

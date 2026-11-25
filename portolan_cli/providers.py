@@ -16,7 +16,7 @@ Producers cannot be invented. A collection whose human named no producer keeps
 firing PTL-PRV-001, which ``validation.remediation`` routes to INSTRUCT.
 
 ``derive_provenance`` reads official-vs-mirror back off the finished array,
-matching ``rashid.rules.provenance.provenance_of`` field for field so generation
+matching ``rashid_core.rules.provenance.provenance_of`` field for field so generation
 and validation never disagree about which kind of catalog this is.
 """
 
@@ -203,7 +203,7 @@ def derive_provenance(providers: list[dict[str, Any]] | None) -> Provenance | No
     """Derive whether a collection is official or a mirror of someone else's data.
 
     Official when the producer and the host are the same organization, mirror
-    when they differ. Mirrors what ``rashid.rules.provenance.provenance_of``
+    when they differ. Mirrors what ``rashid_core.rules.provenance.provenance_of``
     computes, including the case-folded name comparison, so a collection
     Portolan generates is classified the same way ``portolan check`` classifies
     it.

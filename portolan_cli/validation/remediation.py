@@ -30,7 +30,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
-from rashid.model import Severity
+from rashid_core.model import Severity
 
 
 class Bucket(Enum):

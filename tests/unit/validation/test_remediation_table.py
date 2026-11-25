@@ -11,7 +11,7 @@ Phase 3 will register.
 from __future__ import annotations
 
 import pytest
-from rashid.registry import CHECKS
+from rashid_core.registry import CHECKS
 
 from portolan_cli.validation.remediation import (
     DEFAULT_REMEDIATION,
