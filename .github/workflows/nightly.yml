@@ -50,15 +50,18 @@ jobs:
           retry_wait_seconds: 10
           command: uv python install 3.11
 
+      # Since rashid 0.5.0 the repo root builds rashid-core, the package that
+      # holds the rashid_core module. The rashid metapackage only pins it.
       - name: Install dependencies with rashid from main
         run: |
           uv sync --all-extras
           uv pip install --reinstall \
-            "rashid @ git+https://github.com/portolan-sdi/rashid@main"
+            "rashid-core[data] @ git+https://github.com/portolan-sdi/rashid@main"
 
+      # --no-sync keeps uv run from syncing rashid-core back to the locked release.
       - name: Validate a generated catalog against rashid main
         run: |
-          uv run pytest \
+          uv run --no-sync pytest \
             tests/integration/test_generated_catalog_conformance.py \
             -q --no-cov
 
