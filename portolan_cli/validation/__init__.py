@@ -51,6 +51,7 @@ from portolan_cli.validation.remediation import (
     Bucket,
     Remediation,
     remediation_for,
+    remediation_of,
 )
 from portolan_cli.validation.report import (
     annotate_survivors,
@@ -74,6 +75,7 @@ __all__ = [
     "build_check_payload",
     "build_fix_payload",
     "remediation_for",
+    "remediation_of",
     "run_check",
     "validate_catalog_id",
     "validate_collection_id",

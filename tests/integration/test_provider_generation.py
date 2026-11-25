@@ -20,7 +20,7 @@ import pyarrow.parquet as pq
 import pytest
 import yaml
 from click.testing import CliRunner
-from rashid import Severity, validate
+from rashid import Severity, ValidationOptions, validate
 
 from portolan_cli.cli import cli
 
@@ -107,7 +107,7 @@ def _rel(collection: dict[str, Any], rel: str) -> list[dict[str, Any]]:
 
 
 def _provider_findings(root: Path) -> list[str]:
-    report = validate(root, structural=True, data=True)
+    report = validate(root, options=ValidationOptions(structural=True, data=True))
     return sorted(
         f.rule_id
         for f in report.findings

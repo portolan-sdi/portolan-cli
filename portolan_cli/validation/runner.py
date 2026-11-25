@@ -23,7 +23,7 @@ Which passes run by default, and why:
   ``--schema`` turns it on, which is worth doing when validating a catalog some
   other tool produced.
 - **extensions** (the schema of each STAC extension an object declares) — on,
-  as rashid 0.2.0 defaults it. rashid ships the schemas of the versions the
+  as rashid defaults it. rashid ships the schemas of the versions the
   profile registry pins, so those validate offline. A declared version the
   registry does not pin is fetched over https. An unreachable schema degrades
   to a ``PTL-EXT-000`` warning.
@@ -41,7 +41,7 @@ from pathlib import Path, PurePath
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
-from rashid import validate
+from rashid import ValidationOptions, validate
 from rashid.data.reader import LocalOnlyReader
 
 from portolan_cli.errors import InvalidLiveUrlError
@@ -289,16 +289,18 @@ def run_check(
         with span("check.validate", structural=structural, schema=schema, data=data, live=live):
             report = validate(
                 root,
-                config=load_rules_config(root, state=state),
-                structural=structural,
-                structural_validator=structural_validator,
-                schema=schema,
-                schema_validator=schema_validator,
-                data=data,
-                data_reader_factory=LocalOnlyReader if data_scope == "local" else None,
-                live=live,
-                live_prober=live_prober,
-                live_base_url=public_url or load_public_url(root, state=state),
+                options=ValidationOptions(
+                    config=load_rules_config(root, state=state),
+                    structural=structural,
+                    structural_validator=structural_validator,
+                    schema=schema,
+                    schema_validator=schema_validator,
+                    data=data,
+                    data_reader_factory=LocalOnlyReader if data_scope == "local" else None,
+                    live=live,
+                    live_prober=live_prober,
+                    live_base_url=public_url or load_public_url(root, state=state),
+                ),
             )
 
     format_report = None

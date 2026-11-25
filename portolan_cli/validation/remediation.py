@@ -28,6 +28,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
+from typing import Any
+
+from rashid.model import Severity
 
 
 class Bucket(Enum):
@@ -182,6 +185,22 @@ RULE_REMEDIATION: dict[str, Remediation] = {
         "'image/tiff; application=geotiff; profile=cloud-optimized', or convert "
         "the file to a COG if it is not one, with `portolan check --fix --geo-assets`."
     ),
+    "PTL-AST-007": _instruct(
+        "Link the collection's primary data with an asset that carries the 'data' role."
+    ),
+    "PTL-AST-008": _instruct("Give the item at least one asset with the 'data' role."),
+    "PTL-AST-009": _instruct(
+        "Give the PMTiles asset the 'visual' role and link it to the collection's GeoParquet."
+    ),
+    "PTL-AST-010": _instruct(
+        "Give the asset a title and a description that tell a reader what the file holds."
+    ),
+    # A partitioned dataset needs an absolute partition:glob that clients can
+    # list, which a local catalog does not know before it is published.
+    "PTL-AST-012": _instruct(
+        "Link each data file in its own asset or item, or move the glob into an absolute "
+        "partition:glob URL. A data asset href names one file."
+    ),
     # ---- conformance ----
     # fixer `schema_uri` wraps catalog.ensure_schema_uris
     "PTL-CNF-001": _auto(
@@ -204,6 +223,10 @@ RULE_REMEDIATION: dict[str, Remediation] = {
     "PTL-CNF-004": _instruct(
         "Move the declared extension URI to the version the Portolan registry "
         "pins, then re-run generation so the fields match that version's schema."
+    ),
+    "PTL-CNF-005": _instruct(
+        "Declare the newest Portolan profile version rashid bundles, after the catalog meets "
+        "its requirements."
     ),
     # ---- visualization ----
     "PTL-VIZ-001": _auto(
@@ -235,11 +258,42 @@ RULE_REMEDIATION: dict[str, Remediation] = {
         "Add 'default' to the roles of exactly one style asset when a collection "
         "registers more than one style."
     ),
+    "PTL-VIZ-007": _instruct(
+        "Build an 8-bit RGB overview COG of the whole collection and register it as a "
+        "collection-level asset with the 'visual' and 'overview' roles."
+    ),
+    "PTL-VIZ-008": _instruct(
+        "Give the overview asset a datetime, or a start_datetime and end_datetime interval."
+    ),
     # ---- partitions ----
     # fixer `partition` wraps partitioning.py's schema read
     "PTL-PRT-001": _auto(
         "partition",
         "Populate the partition: fields from the Hive layout on disk.",
+    ),
+    "PTL-PRT-002": _instruct(
+        "Set partition:glob to the absolute bucket URL of the partition files, such as "
+        "s3://bucket/data/*.parquet, so clients can list them."
+    ),
+    # ---- classification: class lists describe the data, so only the publisher knows them ----
+    "PTL-CLS-001": _instruct(
+        "Declare the classification extension on the object that carries classification:classes."
+    ),
+    "PTL-CLS-002": _instruct(
+        "Give each classification:classes entry a title, in the extension's class object form."
+    ),
+    "PTL-CLS-003": _instruct(
+        "Mark a class as nodata exactly when its value is the band's nodata value."
+    ),
+    "PTL-CLS-005": _instruct(
+        "Move the class list onto a single-band data asset, or onto its band in the bands array."
+    ),
+    "PTL-CLS-006": _instruct(
+        "Put the items' class lists in the same place in the collection's item_assets."
+    ),
+    # ---- versions: the history is the publisher's record ----
+    "PTL-VER-001": _instruct(
+        "Repair the version links so each resolves, neighbours agree, and latest names a head."
     ),
     # ---- catalogs: how to group children is the publisher's decision ----
     "PTL-CAT-001": _instruct(
@@ -358,11 +412,32 @@ RULE_REMEDIATION: dict[str, Remediation] = {
         "Document the vector asset's columns with table:columns, on the collection or in "
         "the item's properties; re-run `portolan add` to have them read from the file."
     ),
+    "PTL-DAT-018": _instruct(
+        "Rewrite the collection overview COG as 8-bit RGB, with an optional alpha band."
+    ),
+    "PTL-DAT-019": _instruct(
+        "Declare the scene's nodata value, or add an alpha band or a mask, so clients do not "
+        "draw empty pixels as black."
+    ),
+    "PTL-DAT-020": _instruct(
+        "Describe each table:columns entry. For a mirror whose source has no descriptions, "
+        "say so in the collection README."
+    ),
+    "PTL-DAT-021": _instruct(
+        "Align the class list with the COG, with color_hint values that match its color table "
+        "and classes that fit its bands."
+    ),
+    "PTL-DAT-023": _instruct(
+        "Give the native geometry column its CRS as inline PROJJSON or a projjson:<key> reference."
+    ),
     # ---- generic, structural, schema: the object is malformed, not misconfigured ----
     "PTL-GEN-000": _instruct(
         "Create catalog.json at the catalog root; without it there is nothing to validate."
     ),
     "PTL-GEN-001": _instruct("Repair the file so it parses as JSON."),
+    "PTL-GEN-002": _instruct(
+        "Raise the document limit or narrow the check, so rashid reads the whole tree."
+    ),
     "PTL-STR-000": _instruct(
         "Reinstall rashid: the STAC schemas it ships could not be loaded, so the structural pass "
         "degraded to this warning."
@@ -377,6 +452,9 @@ RULE_REMEDIATION: dict[str, Remediation] = {
     "PTL-SCH-001": _instruct(
         "Correct the object against the Portolan profile schema; the schema error names the "
         "failing field."
+    ),
+    "PTL-SCH-002": _instruct(
+        "Remove or correct the profile schema mapping that matched no validated document."
     ),
     # ---- extensions: the object breaks a STAC extension schema it declares ----
     "PTL-EXT-000": _instruct(
@@ -418,9 +496,60 @@ RULE_REMEDIATION: dict[str, Remediation] = {
         "Run `portolan push` again so the host serves every file a link names; if the file is "
         "missing locally too, restore it or remove the link."
     ),
+    "PTL-LIV-007": _instruct(
+        "Point the root self link at the base URL the catalog is published under."
+    ),
+    "PTL-LIV-008": _external(
+        "Configure the host to serve assets and link targets over https with no redirect to http."
+    ),
+    # ---- zarr: store layout is set when the store is written ----
+    "PTL-ZAR-001": _instruct("Point the asset at a readable Zarr v3 store."),
+    "PTL-ZAR-002": _instruct(
+        "Declare the spatial, proj, and multiscales conventions in the store and conform to them."
+    ),
+    "PTL-ZAR-003": _external(
+        "Configure the host to allow a cross-origin read of the Zarr store metadata."
+    ),
+    "PTL-ZAR-004": _instruct("Type the asset as Zarr v3 and point its href at a group."),
+    "PTL-ZAR-005": _instruct("Give every renderable array an affine spatial:transform."),
+    "PTL-ZAR-006": _instruct("Rewrite the arrays with the spatial axes last, Y before X."),
+    "PTL-ZAR-007": _instruct("Rewrite the arrays row-major, with no transpose codec."),
+    "PTL-ZAR-008": _instruct("Record proj:code, or proj:projjson, in the store attributes."),
+    "PTL-ZAR-009": _instruct("Add a pyramid whose coarsest level fits in 4 chunks on each axis."),
+    "PTL-ZAR-010": _instruct(
+        "Give every multiscales layout entry a spatial:transform and a spatial:shape."
+    ),
+    "PTL-ZAR-011": _instruct("Rebuild the pyramid so each level steps by a factor of 2."),
+    "PTL-ZAR-012": _instruct(
+        "Declare cube:variables for a store with more than one data variable."
+    ),
+    "PTL-ZAR-013": _instruct("Give every renderable array band statistics or a renders rescale."),
+    "PTL-ZAR-014": _instruct("Declare nodata on the bands entry of every renderable array."),
+    "PTL-ZAR-015": _instruct(
+        "Rechunk or add pyramid levels so a client reads no more than 8 samples per drawn sample."
+    ),
+    "PTL-ZAR-016": _instruct("Rechunk the non-spatial dimensions to a chunk length of 1."),
+    "PTL-ZAR-017": _instruct("Rechunk to 256 to 1024 samples on X and Y."),
+    "PTL-ZAR-018": _instruct("Shard the non-spatial dimensions by a product of 8 or less."),
+    "PTL-ZAR-019": _instruct("Use only codecs that have a JavaScript implementation."),
 }
 
 
 def remediation_for(rule_id: str) -> Remediation:
     """Look up how ``rule_id`` is remediated, never raising on an unknown id."""
     return RULE_REMEDIATION.get(rule_id, DEFAULT_REMEDIATION)
+
+
+def remediation_of(finding: Any) -> Remediation:
+    """How one finding is remediated: its rule's row, except an INFO is never AUTO.
+
+    An INFO is a note, not a defect, so no fixer runs for it and it never
+    counts toward ``auto`` or as a survivor. rashid 0.4 reports PTL-DAT-006 as
+    an INFO when a file has too few rows to judge its order. Read as AUTO, that
+    note selected ``convert`` and kept ``auto`` above zero after every ``--fix``.
+    It keeps its requirement sentence as an INSTRUCT row.
+    """
+    remediation = remediation_for(finding.rule_id)
+    if remediation.bucket is Bucket.AUTO and finding.severity is Severity.INFO:
+        return Remediation(Bucket.INSTRUCT, None, remediation.requirement)
+    return remediation

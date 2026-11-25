@@ -80,11 +80,14 @@ class TestBucketInvariants:
         (the prober could not reach the host), not a defect in the hosting.
         ``PTL-LIV-006`` is excluded too. The host lacks a file the catalog
         links, and a push of the catalog uploads it (issue #935).
+        ``PTL-LIV-007`` is excluded as well. The root self link is a field in
+        catalog.json, so the fix is a catalog edit.
         """
         live_buckets = {
             RULE_REMEDIATION[rule_id].bucket
             for rule_id in RULE_REMEDIATION
-            if rule_id.startswith("PTL-LIV-") and rule_id not in {"PTL-LIV-000", "PTL-LIV-006"}
+            if rule_id.startswith("PTL-LIV-")
+            and rule_id not in {"PTL-LIV-000", "PTL-LIV-006", "PTL-LIV-007"}
         }
         assert live_buckets == {Bucket.EXTERNAL}
 

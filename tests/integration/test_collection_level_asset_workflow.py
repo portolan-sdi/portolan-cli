@@ -15,7 +15,7 @@ import shutil
 from typing import TYPE_CHECKING
 
 import pytest
-from rashid import validate
+from rashid import ValidationOptions, validate
 
 from portolan_cli.add import add
 
@@ -498,7 +498,7 @@ class TestCollectionLevelNonGeoCompanionWorkflow:
         assert children == ["./imagery/collection.json"]
         link_rules = sorted(
             f.rule_id
-            for f in validate(catalog, structural=True).findings
+            for f in validate(catalog, options=ValidationOptions(structural=True)).findings
             if f.rule_id in {"PTL-LNK-002", "PTL-LNK-006"}
         )
         assert link_rules == []

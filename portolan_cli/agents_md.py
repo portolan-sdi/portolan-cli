@@ -21,10 +21,9 @@ import json
 from pathlib import Path, PurePath
 from typing import Any
 
-from rashid.catalog import is_absolute_href
-
 from portolan_cli.json_io import write_json_atomic
 from portolan_cli.stac_links import visible_stac_files
+from portolan_cli.utils import is_absolute_href
 
 #: Canonical filename for the AI/agent metadata file (uppercase, matching the
 #: cross-tool ``AGENTS.md`` convention — like ``README.md``).

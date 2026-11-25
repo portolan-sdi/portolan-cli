@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 from click.testing import CliRunner
-from rashid import Severity, validate
+from rashid import Severity, ValidationOptions, validate
 
 from portolan_cli.cli import cli
 
@@ -72,6 +72,6 @@ def test_logo_link_has_the_canonical_shape(catalog_with_logo: Path) -> None:
 
 
 def test_rashid_reports_no_errors(catalog_with_logo: Path) -> None:
-    report = validate(catalog_with_logo, structural=True)
+    report = validate(catalog_with_logo, options=ValidationOptions(structural=True))
     errors = [f.to_dict() for f in report.findings if f.severity is Severity.ERROR]
     assert errors == []

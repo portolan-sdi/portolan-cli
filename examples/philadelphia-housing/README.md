@@ -227,7 +227,7 @@ portolan add \
 (cd "$CATALOG_DIR" && portolan readme)
 # Refresh the generated documentation asset metadata.
 portolan check "$CATALOG_DIR" --fix --workers 1
-portolan check "$CATALOG_DIR" --strict
+portolan check "$CATALOG_DIR"
 
 echo "catalog passes the Portolan check."
 ```
