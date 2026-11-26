@@ -31,6 +31,7 @@ def _make_capturing_fake(
         layer_exclude: list[str] | None = None,
         options: ExtractionOptions | None = None,
         on_progress: object = None,
+        on_message: object = None,
     ) -> ExtractionReport:
         assert options is not None
         captured["page_size"] = options.page_size

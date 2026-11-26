@@ -113,6 +113,7 @@ def build_command(layer_source: LayerSource) -> click.Command:
                 target,
                 options,
                 on_progress=None if use_json else cli_helpers.make_extract_progress_callback(),
+                on_message=cli_helpers.print_message,
             )
         except MissingLicenseError as e:
             cli_helpers.fail_missing_license(e, use_json=use_json, url=url, command=command_name)

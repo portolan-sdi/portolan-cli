@@ -101,6 +101,7 @@ def init_extracted_catalog(
     description: str | None,
     post_init: Callable[[Path, list[Path], bool], None] | None = None,
     state: RunState | None = None,
+    on_message: Callable[[str, str], None] | None = None,
 ) -> tuple[list[Path], set[str]] | None:
     """Initialize a catalog and add the extracted assets.
 
@@ -131,6 +132,8 @@ def init_extracted_catalog(
             (issue #832).
         state: The run state of the extraction. The add stages its versions
             in it, and the caller commits them. None commits the add at once.
+        on_message: Called as ``on_message(level, text)`` with each notice for
+            the user. None logs the notice instead.
 
     Returns:
         The added parquet files and the collections that this add wrote a
@@ -138,6 +141,7 @@ def init_extracted_catalog(
         then stops, because no catalog exists.
     """
     from portolan_cli.catalog import CatalogState, detect_state, init_catalog
+    from portolan_cli.extract.common.progress import emit_message
     from portolan_cli.formats import run_scope
 
     parquet_files = collect_successful_parquet_files(output_dir, report)
@@ -167,16 +171,16 @@ def init_extracted_catalog(
             license_id=None,
         )
         for message in init_warnings:
-            logger.warning(message)
+            emit_message(on_message, "warn", message)
 
     elif catalog_id is not None:
         # The catalog already exists and keeps the id it was created with. Say so,
         # rather than accept the flag and change nothing (issue #821).
-        logger.warning(
-            "Ignored --id '%s'. %s is already a Portolan "
+        emit_message(
+            on_message,
+            "warn",
+            f"Ignored --id '{catalog_id}'. {output_dir} is already a Portolan "
             "catalog and keeps the id it was created with.",
-            catalog_id,
-            output_dir,
         )
 
     if post_init is not None:
@@ -318,23 +322,25 @@ def seed_catalog_metadata(
     output_dir: Path,
     extracted: ExtractedMetadata | None,
     license_override: ResolvedLicense | None = None,
+    *,
+    on_message: Callable[[str, str], None] | None = None,
 ) -> None:
     """Seed the catalog-level ``metadata.yaml`` from harvested service metadata.
 
     Writes ``{output_dir}/.portolan/metadata.yaml`` from the given serialized
-    metadata, and logs a confirmation when it creates the file. A ``None``
-    argument (no metadata harvested) is a no-op.
-
-    This module prints nothing (#1005). It logs its notices, because its
-    caller ``run_layer_extraction`` is public API and takes no message
-    callback. A warning reads as ``⚠ message`` on stderr.
+    metadata, and reports a confirmation when it creates the file. A ``None``
+    argument (no metadata harvested) is a no-op. This module prints nothing
+    (#1005). Its notices go to ``on_message``.
 
     Args:
         output_dir: The catalog output directory.
         extracted: Source-agnostic metadata to seed, or ``None`` to skip.
         license_override: License resolved from the command line, which wins over
             anything harvested (issue #686).
+        on_message: Called as ``on_message(level, text)`` with each notice for
+            the user. None logs the notice instead.
     """
+    from portolan_cli.extract.common.progress import emit_message
     from portolan_cli.metadata_seeding import seed_metadata_yaml
 
     if extracted is None:
@@ -342,24 +348,24 @@ def seed_catalog_metadata(
 
     metadata_path = output_dir / ".portolan" / "metadata.yaml"
     if seed_metadata_yaml(extracted, metadata_path, license_override=license_override):
-        # shortcut: the CLI shows this INFO line only with -v. Upgrade when
-        # run_layer_extraction takes a message callback.
-        logger.info("Seeded metadata.yaml from %s", extracted.source_type)
+        emit_message(on_message, "info", f"Seeded metadata.yaml from {extracted.source_type}")
         if not (extracted.producer or extracted.attribution):
             # A producer is a fact of the source. Portolan does not invent one.
-            logger.warning(
+            emit_message(
+                on_message,
+                "warn",
                 "No producer provider: the source publishes no author and no attribution. "
-                "Add a provider with the producer role to %s. Until then, "
+                f"Add a provider with the producer role to {metadata_path}. Until then, "
                 "check reports PTL-PRV-001.",
-                metadata_path,
             )
         # The host serves the catalog. Only the person who runs extract knows it,
         # and a placeholder is never published as one (issue #1039).
         # A collection takes an inherited contact only on its first add, so the
         # warning names the collection file, which a re-add applies (#755).
-        logger.warning(
+        emit_message(
+            on_message,
+            "warn",
             "No host provider: set contact.name and contact.email in "
-            "%s, then run "
+            f"{output_dir / '<collection>' / '.portolan' / 'metadata.yaml'}, then run "
             "'portolan add --force <collection>'. Until then, check reports PTL-PRV-002.",
-            output_dir / "<collection>" / ".portolan" / "metadata.yaml",
         )

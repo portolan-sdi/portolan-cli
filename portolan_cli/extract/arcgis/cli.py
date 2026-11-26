@@ -658,6 +658,7 @@ def extract_arcgis_cmd(
                 service_exclude=service_exclude,
                 options=options,
                 on_progress=None if use_json else on_progress,
+                on_message=cli_helpers.print_message,
             ),
         )
     except MissingLicenseError as e:

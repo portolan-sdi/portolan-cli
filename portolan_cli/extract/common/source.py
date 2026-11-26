@@ -826,7 +826,10 @@ def _resolve_license(discovery: Discovery, options: LayerSourceOptions) -> Resol
 
 
 def _post_init(
-    source_name: str, discovery: Discovery, resolved_license: ResolvedLicense | None
+    source_name: str,
+    discovery: Discovery,
+    resolved_license: ResolvedLicense | None,
+    on_message: Callable[[str, str], None] | None,
 ) -> Callable[[Path, list[Path], bool], None]:
     def post_init(out: Path, files: list[Path], fresh: bool) -> None:
         from portolan_cli.config import set_setting
@@ -850,7 +853,7 @@ def _post_init(
         seed = discovery.catalog_seed
         if seed is None and resolved_license is not None:
             seed = ExtractedMetadata(source_type=source_name, source_url=discovery.source_url)
-        seed_catalog_metadata(out, seed, resolved_license)
+        seed_catalog_metadata(out, seed, resolved_license, on_message=on_message)
 
     return post_init
 
@@ -937,6 +940,7 @@ def build_catalog(
     *,
     resolved_license: ResolvedLicense | None = None,
     catalog_id: str | None = None,
+    on_message: Callable[[str, str], None] | None = None,
 ) -> None:
     """Build or extend the catalog around the layers that succeeded.
 
@@ -951,6 +955,8 @@ def build_catalog(
         report: The extraction report.
         resolved_license: The license to seed (issue #686).
         catalog_id: Catalog id. None derives it from the directory name.
+        on_message: Called as ``on_message(level, text)`` with each notice for
+            the user. None logs the notice instead.
     """
     from portolan_cli.collection_thumbnail import ensure_collection_thumbnails
     from portolan_cli.extract.common.orchestrator_base import (
@@ -970,8 +976,9 @@ def build_catalog(
         catalog_id=catalog_id,
         title=discovery.catalog_title,
         description=discovery.catalog_description,
-        post_init=_post_init(layer_source.name, discovery, resolved_license),
+        post_init=_post_init(layer_source.name, discovery, resolved_license, on_message),
         state=state,
+        on_message=on_message,
     )
     if added is None:
         return
@@ -1011,6 +1018,7 @@ def run_layer_extraction(
     options: LayerSourceOptions | None = None,
     *,
     on_progress: Callable[[ExtractionProgress], None] | None = None,
+    on_message: Callable[[str, str], None] | None = None,
 ) -> ExtractionReport:
     """Extract the layers of ``source`` into a Portolan catalog.
 
@@ -1024,6 +1032,9 @@ def run_layer_extraction(
         output_dir: Catalog directory.
         options: Extraction options. None uses the defaults.
         on_progress: Called with progress for each layer.
+        on_message: Called as ``on_message(level, text)`` with each notice of
+            the catalog build. The level is ``info`` or ``warn``. None logs
+            the notices to the ``portolan_cli`` logger instead.
 
     Returns:
         The extraction report.
@@ -1105,6 +1116,7 @@ def run_layer_extraction(
                 report,
                 resolved_license=resolved_license,
                 catalog_id=options.catalog_id,
+                on_message=on_message,
             )
     return report
 
@@ -1120,12 +1132,14 @@ class LayerSourceExtractor:
     def extract(self, source: str, output_dir: Path, **options: Any) -> ExtractionReport:
         """Run ``run_layer_extraction``. ``options`` holds LayerSourceOptions fields."""
         on_progress = options.pop("on_progress", None)
+        on_message = options.pop("on_message", None)
         return run_layer_extraction(
             self.layer_source,
             source,
             output_dir,
             LayerSourceOptions(**options),
             on_progress=on_progress,
+            on_message=on_message,
         )
 
     def cli_command(self) -> click.Command:

@@ -784,6 +784,7 @@ def extract_arcgis_catalog(
     service_exclude: list[str] | None = None,
     options: ExtractionOptions | None = None,
     on_progress: Callable[[ExtractionProgress], None] | None = None,
+    on_message: Callable[[str, str], None] | None = None,
 ) -> ExtractionReport:
     """Extract layers from an ArcGIS service to a Portolan catalog.
 
@@ -796,6 +797,7 @@ def extract_arcgis_catalog(
         service_exclude: Glob patterns to exclude services (for services root URLs)
         options: Extraction options (defaults to ExtractionOptions())
         on_progress: Callback for progress updates
+        on_message: Called as ``on_message(level, text)`` with each catalog notice.
 
     Returns:
         ExtractionReport with results for all layers
@@ -824,7 +826,9 @@ def extract_arcgis_catalog(
     layer_source = ArcGISLayerSource(
         options, service_filter=service_filter, service_exclude=service_exclude
     )
-    return run_layer_extraction(layer_source, url, output_dir, driver, on_progress=on_progress)
+    return run_layer_extraction(
+        layer_source, url, output_dir, driver, on_progress=on_progress, on_message=on_message
+    )
 
 
 def run_extract_arcgis(
@@ -864,7 +868,8 @@ def run_extract_arcgis(
         layer_exclude: Glob patterns of the layers to exclude.
         on_progress: Called with the progress of each layer.
         on_tile_progress: Called with the progress of each ImageServer tile.
-        on_message: Called with each ImageServer message for the user.
+        on_message: Called as ``on_message(level, text)`` with each notice for
+            the user, in the ImageServer and layer modes.
 
     Returns:
         The service list, the layer extraction, or the ImageServer extraction.
@@ -916,4 +921,5 @@ def run_extract_arcgis(
         layer_filter=layer_filter,
         layer_exclude=layer_exclude,
         on_progress=on_progress,
+        on_message=on_message,
     )

@@ -773,3 +773,64 @@ def test_layer_spans_nest_under_fetch_on_worker_threads(fixtures_dir: Path, tmp_
     assert all(node["attrs"]["status"] == "success" for node in layers)
     assert all(node["attrs"]["attempts"] == 1 for node in layers)
     assert all(node["tid"] != threading.main_thread().native_id for node in layers)
+
+
+def test_catalog_messages_reach_the_callback(fixtures_dir: Path, tmp_path: Path) -> None:
+    """The catalog build hands its notices to ``on_message`` (#1133)."""
+    out = tmp_path / "out"
+    messages: list[tuple[str, str]] = []
+
+    run_layer_extraction(
+        _FixtureSource(fixtures_dir),
+        "https://example.org/src",
+        out,
+        _options(),
+        on_message=lambda level, text: messages.append((level, text)),
+    )
+
+    seeded = out / ".portolan" / "metadata.yaml"
+    host = out / "<collection>" / ".portolan" / "metadata.yaml"
+    assert messages == [
+        (
+            "warn",
+            "Derived catalog id 'out' from the directory name. It looks like a tooling "
+            "artifact, not the name of the data. Pass --id to set the catalog identity.",
+        ),
+        ("warn", "Derived catalog title 'Out' from directory name"),
+        ("info", "Seeded metadata.yaml from fixtures"),
+        (
+            "warn",
+            "No producer provider: the source publishes no author and no attribution. "
+            f"Add a provider with the producer role to {seeded}. Until then, "
+            "check reports PTL-PRV-001.",
+        ),
+        (
+            "warn",
+            f"No host provider: set contact.name and contact.email in {host}, then run "
+            "'portolan add --force <collection>'. Until then, check reports PTL-PRV-002.",
+        ),
+    ]
+
+
+def test_a_run_without_a_callback_prints_nothing(
+    fixtures_dir: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A plugin that passes no callback gets the catalog, and no catalog notice prints.
+
+    preparation.py still prints its rewrite line through output.py. Its own
+    ratchet entry covers it, so the test checks only the catalog notices.
+    """
+    from portolan_cli import logging_setup
+
+    logging_setup.reset_logging()
+    out = tmp_path / "out"
+
+    report = run_layer_extraction(
+        _FixtureSource(fixtures_dir), "https://example.org/src", out, _options()
+    )
+
+    assert report.summary.succeeded == 2
+    assert (out / ".portolan" / "metadata.yaml").is_file()
+    captured = capsys.readouterr()
+    for notice in ("Seeded metadata.yaml", "No producer provider", "No host provider"):
+        assert notice not in captured.out + captured.err

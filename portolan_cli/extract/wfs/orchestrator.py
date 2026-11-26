@@ -325,6 +325,7 @@ def extract_wfs_catalog(
     layer_exclude: list[str] | None = None,
     options: ExtractionOptions | None = None,
     on_progress: Callable[[ExtractionProgress], None] | None = None,
+    on_message: Callable[[str, str], None] | None = None,
 ) -> ExtractionReport:
     """Extract layers from a WFS service to a Portolan catalog.
 
@@ -335,6 +336,7 @@ def extract_wfs_catalog(
         layer_exclude: Glob patterns to exclude layers.
         options: Extraction options (defaults to ExtractionOptions()).
         on_progress: Callback for progress updates.
+        on_message: Called as ``on_message(level, text)`` with each catalog notice.
 
     Returns:
         ExtractionReport with results for all layers.
@@ -350,6 +352,7 @@ def extract_wfs_catalog(
         output_dir,
         driver_options(options, layer_filter, layer_exclude),
         on_progress=on_progress,
+        on_message=on_message,
     )
 
 

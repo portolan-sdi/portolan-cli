@@ -221,6 +221,7 @@ def extract_wfs_cmd(
             layer_exclude=layer_exclude,
             options=options,
             on_progress=None if use_json else on_progress,
+            on_message=cli_helpers.print_message,
         )
     except MissingLicenseError as e:
         cli_helpers.fail_missing_license(e, use_json=use_json, url=url, command="extract-wfs")

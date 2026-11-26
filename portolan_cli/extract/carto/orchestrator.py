@@ -256,6 +256,7 @@ def extract_carto_catalog(
     layer_exclude: list[str] | None = None,
     options: ExtractionOptions | None = None,
     on_progress: Callable[[ExtractionProgress], None] | None = None,
+    on_message: Callable[[str, str], None] | None = None,
 ) -> ExtractionReport:
     """Extract tables from a Carto account into a Portolan catalog.
 
@@ -266,6 +267,7 @@ def extract_carto_catalog(
         layer_exclude: Glob patterns / names of tables to exclude.
         options: Extraction options (defaults to ExtractionOptions()).
         on_progress: Callback for progress updates.
+        on_message: Called as ``on_message(level, text)`` with each catalog notice.
 
     Returns:
         ExtractionReport with results for all tables.
@@ -290,5 +292,10 @@ def extract_carto_catalog(
         license_url=options.license_url,
     )
     return run_layer_extraction(
-        CartoLayerSource(options), url, output_dir, driver, on_progress=on_progress
+        CartoLayerSource(options),
+        url,
+        output_dir,
+        driver,
+        on_progress=on_progress,
+        on_message=on_message,
     )

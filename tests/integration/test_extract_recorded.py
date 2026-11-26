@@ -437,3 +437,58 @@ def test_scenario_is_documented_small_and_has_no_stray_file(scenario: Path) -> N
     bodies = {route.body_file for route in ReplayServer(scenario).routes}
     stray = {path.name for path in scenario.iterdir()} - bodies - {"README.md", "routes.json"}
     assert sorted(stray) == []
+
+
+def _carto_with(tmp_path: Path, run_cli: RunCli, *flags: str) -> tuple[Result, Path]:
+    """Run ``extract carto`` on the phl_zoning recording with root flags before ``extract``."""
+    extraction = EXTRACTIONS["phl_zoning"]
+    out = tmp_path / "out"
+    server = ReplayServer(NETWORK / extraction.scenario)
+    with server as base_url:
+        result = run_cli(
+            *flags,
+            "extract",
+            "carto",
+            base_url + extraction.path,
+            str(out),
+            "--auto",
+            "--license",
+            "CC-BY-4.0",
+            *extraction.args,
+            expect=0,
+        )
+    assert server.unmatched == []
+    return result, out
+
+
+def _host_warning(out: Path) -> str:
+    path = out / "<collection>" / ".portolan" / "metadata.yaml"
+    return (
+        f"⚠ No host provider: set contact.name and contact.email in {path}, then run "
+        "'portolan add --force <collection>'. Until then, check reports PTL-PRV-002."
+    )
+
+
+def test_seeded_metadata_line_prints_without_verbose(tmp_path: Path, run_cli: RunCli) -> None:
+    """A default human run prints the seed line and the provider warnings (#1133)."""
+    result, out = _carto_with(tmp_path, run_cli)
+
+    assert "→ Seeded metadata.yaml from carto\n" in result.stdout
+    assert _host_warning(out) in result.stderr.splitlines()
+
+
+def test_quiet_keeps_the_seeded_metadata_line(tmp_path: Path, run_cli: RunCli) -> None:
+    """``--quiet`` sets the log level only. The extract messages print as before."""
+    result, out = _carto_with(tmp_path, run_cli, "--quiet")
+
+    assert "→ Seeded metadata.yaml from carto\n" in result.stdout
+    assert _host_warning(out) in result.stderr.splitlines()
+
+
+def test_json_run_sends_the_seeded_metadata_line_to_stderr(tmp_path: Path, run_cli: RunCli) -> None:
+    """A JSON run keeps stdout for the envelope. The messages go to stderr."""
+    result, out = _carto_with(tmp_path, run_cli, "--format", "json")
+
+    assert json.loads(result.stdout)["success"] is True
+    assert "→ Seeded metadata.yaml from carto" in result.stderr.splitlines()
+    assert _host_warning(out) in result.stderr.splitlines()
