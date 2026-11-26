@@ -597,13 +597,13 @@ def init(
         portolan init --backend iceberg --license CC0-1.0
         portolan init --auto --license CC-BY-4.0 --logo brand.png
     """
-    from portolan_cli.catalog import CatalogState, detect_state, init_catalog
+    from portolan_cli.catalog import CatalogState, detect_state
     from portolan_cli.errors import (
         CatalogAlreadyExistsError,
         LogoError,
         UnmanagedStacCatalogError,
     )
-    from portolan_cli.logo import find_logo_link
+    from portolan_cli.inspect import initialize_catalog
 
     use_json = should_output_json(ctx, json_output)
 
@@ -620,7 +620,7 @@ def init(
         license_id = _validated_cli_license("init", license_id, license_url, use_json=use_json)
 
     try:
-        catalog_file, warnings = init_catalog(
+        result = initialize_catalog(
             path,
             catalog_id=catalog_id,
             title=title,
@@ -632,27 +632,12 @@ def init(
             logo_title=logo_title,
         )
 
-        # Read back catalog ID for display
-        catalog_data = json.loads(catalog_file.read_text(encoding="utf-8"))
-        catalog_id = catalog_data.get("id", "unknown")
-        logo_link = find_logo_link(catalog_data.get("links", []))
-
-        if not emit_success(
-            "init",
-            {
-                "path": str(path.resolve()),
-                "catalog_file": "catalog.json",
-                "catalog_id": catalog_id,
-                "logo": logo_link["href"] if logo_link else None,
-                "warnings": warnings,
-            },
-            use_json=use_json,
-        ):
-            success(f"Initialized Portolan catalog in {path.resolve()}")
-            info_output(f"Catalog ID: {catalog_id}")
-            if logo_link:
-                info_output(f"Logo: {logo_link['href']}")
-            for w in warnings:
+        if not emit_success("init", result.to_dict(), use_json=use_json):
+            success(f"Initialized Portolan catalog in {result.path}")
+            info_output(f"Catalog ID: {result.catalog_id}")
+            if result.logo:
+                info_output(f"Logo: {result.logo}")
+            for w in result.warnings:
                 warn(w)
 
     except InputValidationError as err:

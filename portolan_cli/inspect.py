@@ -11,7 +11,7 @@ The output format follows the specified structure.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from portolan_cli.stac_links import catalog_collections
@@ -492,3 +492,74 @@ def inspect_target(
     if (target / "collection.json").exists():
         return inspect_collection(target)
     raise ValueError(f"Directory is not a catalog or collection: {target}")
+
+
+@dataclass(frozen=True)
+class InitResult:
+    """The catalog that ``portolan init`` created, read back from its catalog.json.
+
+    Attributes:
+        path: The absolute catalog directory.
+        catalog_id: The id in catalog.json.
+        logo: The href of the logo link, or None.
+        warnings: The warnings of the catalog creation.
+    """
+
+    path: Path
+    catalog_id: str
+    logo: str | None = None
+    warnings: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize the result as the ``init`` envelope data."""
+        return {
+            "path": str(self.path),
+            "catalog_file": "catalog.json",
+            "catalog_id": self.catalog_id,
+            "logo": self.logo,
+            "warnings": self.warnings,
+        }
+
+
+def initialize_catalog(
+    path: Path,
+    *,
+    catalog_id: str | None = None,
+    title: str | None = None,
+    description: str | None = None,
+    backend: str = "file",
+    license_id: str | None,
+    license_url: str | None = None,
+    logo: str | Path | None = None,
+    logo_title: str | None = None,
+) -> InitResult:
+    """Create a catalog with ``catalog.init_catalog`` and report what it wrote.
+
+    This is the library function of ``portolan init``. The arguments and the
+    errors are those of ``catalog.init_catalog``.
+
+    Returns:
+        The catalog directory, its id, its logo href, and the warnings.
+    """
+    from portolan_cli.catalog import init_catalog
+    from portolan_cli.logo import find_logo_link
+
+    catalog_file, warnings = init_catalog(
+        path,
+        catalog_id=catalog_id,
+        title=title,
+        description=description,
+        backend=backend,
+        license_id=license_id,
+        license_url=license_url,
+        logo=logo,
+        logo_title=logo_title,
+    )
+    data = json.loads(catalog_file.read_text(encoding="utf-8"))
+    logo_link = find_logo_link(data.get("links", []))
+    return InitResult(
+        path=catalog_file.parent,
+        catalog_id=data.get("id", "unknown"),
+        logo=logo_link["href"] if logo_link else None,
+        warnings=warnings,
+    )

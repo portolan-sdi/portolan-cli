@@ -6,16 +6,18 @@
 from __future__ import annotations
 
 import shutil
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
 
 from portolan_cli.catalog_list import list_catalog_contents
+from portolan_cli.errors import CatalogAlreadyExistsError
+from portolan_cli.inspect import initialize_catalog
 from portolan_cli.status import get_catalog_status
 
 if TYPE_CHECKING:
     from collections.abc import Callable
-    from pathlib import Path
 
     from tests.catalog_invariants import RunCli
     from tests.parity.harness import Parity
@@ -103,3 +105,46 @@ def test_status_no_collections(
         catalog=build_conformant_catalog,
         call=lambda root: get_catalog_status(root),
     )
+
+
+def _empty_directory_with_logo(root: Path) -> None:
+    root.mkdir()
+    (root / "brand.svg").write_text(
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"/>\n', encoding="utf-8"
+    )
+
+
+def test_init(parity: Parity) -> None:
+    """`init --auto` creates the catalog and reports its id, logo, and warnings."""
+    parity(
+        "init",
+        ["--auto", "--id", "parity", "--license", "CC-BY-4.0", "--logo", "brand.svg"],
+        catalog=_empty_directory_with_logo,
+        call=lambda root: initialize_catalog(
+            Path(), catalog_id="parity", license_id="CC-BY-4.0", logo="brand.svg"
+        ),
+    )
+
+
+def test_init_derived_id(parity: Parity) -> None:
+    """`init` with no --id derives the id from the directory name."""
+    parity(
+        "init",
+        ["--auto", "--license", "CC-BY-4.0"],
+        catalog=lambda root: root.mkdir(),
+        call=lambda root: initialize_catalog(Path(), license_id="CC-BY-4.0"),
+    )
+
+
+def test_init_existing_catalog(
+    parity: Parity, build_conformant_catalog: Callable[..., Path]
+) -> None:
+    """`init` in a Portolan catalog reports CatalogAlreadyExistsError."""
+    parity.error(
+        "init",
+        ["--auto", "--license", "CC-BY-4.0"],
+        catalog=build_conformant_catalog,
+        call=lambda root: initialize_catalog(Path(), license_id="CC-BY-4.0"),
+        raises=CatalogAlreadyExistsError,
+    )
+
