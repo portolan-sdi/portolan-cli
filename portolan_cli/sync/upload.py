@@ -19,7 +19,11 @@ An AWS profile can also set ``endpoint_url`` and ``region``. Both apply to the
 profile the caller names, to ``AWS_PROFILE``, or to the default profile, as
 they do for the AWS CLI. This reads the files directly, so it applies without
 the ``aws`` extra. An explicit endpoint and ``PORTOLAN_S3_ENDPOINT`` still win,
-and the upload prints the profile that supplies an endpoint.
+and the upload names the profile that supplies an endpoint.
+
+The upload prints nothing. It reports each message through
+``portolan_cli.sync.notices``. The caller makes a callback current with
+``notifying``. Without one, the messages go to the log.
 
 Basic Usage:
     from portolan_cli.sync.upload import upload_file, upload_directory, check_credentials
@@ -81,7 +85,7 @@ from obstore.store import (
 )
 
 from portolan_cli.errors import InsecureS3EndpointError, ProfileCredentialsError
-from portolan_cli.output import detail, error, info, success
+from portolan_cli.sync.notices import notice
 from portolan_cli.trace import submit
 
 if TYPE_CHECKING:
@@ -578,7 +582,7 @@ def _resolve_s3_endpoint_settings(
         return None, use_ssl
 
     # Name the source, so a redirected upload is never silent.
-    detail(f"Endpoint {aws_endpoint} from {source}")
+    notice("detail", f"Endpoint {aws_endpoint} from {source}")
 
     # Both sources write a full URL, so its scheme carries the TLS setting.
     # An explicit argument or PORTOLAN_S3_USE_SSL still wins.
@@ -1031,20 +1035,18 @@ def _upload_one_file(
     file_path: Path,
     source: Path,
     prefix: str,
-    verbose: bool = False,
     **kwargs: int,
 ) -> tuple[Path, Exception | None, int]:
     """Upload a single file and return result tuple for parallel processing.
 
-    Per-file output only shown in verbose mode when used in
-    batch operations. Errors are always shown.
+    Per-file lines go out at the ``verbose`` notice level. Errors go out at
+    the ``error`` level.
 
     Args:
         store: Object store instance
         file_path: Path to file to upload
         source: Source directory for relative path calculation
         prefix: Prefix for target key
-        verbose: If True, show per-file upload/success messages.
         **kwargs: Additional args passed to put_object
 
     Returns:
@@ -1056,22 +1058,18 @@ def _upload_one_file(
         size_mb = file_size / (1024 * 1024)
         start_time = time.time()
 
-        # Per-file output only in verbose mode
-        if verbose:
-            info(f"Uploading {file_path.name} ({size_mb:.2f} MB) -> {target_key}")
+        notice("verbose", f"Uploading {file_path.name} ({size_mb:.2f} MB) -> {target_key}")
 
         put_object(store, target_key, file_path, max_concurrency=kwargs.get("max_concurrency", 4))
 
         elapsed = time.time() - start_time
         speed_mbps = size_mb / elapsed if elapsed > 0 else 0
 
-        # Per-file output only in verbose mode
-        if verbose:
-            success(f"{file_path.name} ({speed_mbps:.2f} MB/s)")
+        notice("verbose", f"{file_path.name} ({speed_mbps:.2f} MB/s)")
         return file_path, None, file_size
     except Exception as e:
         # Errors are always shown
-        error(f"{file_path.name}: {e}")
+        notice("error", f"{file_path.name}: {e}")
         return file_path, e, 0
 
 
@@ -1121,7 +1119,7 @@ def upload_file(
     size_mb = file_size / (1024 * 1024)
 
     if dry_run:
-        info(f"[DRY RUN] Would upload: {source.name} ({size_mb:.2f} MB) -> {target_key}")
+        notice("info", f"[DRY RUN] Would upload: {source.name} ({size_mb:.2f} MB) -> {target_key}")
         return UploadResult(
             success=True,
             files_uploaded=0,
@@ -1136,14 +1134,14 @@ def upload_file(
 
     try:
         start_time = time.time()
-        info(f"Uploading {source.name} ({size_mb:.2f} MB) -> {target_key}")
+        notice("info", f"Uploading {source.name} ({size_mb:.2f} MB) -> {target_key}")
 
         put_object(store, target_key, source, max_concurrency=kwargs.get("max_concurrency", 4))
 
         elapsed = time.time() - start_time
         speed_mbps = size_mb / elapsed if elapsed > 0 else 0
 
-        success(f"Upload complete ({speed_mbps:.2f} MB/s)")
+        notice("success", f"Upload complete ({speed_mbps:.2f} MB/s)")
 
         return UploadResult(
             success=True,
@@ -1153,7 +1151,7 @@ def upload_file(
             errors=[],
         )
     except Exception as e:
-        error(f"Upload failed: {e}")
+        notice("error", f"Upload failed: {e}")
         return UploadResult(
             success=False,
             files_uploaded=0,
@@ -1181,12 +1179,12 @@ def _print_dry_run_directory(
     files: list[Path], source: Path, prefix: str, total_size_mb: float
 ) -> None:
     """Print dry-run information for directory upload."""
-    info(f"[DRY RUN] Would upload {len(files)} file(s) ({total_size_mb:.2f} MB total)")
+    notice("info", f"[DRY RUN] Would upload {len(files)} file(s) ({total_size_mb:.2f} MB total)")
     for f in files[:10]:
         target_key = _build_target_key(f, source, prefix)
-        detail(f"  {f.name} -> {target_key}")
+        notice("detail", f"  {f.name} -> {target_key}")
     if len(files) > 10:
-        detail(f"  ... and {len(files) - 10} more file(s)")
+        notice("detail", f"  ... and {len(files) - 10} more file(s)")
 
 
 def _execute_parallel_uploads(
@@ -1197,12 +1195,8 @@ def _execute_parallel_uploads(
     max_files: int,
     fail_fast: bool,
     kwargs: dict[str, int],
-    *,
-    verbose: bool = False,
 ) -> list[tuple[Path, Exception | None, int]]:
     """Execute parallel uploads using ThreadPoolExecutor.
-
-    Per-file output controlled by verbose parameter.
 
     Args:
         store: Object store instance
@@ -1212,7 +1206,6 @@ def _execute_parallel_uploads(
         max_files: Max concurrent file uploads
         fail_fast: Stop on first error if True
         kwargs: Additional args for put_object
-        verbose: If True, show per-file upload messages.
 
     Returns:
         List of (file_path, error_or_none, bytes_uploaded) tuples
@@ -1229,7 +1222,7 @@ def _execute_parallel_uploads(
             # Submit initial batch up to max_files
             for f in files_iter:
                 future: UploadResultFuture = submit(
-                    executor, _upload_one_file, store, f, source, prefix, verbose, **kwargs
+                    executor, _upload_one_file, store, f, source, prefix, **kwargs
                 )
                 pending[future] = f
                 if len(pending) >= max_files:
@@ -1258,7 +1251,6 @@ def _execute_parallel_uploads(
                         next_file,
                         source,
                         prefix,
-                        verbose,
                         **kwargs,
                     )
                     pending[new_future] = next_file
@@ -1268,7 +1260,7 @@ def _execute_parallel_uploads(
         # For non-fail_fast mode, submit all futures upfront for maximum parallelism
         with ThreadPoolExecutor(max_workers=max_files) as executor:
             future_to_file = {
-                submit(executor, _upload_one_file, store, f, source, prefix, verbose, **kwargs): f
+                submit(executor, _upload_one_file, store, f, source, prefix, **kwargs): f
                 for f in files
             }
 
@@ -1292,12 +1284,11 @@ def upload_directory(
     s3_endpoint: str | None = None,
     s3_region: str | None = None,
     s3_use_ssl: bool | None = None,
-    verbose: bool = False,
 ) -> UploadResult:
     """Upload a directory to S3/GCS/Azure with parallel uploads.
 
-    Per-file output controlled by verbose parameter.
-    Progress is shown via summary messages at start/end.
+    Per-file lines go out at the ``verbose`` notice level. Summary lines
+    go out at the start and the end.
 
     Args:
         source: Local directory path
@@ -1311,7 +1302,6 @@ def upload_directory(
         s3_endpoint: Custom S3-compatible endpoint (e.g., "minio.example.com:9000")
         s3_region: S3 region (default: auto-detected)
         s3_use_ssl: Whether to use HTTPS for S3 endpoint (default: True)
-        verbose: If True, show per-file upload messages.
 
     Returns:
         UploadResult with upload statistics
@@ -1334,7 +1324,7 @@ def upload_directory(
 
     # Early return for empty directory
     if not files:
-        detail(f"No files found in {source}")
+        notice("detail", f"No files found in {source}")
         return UploadResult(
             success=True, files_uploaded=0, files_failed=0, total_bytes=0, errors=[]
         )
@@ -1353,14 +1343,12 @@ def upload_directory(
         bucket_url, profile, chunk_concurrency, s3_endpoint, s3_region, s3_use_ssl
     )
 
-    info(f"Found {len(files)} file(s) to upload ({total_size_mb:.2f} MB total)")
+    notice("info", f"Found {len(files)} file(s) to upload ({total_size_mb:.2f} MB total)")
 
     # Ensure max_files is at least 1 to avoid ThreadPoolExecutor ValueError
     max_files = max(1, max_files)
 
-    results = _execute_parallel_uploads(
-        store, files, source, prefix, max_files, fail_fast, kwargs, verbose=verbose
-    )
+    results = _execute_parallel_uploads(store, files, source, prefix, max_files, fail_fast, kwargs)
 
     # Calculate results
     errors = [(path, err) for path, err, _ in results if err is not None]

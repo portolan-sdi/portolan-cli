@@ -1264,16 +1264,19 @@ class TestBuildTargetKey:
 
 
 class TestOutputIntegration:
-    """Tests for integration with portolan_cli.output module."""
+    """Tests for the notices that an upload sends."""
 
     @pytest.mark.unit
-    def test_upload_file_uses_output_functions(
+    def test_upload_file_sends_notices(
         self, temp_file: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """Upload should use portolan_cli.output for logging."""
+        """Upload reports each step through the notify callback and prints nothing."""
+        from portolan_cli.sync.notices import notifying
         from portolan_cli.sync.upload import upload_file
 
+        notices: list[tuple[str, str]] = []
         with (
+            notifying(lambda level, message: notices.append((level, message))),
             patch("portolan_cli.sync.upload.obs"),
             patch("portolan_cli.sync.upload.S3Store"),
             patch.dict(
@@ -1287,10 +1290,10 @@ class TestOutputIntegration:
             )
 
         assert result.success is True
-        # The output module uses click.echo, so the lines reach stdout
-        out = capsys.readouterr().out
-        assert "Uploading test_data.parquet (0.00 MB) -> data.parquet" in out
-        assert "Upload complete" in out
+        assert capsys.readouterr() == ("", "")
+        assert notices[0] == ("info", "Uploading test_data.parquet (0.00 MB) -> data.parquet")
+        assert notices[1][0] == "success"
+        assert notices[1][1].startswith("Upload complete (")
 
 
 # =============================================================================
@@ -1395,17 +1398,21 @@ class TestProfileEndpointRegion:
         assert kwargs["region"] == "us-west-2"
 
     @pytest.mark.unit
-    def test_profile_endpoint_names_its_source(
-        self, default_profile_endpoint: Path, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_profile_endpoint_names_its_source(self, default_profile_endpoint: Path) -> None:
         """The upload must name the profile that supplies the endpoint."""
+        from portolan_cli.sync.notices import notifying
         from portolan_cli.sync.upload import _create_s3_store
 
-        with cleared_environ(), patch("portolan_cli.sync.upload.S3Store"):
+        notices: list[tuple[str, str]] = []
+        with (
+            notifying(lambda level, message: notices.append((level, message))),
+            cleared_environ(),
+            patch("portolan_cli.sync.upload.S3Store"),
+        ):
             _create_s3_store("s3://mybucket", None, None, None, None)
 
-        assert capsys.readouterr().out.splitlines() == [
-            "  Endpoint https://data.source.coop from AWS profile 'default'"
+        assert notices == [
+            ("detail", "Endpoint https://data.source.coop from AWS profile 'default'")
         ]
 
     @pytest.mark.unit

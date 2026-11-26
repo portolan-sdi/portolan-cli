@@ -72,7 +72,7 @@ RATCHET_TID251 = frozenset(
 # Ruff lifts TID251 per file, not per banned name. sync/upload.py keeps its
 # obstore.put calls, so ruff exempts it for good. import-linter still sees its
 # output import, and that edge is a ratchet line there.
-OUTPUT_RATCHET_ONLY_IN_IMPORT_LINTER = frozenset({"portolan_cli.sync.upload"})
+OUTPUT_RATCHET_ONLY_IN_IMPORT_LINTER: frozenset[str] = frozenset()
 
 OBJECT_STORE_IMPORTERS = frozenset(
     {

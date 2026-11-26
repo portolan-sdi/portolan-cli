@@ -683,7 +683,6 @@ ignore_imports = [
     # file for obstore.put, so only this contract sees its output import.
     # The letter names the owning #1035 agent. Delete only.
     "portolan_cli.sync.push -> portolan_cli.output", # E
-    "portolan_cli.sync.upload -> portolan_cli.output", # E
 ]
 
 [[tool.importlinter.contracts]]
