@@ -806,3 +806,106 @@ def strategy_of_column(column: str) -> str:
         if column in (name, f"{name}_prefix"):
             return strategy
     return column.removesuffix("_cell")
+
+
+@dataclass(frozen=True)
+class PartitionPreview:
+    """The result of ``portolan partition --preview``. Nothing is written."""
+
+    file: Path
+    size_gb: float
+    recommended: bool
+    strategy: str
+    target_rows: int
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return the envelope data of ``portolan partition --preview``."""
+        return {
+            "file": str(self.file),
+            "size_gb": round(self.size_gb, 2),
+            "recommended_partition": self.recommended,
+            "strategy": self.strategy,
+            "target_rows": self.target_rows,
+        }
+
+
+@dataclass(frozen=True)
+class PartitionOutcome:
+    """The result of ``portolan partition``: the partition files it wrote."""
+
+    input: Path
+    output_dir: Path
+    files: list[Path]
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return the envelope data of ``portolan partition``."""
+        return {
+            "input": str(self.input),
+            "output_dir": str(self.output_dir),
+            "partitions": len(self.files),
+            "files": [str(p) for p in self.files],
+        }
+
+
+def partition_file(
+    input_file: Path,
+    output_dir: Path | None,
+    *,
+    strategy: str = DEFAULT_STRATEGY,
+    target_rows: int = DEFAULT_TARGET_ROWS,
+    preview: bool = False,
+    verbose: bool = False,
+) -> PartitionPreview | PartitionOutcome:
+    """Partition a GeoParquet file into ``output_dir``, or preview the partition.
+
+    The preview reads ``partitioning.threshold_gb`` and ``partitioning.enabled``
+    from the configuration of the working directory and writes nothing.
+
+    Args:
+        input_file: The GeoParquet file.
+        output_dir: Directory for the Hive-style partitions. Only the preview
+            accepts None.
+        strategy: Partitioning strategy.
+        target_rows: Target rows per partition.
+        preview: Report the recommendation and write nothing.
+        verbose: Ask geoparquet-io for its verbose output.
+
+    Returns:
+        The preview, or the partition files.
+
+    Raises:
+        PartitionError: If ``output_dir`` is None, or if geoparquet-io fails.
+            A failure removes the partial partitions.
+    """
+    if preview:
+        from portolan_cli.config import get_setting
+
+        threshold_gb = get_setting("partitioning.threshold_gb") or 2.0
+        enabled = get_setting("partitioning.enabled")
+        return PartitionPreview(
+            file=input_file,
+            size_gb=input_file.stat().st_size / (1024 * 1024 * 1024),
+            recommended=should_partition(
+                input_file, threshold_gb=float(threshold_gb), enabled=enabled is not False
+            ),
+            strategy=strategy,
+            target_rows=target_rows,
+        )
+
+    from portolan_cli.errors import PartitionError
+
+    if output_dir is None:
+        raise PartitionError("output_dir is required unless preview is set")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        files = partition_geoparquet(
+            input_path=input_file,
+            output_dir=output_dir,
+            strategy=strategy,
+            target_rows=target_rows,
+            verbose=verbose,
+        )
+    # geoparquet-io raises many types. The error keeps its message.
+    except Exception as e:
+        raise PartitionError(str(e)) from e
+    return PartitionOutcome(input_file, output_dir, files)

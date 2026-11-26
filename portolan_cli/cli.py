@@ -5093,8 +5093,8 @@ def partition(
         # Custom target rows
         portolan partition buildings.parquet output/ --target-rows 50000
     """
-    from portolan_cli.config import get_setting
-    from portolan_cli.partitioning import partition_geoparquet, should_partition
+    from portolan_cli.errors import PartitionError
+    from portolan_cli.partitioning import PartitionPreview, partition_file
 
     use_json = should_output_json(ctx)
 
@@ -5103,37 +5103,8 @@ def partition(
         emit_error("partition", "FormatError", "Input must be a .parquet file", use_json=use_json)
         raise SystemExit(1)
 
-    # Preview mode: show analysis without creating files
-    if preview:
-        file_size_gb = input_file.stat().st_size / (1024 * 1024 * 1024)
-        threshold_gb = get_setting("partitioning.threshold_gb") or 2.0
-        part_enabled = get_setting("partitioning.enabled")
-        should_part = should_partition(
-            input_file, threshold_gb=float(threshold_gb), enabled=part_enabled is not False
-        )
-
-        if use_json:
-            result = {
-                "file": str(input_file),
-                "size_gb": round(file_size_gb, 2),
-                "recommended_partition": should_part,
-                "strategy": strategy,
-                "target_rows": target_rows,
-            }
-            output_json_envelope(success_envelope("partition", result))
-        else:
-            info_output(f"File: {input_file}")
-            info_output(f"Size: {file_size_gb:.2f} GB")
-            if should_part:
-                success("Partitioning recommended (> 2GB threshold)")
-            else:
-                info_output("File is under 2GB threshold - partitioning optional")
-            info_output(f"Strategy: {strategy}")
-            info_output(f"Target rows per partition: {target_rows:,}")
-        return
-
     # Require output_dir for actual partitioning
-    if output_dir is None:
+    if output_dir is None and not preview:
         emit_error(
             "partition",
             "UsageError",
@@ -5142,45 +5113,41 @@ def partition(
         )
         raise SystemExit(1)
 
-    # Create output directory
-    output_dir.mkdir(parents=True, exist_ok=True)
+    if not use_json and not preview:
+        info_output(f"Partitioning {input_file.name} with {strategy} strategy...")
 
     try:
-        if not use_json:
-            info_output(f"Partitioning {input_file.name} with {strategy} strategy...")
-
-        partition_files = partition_geoparquet(
-            input_path=input_file,
-            output_dir=output_dir,
+        result = partition_file(
+            input_file,
+            output_dir,
             strategy=strategy,
             target_rows=target_rows,
+            preview=preview,
             verbose=verbose,
         )
-
+    except PartitionError as e:
         if use_json:
-            result = {
-                "input": str(input_file),
-                "output_dir": str(output_dir),
-                "partitions": len(partition_files),
-                "files": [str(p) for p in partition_files],
-            }
-            output_json_envelope(success_envelope("partition", result))
+            emit_error("partition", "PartitionError", e.message, use_json=True, code=e.code)
         else:
-            success(f"Created {len(partition_files)} partitions in {output_dir}")
-            if verbose:
-                for pf in partition_files:
-                    detail(f"  {pf.parent.name}/{pf.name}")
-
-    except Exception as e:
-        if use_json:
-            envelope = error_envelope(
-                "partition",
-                [ErrorDetail(type="PartitionError", message=str(e))],
-            )
-            output_json_envelope(envelope)
-        else:
-            error(f"Partitioning failed: {e}")
+            error(f"Partitioning failed: {e.message}")
         raise SystemExit(1) from None
+
+    if emit_success("partition", result.to_dict(), use_json=use_json):
+        return
+    if isinstance(result, PartitionPreview):
+        info_output(f"File: {result.file}")
+        info_output(f"Size: {result.size_gb:.2f} GB")
+        if result.recommended:
+            success("Partitioning recommended (> 2GB threshold)")
+        else:
+            info_output("File is under 2GB threshold - partitioning optional")
+        info_output(f"Strategy: {strategy}")
+        info_output(f"Target rows per partition: {target_rows:,}")
+        return
+    success(f"Created {len(result.files)} partitions in {output_dir}")
+    if verbose:
+        for pf in result.files:
+            detail(f"  {pf.parent.name}/{pf.name}")
 
 
 @cli.group()

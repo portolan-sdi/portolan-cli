@@ -555,6 +555,17 @@ class PartitionCollisionError(ConversionError):
         )
 
 
+class PartitionError(ConversionError):
+    """Raised when geoparquet-io fails to partition a GeoParquet file.
+
+    Error code: PRTLN-CNV011
+
+    The message is the message of the geoparquet-io error.
+    """
+
+    code = "PRTLN-CNV011"
+
+
 class OutputExistsError(ConversionError):
     """Raised when a conversion would write over a file that its source did not make.
 

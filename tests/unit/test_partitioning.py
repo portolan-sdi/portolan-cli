@@ -906,3 +906,78 @@ class TestFindLargePartitionCandidates:
             decision = find_large_partition_candidates([other], tmp_path)
 
         assert decision.large_files == []
+
+
+class TestPartitionFile:
+    """Tests for partition_file, the library function of `portolan partition`.
+
+    The command has no `--json` flag, so the parity harness cannot run it.
+    These tests compare the `--format json` envelope with the library result.
+    """
+
+    @pytest.mark.integration
+    def test_preview_envelope_is_the_library_result(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The preview envelope data equals partition_file(...).to_dict()."""
+        import json
+
+        from click.testing import CliRunner
+
+        from portolan_cli.cli import cli
+        from portolan_cli.partitioning import partition_file
+
+        monkeypatch.chdir(tmp_path)
+        Path("small.parquet").write_bytes(b"x" * 10)
+        result = CliRunner().invoke(
+            cli, ["--format", "json", "partition", "small.parquet", "--preview"]
+        )
+
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.stdout)["data"]
+        assert data == partition_file(Path("small.parquet"), None, preview=True).to_dict()
+        assert data == {
+            "file": "small.parquet",
+            "size_gb": 0.0,
+            "recommended_partition": False,
+            "strategy": "kdtree",
+            "target_rows": 120_000,
+        }
+
+    @pytest.mark.integration
+    def test_a_geoparquet_io_failure_is_a_partition_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A geoparquet-io failure raises PartitionError, and the envelope reports it."""
+        import json
+
+        from click.testing import CliRunner
+
+        from portolan_cli.cli import cli
+        from portolan_cli.errors import PartitionError
+        from portolan_cli.partitioning import partition_file
+
+        def failing_partition(*args: object, **kwargs: object) -> None:
+            raise RuntimeError("Simulated partition failure")
+
+        monkeypatch.chdir(tmp_path)
+        Path("input.parquet").write_bytes(b"x")
+        with mock.patch(
+            "geoparquet_io.core.partition.by_kdtree.partition_by_kdtree", failing_partition
+        ):
+            with pytest.raises(PartitionError) as caught:
+                partition_file(Path("input.parquet"), Path("out"))
+            result = CliRunner().invoke(
+                cli, ["--format", "json", "partition", "input.parquet", "out2"]
+            )
+
+        assert caught.value.message == "Simulated partition failure"
+        assert Path("out").is_dir()
+        assert result.exit_code == 1
+        assert json.loads(result.stdout)["errors"] == [
+            {
+                "type": "PartitionError",
+                "message": "Simulated partition failure",
+                "code": "PRTLN-CNV011",
+            }
+        ]
