@@ -2031,3 +2031,20 @@ def test_report_holds_no_token(sample_metadata: ImageServerMetadata, tmp_path: P
     assert report.metadata_extracted.source_url == "https://h.example/X/ImageServer"
     assert "SECRET" not in repr(report)
     assert "SECRET" not in path.read_text(encoding="utf-8")
+
+
+@pytest.mark.asyncio
+async def test_non_tiff_answer_error_holds_no_token(sample_tile: TileSpec, tmp_path: Path) -> None:
+    """An HTTP 200 answer that is not a TIFF names the request without its token."""
+    mock_response = AsyncMock()
+    mock_response.status_code = 200
+    mock_response.content = _EXPORT_FAILED
+    mock_response.raise_for_status = MagicMock()
+    client = AsyncMock()
+    client.get.return_value = mock_response
+
+    with pytest.raises(ImageServerExtractionError) as caught:
+        await download_tile(_TOKEN_SERVICE, sample_tile, tmp_path / "t.tif", client)
+
+    assert str(caught.value).startswith("ArcGIS error for tile tile_0_0: HTTP 200 [500]")
+    assert "SECRET" not in str(caught.value)

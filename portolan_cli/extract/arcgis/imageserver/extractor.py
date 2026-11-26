@@ -495,7 +495,9 @@ async def download_tile(
         content = response.content
         if not _validate_tiff(content):
             error = ImageServerExtractionError(
-                _describe_non_tiff_body(tile, response.status_code, content, export_url)
+                redact_credentials(
+                    _describe_non_tiff_body(tile, response.status_code, content, export_url)
+                )
             )
             code = (_arcgis_error(content) or {}).get("code")
             error.arcgis_code = code if isinstance(code, int) else None
