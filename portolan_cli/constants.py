@@ -6,7 +6,7 @@ to avoid duplication and ensure consistency.
 
 from __future__ import annotations
 
-from rashid_core.schema import bundled_schema_versions
+from rashid_core.api import newest_profile_version
 
 from portolan_cli import extension_registry as _reg
 
@@ -15,13 +15,14 @@ from portolan_cli import extension_registry as _reg
 # DERIVED from the profile schemas rashid bundles in its wheel, so
 # the CLI and the validator cannot drift: whichever spec version rashid can
 # actually validate against is the one `check` reports and the one generation
-# stamps. ``bundled_schema_versions()`` returns tags like ("v0.1.0",) sorted
-# ascending; the newest wins and the leading "v" is dropped, because the URI
-# template below and the JSON payload both want a bare SemVer triple.
+# stamps. ``newest_profile_version()`` returns a tag like "v0.1.0". It sorts the
+# versions as numbers, so v0.10.0 follows v0.9.0. The leading "v" is dropped,
+# because the URI template below and the JSON payload both want a bare SemVer
+# triple.
 #
 # NOTE: This is the version of the *specification as a whole*. It is distinct
 # from versions.SPEC_VERSION, which versions the versions.json manifest schema.
-PORTOLAN_SPEC_VERSION: str = max(bundled_schema_versions()).removeprefix("v")
+PORTOLAN_SPEC_VERSION: str = newest_profile_version().removeprefix("v")
 
 # STAC version we generate (v1.1.0 has unified bands array, superseding
 # eo:bands/raster:bands). It lives here, not in stac.py, so the models package

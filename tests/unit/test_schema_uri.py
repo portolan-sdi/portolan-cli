@@ -7,11 +7,13 @@ root's. ``ensure_portolan_schema_uri`` is the single writer that satisfies both.
 
 from __future__ import annotations
 
+import importlib
 import re
 
 import pytest
-from rashid_core.schema import bundled_schema_versions
+from rashid_core.api import newest_profile_version
 
+from portolan_cli import constants
 from portolan_cli.constants import PORTOLAN_SCHEMA_URI, PORTOLAN_SPEC_VERSION
 from portolan_cli.stac import ensure_portolan_schema_uri
 
@@ -31,9 +33,23 @@ class TestSchemaUriConstant:
 
     def test_spec_version_is_the_newest_schema_rashid_bundles(self) -> None:
         """The CLI cannot drift from the validator: it reads the version off it."""
-        newest = max(bundled_schema_versions())
+        assert newest_profile_version().removeprefix("v") == PORTOLAN_SPEC_VERSION
 
-        assert newest.removeprefix("v") == PORTOLAN_SPEC_VERSION
+    def test_spec_version_orders_versions_numerically(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """v0.10.0 is newer than v0.9.0. A string sort put v0.9.0 last."""
+        # rashid has no public hook to fake a wheel, so this patches the private
+        # function behind newest_profile_version. If rashid renames it, this test
+        # fails loudly, and the fix is to update the target here.
+        monkeypatch.setattr(
+            "rashid_core._profile.bundled_profile_versions", lambda: ("v0.9.0", "v0.10.0")
+        )
+        try:
+            assert importlib.reload(constants).PORTOLAN_SPEC_VERSION == "0.10.0"
+        finally:
+            monkeypatch.undo()
+            importlib.reload(constants)
 
     def test_spec_version_is_a_bare_semver_triple(self) -> None:
         """No leading ``v``: the URI template and the JSON payload both want digits."""

@@ -111,9 +111,9 @@ class TestCheckCommand:
         self, runner: CliRunner, valid_catalog: Path, extra_flags: list[str]
     ) -> None:
         """check --json reports the Portolan spec version across every scope (#566)."""
-        from rashid_core.schema import bundled_schema_versions
+        from rashid_core.api import newest_profile_version
 
-        expected = max(bundled_schema_versions()).removeprefix("v")
+        expected = newest_profile_version().removeprefix("v")
 
         result = runner.invoke(cli, ["check", str(valid_catalog), *extra_flags, "--json"])
         assert result.exit_code == 0
