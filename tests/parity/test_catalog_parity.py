@@ -5,16 +5,20 @@
 
 from __future__ import annotations
 
+import contextlib
+import copy
 import json
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pytest
+import yaml
 
 from portolan_cli.catalog_list import list_catalog_contents
 from portolan_cli.clean import clean_metadata
 from portolan_cli.config import (
     clear_setting,
+    load_config,
     read_setting,
     read_settings,
     set_setting,
@@ -24,9 +28,10 @@ from portolan_cli.errors import CatalogAlreadyExistsError, ConfigError
 from portolan_cli.inspect import initialize_catalog
 from portolan_cli.remove import SafetyError, remove_path
 from portolan_cli.status import get_catalog_status
+from portolan_cli.versions import read_versions
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterator
 
     from tests.catalog_invariants import RunCli
     from tests.parity.harness import Parity
@@ -37,6 +42,34 @@ pytestmark = pytest.mark.integration
 def _tree(root: Path) -> dict[str, bytes]:
     """Map each file below ``root`` to its bytes."""
     return {p.relative_to(root).as_posix(): p.read_bytes() for p in root.rglob("*") if p.is_file()}
+
+
+def _both_sides(
+    run_cli: RunCli,
+    base: Path,
+    catalog: Callable[[Path], object],
+    args: list[str],
+    call: Callable[[Path], Any],
+) -> Iterator[tuple[Path, dict[str, bytes], dict[str, Any]]]:
+    """Run the command and the library call, each on its own fresh catalog.
+
+    The parity harness deletes each catalog before the test can look at it.
+    This helper keeps both, so a test can assert the effect of a mutating
+    command on each side.
+
+    Yields:
+        The catalog root, its files before the run, and the result data.
+    """
+    for side in ("command", "library"):
+        root = base / side
+        catalog(root)
+        before = _tree(root)
+        if side == "command":
+            data = json.loads(run_cli(*args, "--json", cwd=root).stdout)["data"]
+        else:
+            with contextlib.chdir(root):
+                data = call(root).to_dict()
+        yield root, before, data
 
 
 @pytest.fixture
@@ -423,3 +456,184 @@ def test_clean(parity: Parity, points_catalog: Callable[[Path], None], dry_run: 
         catalog=points_catalog,
         call=lambda root: clean_metadata(root, dry_run=dry_run),
     )
+
+
+def test_init_effects(run_cli: RunCli, tmp_path: Path) -> None:
+    """`init` writes the catalog, its management files, and the logo copy."""
+    for root, _, _ in _both_sides(
+        run_cli,
+        tmp_path,
+        _empty_directory_with_logo,
+        ["init", "--auto", "--id", "parity", "--license", "CC-BY-4.0", "--logo", "brand.svg"],
+        lambda root: initialize_catalog(
+            Path(), catalog_id="parity", license_id="CC-BY-4.0", logo="brand.svg"
+        ),
+    ):
+        assert sorted(_tree(root)) == [
+            ".portolan/config.yaml",
+            ".portolan/metadata.yaml",
+            "AGENTS.md",
+            "README.md",
+            "_assets/brand.svg",
+            "brand.svg",
+            "catalog.json",
+            "versions.json",
+        ]
+        assert json.loads((root / "catalog.json").read_text(encoding="utf-8"))["id"] == "parity"
+
+
+def _tracked(root: Path) -> set[str]:
+    return set(read_versions(root / "points" / "versions.json").versions[-1].assets)
+
+
+@pytest.mark.parametrize("flag", ["--force", "--keep"])
+def test_rm_effects(
+    run_cli: RunCli, points_catalog: Callable[[Path], None], tmp_path: Path, flag: str
+) -> None:
+    """`rm --force` deletes and untracks the file. `rm --keep` only untracks it."""
+    target = Path("points") / "points.geojson"
+    keep = flag == "--keep"
+    for root, before, _ in _both_sides(
+        run_cli,
+        tmp_path,
+        points_catalog,
+        ["rm", flag, str(target)],
+        lambda root: remove_path(target, catalog_root=root, keep=keep, force=not keep),
+    ):
+        assert "points/points.geojson" in before
+        assert "points.geojson" not in _tracked(root)
+        assert (root / target).exists() is keep
+
+
+def test_rm_dry_run_effects(
+    run_cli: RunCli, points_catalog: Callable[[Path], None], tmp_path: Path
+) -> None:
+    """`rm --dry-run` changes no file."""
+    target = Path("points") / "points.geojson"
+    for root, before, data in _both_sides(
+        run_cli,
+        tmp_path,
+        points_catalog,
+        ["rm", "--dry-run", str(target)],
+        lambda root: remove_path(target, catalog_root=root, dry_run=True),
+    ):
+        assert data["removed"] == [str((root / target).resolve())]
+        assert _tree(root) == before
+
+
+@pytest.mark.parametrize(
+    ("args", "path", "new"),
+    [
+        (["statistics.enabled", "true"], ("statistics", "enabled"), True),
+        (
+            ["pmtiles.enabled", "false", "-c", "points"],
+            ("collections", "points", "pmtiles", "enabled"),
+            False,
+        ),
+    ],
+)
+def test_config_set_effects(
+    run_cli: RunCli,
+    configured_catalog: Callable[[Path], None],
+    tmp_path: Path,
+    args: list[str],
+    path: tuple[str, ...],
+    new: bool,
+) -> None:
+    """`config set` writes the value to config.yaml in the type of its setting."""
+    key, value, *rest = args
+    collection = rest[1] if rest else None
+    for root, _, _ in _both_sides(
+        run_cli,
+        tmp_path,
+        configured_catalog,
+        ["config", "set", *args],
+        lambda root: store_setting(root, key, value, collection),
+    ):
+        stored: Any = load_config(root)
+        for part in path:
+            stored = stored[part]
+        # configured_catalog stores the opposite value, so a no-op fails here.
+        assert stored is new
+
+
+def _without(config: dict[str, Any], path: tuple[str, ...]) -> dict[str, Any]:
+    """Return ``config`` without the value at ``path``, and without levels left empty."""
+    result = copy.deepcopy(config)
+    levels = [result]
+    for part in path[:-1]:
+        levels.append(levels[-1][part])
+    del levels[-1][path[-1]]
+    for level, part in zip(reversed(levels[:-1]), reversed(path[:-1]), strict=True):
+        if not level[part]:
+            del level[part]
+    return result
+
+
+@pytest.mark.parametrize(
+    ("args", "path"),
+    [
+        (["statistics.enabled"], ("statistics", "enabled")),
+        (["pmtiles.enabled", "-c", "points"], ("collections", "points", "pmtiles", "enabled")),
+        (["backend"], None),
+    ],
+)
+def test_config_unset_effects(
+    run_cli: RunCli,
+    configured_catalog: Callable[[Path], None],
+    tmp_path: Path,
+    args: list[str],
+    path: tuple[str, ...] | None,
+) -> None:
+    """`config unset` removes exactly that key, and a key that is not set changes nothing."""
+    key, *rest = args
+    collection = rest[1] if rest else None
+    for root, before, _ in _both_sides(
+        run_cli,
+        tmp_path,
+        configured_catalog,
+        ["config", "unset", *args],
+        lambda root: clear_setting(root, key, collection),
+    ):
+        if path is None:
+            assert _tree(root) == before
+        else:
+            old: dict[str, Any] = yaml.safe_load(before[".portolan/config.yaml"])
+            assert load_config(root) == _without(old, path)
+
+
+def test_clean_effects(
+    run_cli: RunCli, points_catalog: Callable[[Path], None], tmp_path: Path
+) -> None:
+    """`clean` removes exactly the reported files and directories, and keeps the rest."""
+    for root, before, data in _both_sides(
+        run_cli,
+        tmp_path,
+        points_catalog,
+        ["clean"],
+        lambda root: clean_metadata(root),
+    ):
+        gone = [*data["files_removed"], *data["directories_removed"]]
+        assert "catalog.json" in gone
+        assert ".portolan" in gone
+        kept = {
+            name: content
+            for name, content in before.items()
+            if not any(name == g or name.startswith(f"{g}/") for g in gone)
+        }
+        assert _tree(root) == kept
+
+
+def test_clean_dry_run_effects(
+    run_cli: RunCli, points_catalog: Callable[[Path], None], tmp_path: Path
+) -> None:
+    """`clean --dry-run` changes no file."""
+    for root, before, data in _both_sides(
+        run_cli,
+        tmp_path,
+        points_catalog,
+        ["clean", "--dry-run"],
+        lambda root: clean_metadata(root, dry_run=True),
+    ):
+        assert "catalog.json" in data["would_remove_files"]
+        assert _tree(root) == before
