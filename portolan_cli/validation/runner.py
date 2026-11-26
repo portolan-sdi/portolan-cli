@@ -41,8 +41,7 @@ from pathlib import Path, PurePath
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
-from rashid_core import validate
-from rashid_core.api import LocalOnlyReader, ValidationOptions
+from rashid_core.api import LocalOnlyReader, ValidationOptions, validate
 
 from portolan_cli.errors import InvalidLiveUrlError
 from portolan_cli.trace import span

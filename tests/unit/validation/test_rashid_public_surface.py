@@ -18,13 +18,12 @@ import pytest
 pytestmark = pytest.mark.unit
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-SEARCH_ROOTS = ("portolan_cli", "tests")
+LIBRARY_ROOTS = ("portolan_cli", "packages/portolan-core/src")
+SEARCH_ROOTS = (*LIBRARY_ROOTS, "tests")
 
-# Library code imports rashid only from these. Ruff banned-api cannot ban every
-# submodule and still allow rashid_core.api, so this test is the gate.
-# shortcut: top-level rashid_core is allowed only because validate is not in
-# rashid_core.api yet. Drop it from the set once rashid 0.5.1 exports validate.
-LIBRARY_RASHID_MODULES = frozenset({"rashid_core.api", "rashid_core"})
+# Library code imports rashid only from rashid_core.api. Ruff banned-api cannot
+# ban every submodule and still allow rashid_core.api, so this test is the gate.
+LIBRARY_RASHID_MODULES = frozenset({"rashid_core.api"})
 
 
 def _rashid_modules(tree: ast.AST) -> list[str]:
@@ -77,12 +76,11 @@ class TestRashidImportsArePublic:
         """A public submodule such as rashid_core.model can still move in a patch."""
         outside = [
             f"{path.relative_to(REPO_ROOT)}: {module}"
-            for path in _python_files(("portolan_cli",))
+            for path in _python_files(LIBRARY_ROOTS)
             for module in _outside_public_api(_rashid_modules(_parsed(path)))
         ]
         assert outside == [], (
-            "Library code imports rashid only from rashid_core.api, or rashid_core "
-            "for validate:\n" + "\n".join(outside)
+            "Library code imports rashid only from rashid_core.api:\n" + "\n".join(outside)
         )
 
     def test_a_public_submodule_import_is_detected(self) -> None:
@@ -93,6 +91,7 @@ class TestRashidImportsArePublic:
         assert _outside_public_api(_rashid_modules(tree)) == [
             "rashid_core.model",
             "rashid_core.catalog",
+            "rashid_core",
         ]
 
     def test_the_sweep_sees_the_imports_it_is_meant_to_grade(self) -> None:
