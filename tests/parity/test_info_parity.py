@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -13,27 +12,9 @@ from portolan_cli.inspect import inspect_catalog, inspect_collection, inspect_fi
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from tests.catalog_invariants import RunCli
     from tests.parity.harness import Parity
 
 pytestmark = pytest.mark.integration
-
-
-@pytest.fixture
-def points_catalog(
-    build_conformant_catalog: Callable[..., Path],
-    run_cli: RunCli,
-    valid_points_geojson: Path,
-) -> Callable[[Path], None]:
-    """Build a catalog with one collection, `points`, that holds one GeoParquet item."""
-
-    def build(root: Path) -> None:
-        build_conformant_catalog(root)
-        (root / "points").mkdir()
-        shutil.copy(valid_points_geojson, root / "points" / "points.geojson")
-        run_cli("add", "--portolan-dir", str(root), str(root / "points" / "points.geojson"))
-
-    return build
 
 
 def test_info_catalog(parity: Parity, points_catalog: Callable[[Path], None]) -> None:

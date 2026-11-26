@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -28,25 +27,17 @@ from portolan_cli.status import get_catalog_status
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from tests.catalog_invariants import RunCli
     from tests.parity.harness import Parity
 
 pytestmark = pytest.mark.integration
 
 
 @pytest.fixture
-def points_catalog(
-    build_conformant_catalog: Callable[..., Path],
-    run_cli: RunCli,
-    valid_points_geojson: Path,
-) -> Callable[[Path], None]:
-    """Build a catalog with one collection, `points`, and one untracked file in it."""
+def points_catalog(points_catalog: Callable[[Path], None]) -> Callable[[Path], None]:
+    """The `points` catalog of conftest.py, with one untracked file in the collection."""
 
     def build(root: Path) -> None:
-        build_conformant_catalog(root)
-        (root / "points").mkdir()
-        shutil.copy(valid_points_geojson, root / "points" / "points.geojson")
-        run_cli("add", "--portolan-dir", str(root), str(root / "points" / "points.geojson"))
+        points_catalog(root)
         (root / "points" / "notes.txt").write_text("not tracked\n", encoding="utf-8")
 
     return build
