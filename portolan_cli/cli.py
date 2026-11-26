@@ -5006,8 +5006,8 @@ def metadata_init(
         portolan metadata init --no-recursive     # Only at catalog root
         portolan metadata init demographics --no-recursive  # Only for collection
     """
+    from portolan_cli.errors import PathNotFoundError
     from portolan_cli.metadata.yaml_tree import init_metadata_templates
-    from portolan_cli.readme import PathNotFoundError
 
     use_json = should_output_json(ctx, json_output)
     catalog_path = _metadata_catalog_root("metadata init", use_json)
@@ -5061,9 +5061,8 @@ def metadata_validate(
         portolan metadata validate --no-recursive     # Only at catalog root
         portolan metadata validate demographics --no-recursive  # Only for collection
     """
-    from portolan_cli.errors import ConfigInvalidStructureError
+    from portolan_cli.errors import ConfigInvalidStructureError, PathNotFoundError
     from portolan_cli.metadata.yaml_tree import validate_metadata_files
-    from portolan_cli.readme import PathNotFoundError
 
     use_json = should_output_json(ctx, json_output)
     catalog_path = _metadata_catalog_root("metadata validate", use_json)
@@ -5272,8 +5271,8 @@ def readme(
         portolan readme demographics --no-recursive  # Only for collection
         portolan readme --stdout --no-recursive      # Print single README
     """
-    from portolan_cli.errors import ConfigInvalidStructureError
-    from portolan_cli.readme import PathNotFoundError, UnsupportedOptionError, generate_readmes
+    from portolan_cli.errors import ConfigInvalidStructureError, PathNotFoundError
+    from portolan_cli.readme import UnsupportedOptionError, generate_readmes
 
     use_json = should_output_json(ctx, json_output)
     catalog_path = _metadata_catalog_root("readme", use_json)

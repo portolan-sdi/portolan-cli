@@ -1300,14 +1300,6 @@ def ensure_readmes(catalog_root: Path, *, state: ConfigSource | None = None) -> 
     return changed_any
 
 
-class PathNotFoundError(FileNotFoundError):
-    """A PATH argument names nothing inside the catalog.
-
-    It is not a ``PortolanError``: the JSON envelope reported this type with no
-    error code before the walk moved out of ``cli.py``, and it still does.
-    """
-
-
 def resolve_catalog_dir(catalog_root: Path, path: str | None, *, must_exist: bool) -> Path:
     """Resolve the PATH argument of a catalog walk to a directory below the root.
 
@@ -1331,6 +1323,8 @@ def resolve_catalog_dir(catalog_root: Path, path: str | None, *, must_exist: boo
     validate_safe_path(Path(path), catalog_root)
     target = catalog_root / path
     if must_exist and not target.exists():
+        from portolan_cli.errors import PathNotFoundError
+
         raise PathNotFoundError(f"Path '{path}' does not exist in catalog.")
     if must_exist and not target.is_dir():
         raise NotADirectoryError(f"Path '{path}' is not a directory.")
@@ -1340,7 +1334,7 @@ def resolve_catalog_dir(catalog_root: Path, path: str | None, *, must_exist: boo
 class UnsupportedOptionError(ValueError):
     """An option does not apply to the mode the run is in.
 
-    It is not a ``PortolanError`` for the reason that :class:`PathNotFoundError` gives.
+    It is not a ``PortolanError`` for the reason that :class:`portolan_cli.errors.PathNotFoundError` gives.
     """
 
 
