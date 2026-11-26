@@ -1144,44 +1144,12 @@ def info_cmd(
         portolan info                              # Catalog info
         portolan info demographics/census.parquet --json  # JSON output
     """
-    from portolan_cli.inspect import (
-        inspect_catalog,
-        inspect_collection,
-        inspect_file,
-    )
+    from portolan_cli.inspect import inspect_target
 
     use_json = should_output_json(ctx, json_output)
 
     try:
-        if target is None:
-            # Catalog-level info
-            catalog_result = inspect_catalog(catalog_path)
-            _output_catalog_info(catalog_result, use_json=use_json)
-        elif target.is_file():
-            # File-level info
-            file_result = inspect_file(target, catalog_root=catalog_path)
-            _output_file_info(file_result, use_json=use_json)
-        elif target.is_dir():
-            # Check what type of directory this is based on its contents.
-            # STAC structure is self-describing: catalog.json vs collection.json.
-            # Pattern 2, a directory CAN have both (e.g., a collection
-            # with sub-catalogs organizing items). We prefer catalog.json since it
-            # represents the organizational structure.
-            if (target / "catalog.json").exists():
-                # It's a catalog (root or subcatalog)
-                catalog_result = inspect_catalog(target)
-                _output_catalog_info(catalog_result, use_json=use_json)
-            elif (target / "collection.json").exists():
-                # It's a collection
-                collection_result = inspect_collection(target)
-                _output_collection_info(collection_result, use_json=use_json)
-            else:
-                # Directory exists but isn't a catalog or collection
-                raise ValueError(f"Directory is not a catalog or collection: {target}")
-        else:
-            # Path doesn't exist
-            raise FileNotFoundError(f"Path not found: {target}")
-
+        result = inspect_target(target, catalog_root=catalog_path)
     except FileNotFoundError as err:
         emit_error("info", "FileNotFoundError", str(err), use_json=use_json)
         raise SystemExit(1) from err
@@ -1189,23 +1157,6 @@ def info_cmd(
         emit_error("info", "ValueError", str(err), use_json=use_json)
         raise SystemExit(1) from err
 
-
-def _output_file_info(result: Any, *, use_json: bool) -> None:
-    """Output file info in human or JSON format."""
-    if not emit_success("info", result.to_dict(), use_json=use_json):
-        for line in result.format_human():
-            info_output(line)
-
-
-def _output_collection_info(result: Any, *, use_json: bool) -> None:
-    """Output collection info in human or JSON format."""
-    if not emit_success("info", result.to_dict(), use_json=use_json):
-        for line in result.format_human():
-            info_output(line)
-
-
-def _output_catalog_info(result: Any, *, use_json: bool) -> None:
-    """Output catalog info in human or JSON format."""
     if not emit_success("info", result.to_dict(), use_json=use_json):
         for line in result.format_human():
             info_output(line)

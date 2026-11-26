@@ -456,3 +456,39 @@ def inspect_catalog(catalog_root: Path) -> CatalogInfo:
         description=data.get("description"),
         collection_count=collection_count,
     )
+
+
+def inspect_target(
+    target: Path | None, *, catalog_root: Path
+) -> FileInfo | CollectionInfo | CatalogInfo:
+    """Inspect the file, collection, or catalog that ``target`` names.
+
+    This is the library function of ``portolan info``.
+
+    Args:
+        target: A file, a catalog or collection directory, or None for the
+            catalog at ``catalog_root``.
+        catalog_root: The catalog root. It reports the catalog when ``target``
+            is None, and it gives a file its version.
+
+    Returns:
+        The report for the kind of target.
+
+    Raises:
+        FileNotFoundError: If ``target`` does not exist.
+        ValueError: If ``target`` is a directory with no catalog.json or
+            collection.json, or a file of an unsupported format.
+    """
+    if target is None:
+        return inspect_catalog(catalog_root)
+    if target.is_file():
+        return inspect_file(target, catalog_root=catalog_root)
+    if not target.is_dir():
+        raise FileNotFoundError(f"Path not found: {target}")
+    # A directory can hold both files. catalog.json wins, because it gives the
+    # organizing structure.
+    if (target / "catalog.json").exists():
+        return inspect_catalog(target)
+    if (target / "collection.json").exists():
+        return inspect_collection(target)
+    raise ValueError(f"Directory is not a catalog or collection: {target}")

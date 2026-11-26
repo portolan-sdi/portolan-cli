@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from portolan_cli.inspect import inspect_catalog, inspect_collection, inspect_file
+from portolan_cli.inspect import inspect_catalog, inspect_collection, inspect_file, inspect_target
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -59,4 +59,44 @@ def test_info_file(parity: Parity, points_catalog: Callable[[Path], None]) -> No
         [str(target)],
         catalog=points_catalog,
         call=lambda root: inspect_file(target, catalog_root=Path()),
+    )
+
+
+@pytest.mark.parametrize("target", [None, Path(), Path("points"), Path("points/points.parquet")])
+def test_info_target(
+    parity: Parity, points_catalog: Callable[[Path], None], target: Path | None
+) -> None:
+    """`info` picks the report for each target kind, as `inspect_target` does."""
+    parity(
+        "info",
+        [] if target is None else [str(target)],
+        catalog=points_catalog,
+        call=lambda root: inspect_target(target, catalog_root=Path()),
+    )
+
+
+def test_info_missing_target(parity: Parity, points_catalog: Callable[[Path], None]) -> None:
+    """`info` on a path that does not exist reports FileNotFoundError."""
+    parity.error(
+        "info",
+        ["missing"],
+        catalog=points_catalog,
+        call=lambda root: inspect_target(Path("missing"), catalog_root=Path()),
+        raises=FileNotFoundError,
+    )
+
+
+def test_info_plain_directory(parity: Parity, points_catalog: Callable[[Path], None]) -> None:
+    """`info` on a directory with no catalog.json or collection.json reports ValueError."""
+
+    def catalog(root: Path) -> None:
+        points_catalog(root)
+        (root / "plain").mkdir()
+
+    parity.error(
+        "info",
+        ["plain"],
+        catalog=catalog,
+        call=lambda root: inspect_target(Path("plain"), catalog_root=Path()),
+        raises=ValueError,
     )
