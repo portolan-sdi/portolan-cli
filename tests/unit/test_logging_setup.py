@@ -261,7 +261,7 @@ class TestCredentialsStayOutOfTheLog:
         assert "basemaps.cartocdn.com/light_all/8/135/95.png" in err
         assert self.SECRET not in err
         record = json.loads(file_text)
-        assert "basemaps.cartocdn.com" in record["msg"]
+        assert "basemaps.cartocdn.com/" in record["msg"]
         assert "OSError" in record["exc"]
         assert self.SECRET not in file_text
 

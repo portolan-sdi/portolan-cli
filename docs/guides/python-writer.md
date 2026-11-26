@@ -7,7 +7,7 @@ that you supply. To convert data or extract metadata, use `portolan add`
 instead.
 
 For each name and parameter, see the
-[catalog writer reference](../reference/python.md#catalog-writer).
+[catalog writer reference](../reference/python.md).
 
 ## Plan the catalog
 

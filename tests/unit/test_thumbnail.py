@@ -2229,7 +2229,7 @@ class TestHungTileServer:
             assert len(asked) == asked_in_first
             warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
             assert len(warnings) == 1, warnings
-            assert "basemaps.cartocdn.com" in warnings[0]
+            assert "basemaps.cartocdn.com/" in warnings[0]
             assert self._KEY not in warnings[0]
 
             # A new run asks again.
