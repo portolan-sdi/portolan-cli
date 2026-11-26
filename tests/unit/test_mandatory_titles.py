@@ -235,6 +235,38 @@ class TestPercentEncodedLinks:
         catalog = json.loads((tmp_path / "catalog.json").read_text(encoding="utf-8"))
         assert catalog["links"][0]["title"] == "Summer"
 
+    def test_the_item_of_an_encoded_link_gets_a_title(self, tmp_path: Path) -> None:
+        _encoded_catalog(tmp_path)
+
+        repair_titles_and_links(tmp_path)
+
+        item = json.loads((tmp_path / "été" / "tree census" / "tree census.json").read_text())
+        assert item["properties"]["title"] == "Tree Census"
+
+
+@pytest.mark.unit
+def test_an_item_link_outside_the_catalog_is_not_rewritten(tmp_path: Path) -> None:
+    """The title repair writes only inside the catalog root."""
+    outside = tmp_path / "outside.json"
+    _write(outside, {"type": "Feature", "id": "x", "properties": {}, "links": []})
+    before = outside.read_text()
+    catalog_root = tmp_path / "catalog"
+    _write(
+        catalog_root / "catalog.json",
+        {
+            "type": "Catalog",
+            "stac_version": "1.0.0",
+            "id": "demo",
+            "title": "Demo",
+            "description": "d",
+            "links": [{"rel": "item", "href": "../outside.json"}],
+        },
+    )
+
+    repair_titles_and_links(catalog_root)
+
+    assert outside.read_text() == before
+
 
 @pytest.mark.unit
 class TestValidateTitleDescription:

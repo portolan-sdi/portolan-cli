@@ -297,7 +297,7 @@ def repair_titles_and_links(
 
         # Repair item titles referenced by this collection's item links so the
         # link-title backfill below has a title to copy.
-        results.extend(_repair_item_titles(stac_file, data, dry_run=dry_run))
+        results.extend(_repair_item_titles(catalog_root, stac_file, data, dry_run=dry_run))
 
     # Issue #815: a title a human wrote in metadata.yaml wins over the derived
     # one above. The sweep runs after the loop for that reason. A user who
@@ -573,12 +573,15 @@ def repair_agents_md(catalog_root: Path, *, dry_run: bool = False) -> list[FixRe
 
 
 def _repair_item_titles(
+    catalog_root: Path,
     stac_file: Path,
     data: dict[str, Any],
     *,
     dry_run: bool,
 ) -> list[FixResult]:
     """Ensure items referenced by ``item`` links have a human-readable title."""
+    from rashid_core.api import resolve_local_href
+
     from portolan_cli.humanize import derive_title
 
     results: list[FixResult] = []
@@ -592,7 +595,11 @@ def _repair_item_titles(
         href = link.get("href")
         if not isinstance(href, str) or not href:
             continue
-        item_file = (stac_file.parent / href).resolve()
+        rel = resolve_local_href(stac_file.relative_to(catalog_root).as_posix(), href)
+        # An href that leaves the catalog gives None, so the repair writes only inside it.
+        if rel is None:
+            continue
+        item_file = catalog_root / rel
         if not item_file.exists():
             continue
         try:
