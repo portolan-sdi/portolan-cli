@@ -65,18 +65,13 @@ from portolan_cli.remove import _resolve_collection_dir, remove_files
 from portolan_cli.scan.core import (
     IssueType,
     ScanIssue,
-    ScanOptions,
     ScanResult,
-    scan_directory,
 )
 from portolan_cli.scan.core import (
     Severity as ScanSeverity,
 )
-from portolan_cli.scan.fix import ProposedFix, apply_safe_fixes
-from portolan_cli.scan.infer import infer_collections
 from portolan_cli.scan.output import (
     format_collection_suggestion,
-    format_fix_commands_json,
     generate_next_steps,
     get_category_display_name,
     get_fixability,
@@ -2268,55 +2263,36 @@ def _print_check_fix_results(report: Any, *, verbose: bool = False) -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def _handle_fix_mode(
-    result: ScanResult,
-    *,
-    dry_run: bool,
-    use_json: bool,
-) -> tuple[list[ProposedFix], list[ProposedFix]]:
-    """Handle --fix mode for scan command.
+def _print_fix_report(result: ScanResult, *, dry_run: bool) -> None:
+    """Print the fixes that scan --fix proposed and applied.
 
     Args:
-        result: Scan result with issues to fix.
-        dry_run: If True, preview fixes without applying.
-        use_json: If True, suppress human output.
-
-    Returns:
-        Tuple of (proposed_fixes, applied_fixes).
+        result: Scan result with the proposed and applied fixes.
+        dry_run: If True, the fixes are a preview and none were applied.
     """
-    # Dry-run mode: compute and show what would be done
+    proposed = result.proposed_fixes
+    if not proposed:
+        info_output("No issues to fix")
+        return
+
     if dry_run:
-        proposed, _ = apply_safe_fixes(result.issues, dry_run=True)
-        if not use_json:
-            if not proposed:
-                info_output("No issues to fix")
-            else:
-                info_output(f"Dry run: {len(proposed)} fix(es) would be applied")
-                for fix in proposed:
-                    detail(f"  {fix.preview}")
-        return proposed, []
+        info_output(f"Dry run: {len(proposed)} fix(es) would be applied")
+        for fix in proposed:
+            detail(f"  {fix.preview}")
+        return
 
-    # Apply fixes
-    proposed, applied = apply_safe_fixes(result.issues, dry_run=False)
+    applied = result.applied_fixes
+    if applied:
+        success(f"Applied {len(applied)} fix(es)")
+        for fix in applied:
+            detail(f"  {fix.preview}")
 
-    if not use_json:
-        if not proposed:
-            info_output("No issues to fix")
-        else:
-            # Show successful fixes
-            if applied:
-                success(f"Applied {len(applied)} fix(es)")
-                for fix in applied:
-                    detail(f"  {fix.preview}")
-
-            # Show any that failed to apply (collisions)
-            failed = [p for p in proposed if p not in applied]
-            if failed:
-                warn(f"{len(failed)} fix(es) could not be applied (collision):")
-                for fix in failed:
-                    detail(f"  {fix.preview}")
-
-    return proposed, applied
+    # A fix that did not apply hit a name collision.
+    failed = [p for p in proposed if p not in applied]
+    if failed:
+        warn(f"{len(failed)} fix(es) could not be applied (collision):")
+        for fix in failed:
+            detail(f"  {fix.preview}")
 
 
 @cli.command()
@@ -2445,16 +2421,7 @@ def scan(
         )
         raise SystemExit(1)
 
-    # Build options from CLI flags
-    options = ScanOptions(
-        recursive=not no_recursive,
-        max_depth=max_depth,
-        include_hidden=include_hidden,
-        follow_symlinks=follow_symlinks,
-        show_all=show_all,
-        suggest_collections=suggest_collections,
-        strict=strict,
-    )
+    from portolan_cli.scan.workflow import run_scan
 
     # Pre-count directories only when progress will be displayed
     # ScanProgressReporter displays progress when: not json_mode AND stderr is TTY
@@ -2478,7 +2445,19 @@ def scan(
 
     try:
         with progress_reporter:
-            result = scan_directory(path, options, progress_callback=progress_reporter.advance)
+            outcome = run_scan(
+                path,
+                recursive=not no_recursive,
+                max_depth=max_depth,
+                include_hidden=include_hidden,
+                follow_symlinks=follow_symlinks,
+                show_all=show_all,
+                suggest_collections=suggest_collections,
+                strict=strict,
+                fix=fix,
+                dry_run=dry_run,
+                progress_callback=progress_reporter.advance,
+            )
     except FileNotFoundError as err:
         emit_error("scan", "FileNotFoundError", str(err), use_json=use_json)
         raise SystemExit(1) from err
@@ -2486,44 +2465,28 @@ def scan(
         emit_error("scan", "NotADirectoryError", str(err), use_json=use_json)
         raise SystemExit(1) from err
 
-    # Run collection inference if requested
-    if suggest_collections and result.ready:
-        result.collection_suggestions = infer_collections(result.ready)
-
     # Warn if --dry-run is used without --fix (no effect)
     if dry_run and not fix:
         warn("--dry-run has no effect without --fix")
 
-    # Handle fix mode
-    if fix:
-        proposed, applied = _handle_fix_mode(
-            result,
-            dry_run=dry_run,
-            use_json=use_json,
-        )
-        result.proposed_fixes = proposed
-        result.applied_fixes = applied
-
-    # Determine if we should fail based on strict mode
-    # Strict mode: errors OR warnings → failure
-    # Normal mode: errors only → failure (but scan is informational, so still exit 0)
-    has_strict_failure = strict and (result.has_errors or result.warning_count > 0)
+    if fix and not use_json:
+        _print_fix_report(outcome.result, dry_run=dry_run)
 
     # Output results in appropriate format
-    _output_scan_results(
-        result,
-        use_json=use_json,
-        manual_only=manual_only,
-        show_all=show_all,
-        show_tree=show_tree,
-        strict=strict,
-        has_strict_failure=has_strict_failure,
-        elapsed_seconds=progress_reporter.elapsed_seconds,
-    )
+    if use_json:
+        _output_scan_json(outcome.to_dict(), outcome.failing_issues)
+    else:
+        _output_scan_results(
+            outcome.result,
+            manual_only=manual_only,
+            show_all=show_all,
+            show_tree=show_tree,
+            elapsed_seconds=progress_reporter.elapsed_seconds,
+        )
 
-    # Handle strict mode exit code
-    if has_strict_failure:
-        _handle_strict_mode_exit(result, use_json=use_json)
+    # Strict mode: errors OR warnings fail the command.
+    if outcome.strict_failure:
+        _handle_strict_mode_exit(outcome.result, use_json=use_json)
 
     # Normal mode: scan is informational — exit 0 even with errors
 
@@ -2554,29 +2517,21 @@ def _handle_strict_mode_exit(result: ScanResult, *, use_json: bool) -> NoReturn:
 def _output_scan_results(
     result: ScanResult,
     *,
-    use_json: bool,
     manual_only: bool,
     show_all: bool,
     show_tree: bool,
-    strict: bool,
-    has_strict_failure: bool,
     elapsed_seconds: float = 0.0,
 ) -> None:
-    """Output scan results in the appropriate format.
+    """Print human-readable scan results.
 
     Args:
         result: The scan result.
-        use_json: If True, output JSON envelope.
         manual_only: If True, show only manual-resolution issues.
         show_all: If True, show all issues without truncation.
         show_tree: If True, show directory tree view.
-        strict: If True, treat warnings as errors in JSON output.
-        has_strict_failure: If True, the scan has failed in strict mode.
         elapsed_seconds: Time elapsed during scan (for progress reporting).
     """
-    if use_json:
-        _output_scan_json(result, strict=strict, has_strict_failure=has_strict_failure)
-    elif manual_only:
+    if manual_only:
         from portolan_cli.scan.output import format_scan_output
 
         output = format_scan_output(result, manual_only=True)
@@ -2590,38 +2545,22 @@ def _output_scan_results(
         )
 
 
-def _output_scan_json(result: ScanResult, *, strict: bool, has_strict_failure: bool) -> None:
+def _output_scan_json(data: dict[str, Any], failing_issues: list[ScanIssue]) -> None:
     """Output scan results as JSON envelope.
 
+    A scan with failing issues still returns its data, in an error envelope.
+
     Args:
-        result: The scan result.
-        strict: If True, include warnings as errors.
-        has_strict_failure: If True, mark as not successful.
+        data: The envelope data, from ScanOutcome.to_dict.
+        failing_issues: The errors, plus the warnings in strict mode.
     """
-    data = result.to_dict()
-    data["summary"] = {
-        "ready_count": len(result.ready),
-        "error_count": result.error_count,
-        "warning_count": result.warning_count,
-        "skipped_count": len(result.skipped),
-    }
-    # Add fix_commands for agent consumption
-    data["fix_commands"] = format_fix_commands_json(result)
-
-    if has_strict_failure or result.has_errors:
-        # Still return data, but mark as not successful
-        # In strict mode, include warnings as errors too
-        errors = [
-            ErrorDetail(type=issue.issue_type.value, message=issue.message)
-            for issue in result.issues
-            if issue.severity == ScanSeverity.ERROR
-            or (strict and issue.severity == ScanSeverity.WARNING)
-        ]
-        envelope = error_envelope("scan", errors, data=data)
-    else:
-        envelope = success_envelope("scan", data)
-
-    output_json_envelope(envelope)
+    if not failing_issues:
+        emit_success("scan", data, use_json=True)
+        return
+    errors = [
+        ErrorDetail(type=issue.issue_type.value, message=issue.message) for issue in failing_issues
+    ]
+    output_json_envelope(error_envelope("scan", errors, data=data))
 
 
 def _print_scan_header(result: ScanResult, *, elapsed_seconds: float = 0.0) -> None:

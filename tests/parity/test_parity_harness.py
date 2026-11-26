@@ -54,7 +54,6 @@ PARITY_PENDING = frozenset(
         "push",
         "readme",
         "rm",
-        "scan",
         "skills list",
         "skills show",
         "stac-geoparquet",
