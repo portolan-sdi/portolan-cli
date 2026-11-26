@@ -34,7 +34,6 @@ from portolan_cli import extension_registry as _reg
 from portolan_cli.constants import ROLE_THUMBNAIL
 from portolan_cli.formats import is_geoparquet, run_scope
 from portolan_cli.json_io import write_json_atomic
-from portolan_cli.output import warn
 from portolan_cli.stac_parquet import sync_file_extension
 from portolan_cli.sync.checksums import compute_checksum, multihash_sha256
 from portolan_cli.trace import span
@@ -365,7 +364,7 @@ def _resolve_for_collection(
     if rendered is None:
         # A silent failure left partitioned collections without a thumbnail
         # and gave no hint why (issue #1038).
-        warn(f"No thumbnail for {collection_path.name}: {path.name} did not render")
+        logger.warning("No thumbnail for %s: %s did not render", collection_path.name, path.name)
         return None
     return rendered, True
 
@@ -471,7 +470,7 @@ def _ensure_thumbnail(
             collection_path, catalog_root, data, force=force, state=state
         )
     except Exception as exc:
-        warn(f"Thumbnail generation failed for {collection_path.name}: {exc}")
+        logger.warning("Thumbnail generation failed for %s: %s", collection_path.name, exc)
         return None
     if resolved is None:
         return None
@@ -495,7 +494,7 @@ def _ensure_thumbnail(
             state=state,
         )
     except Exception as exc:
-        warn(f"Failed to track {thumbnail.name} in versions.json: {exc}")
+        logger.warning("Failed to track %s in versions.json: %s", thumbnail.name, exc)
     return thumbnail, was_rendered
 
 
