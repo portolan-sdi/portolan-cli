@@ -9,6 +9,7 @@ reason for the loopback replay.
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -75,13 +76,14 @@ def test_extract_arcgis_featureserver(parity: Parity, replay: Callable[[str | Pa
     )
 
 
-def test_extract_arcgis_imageserver_dry_run(
-    parity: Parity, replay: Callable[[str | Path], str], tmp_path: Path
-) -> None:
-    """`extract arcgis` on an ImageServer reports the dry run of the library."""
-    scenario = tmp_path / "imageserver"
+IMAGESERVER = "/arcgis/rest/services/Minimal/ImageServer"
+
+
+def _imageserver_scenario(base: Path) -> Path:
+    """Write a one-route ImageServer scenario. The extent holds one tile."""
+    scenario = base / "imageserver"
     scenario.mkdir()
-    # The fields that discovery requires. The extent holds one tile.
+    # The fields that discovery requires.
     service = {
         "name": "Minimal_Raster",
         "bandCount": 1,
@@ -91,13 +93,16 @@ def test_extract_arcgis_imageserver_dry_run(
         "extent": {"xmin": 0.0, "ymin": 0.0, "xmax": 100.0, "ymax": 100.0},
     }
     (scenario / "service.json").write_text(json.dumps(service), encoding="utf-8")
-    route: dict[str, Any] = {
-        "method": "GET",
-        "path": "/arcgis/rest/services/Minimal/ImageServer",
-        "body_file": "service.json",
-    }
+    route: dict[str, Any] = {"method": "GET", "path": IMAGESERVER, "body_file": "service.json"}
     (scenario / "routes.json").write_text(json.dumps([route]), encoding="utf-8")
-    url = replay(scenario) + str(route["path"])
+    return scenario
+
+
+def test_extract_arcgis_imageserver_dry_run(
+    parity: Parity, replay: Callable[[str | Path], str], tmp_path: Path
+) -> None:
+    """`extract arcgis` on an ImageServer reports the dry run of the library."""
+    url = replay(_imageserver_scenario(tmp_path)) + IMAGESERVER
     parity(
         "extract arcgis",
         [url, "out", "--dry-run"],
@@ -106,6 +111,30 @@ def test_extract_arcgis_imageserver_dry_run(
             url, Path("out"), imageserver=ImageServerCLIOptions(dry_run=True, timeout=60.0)
         ),
     )
+
+
+def test_imageserver_run_logs_no_token(
+    replay: Callable[[str | Path], str], tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A token in the URL stays out of the log records and the result (Codex review)."""
+    caplog.set_level(logging.DEBUG, logger="portolan_cli")
+    url = replay(_imageserver_scenario(tmp_path)) + IMAGESERVER + "?token=SECRET"
+    messages: list[tuple[str, str]] = []
+
+    result = run_extract_arcgis(
+        url,
+        tmp_path / "out",
+        imageserver=ImageServerCLIOptions(dry_run=True, timeout=60.0),
+        on_message=lambda level, text: messages.append((level, text)),
+    )
+
+    assert result.to_dict()["source_url"] == url.removesuffix("?token=SECRET")
+    assert ("info", f"Discovering ImageServer: {url.removesuffix('?token=SECRET')}") in messages
+    assert "SECRET" not in repr(result)
+    assert "SECRET" not in json.dumps(result.to_dict())
+    assert "SECRET" not in repr(messages)
+    assert caplog.records
+    assert "SECRET" not in caplog.text
 
 
 def test_extract_arcgis_list_services(

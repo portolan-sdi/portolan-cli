@@ -22,7 +22,7 @@ Typical usage:
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING
 from urllib.parse import urlencode
 
@@ -100,7 +100,8 @@ class ExtractionOptions:
     limit: int | None = None
     include_cols: str | None = None
     exclude_cols: str | None = None
-    api_key: str | None = None
+    # repr=False: an options repr reaches tracebacks and logs.
+    api_key: str | None = field(default=None, repr=False)
     license: str | None = None
     license_url: str | None = None
     catalog_id: str | None = None

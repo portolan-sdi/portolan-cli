@@ -255,7 +255,8 @@ class ExtractionOptions:
     dry_run: bool = False
     vector: VectorSettings = field(default_factory=VectorSettings)
     no_styles: bool = False
-    token: str | None = None
+    # repr=False: an options repr reaches tracebacks and logs.
+    token: str | None = field(default=None, repr=False)
     recurse: bool = True
     license: str | None = None
     license_url: str | None = None
@@ -908,7 +909,12 @@ def run_extract_arcgis(
                 url, output_dir, image, on_progress=on_tile_progress, on_message=on_message
             )
         )
-        return ImageServerRunResult(url, output_dir, image.dry_run, exit_code, image_report)
+        from portolan_cli.extract.common.urls import redact_credentials
+
+        # A repr reaches tracebacks and logs, so the result never holds the token.
+        return ImageServerRunResult(
+            redact_credentials(url), output_dir, image.dry_run, exit_code, image_report
+        )
 
     return run_extract_command(
         extract_arcgis_catalog,

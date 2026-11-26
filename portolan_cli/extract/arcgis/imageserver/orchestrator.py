@@ -87,7 +87,7 @@ class ImageServerRunResult:
     """One ImageServer run of ``portolan extract arcgis``.
 
     Attributes:
-        url: The ImageServer URL.
+        url: The ImageServer URL, with the credentials removed.
         output_dir: The directory the run wrote, as the caller gave it.
         dry_run: True when the run computed the tiles and read none.
         exit_code: 0 for success, 1 when every tile failed or held no data.
@@ -266,7 +266,9 @@ async def run_imageserver_extraction(
         )
     # The old contract maps every error to exit code 1, so the catch is broad.
     except Exception as e:  # noqa: BLE001
-        emit_message(on_message, "error", f"ImageServer extraction failed: {e}")
+        emit_message(
+            on_message, "error", f"ImageServer extraction failed: {redact_credentials(str(e))}"
+        )
         if isinstance(e, MissingLicenseError):
             emit_message(on_message, "info", CLI_LICENSE_REMEDIATION)
         return 1, None

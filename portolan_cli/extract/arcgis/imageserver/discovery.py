@@ -278,7 +278,9 @@ def _validate_required_fields(data: dict[str, Any], url: str) -> None:
     for field_name in required_fields:
         if field_name not in data:
             raise ImageServerDiscoveryError(
-                f"Missing required field '{field_name}' in ImageServer response from {url}"
+                redact_credentials(
+                    f"Missing required field '{field_name}' in ImageServer response from {url}"
+                )
             )
 
 

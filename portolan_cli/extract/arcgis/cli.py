@@ -202,10 +202,10 @@ def _handle_imageserver_extraction(
         # The license resolves before any download, so the failure costs one
         # command re-run. The user needs the flags that fix it, which the
         # FeatureServer path also prints (pull request #871 review).
-        error(f"ImageServer extraction failed: {e}")
+        error(f"ImageServer extraction failed: {redact_credentials(str(e))}")
         if isinstance(e, MissingLicenseError) and not json_output:
             info(CLI_LICENSE_REMEDIATION)
-        result = ImageServerRunResult(url, output_dir, dry_run, 1, None)
+        result = ImageServerRunResult(redact_credentials(url), output_dir, dry_run, 1, None)
 
     if json_output:
         data = result.to_dict()
