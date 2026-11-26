@@ -430,6 +430,38 @@ def test_codspeed_measures_the_benchmarks() -> None:
     assert not [s for s in job["steps"] if s.get("continue-on-error")]
 
 
+BUILD_PACKAGE = re.compile(r"uv build --package (\S+) --out-dir (\S+)")
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="#1133: phase 4 adds the portolan-core build and publish to release.yml",
+)
+def test_release_publishes_portolan_core_before_portolan_cli() -> None:
+    """portolan-cli pins portolan-core exactly, so PyPI must hold portolan-core first.
+
+    Each distribution builds into its own directory, as in rashid's
+    publish.yml. The publish step for the portolan-core directory comes
+    before the publish step for the portolan-cli directory.
+    """
+    steps = _jobs("release.yml")["release"]["steps"]
+    out_dirs = {
+        package: out_dir
+        for step in steps
+        for package, out_dir in BUILD_PACKAGE.findall(str(step.get("run", "")))
+    }
+    published = [
+        step.get("with", {}).get("packages-dir", "dist/")
+        for step in steps
+        if str(step.get("uses", "")).startswith("pypa/gh-action-pypi-publish@")
+    ]
+
+    assert {"portolan-core", "portolan-cli"} <= out_dirs.keys()
+    assert out_dirs["portolan-core"] in published
+    assert out_dirs["portolan-cli"] in published
+    assert published.index(out_dirs["portolan-core"]) < published.index(out_dirs["portolan-cli"])
+
+
 # ---------------------------------------------------------------------------
 # Cheap gate faults, run on every pull request
 # ---------------------------------------------------------------------------

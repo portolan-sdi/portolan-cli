@@ -741,6 +741,10 @@ forbidden_modules = ["portolan_cli"]
 [[tool.importlinter.contracts]]
 id = "core-no-heavy"
 name = "portolan-core must not import click or the geospatial stack"
+# This list is the fast named check. External packages are leaves in the
+# graph, so it cannot see click behind rio_cogeo. The allowlist is the
+# deptry-core hook in prek.toml, which rejects any import that
+# packages/portolan-core/pyproject.toml does not declare.
 type = "forbidden"
 source_modules = ["portolan_core"]
 forbidden_modules = [

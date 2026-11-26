@@ -144,8 +144,11 @@ jobs:
         # The export pins every package with hashes, so pip-audit audits the
         # list as written and builds no virtual environment. On the Ubuntu
         # 26.04 runner, the temporary environment fails in ensurepip.
+        # --no-emit-workspace leaves out portolan-cli and portolan-core. Their
+        # editable lines carry no hash, and --require-hashes rejects them.
+        # The third-party dependencies of both members stay in the export.
         run: |
-          uv export --no-dev --no-emit-project \
+          uv export --no-dev --no-emit-workspace \
             --extra iceberg --extra pmtiles --extra thumbnails \
             -o /tmp/runtime-deps.txt
           # shellcheck disable=SC2046  # intentional word-splitting of the flag list
@@ -705,7 +708,8 @@ jobs:
         run: uv python install 3.11
 
       - name: Build package
-        run: uv build
+        # Build portolan-cli and the portolan-core workspace member.
+        run: uv build --all-packages
 
       - name: Check package contents
         run: |

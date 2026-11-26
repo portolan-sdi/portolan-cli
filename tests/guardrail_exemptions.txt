@@ -8,6 +8,7 @@
 xfail	#914	spec	tests/integration/test_generated_catalog_conformance.py PTL-EXT-001, PTL-PRT-001, PTL-SCH-001 row partitioned
 xfail	#1143	spec	tests/integration/test_generated_catalog_conformance.py PTL-AST-012 row partitioned
 xfail	#1137	spec	tests/docs/test_v1_examples.py philadelphia example check --strict, two tests
+xfail	#1133	none	tests/docs/test_ci_wiring.py release.yml publishes portolan-core before portolan-cli
 
 invariant	catalog_invariants: file:size set to 1 for the __main__ test
 invariant	catalog_invariants: a clean root that proves the stale-exemption check

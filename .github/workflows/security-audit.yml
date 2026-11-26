@@ -55,7 +55,8 @@ jobs:
         run: |
           # Export runtime deps (what we ship). The hashes let pip-audit
           # audit the pinned list with no virtual environment, as in ci.yml.
-          uv export --no-dev --no-emit-project \
+          # --no-emit-workspace drops the unhashed editable member lines.
+          uv export --no-dev --no-emit-workspace \
             --extra iceberg --extra pmtiles --extra thumbnails \
             -o /tmp/runtime-deps.txt
 
