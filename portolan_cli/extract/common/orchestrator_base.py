@@ -37,6 +37,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from portolan_cli.extract.common.progress import MessageCallback
     from portolan_cli.extract.common.report import ExtractionReport, LayerResult
     from portolan_cli.licensing import ResolvedLicense
     from portolan_cli.metadata_extraction import ExtractedMetadata
@@ -101,7 +102,7 @@ def init_extracted_catalog(
     description: str | None,
     post_init: Callable[[Path, list[Path], bool], None] | None = None,
     state: RunState | None = None,
-    on_message: Callable[[str, str], None] | None = None,
+    on_message: MessageCallback | None = None,
 ) -> tuple[list[Path], set[str]] | None:
     """Initialize a catalog and add the extracted assets.
 
@@ -323,7 +324,7 @@ def seed_catalog_metadata(
     extracted: ExtractedMetadata | None,
     license_override: ResolvedLicense | None = None,
     *,
-    on_message: Callable[[str, str], None] | None = None,
+    on_message: MessageCallback | None = None,
 ) -> None:
     """Seed the catalog-level ``metadata.yaml`` from harvested service metadata.
 

@@ -21,13 +21,14 @@ Typical usage:
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from collections.abc import Callable
+from typing import TypeAlias
 
 logger = logging.getLogger(__name__)
+
+MessageCallback: TypeAlias = Callable[[str, str], None]
+"""Called as ``on_message(level, text)`` with a message for the user. See ``emit_message``."""
 
 _LOG_LEVELS = {"warn": logging.WARNING, "error": logging.ERROR}
 
@@ -52,8 +53,12 @@ class ExtractionProgress:
     error: str | None = None
 
 
+LayerProgressCallback: TypeAlias = Callable[[ExtractionProgress], None]
+"""Called with the progress of each layer. See ``emit_progress``."""
+
+
 def emit_progress(
-    on_progress: Callable[[ExtractionProgress], None] | None,
+    on_progress: LayerProgressCallback | None,
     layer_index: int,
     total_layers: int,
     layer_name: str,
@@ -73,7 +78,7 @@ def emit_progress(
         )
 
 
-def emit_message(on_message: Callable[[str, str], None] | None, level: str, text: str) -> None:
+def emit_message(on_message: MessageCallback | None, level: str, text: str) -> None:
     """Hand a message for the user to ``on_message(level, text)``.
 
     The level is ``info``, ``detail``, ``success``, ``warn``, or ``error``. The

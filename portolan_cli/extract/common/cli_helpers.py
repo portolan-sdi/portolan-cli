@@ -21,7 +21,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from portolan_cli.errors import MissingLicenseError
-    from portolan_cli.extract.common.progress import ExtractionProgress
+    from portolan_cli.extract.common.progress import ExtractionProgress, LayerProgressCallback
     from portolan_cli.extract.common.report import ExtractRunResult
 
 
@@ -149,7 +149,7 @@ def print_message(level: str, text: str) -> None:
 def make_extract_progress_callback(
     *,
     skipped_message: str = "  ↪ Skipped (already extracted)",
-) -> Callable[[ExtractionProgress], None]:
+) -> LayerProgressCallback:
     """Build the text-mode progress callback that every extract command shares."""
     from portolan_cli.output import detail, info, warn
 

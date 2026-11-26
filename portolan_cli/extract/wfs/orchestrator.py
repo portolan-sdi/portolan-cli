@@ -48,10 +48,12 @@ from portolan_cli.extract.wfs.discovery import LayerInfo, WFSDiscoveryResult, di
 from portolan_cli.licensing import license_url_from_text
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
     from pathlib import Path
 
-    from portolan_cli.extract.common.progress import ExtractionProgress
+    from portolan_cli.extract.common.progress import (
+        LayerProgressCallback,
+        MessageCallback,
+    )
     from portolan_cli.extract.common.report import ExtractionReport
     from portolan_cli.extract.csw.models import ISOMetadata
     from portolan_cli.extract.wfs.metadata import WFSMetadata
@@ -324,8 +326,8 @@ def extract_wfs_catalog(
     layer_filter: list[str] | None = None,
     layer_exclude: list[str] | None = None,
     options: ExtractionOptions | None = None,
-    on_progress: Callable[[ExtractionProgress], None] | None = None,
-    on_message: Callable[[str, str], None] | None = None,
+    on_progress: LayerProgressCallback | None = None,
+    on_message: MessageCallback | None = None,
 ) -> ExtractionReport:
     """Extract layers from a WFS service to a Portolan catalog.
 

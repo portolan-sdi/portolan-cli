@@ -87,6 +87,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from portolan_cli.extract.arcgis.imageserver.discovery import ImageServerMetadata
+    from portolan_cli.extract.common.progress import MessageCallback
 
 
 @dataclass
@@ -864,7 +865,7 @@ def _plan_tiles(
     extent: dict[str, Any],
     config: ExtractionConfig,
     *,
-    on_message: Callable[[str, str], None] | None = None,
+    on_message: MessageCallback | None = None,
 ) -> _TilePlan:
     """Choose the tile source and compute the tile grid.
 
@@ -927,7 +928,7 @@ def _warn_on_cache_request_count(
     tiles: list[TileSpec],
     cache: TileCacheInfo,
     *,
-    on_message: Callable[[str, str], None] | None = None,
+    on_message: MessageCallback | None = None,
 ) -> None:
     """Report how many cache requests the run still costs.
 
@@ -1018,7 +1019,7 @@ async def _process_tile(
     collection_name: str = "tiles",
     plan: _TilePlan | None = None,
     *,
-    on_message: Callable[[str, str], None] | None = None,
+    on_message: MessageCallback | None = None,
 ) -> _TileProcessResult:
     """Process a single tile: download and convert to COG.
 
@@ -1240,7 +1241,7 @@ def _load_effective_config(
     config: ExtractionConfig,
     output_dir: Path,
     *,
-    on_message: Callable[[str, str], None] | None = None,
+    on_message: MessageCallback | None = None,
 ) -> ExtractionConfig:
     """Load COG settings from config.yaml if not explicitly provided.
 
@@ -1276,7 +1277,7 @@ def _seed_metadata_from_report(
     report: ImageServerExtractionReport,
     resolved_license: ResolvedLicense | None = None,
     *,
-    on_message: Callable[[str, str], None] | None = None,
+    on_message: MessageCallback | None = None,
 ) -> None:
     """Seed metadata.yaml from extraction report.
 
@@ -1303,7 +1304,7 @@ def _auto_init_catalog(
     collection_name: str = "tiles",
     catalog_id: str | None = None,
     *,
-    on_message: Callable[[str, str], None] | None = None,
+    on_message: MessageCallback | None = None,
 ) -> bool:
     """Initialize a Portolan catalog and add extracted COG files.
 
@@ -1375,7 +1376,7 @@ async def _extract_all_tiles(
     collection_name: str = "tiles",
     plan: _TilePlan | None = None,
     *,
-    on_message: Callable[[str, str], None] | None = None,
+    on_message: MessageCallback | None = None,
 ) -> _ProcessingStats:
     """Extract all tiles with concurrency control.
 
@@ -1461,7 +1462,7 @@ def _record_empty_tile(
     attempts: int,
     on_progress: Callable[[TileProgress], None] | None,
     *,
-    on_message: Callable[[str, str], None] | None = None,
+    on_message: MessageCallback | None = None,
 ) -> None:
     """Record a tile that holds no valid pixel.
 
@@ -1522,7 +1523,7 @@ def _update_stats_and_state(
     collection_name: str = "tiles",
     empty: bool = False,
     *,
-    on_message: Callable[[str, str], None] | None = None,
+    on_message: MessageCallback | None = None,
 ) -> None:
     """Update statistics, resume state, and tile results after processing a tile.
 
@@ -1665,7 +1666,7 @@ async def _scan_for_empty_blocks(
     plan: _TilePlan,
     config: ExtractionConfig,
     *,
-    on_message: Callable[[str, str], None] | None = None,
+    on_message: MessageCallback | None = None,
 ) -> tuple[list[TileSpec], list[TileSpec]]:
     """Split output tiles into the ones to read and the ones with no data.
 
@@ -1758,7 +1759,7 @@ def _clamp_tile_size(
     config: ExtractionConfig,
     metadata: ImageServerMetadata,
     *,
-    on_message: Callable[[str, str], None] | None = None,
+    on_message: MessageCallback | None = None,
 ) -> ExtractionConfig:
     """Clamp the tile size to the exportImage limits of the service.
 
@@ -1783,7 +1784,7 @@ def _report_tile_counts(
     stats: _ProcessingStats,
     report_path: Path,
     *,
-    on_message: Callable[[str, str], None] | None = None,
+    on_message: MessageCallback | None = None,
 ) -> None:
     """Report the downloaded, empty, and failed tile counts of a run."""
     emit_message(
@@ -1810,7 +1811,7 @@ async def extract_imageserver(
     license_id: str | None = None,
     license_url: str | None = None,
     *,
-    on_message: Callable[[str, str], None] | None = None,
+    on_message: MessageCallback | None = None,
 ) -> ExtractionResult:
     """Extract raster tiles from ImageServer to COG files.
 
@@ -2076,7 +2077,7 @@ def _load_or_create_resume_state(
     url: str,
     grid: TileGrid,
     *,
-    on_message: Callable[[str, str], None] | None = None,
+    on_message: MessageCallback | None = None,
 ) -> ImageServerResumeState:
     """Load existing resume state or create new one.
 

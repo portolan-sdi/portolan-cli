@@ -48,10 +48,12 @@ from portolan_cli.extract.common.source import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
     from pathlib import Path
 
-    from portolan_cli.extract.common.progress import ExtractionProgress
+    from portolan_cli.extract.common.progress import (
+        LayerProgressCallback,
+        MessageCallback,
+    )
     from portolan_cli.extract.common.report import ExtractionReport
 
 logger = logging.getLogger(__name__)
@@ -256,8 +258,8 @@ def extract_carto_catalog(
     layer_filter: list[str] | None = None,
     layer_exclude: list[str] | None = None,
     options: ExtractionOptions | None = None,
-    on_progress: Callable[[ExtractionProgress], None] | None = None,
-    on_message: Callable[[str, str], None] | None = None,
+    on_progress: LayerProgressCallback | None = None,
+    on_message: MessageCallback | None = None,
 ) -> ExtractionReport:
     """Extract tables from a Carto account into a Portolan catalog.
 

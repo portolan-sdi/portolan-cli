@@ -420,7 +420,10 @@ class TestEmptyTileOutcome:
 
 
 class TestCompatibilityWrappers:
-    """The public wrappers keep their contract: a failure returns (1, None) (Codex review)."""
+    """The public wrappers keep their contract: a failure returns (1, None) (Codex review).
+
+    They take no callback, so their messages go to the ``portolan_cli`` logger.
+    """
 
     @staticmethod
     def _network_error() -> AsyncMock:
@@ -429,43 +432,43 @@ class TestCompatibilityWrappers:
         return AsyncMock(side_effect=ImageServerDiscoveryError("Network error"))
 
     @pytest.mark.asyncio
-    async def test_an_error_returns_exit_code_1(self, tmp_path: Path) -> None:
-        messages: list[tuple[str, str]] = []
+    async def test_an_error_returns_exit_code_1(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
         with patch(
             "portolan_cli.extract.arcgis.imageserver.orchestrator.extract_imageserver",
             self._network_error(),
         ):
             result = await run_imageserver_extraction(
-                SERVICE_URL,
-                tmp_path,
-                ImageServerCLIOptions(),
-                on_message=lambda level, text: messages.append((level, text)),
+                SERVICE_URL, tmp_path, ImageServerCLIOptions()
             )
 
         assert result == (1, None)
-        assert messages == [("error", "ImageServer extraction failed: Network error")]
+        assert [(r.levelname, r.getMessage()) for r in caplog.records] == [
+            ("ERROR", "ImageServer extraction failed: Network error")
+        ]
 
     @pytest.mark.asyncio
-    async def test_a_missing_license_returns_exit_code_1_and_the_hint(self, tmp_path: Path) -> None:
+    async def test_a_missing_license_returns_exit_code_1_and_the_hint(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        import logging
+
         from portolan_cli.errors import MissingLicenseError
         from portolan_cli.licensing import CLI_LICENSE_REMEDIATION
 
+        caplog.set_level(logging.INFO, logger="portolan_cli")
         error = MissingLicenseError("this extraction", "the source publishes no license URL")
-        messages: list[tuple[str, str]] = []
         with patch(
             "portolan_cli.extract.arcgis.imageserver.orchestrator.extract_imageserver",
             AsyncMock(side_effect=error),
         ):
-            result = await run_imageserver_extraction(
-                SERVICE_URL,
-                tmp_path,
-                on_message=lambda level, text: messages.append((level, text)),
-            )
+            result = await run_imageserver_extraction(SERVICE_URL, tmp_path)
 
         assert result == (1, None)
-        assert messages == [
-            ("error", f"ImageServer extraction failed: {error}"),
-            ("info", CLI_LICENSE_REMEDIATION),
+        assert [(r.levelname, r.getMessage()) for r in caplog.records] == [
+            ("ERROR", f"ImageServer extraction failed: {error}"),
+            ("INFO", CLI_LICENSE_REMEDIATION),
         ]
 
     def test_the_sync_wrapper_returns_exit_code_1(self, tmp_path: Path) -> None:

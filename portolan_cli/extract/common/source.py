@@ -45,7 +45,10 @@ if TYPE_CHECKING:
 
     import click
 
-    from portolan_cli.extract.common.progress import ExtractionProgress
+    from portolan_cli.extract.common.progress import (
+        LayerProgressCallback,
+        MessageCallback,
+    )
     from portolan_cli.extract.common.report import (
         ExtractionReport,
         FolderCoverage,
@@ -490,7 +493,7 @@ class _Run:
     discovery: Discovery
     output_dir: Path
     options: LayerSourceOptions
-    on_progress: Callable[[ExtractionProgress], None] | None
+    on_progress: LayerProgressCallback | None
     # Data files of the layers that timed out. Their retries stop.
     abandoned: set[str] = field(default_factory=set)
     # Set after the fetch step. A late worker then removes the staging root.
@@ -829,7 +832,7 @@ def _post_init(
     source_name: str,
     discovery: Discovery,
     resolved_license: ResolvedLicense | None,
-    on_message: Callable[[str, str], None] | None,
+    on_message: MessageCallback | None,
 ) -> Callable[[Path, list[Path], bool], None]:
     def post_init(out: Path, files: list[Path], fresh: bool) -> None:
         from portolan_cli.config import set_setting
@@ -940,7 +943,7 @@ def build_catalog(
     *,
     resolved_license: ResolvedLicense | None = None,
     catalog_id: str | None = None,
-    on_message: Callable[[str, str], None] | None = None,
+    on_message: MessageCallback | None = None,
 ) -> None:
     """Build or extend the catalog around the layers that succeeded.
 
@@ -1017,8 +1020,8 @@ def run_layer_extraction(
     output_dir: Path,
     options: LayerSourceOptions | None = None,
     *,
-    on_progress: Callable[[ExtractionProgress], None] | None = None,
-    on_message: Callable[[str, str], None] | None = None,
+    on_progress: LayerProgressCallback | None = None,
+    on_message: MessageCallback | None = None,
 ) -> ExtractionReport:
     """Extract the layers of ``source`` into a Portolan catalog.
 

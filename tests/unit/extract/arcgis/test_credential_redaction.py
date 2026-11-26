@@ -83,18 +83,16 @@ def test_cli_error_path_prints_no_token(
 
 @pytest.mark.asyncio
 async def test_compatibility_wrapper_message_holds_no_token(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     monkeypatch.setattr(RUN, _leaky_error)
-    messages: list[tuple[str, str]] = []
 
-    result = await run_imageserver_extraction(
-        TOKEN_URL, tmp_path, on_message=lambda level, text: messages.append((level, text))
-    )
+    result = await run_imageserver_extraction(TOKEN_URL, tmp_path)
 
     assert result == (1, None)
-    assert [level for level, _ in messages] == ["error"]
-    assert "SECRET" not in messages[0][1]
+    assert [r.levelname for r in caplog.records] == ["ERROR"]
+    assert "Failed to read" in caplog.text
+    assert "SECRET" not in caplog.text
 
 
 def test_options_repr_holds_no_credential() -> None:

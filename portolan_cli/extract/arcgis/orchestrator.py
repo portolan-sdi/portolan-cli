@@ -78,7 +78,10 @@ if TYPE_CHECKING:
         ImageServerRunResult,
     )
     from portolan_cli.extract.arcgis.metadata import ArcGISMetadata
-    from portolan_cli.extract.common.progress import ExtractionProgress
+    from portolan_cli.extract.common.progress import (
+        LayerProgressCallback,
+        MessageCallback,
+    )
     from portolan_cli.extract.common.report import ExtractionReport, ExtractRunResult
 
 logger = logging.getLogger(__name__)
@@ -784,8 +787,8 @@ def extract_arcgis_catalog(
     service_filter: list[str] | None = None,
     service_exclude: list[str] | None = None,
     options: ExtractionOptions | None = None,
-    on_progress: Callable[[ExtractionProgress], None] | None = None,
-    on_message: Callable[[str, str], None] | None = None,
+    on_progress: LayerProgressCallback | None = None,
+    on_message: MessageCallback | None = None,
 ) -> ExtractionReport:
     """Extract layers from an ArcGIS service to a Portolan catalog.
 
@@ -843,9 +846,9 @@ def run_extract_arcgis(
     imageserver: ImageServerCLIOptions | None = None,
     layer_filter: list[str] | None = None,
     layer_exclude: list[str] | None = None,
-    on_progress: Callable[[ExtractionProgress], None] | None = None,
+    on_progress: LayerProgressCallback | None = None,
     on_tile_progress: Callable[[TileProgress], None] | None = None,
-    on_message: Callable[[str, str], None] | None = None,
+    on_message: MessageCallback | None = None,
 ) -> ServicesRootDiscoveryResult | ExtractRunResult | ImageServerRunResult:
     """Run ``portolan extract arcgis`` in the mode that the URL and ``list_only`` select.
 

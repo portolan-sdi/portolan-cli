@@ -8,13 +8,13 @@ import pytest
 from click.testing import CliRunner
 
 from portolan_cli.cli import cli
+from portolan_cli.extract.carto.orchestrator import ExtractionOptions
 from portolan_cli.extract.common.source import Discovery, build_report
 
 if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
-    from portolan_cli.extract.carto.orchestrator import ExtractionOptions
     from portolan_cli.extract.common.report import ExtractionReport
 
 pytestmark = [pytest.mark.unit]
@@ -23,24 +23,16 @@ pytestmark = [pytest.mark.unit]
 def _make_capturing_fake(captured: dict[str, object]) -> Callable[..., ExtractionReport]:
     """Build a fake extract_carto_catalog that records resolved options + filters."""
 
-    def fake_extract(
-        url: str,
-        output_dir: Path,
-        *,
-        layer_filter: list[str] | None = None,
-        layer_exclude: list[str] | None = None,
-        options: ExtractionOptions | None = None,
-        on_progress: object = None,
-        on_message: object = None,
-    ) -> ExtractionReport:
-        assert options is not None
+    def fake_extract(url: str, output_dir: Path, **kwargs: object) -> ExtractionReport:
+        options = kwargs["options"]
+        assert isinstance(options, ExtractionOptions)
         captured["where"] = options.where
         captured["limit"] = options.limit
         captured["api_key"] = options.api_key
         captured["workers"] = options.workers
         captured["catalog_id"] = options.catalog_id
-        captured["layer_filter"] = layer_filter
-        captured["layer_exclude"] = layer_exclude
+        captured["layer_filter"] = kwargs["layer_filter"]
+        captured["layer_exclude"] = kwargs["layer_exclude"]
         return build_report(Discovery(source_url=url, layers=[]), [])
 
     return fake_extract

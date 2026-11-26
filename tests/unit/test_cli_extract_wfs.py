@@ -8,6 +8,7 @@ import pytest
 from click.testing import CliRunner
 
 from portolan_cli.cli import cli
+from portolan_cli.extract.wfs.orchestrator import ExtractionOptions
 from tests.support.extract import make_report
 
 if TYPE_CHECKING:
@@ -15,7 +16,6 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from portolan_cli.extract.common.report import ExtractionReport
-    from portolan_cli.extract.wfs.orchestrator import ExtractionOptions
 
 
 def _make_capturing_fake(
@@ -23,17 +23,9 @@ def _make_capturing_fake(
 ) -> Callable[..., ExtractionReport]:
     """Build a fake extract_wfs_catalog that records the resolved options."""
 
-    def fake_extract(
-        url: str,
-        output_dir: Path,
-        *,
-        layer_filter: list[str] | None = None,
-        layer_exclude: list[str] | None = None,
-        options: ExtractionOptions | None = None,
-        on_progress: object = None,
-        on_message: object = None,
-    ) -> ExtractionReport:
-        assert options is not None
+    def fake_extract(url: str, output_dir: Path, **kwargs: object) -> ExtractionReport:
+        options = kwargs["options"]
+        assert isinstance(options, ExtractionOptions)
         captured["page_size"] = options.page_size
         captured["auto_tile"] = options.auto_tile
         captured["catalog_id"] = options.catalog_id

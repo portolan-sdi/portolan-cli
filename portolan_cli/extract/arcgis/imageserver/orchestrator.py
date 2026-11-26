@@ -37,6 +37,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from portolan_cli.extract.arcgis.imageserver.report import ImageServerExtractionReport
+    from portolan_cli.extract.common.progress import MessageCallback
 
 
 @dataclass
@@ -139,7 +140,7 @@ async def run_imageserver(
     options: ImageServerCLIOptions | None = None,
     *,
     on_progress: Callable[[TileProgress], None] | None = None,
-    on_message: Callable[[str, str], None] | None = None,
+    on_message: MessageCallback | None = None,
 ) -> tuple[int, ImageServerExtractionReport | None]:
     """Run ImageServer extraction and pick the exit code. Raise on an error.
 
@@ -233,25 +234,19 @@ async def run_imageserver(
 
 
 async def run_imageserver_extraction(
-    url: str,
-    output_dir: Path,
-    options: ImageServerCLIOptions | None = None,
-    *,
-    on_progress: Callable[[TileProgress], None] | None = None,
-    on_message: Callable[[str, str], None] | None = None,
+    url: str, output_dir: Path, options: ImageServerCLIOptions | None = None
 ) -> tuple[int, ImageServerExtractionReport | None]:
     """Run ``run_imageserver`` and turn an error into exit code 1.
 
-    This wrapper keeps the contract that callers had before #1133. An error
-    returns ``(1, None)`` and goes to ``on_message`` at the ``error`` level.
-    A missing license also sends the flags that set one, at ``info``.
+    This wrapper keeps the signature and the contract that callers had
+    before #1133. An error returns ``(1, None)``. The messages go to the
+    ``portolan_cli`` logger, because the wrapper takes no callback. A
+    missing license also logs the flags that set one.
 
     Args:
         url: ImageServer URL.
         output_dir: Directory to write extracted data.
         options: Options (defaults to ImageServerCLIOptions()).
-        on_progress: Called with the progress of each tile.
-        on_message: Called as ``on_message(level, text)`` with each message.
 
     Returns:
         Tuple of (exit_code, report). Exit code is 0 for success, 1 for failure.
@@ -261,16 +256,12 @@ async def run_imageserver_extraction(
     from portolan_cli.licensing import CLI_LICENSE_REMEDIATION
 
     try:
-        return await run_imageserver(
-            url, output_dir, options, on_progress=on_progress, on_message=on_message
-        )
+        return await run_imageserver(url, output_dir, options)
     # The old contract maps every error to exit code 1, so the catch is broad.
     except Exception as e:  # noqa: BLE001
-        emit_message(
-            on_message, "error", f"ImageServer extraction failed: {redact_credentials(str(e))}"
-        )
+        emit_message(None, "error", f"ImageServer extraction failed: {redact_credentials(str(e))}")
         if isinstance(e, MissingLicenseError):
-            emit_message(on_message, "info", CLI_LICENSE_REMEDIATION)
+            emit_message(None, "info", CLI_LICENSE_REMEDIATION)
         return 1, None
 
 
