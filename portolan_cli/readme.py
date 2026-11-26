@@ -46,7 +46,7 @@ from portolan_cli.stac_links import owned_item_hrefs
 from portolan_cli.stac_links import visible_stac_files as _visible_stac_files
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterator
 
     from portolan_cli.config import ConfigSource
 
@@ -1401,13 +1401,22 @@ def _settle_readme(readme_path: Path, content: str, *, check: bool) -> bool:
     return True
 
 
+def _start_then_subtree(base_dir: Path) -> Iterator[Path]:
+    """Yield ``base_dir``, then list and yield everything below it.
+
+    The caller settles ``base_dir`` before the listing runs, so a listing error
+    leaves the start directory done.
+    """
+    yield base_dir
+    yield from sorted(base_dir.rglob("*"))
+
+
 def _readme_walk(
     catalog_root: Path, base_dir: Path, *, check: bool, say: Callable[[str], None]
 ) -> ReadmeRunResult:
     """Write or check the README of each catalog and collection at and below ``base_dir``."""
     result = ReadmeRunResult(recursive=True, check=check)
-    candidates = [base_dir] + sorted(base_dir.rglob("*"))
-    for directory in candidates:
+    for directory in _start_then_subtree(base_dir):
         if not directory.is_dir():
             continue
         rel_dir = directory.relative_to(catalog_root)

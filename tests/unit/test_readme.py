@@ -533,3 +533,32 @@ class TestGenerateReadmeForCollection:
 
         # Should work without STAC
         assert "Portolan" in readme  # At minimum, has footer
+
+
+class TestGenerateReadmesWalkOrder:
+    """generate_readmes settles the start directory before it lists the subtree."""
+
+    @pytest.mark.unit
+    def test_root_readme_is_written_before_the_subtree_listing_fails(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An OSError from the listing leaves the root README regenerated and reported."""
+        from pathlib import Path as RealPath
+
+        from portolan_cli.readme import generate_catalog_readme, generate_readmes
+
+        (tmp_path / "catalog.json").write_text(
+            json.dumps({"type": "Catalog", "id": "root", "description": "Root", "links": []})
+        )
+        (tmp_path / "README.md").write_text("stale\n")
+
+        def fail_listing(self: Path, pattern: str) -> None:
+            raise OSError("listing failed")
+
+        messages: list[str] = []
+        monkeypatch.setattr(RealPath, "rglob", fail_listing)
+        with pytest.raises(OSError, match="listing failed"):
+            generate_readmes(tmp_path, on_progress=messages.append)
+
+        assert (tmp_path / "README.md").read_text() == generate_catalog_readme(tmp_path)
+        assert messages == ["Processing catalog root", "Reading catalog.json from catalog root"]
