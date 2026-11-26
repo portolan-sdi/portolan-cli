@@ -32,7 +32,6 @@ from portolan_cli.constants import ROLE_VISUAL
 from portolan_cli.errors import PortolanError
 from portolan_cli.formats import is_geoparquet, run_scope
 from portolan_cli.json_io import write_json_atomic
-from portolan_cli.output import warn
 from portolan_cli.stac_parquet import stamp_file_fields, sync_file_extension
 from portolan_cli.versions import track_generated_assets
 
@@ -265,10 +264,10 @@ def _end_build(pmtiles_path: Path, previous: Path | None, *, succeeded: bool) ->
     # missing_ok=True avoids TOCTOU race condition
     if pmtiles_path.exists():
         pmtiles_path.unlink(missing_ok=True)
-        warn(f"Cleaned up partial file after failure: {pmtiles_path.name}")
+        logger.warning("Cleaned up partial file after failure: %s", pmtiles_path.name)
     if previous is not None:
         previous.replace(pmtiles_path)
-        warn(f"Kept the previous {pmtiles_path.name}: the rebuild failed.")
+        logger.warning("Kept the previous %s: the rebuild failed.", pmtiles_path.name)
 
 
 def _discover_style_for_thumbnail(collection_dir: Path) -> Path | None:
@@ -679,7 +678,7 @@ def _backfill_skipped_assets(
             state=state,
         )
     except Exception as e:
-        warn(f"Failed to backfill versions.json tracking for {pmtiles_path.name}: {e}")
+        logger.warning("Failed to backfill versions.json tracking for %s: %s", pmtiles_path.name, e)
 
 
 def _generate_thumbnail_asset(
@@ -715,7 +714,7 @@ def _generate_thumbnail_asset(
             style_path=style_path,
         )
     except Exception as e:
-        warn(f"Thumbnail generation failed for {pmtiles_path.name}: {e}")
+        logger.warning("Thumbnail generation failed for %s: %s", pmtiles_path.name, e)
         return None
 
 
@@ -743,7 +742,9 @@ def _track_side_step_assets(
             collection_path, generated_assets, catalog_root, message=message, state=state
         )
     except Exception as e:
-        warn(f"Failed to track generated assets in versions.json for {pmtiles_path.name}: {e}")
+        logger.warning(
+            "Failed to track generated assets in versions.json for %s: %s", pmtiles_path.name, e
+        )
 
 
 def generate_pmtiles_for_collection(
