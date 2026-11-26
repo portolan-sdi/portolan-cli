@@ -8,7 +8,7 @@
 xfail	#914	spec	tests/integration/test_generated_catalog_conformance.py PTL-EXT-001, PTL-PRT-001, PTL-SCH-001 row partitioned
 xfail	#1143	spec	tests/integration/test_generated_catalog_conformance.py PTL-AST-012 row partitioned
 xfail	#1137	spec	tests/docs/test_v1_examples.py philadelphia example check --strict, two tests
-xfail	#1133	none	tests/integration/test_check_workflow.py, tests/unit/test_partitioning.py, tests/unit/test_pull_discovery_output.py, tests/parity/test_pull_sync_clone_parity.py library code still prints
+xfail	#1133	none	tests/integration/test_check_workflow.py, tests/unit/test_pull_discovery_output.py, tests/parity/test_pull_sync_clone_parity.py library code still prints
 
 invariant	catalog_invariants: file:size set to 1 for the __main__ test
 invariant	catalog_invariants: a clean root that proves the stale-exemption check

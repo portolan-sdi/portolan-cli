@@ -8,6 +8,8 @@ Tests the partitioning functionality including:
 
 from __future__ import annotations
 
+import subprocess
+import sys
 from pathlib import Path
 from unittest import mock
 
@@ -1038,35 +1040,86 @@ class TestPartitionFile:
         assert sorted(str(f) for f in Path("cli/out").rglob("*.parquet")) == data["files"]
 
     @pytest.mark.integration
-    @pytest.mark.xfail(
-        strict=True,
-        reason="#1133: geoparquet-io writes partition progress to the terminal",
-    )
     def test_the_library_call_prints_nothing(self, tmp_path: Path) -> None:
         """A fresh process that calls partition_file gets no terminal output.
 
-        geoparquet-io logs progress through the ``geoparquet_io`` logger. When the
-        root logger has no handler, its first call installs a stream handler at
-        INFO. The ``portolan`` command configures the root logger first, so its
-        output does not show the message. A plain library caller does.
+        geoparquet-io logs progress through the ``geoparquet_io`` logger. When
+        that logger has no handler and the root logger has none, geoparquet-io
+        installs a stream handler at INFO. The NullHandler that
+        ``portolan_cli`` attaches stops that.
         """
-        import subprocess
-        import sys
-
         source = _points_geoparquet(tmp_path / "points.parquet")
-        code = (
-            "import sys\n"
-            "from pathlib import Path\n"
-            "from portolan_cli.partitioning import partition_file\n"
-            "partition_file(Path(sys.argv[1]), Path(sys.argv[2]))\n"
-        )
 
-        result = subprocess.run(
-            [sys.executable, "-c", code, str(source), str(tmp_path / "out")],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
+        result = _python(_PARTITION_CALL, str(source), str(tmp_path / "out"))
 
         assert list((tmp_path / "out").rglob("*.parquet"))
         assert (result.stdout, result.stderr) == ("", "")
+
+    @pytest.mark.integration
+    def test_a_caller_that_configures_logging_gets_the_warnings(self, tmp_path: Path) -> None:
+        """The NullHandler keeps propagation, so a root handler gets geoparquet-io warnings."""
+        source = _points_geoparquet(tmp_path / "points.parquet")
+        configure = (
+            "import logging\nlogging.basicConfig(format='%(name)s %(levelname)s %(message)s')\n"
+        )
+
+        result = _python(configure + _PARTITION_CALL, str(source), str(tmp_path / "out"))
+
+        assert result.stdout == ""
+        assert result.stderr.splitlines() == [
+            "geoparquet_io WARNING   Small partitions: Average of 500 rows per partition is"
+            " below recommended 10,000. Suboptimal but might be intentional for your use case."
+        ]
+
+    @pytest.mark.integration
+    def test_the_partition_command_output_is_unchanged(self, tmp_path: Path) -> None:
+        """`portolan partition` shows its own lines and the geoparquet-io warning, not INFO."""
+        import re
+
+        _points_geoparquet(tmp_path / "points.parquet")
+
+        result = _portolan(tmp_path, "partition", "points.parquet", "out")
+
+        assert result.stdout == (
+            "\u2192 Partitioning points.parquet with kdtree strategy...\n"
+            "\u2713 Created 2 partitions in out\n"
+        )
+        assert [re.sub(r"^\+\d+\.\d+s ", "", line) for line in result.stderr.splitlines()] == [
+            "WARNING geoparquet_io:   Small partitions: Average of 500 rows per partition is"
+            " below recommended 10,000. Suboptimal but might be intentional for your use case."
+        ]
+
+    @pytest.mark.integration
+    def test_the_add_command_output_is_unchanged(self, tmp_path: Path) -> None:
+        """`portolan add` of a GeoParquet file that geoparquet-io rewrites prints only its own lines."""
+        _portolan(tmp_path, "init", "--auto", "--license", "CC-BY-4.0")
+        # The subprocess escapes the no_basemap_tiles fixture, so it draws no thumbnail.
+        _portolan(tmp_path, "config", "set", "thumbnails.enabled", "false")
+        (tmp_path / "points").mkdir()
+        _points_geoparquet(tmp_path / "points" / "points.parquet")
+
+        result = _portolan(tmp_path, "add", "points")
+
+        assert result.stdout.splitlines()[0].startswith("\u2192 Rewriting points.parquet (")
+        assert result.stdout.splitlines()[1:] == ["\u2713 Added 1 file to 1 collection"]
+        assert result.stderr == ""
+
+
+_PARTITION_CALL = (
+    "import sys\n"
+    "from pathlib import Path\n"
+    "from portolan_cli.partitioning import partition_file\n"
+    "partition_file(Path(sys.argv[1]), Path(sys.argv[2]))\n"
+)
+
+
+def _python(code: str, *args: str, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
+    """Run ``code`` in a fresh interpreter, so no handler of this test process applies."""
+    return subprocess.run(
+        [sys.executable, "-c", code, *args], capture_output=True, text=True, check=True, cwd=cwd
+    )
+
+
+def _portolan(cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    """Run the ``portolan`` command in a fresh process in ``cwd``."""
+    return _python("from portolan_cli import cli\ncli()\n", *args, cwd=cwd)
