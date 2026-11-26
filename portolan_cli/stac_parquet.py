@@ -30,6 +30,7 @@ import hashlib
 import json
 import os
 from dataclasses import dataclass, field, replace
+from pathlib import PureWindowsPath
 from typing import TYPE_CHECKING, Any, TypeGuard
 from urllib.parse import unquote
 
@@ -286,7 +287,9 @@ def _is_relative_href(href: object) -> TypeGuard[str]:
         isinstance(href, str)
         and bool(href)
         and not is_absolute_href(href)
-        and not is_absolute_href(unquote(href))
+        # A decoded colon is a file name character, not a URI scheme.
+        and not unquote(href).startswith(("/", "\\"))
+        and not PureWindowsPath(unquote(href)).drive
     )
 
 
