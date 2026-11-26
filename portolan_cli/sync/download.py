@@ -53,6 +53,7 @@ Note:
 from __future__ import annotations
 
 import fnmatch
+import logging
 import time
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
@@ -68,12 +69,15 @@ from obstore.store import (
     S3Store,
 )
 
-from portolan_cli.output import detail, error, info, success, warn
 from portolan_cli.sync.upload import (
     _setup_store_and_kwargs,
     parse_object_store_url,
 )
 from portolan_cli.trace import submit
+
+# Transfer progress is a diagnostic. Each caller reports its own outcome from
+# the DownloadResult.
+logger = logging.getLogger(__name__)
 
 # Type alias for all supported object stores (same as upload.py)
 ObjectStore = S3Store | GCSStore | AzureStore | HTTPStore | LocalStore | MemoryStore
@@ -208,20 +212,14 @@ def _download_one_file(
     remote_key: str,
     local_path: Path,
     file_size: int,
-    *,
-    verbose: bool = False,
 ) -> tuple[Path, Exception | None, int]:
     """Download a single file and return result tuple for parallel processing.
-
-    Per-file output only shown in verbose mode when used in
-    batch operations. Errors are always shown.
 
     Args:
         store: Object store instance
         remote_key: Remote object key to download
         local_path: Local path to save the file
         file_size: Expected file size in bytes
-        verbose: If True, show per-file download/success messages.
 
     Returns:
         Tuple of (local_path, error_or_none, bytes_downloaded)
@@ -232,9 +230,7 @@ def _download_one_file(
         start_time = time.time()
 
         filename = local_path.name
-        # Per-file output only in verbose mode
-        if verbose:
-            info(f"Downloading {filename} ({size_mb:.2f} MB) <- {remote_key}")
+        logger.debug("Downloading %s (%.2f MB) <- %s", filename, size_mb, remote_key)
 
         # Ensure parent directory exists
         local_path.parent.mkdir(parents=True, exist_ok=True)
@@ -262,16 +258,13 @@ def _download_one_file(
         elapsed = time.time() - start_time
         speed_mbps = size_mb / elapsed if elapsed > 0 else 0
 
-        # Per-file output only in verbose mode
-        if verbose:
-            success(f"{filename} ({speed_mbps:.2f} MB/s)")
+        logger.debug("Downloaded %s (%.2f MB/s)", filename, speed_mbps)
         return local_path, None, actual_size
     except Exception as e:
         # Clean up partial file if it exists (for any uncaught exceptions)
         if local_path.exists():
             local_path.unlink()
-        # Errors are always shown
-        error(f"{local_path.name}: {e}")
+        logger.warning("%s: %s", local_path.name, e)
         return local_path, e, 0
 
 
@@ -324,7 +317,7 @@ def download_file(
 
     # Overwrite protection
     if not overwrite and local_path.exists():
-        detail(f"Skipping existing file: {local_path}")
+        logger.debug("Skipping existing file: %s", local_path)
         return DownloadResult(
             success=True,
             files_downloaded=0,
@@ -334,7 +327,7 @@ def download_file(
         )
 
     if dry_run:
-        info(f"[DRY RUN] Would download: {prefix} -> {local_path}")
+        logger.info("[DRY RUN] Would download: %s -> %s", prefix, local_path)
         return DownloadResult(
             success=True,
             files_downloaded=0,
@@ -358,7 +351,7 @@ def download_file(
         file_size = response.meta.get("size", 0)
         size_mb = file_size / (1024 * 1024) if file_size else 0
 
-        info(f"Downloading {local_path.name} ({size_mb:.2f} MB) <- {prefix}")
+        logger.debug("Downloading %s (%.2f MB) <- %s", local_path.name, size_mb, prefix)
 
         # Stream download to file with cleanup on failure
         try:
@@ -382,7 +375,7 @@ def download_file(
         elapsed = time.time() - start_time
         speed_mbps = size_mb / elapsed if elapsed > 0 else 0
 
-        success(f"Download complete ({speed_mbps:.2f} MB/s)")
+        logger.debug("Download complete (%.2f MB/s)", speed_mbps)
 
         return DownloadResult(
             success=True,
@@ -398,7 +391,7 @@ def download_file(
                 local_path.unlink()
         except OSError:
             pass  # Already deleted or permission issue
-        error(f"Download failed: {e}")
+        logger.warning("Download failed: %s", e)
         return DownloadResult(
             success=False,
             files_downloaded=0,
@@ -439,17 +432,17 @@ def _list_remote_files(
     return files
 
 
-def _print_dry_run_directory(
+def _log_dry_run_directory(
     files: list[dict[str, int | str]], prefix: str, destination: Path, total_size_mb: float
 ) -> None:
-    """Print dry-run information for directory download."""
-    info(f"[DRY RUN] Would download {len(files)} file(s) ({total_size_mb:.2f} MB total)")
+    """Log dry-run information for directory download."""
+    logger.info("[DRY RUN] Would download %d file(s) (%.2f MB total)", len(files), total_size_mb)
     for f in files[:10]:
         remote_path = str(f["path"])
         local_path = _build_local_path(remote_path, prefix, destination)
-        detail(f"  {remote_path} -> {local_path}")
+        logger.info("  %s -> %s", remote_path, local_path)
     if len(files) > 10:
-        detail(f"  ... and {len(files) - 10} more file(s)")
+        logger.info("  ... and %d more file(s)", len(files) - 10)
 
 
 def _execute_parallel_downloads(
@@ -460,12 +453,8 @@ def _execute_parallel_downloads(
     max_files: int,
     fail_fast: bool,
     overwrite: bool = True,
-    *,
-    verbose: bool = False,
 ) -> list[tuple[Path, Exception | None, int]]:
     """Execute parallel downloads using ThreadPoolExecutor.
-
-    Per-file output controlled by verbose parameter.
 
     Args:
         store: Object store instance
@@ -475,7 +464,6 @@ def _execute_parallel_downloads(
         max_files: Max concurrent file downloads
         fail_fast: Stop on first error if True
         overwrite: If False, skip existing files
-        verbose: If True, show per-file download messages.
 
     Returns:
         List of (local_path, error_or_none, bytes_downloaded) tuples
@@ -493,13 +481,13 @@ def _execute_parallel_downloads(
         try:
             _validate_local_path(local_path, destination)
         except PathTraversalError as e:
-            warn(f"Skipping {remote_key}: {e}")
+            logger.warning("Skipping %s: %s", remote_key, e)
             results.append((local_path, e, 0))
             continue
 
         # Overwrite protection
         if not overwrite and local_path.exists():
-            detail(f"Skipping existing: {local_path.name}")
+            logger.debug("Skipping existing: %s", local_path.name)
             continue
 
         files_to_download.append((remote_key, file_size, local_path))
@@ -523,7 +511,6 @@ def _execute_parallel_downloads(
                     remote_key,
                     local_path,
                     file_size,
-                    verbose=verbose,
                 )
                 pending[future] = remote_key
                 if len(pending) >= max_files:
@@ -552,7 +539,6 @@ def _execute_parallel_downloads(
                         remote_key,
                         local_path,
                         file_size,
-                        verbose=verbose,
                     )
                     pending[new_future] = remote_key
                 except StopIteration:
@@ -568,7 +554,6 @@ def _execute_parallel_downloads(
                     remote_key,
                     local_path,
                     file_size,
-                    verbose=verbose,
                 ): remote_key
                 for remote_key, file_size, local_path in files_to_download
             }
@@ -594,12 +579,10 @@ def download_directory(
     s3_endpoint: str | None = None,
     s3_region: str | None = None,
     s3_use_ssl: bool | None = None,
-    verbose: bool = False,
 ) -> DownloadResult:
     """Download a directory from S3/GCS/Azure with parallel downloads.
 
-    Per-file output controlled by verbose parameter.
-    Progress is shown via summary messages at start/end.
+    Progress goes to the module logger.
 
     Args:
         source: Object store URL (e.g., s3://bucket/prefix/)
@@ -614,7 +597,6 @@ def download_directory(
         s3_endpoint: Custom S3-compatible endpoint (e.g., "minio.example.com:9000")
         s3_region: S3 region (default: auto-detected)
         s3_use_ssl: Whether to use HTTPS for S3 endpoint (default: True)
-        verbose: If True, show per-file download messages.
 
     Returns:
         DownloadResult with download statistics
@@ -650,7 +632,7 @@ def download_directory(
 
     # Early return for empty remote directory
     if not files:
-        detail(f"No files found at {source}")
+        logger.info("No files found at %s", source)
         return DownloadResult(
             success=True, files_downloaded=0, files_failed=0, total_bytes=0, errors=[]
         )
@@ -659,7 +641,7 @@ def download_directory(
     total_size_mb = total_size / (1024 * 1024)
 
     if dry_run:
-        _print_dry_run_directory(files, prefix, destination, total_size_mb)
+        _log_dry_run_directory(files, prefix, destination, total_size_mb)
         return DownloadResult(
             success=True, files_downloaded=0, files_failed=0, total_bytes=0, errors=[]
         )
@@ -667,13 +649,13 @@ def download_directory(
     # Ensure destination directory exists
     destination.mkdir(parents=True, exist_ok=True)
 
-    info(f"Found {len(files)} file(s) to download ({total_size_mb:.2f} MB total)")
+    logger.info("Found %d file(s) to download (%.2f MB total)", len(files), total_size_mb)
 
     # Ensure max_files is at least 1 to avoid ThreadPoolExecutor ValueError
     max_files = max(1, max_files)
 
     results = _execute_parallel_downloads(
-        store, files, prefix, destination, max_files, fail_fast, overwrite, verbose=verbose
+        store, files, prefix, destination, max_files, fail_fast, overwrite
     )
 
     # Calculate results

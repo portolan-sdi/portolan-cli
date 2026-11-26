@@ -75,7 +75,6 @@ RATCHET_TID251 = frozenset(
         "portolan_cli/preparation.py",
         "portolan_cli/stac.py",
         "portolan_cli/sync/core.py",
-        "portolan_cli/sync/download.py",
         "portolan_cli/sync/pull.py",
         "portolan_cli/sync/push.py",
         "portolan_cli/viz/pmtiles.py",
