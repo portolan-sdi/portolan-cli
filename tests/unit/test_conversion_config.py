@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from portolan_cli.config import (
+from portolan_core.config import (
     get_setting,
     load_config,
     set_setting,

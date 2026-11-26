@@ -321,7 +321,7 @@ class TestIntermediateSidecarFiles:
     ) -> None:
         """The uploaded set covers the linked set, so no published link dangles."""
         from portolan_cli.catalog import create_intermediate_catalogs
-        from portolan_cli.stac_links import iter_links
+        from portolan_core.stac_links import iter_links
 
         _setup_valid_catalog(tmp_path)
         _write_catalog_json(tmp_path / "catalog.json", "root")

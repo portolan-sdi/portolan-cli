@@ -3,13 +3,13 @@ paths:
   - "portolan_cli/stac.py"
   - "portolan_cli/stac_parquet.py"
   - "portolan_cli/add.py"
-  - "portolan_cli/query.py"
+  - "packages/portolan-core/src/portolan_core/query.py"
   - "portolan_cli/remove.py"
   - "portolan_cli/catalog.py"
   - "portolan_cli/collection.py"
   - "portolan_cli/collection_id.py"
   - "portolan_cli/item.py"
-  - "portolan_cli/models/**"
+  - "packages/portolan-core/src/portolan_core/models/**"
 ---
 
 # STAC construction and asset wiring

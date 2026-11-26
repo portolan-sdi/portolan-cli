@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from portolan_cli.stac_links import published_files, resolve_href
+from portolan_core.stac_links import published_files, resolve_href
 
 if TYPE_CHECKING:
     from pathlib import Path

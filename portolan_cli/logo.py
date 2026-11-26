@@ -38,13 +38,13 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from portolan_cli.errors import (
+from portolan_core.errors import (
     CatalogNotFoundError,
     LogoSourceNotFoundError,
     RemoteLogoSourceError,
     UnsupportedLogoFormatError,
 )
-from portolan_cli.json_io import write_json_atomic
+from portolan_core.json_io import write_json_atomic
 
 #: STAC link relation that carries the catalog logo (PORTO-CORE-074).
 LOGO_LINK_REL = "icon"

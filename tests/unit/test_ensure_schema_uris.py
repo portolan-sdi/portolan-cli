@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from portolan_cli.catalog import ensure_schema_uris
-from portolan_cli.constants import PORTOLAN_SCHEMA_URI
+from portolan_core.constants import PORTOLAN_SCHEMA_URI
 
 if TYPE_CHECKING:
     from pathlib import Path

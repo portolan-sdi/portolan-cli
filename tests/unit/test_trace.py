@@ -11,7 +11,7 @@ from typing import Any
 
 import pytest
 
-from portolan_cli import trace
+from portolan_core import trace
 
 pytestmark = pytest.mark.unit
 

@@ -11,7 +11,7 @@ import pytest
 
 from portolan_cli.formats import current_run, in_run, parquet_footer, run_scope
 from portolan_cli.preparation import convert_vector
-from portolan_cli.run_state import RunState
+from portolan_core.run_state import RunState
 
 pytestmark = pytest.mark.integration
 
@@ -89,7 +89,7 @@ def test_rewrite_invalidates_footer_when_stat_key_is_unchanged(
     import geoparquet_io as gpio
     from geoparquet_io.api.table import Table
 
-    import portolan_cli.run_state as run_state
+    import portolan_core.run_state as run_state
 
     source = tmp_path / "points.parquet"
     table = gpio.convert(POINTS).add_bbox()
@@ -118,7 +118,7 @@ def test_copy_invalidates_destination_footer(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Copying an existing Parquet must drop reads of the previous output."""
-    import portolan_cli.run_state as run_state
+    import portolan_core.run_state as run_state
     from portolan_cli.conversion_config import VectorSettings
     from portolan_cli.convert import PROVENANCE_KEY, provenance_record
 
@@ -153,7 +153,7 @@ def test_reused_scratch_path_does_not_reuse_a_deleted_footer(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A prior scratch footer cannot supply the gate or replacement metadata."""
-    import portolan_cli.run_state as run_state
+    import portolan_core.run_state as run_state
 
     source = tmp_path / "points.parquet"
     source.write_bytes(POINTS.read_bytes())
@@ -170,7 +170,7 @@ def test_reused_scratch_path_does_not_reuse_a_deleted_footer(
 
 def test_run_scopes_restore_after_nested_exception_and_thread_work(tmp_path: Path) -> None:
     """Nested scopes restore their parent and worker submissions copy the run."""
-    from portolan_cli.trace import submit
+    from portolan_core.trace import submit
 
     outer, inner = RunState.open(tmp_path), RunState.open(tmp_path)
     assert current_run() is None
@@ -209,8 +209,8 @@ def test_pmtiles_style_reuses_the_discovery_footer(tmp_path: Path) -> None:
     """The PMTiles side step must keep its run scope through style creation."""
     import json
 
-    from portolan_cli.trace import counters, tracing
     from portolan_cli.viz.pmtiles import generate_or_suggest_pmtiles
+    from portolan_core.trace import counters, tracing
 
     collection = tmp_path / "places"
     collection.mkdir()

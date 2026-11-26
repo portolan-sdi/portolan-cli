@@ -43,16 +43,16 @@ from urllib.parse import urlparse
 
 from rashid_core.api import LocalOnlyReader, ValidationOptions, validate
 
-from portolan_cli.errors import InvalidLiveUrlError
-from portolan_cli.trace import span
 from portolan_cli.validation.config import load_public_url, load_rules_config
 from portolan_cli.validation.legacy import detect_legacy_notes
+from portolan_core.errors import InvalidLiveUrlError
+from portolan_core.trace import span
 
 if TYPE_CHECKING:
     from rashid_core.api import Report
 
-    from portolan_cli.config import ConfigSource
-    from portolan_cli.run_state import RunState
+    from portolan_core.config import ConfigSource
+    from portolan_core.run_state import RunState
 
 #: A structural/schema validator maps one object's raw JSON to schema errors.
 #: Injected by tests to keep them offline and independent of schema churn.
@@ -269,7 +269,7 @@ def run_check(
         about which files exist — a workflow channel, never a conformance
         finding.
     """
-    from portolan_cli.run_state import RunState
+    from portolan_core.run_state import RunState
 
     root = _resolve_root(path)
     # One run state, so the three config readers below parse config.yaml once.

@@ -29,13 +29,13 @@ class TestResolveBackendName:
 
     @pytest.mark.unit
     def test_config_value_used_when_no_cli(self, tmp_path: Path) -> None:
-        with patch("portolan_cli.config.get_setting", return_value="config_backend"):
+        with patch("portolan_core.config.get_setting", return_value="config_backend"):
             result = _resolve_backend_name(None, catalog_root=tmp_path)
         assert result == "config_backend"
 
     @pytest.mark.unit
     def test_defaults_to_file(self) -> None:
-        with patch("portolan_cli.config.get_setting", return_value=None):
+        with patch("portolan_core.config.get_setting", return_value=None):
             result = _resolve_backend_name(None, catalog_root=None)
         assert result == "file"
 
@@ -153,7 +153,7 @@ class TestTryBackendPull:
             _pull_result(downloaded=3, version="2.0.0"),
         ]
         with (
-            patch("portolan_cli.run_state.RunState.setting", return_value="iceberg"),
+            patch("portolan_core.run_state.RunState.setting", return_value="iceberg"),
             patch("portolan_cli.backends.get_backend", return_value=backend),
         ):
             result = try_backend_pull(root, "s3://example-bucket/catalog", None, dry_run=False)
@@ -171,7 +171,7 @@ class TestTryBackendPull:
 
         backend = MagicMock()
         with (
-            patch("portolan_cli.run_state.RunState.setting", return_value="iceberg"),
+            patch("portolan_core.run_state.RunState.setting", return_value="iceberg"),
             patch("portolan_cli.backends.get_backend", return_value=backend),
         ):
             result = try_backend_pull(tmp_path, "s3://example-bucket/catalog", None, dry_run=False)
@@ -190,7 +190,7 @@ class TestTryBackendPull:
             _pull_result(downloaded=0, version="1.0.0", success=False),
         ]
         with (
-            patch("portolan_cli.run_state.RunState.setting", return_value="iceberg"),
+            patch("portolan_core.run_state.RunState.setting", return_value="iceberg"),
             patch("portolan_cli.backends.get_backend", return_value=backend),
         ):
             result = try_backend_pull(root, "s3://example-bucket/catalog", None, dry_run=False)

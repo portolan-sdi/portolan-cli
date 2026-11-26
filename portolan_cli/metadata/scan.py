@@ -61,7 +61,7 @@ from portolan_cli.metadata.models import (
     MetadataReport,
     MetadataStatus,
 )
-from portolan_cli.run_state import RunState, stat_matches
+from portolan_core.run_state import RunState, stat_matches
 
 if TYPE_CHECKING:
     from collections.abc import Iterator

@@ -79,8 +79,8 @@ class ArcGISMetadata:
         Returns:
             ExtractedMetadata instance with mapped fields.
         """
-        from portolan_cli.licensing import license_url_from_text
         from portolan_cli.metadata_extraction import ExtractedMetadata
+        from portolan_core.licensing import license_url_from_text
 
         return ExtractedMetadata(
             source_type="arcgis_featureserver",

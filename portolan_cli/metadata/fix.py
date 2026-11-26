@@ -19,8 +19,6 @@ from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from portolan_cli.constants import LEGACY_MANAGED_FIELD, REMOVED_PORTOLAN_FIELDS
-from portolan_cli.json_io import write_json_atomic
 from portolan_cli.metadata.models import (
     MetadataCheckResult,
     MetadataReport,
@@ -31,13 +29,15 @@ from portolan_cli.metadata.update import (
     update_item_metadata,
     update_versions_tracking,
 )
-from portolan_cli.stac_links import contained_link_target, visible_stac_files
+from portolan_core.constants import LEGACY_MANAGED_FIELD, REMOVED_PORTOLAN_FIELDS
+from portolan_core.json_io import write_json_atomic
+from portolan_core.stac_links import contained_link_target, visible_stac_files
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
     from portolan_cli.preparation import PreparedItem
-    from portolan_cli.run_state import RunState
+    from portolan_core.run_state import RunState
 
 
 class FixAction(Enum):
@@ -331,7 +331,7 @@ def _every_stac_object(catalog_root: Path) -> Iterator[Path]:
     the sweep reports nothing about it rather than raising over a file some
     other check already flags.
     """
-    from portolan_cli.stac_links import owned_item_hrefs
+    from portolan_core.stac_links import owned_item_hrefs
 
     seen: set[Path] = set()
     for path in visible_stac_files(catalog_root):

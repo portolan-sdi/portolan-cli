@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from portolan_cli.bbox import (
+from portolan_core.bbox import (
     BboxValidationResult,
     compute_bbox_union,
     filter_valid_bboxes,
@@ -454,24 +454,24 @@ class TestWgs84EdgeTolerance:
     """A coordinate that rounds past a bound is the bound (issue #882)."""
 
     def test_rounded_longitude_is_valid(self) -> None:
-        from portolan_cli.bbox import is_valid_bbox
+        from portolan_core.bbox import is_valid_bbox
 
         assert is_valid_bbox([-180.0, -90.0, 180.00000000000006, 83.64513000000001])
 
     def test_rounded_longitude_has_no_validation_reason(self) -> None:
-        from portolan_cli.bbox import get_bbox_validation_reason
+        from portolan_core.bbox import get_bbox_validation_reason
 
         assert get_bbox_validation_reason([-180.0, -90.0, 180.00000000000006, 83.6]) is None
 
     def test_a_degree_past_the_bound_is_still_invalid(self) -> None:
-        from portolan_cli.bbox import get_bbox_validation_reason, is_valid_bbox
+        from portolan_core.bbox import get_bbox_validation_reason, is_valid_bbox
 
         assert not is_valid_bbox([-180.0, -90.0, 181.0, 83.6])
         assert get_bbox_validation_reason([-180.0, -90.0, 181.0, 83.6]) is not None
 
     def test_filter_keeps_the_snapped_value(self) -> None:
         """The filter validates the snapped bbox, so it must keep the snapped one."""
-        from portolan_cli.bbox import filter_valid_bboxes
+        from portolan_core.bbox import filter_valid_bboxes
 
         result = filter_valid_bboxes([[-180.0, -90.0, 180.00000000000006, 83.6]])
 
@@ -479,7 +479,7 @@ class TestWgs84EdgeTolerance:
 
     def test_union_emits_the_bound_not_the_raw_value(self) -> None:
         """An unsnapped value reached the collection extent through the union."""
-        from portolan_cli.bbox import compute_bbox_union
+        from portolan_core.bbox import compute_bbox_union
 
         result = compute_bbox_union(
             [[-180.0, -90.0, 180.00000000000006, 83.6], [10.0, 10.0, 20.0, 20.0]]
@@ -495,7 +495,7 @@ class TestWgs84EdgeTolerance:
         assert _looks_valid([-180.0, -90.0, 180.0, 83.6])
 
     def test_snap_returns_the_bound(self) -> None:
-        from portolan_cli.bbox import snap_to_wgs84_range
+        from portolan_core.bbox import snap_to_wgs84_range
 
         assert snap_to_wgs84_range([-180.0, -90.0, 180.00000000000006, 90.0000000000001]) == [
             -180.0,
@@ -505,11 +505,11 @@ class TestWgs84EdgeTolerance:
         ]
 
     def test_snap_leaves_an_interior_coordinate_alone(self) -> None:
-        from portolan_cli.bbox import snap_to_wgs84_range
+        from portolan_core.bbox import snap_to_wgs84_range
 
         assert snap_to_wgs84_range([-7.33, 38.04, -4.70, 40.49]) == [-7.33, 38.04, -4.70, 40.49]
 
     def test_snap_leaves_a_real_out_of_range_coordinate_alone(self) -> None:
-        from portolan_cli.bbox import snap_to_wgs84_range
+        from portolan_core.bbox import snap_to_wgs84_range
 
         assert snap_to_wgs84_range([-180.0, -90.0, 181.0, 83.6]) == [-180.0, -90.0, 181.0, 83.6]

@@ -7,8 +7,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from portolan_cli.errors import LogoSourceNotFoundError
 from portolan_cli.logo import set_catalog_logo
+from portolan_core.errors import LogoSourceNotFoundError
 
 if TYPE_CHECKING:
     from collections.abc import Callable

@@ -25,7 +25,7 @@ from portolan_cli.add import (
     resolve_collection_id,
 )
 from portolan_cli.catalog import find_catalog_root
-from portolan_cli.constants import SIDECAR_PATTERNS
+from portolan_core.constants import SIDECAR_PATTERNS
 
 # =============================================================================
 # Custom Strategies
@@ -474,7 +474,7 @@ class TestIncrementVersionProperties:
     @pytest.mark.unit
     def test_increment_standard_semver(self) -> None:
         """_increment_version increments standard semver correctly."""
-        from portolan_cli.versions import _increment_version
+        from portolan_core.versions import _increment_version
 
         assert _increment_version("1.2.3") == "1.2.4"
         assert _increment_version("0.0.1") == "0.0.2"
@@ -483,7 +483,7 @@ class TestIncrementVersionProperties:
     @pytest.mark.unit
     def test_increment_prerelease_semver(self) -> None:
         """_increment_version handles pre-release versions."""
-        from portolan_cli.versions import _increment_version
+        from portolan_core.versions import _increment_version
 
         # Pre-release with number suffix
         assert _increment_version("1.0.0-beta.1") == "1.0.0-beta.2"
@@ -493,7 +493,7 @@ class TestIncrementVersionProperties:
     @pytest.mark.unit
     def test_increment_prerelease_no_number(self) -> None:
         """_increment_version handles pre-release without number."""
-        from portolan_cli.versions import _increment_version
+        from portolan_core.versions import _increment_version
 
         # Pre-release without number suffix appends .1 (preserves prerelease tag)
         result = _increment_version("1.0.0-beta")
@@ -506,7 +506,7 @@ class TestIncrementVersionProperties:
     @pytest.mark.unit
     def test_increment_empty_version(self) -> None:
         """_increment_version handles empty version."""
-        from portolan_cli.versions import _increment_version
+        from portolan_core.versions import _increment_version
 
         assert _increment_version("") == "0.0.1"
         assert _increment_version(None) == "0.0.1"  # type: ignore[arg-type]
@@ -514,7 +514,7 @@ class TestIncrementVersionProperties:
     @pytest.mark.unit
     def test_increment_short_version(self) -> None:
         """_increment_version handles short version strings."""
-        from portolan_cli.versions import _increment_version
+        from portolan_core.versions import _increment_version
 
         assert _increment_version("1") == "1.0.1"
         assert _increment_version("1.0") == "1.0.1"
@@ -527,7 +527,7 @@ class TestIncrementVersionProperties:
         length is not < 3, so the old fallback returned the input unchanged - a
         no-op that stalls version bumps. The result must differ from the input.
         """
-        from portolan_cli.versions import _increment_version
+        from portolan_core.versions import _increment_version
 
         for version in ("1.2.3rc1", "1.2.foo", "2.5.9beta"):
             result = _increment_version(version)
@@ -547,7 +547,7 @@ class TestConstantsProperties:
     @pytest.mark.unit
     def test_mtime_tolerance_is_reasonable(self) -> None:
         """MTIME_TOLERANCE_SECONDS is reasonable for NFS."""
-        from portolan_cli.constants import MTIME_TOLERANCE_SECONDS
+        from portolan_core.constants import MTIME_TOLERANCE_SECONDS
 
         # Should be at least 1 second for NFS compatibility
         assert MTIME_TOLERANCE_SECONDS >= 1.0
@@ -557,7 +557,7 @@ class TestConstantsProperties:
     @pytest.mark.unit
     def test_max_catalog_search_depth_is_reasonable(self) -> None:
         """MAX_CATALOG_SEARCH_DEPTH is reasonable."""
-        from portolan_cli.constants import MAX_CATALOG_SEARCH_DEPTH
+        from portolan_core.constants import MAX_CATALOG_SEARCH_DEPTH
 
         # Should be at least 5 levels
         assert MAX_CATALOG_SEARCH_DEPTH >= 5
@@ -567,7 +567,7 @@ class TestConstantsProperties:
     @pytest.mark.unit
     def test_geospatial_extensions_contains_common_formats(self) -> None:
         """GEOSPATIAL_EXTENSIONS includes common formats."""
-        from portolan_cli.constants import GEOSPATIAL_EXTENSIONS
+        from portolan_core.constants import GEOSPATIAL_EXTENSIONS
 
         assert ".geojson" in GEOSPATIAL_EXTENSIONS
         assert ".shp" in GEOSPATIAL_EXTENSIONS
@@ -577,7 +577,7 @@ class TestConstantsProperties:
     @pytest.mark.unit
     def test_sidecar_patterns_contains_shapefile_extensions(self) -> None:
         """SIDECAR_PATTERNS includes shapefile sidecars."""
-        from portolan_cli.constants import SIDECAR_PATTERNS
+        from portolan_core.constants import SIDECAR_PATTERNS
 
         assert ".shp" in SIDECAR_PATTERNS
         shp_sidecars = SIDECAR_PATTERNS[".shp"]
@@ -773,7 +773,7 @@ class TestIsCurrentEdgeCases:
         import json
 
         from portolan_cli.add import is_current
-        from portolan_cli.sync.checksums import compute_checksum
+        from portolan_core.checksums import compute_checksum
 
         test_file = tmp_path / "test.parquet"
         content = b"exact content"

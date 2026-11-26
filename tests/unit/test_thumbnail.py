@@ -12,7 +12,7 @@ from unittest.mock import patch
 
 import pytest
 
-from portolan_cli import trace
+from portolan_core import trace
 from tests.perf.runner import STUB_TILE_RGBA
 
 # =============================================================================
@@ -2184,8 +2184,8 @@ class TestHungTileServer:
 
         from shapely.geometry import box
 
-        from portolan_cli.run_state import RunState
         from portolan_cli.viz import thumbnail
+        from portolan_core.run_state import RunState
 
         release = threading.Event()
         asked: list[str] = []

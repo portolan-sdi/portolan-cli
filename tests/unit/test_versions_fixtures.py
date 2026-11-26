@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from portolan_cli.versions import read_versions
+from portolan_core.versions import read_versions
 
 FIXTURES_DIR = Path(__file__).parent.parent / "fixtures" / "metadata" / "versions"
 

@@ -96,7 +96,7 @@ def _invoke_with_backend(
 ) -> Result:
     """Run the CLI with ARGS while the config gives SETTING and get_backend gives BACKEND."""
     with (
-        patch("portolan_cli.config.get_setting", return_value=setting),
+        patch("portolan_core.config.get_setting", return_value=setting),
         patch("portolan_cli.backends.get_backend", return_value=backend),
     ):
         return runner.invoke(cli, args)
@@ -473,7 +473,7 @@ def test_missing_iceberg_extra_reports_a_json_error(
     catalog_root = _make_iceberg_catalog(tmp_path)
 
     with (
-        patch("portolan_cli.config.get_setting", return_value="iceberg"),
+        patch("portolan_core.config.get_setting", return_value="iceberg"),
         patch("portolan_cli.backends.get_backend", side_effect=ValueError(_MISSING_EXTRA)),
     ):
         result = runner.invoke(
@@ -627,7 +627,7 @@ class TestCheckBackendPushSupport:
         catalog_root = _make_file_catalog(tmp_path)
 
         # No backend configured → _check_backend_push_support should return early
-        with patch("portolan_cli.config.get_setting", return_value=None):
+        with patch("portolan_core.config.get_setting", return_value=None):
             # We only care that it doesn't block; the actual push will fail without
             # a real remote — that's OK for this guard test
             result = runner.invoke(
@@ -705,7 +705,7 @@ class TestTryBackendPull:
 
         # The file pull is replaced, so the command never contacts GCS.
         with (
-            patch("portolan_cli.config.get_setting", return_value=None),
+            patch("portolan_core.config.get_setting", return_value=None),
             patch("portolan_cli.sync.pull.pull", side_effect=ValueError("stub remote")) as pull_fn,
         ):
             result = runner.invoke(
@@ -737,7 +737,7 @@ class TestTryBackendPull:
         mock_backend.pull.return_value = None
 
         with (
-            patch("portolan_cli.config.get_setting", return_value="custom"),
+            patch("portolan_core.config.get_setting", return_value="custom"),
             patch("portolan_cli.backends.get_backend", return_value=mock_backend),
             patch("portolan_cli.sync.pull.pull", side_effect=ValueError("stub remote")) as pull_fn,
         ):

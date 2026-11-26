@@ -15,9 +15,7 @@ from click.testing import CliRunner
 from portolan_cli.add import add_files
 from portolan_cli.backends.json_file import JsonFileBackend
 from portolan_cli.cli import cli
-from portolan_cli.config import set_setting
 from portolan_cli.hookspecs import EnrichContext, hookimpl
-from portolan_cli.run_state import RunState
 from portolan_cli.sync.pull import PullResult, pull_all_collections_async
 from portolan_cli.version_ops import (
     check_backend_supports_push,
@@ -26,7 +24,9 @@ from portolan_cli.version_ops import (
     publish_version,
     try_backend_pull,
 )
-from portolan_cli.versions import Version
+from portolan_core.config import set_setting
+from portolan_core.run_state import RunState
+from portolan_core.versions import Version
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -359,7 +359,7 @@ def test_plugin_owned_run_exception_commits_nothing(
 
 
 def test_catalog_push_shares_config_reads(conformant_catalog: Path) -> None:
-    from portolan_cli import trace
+    from portolan_core import trace
 
     root = conformant_catalog
     for name in ("a", "b", "c"):
@@ -376,14 +376,14 @@ def test_item_companion_scan_reuses_run_checksums(
     fixtures_dir: Path,
     recording: RecordingBackend,
 ) -> None:
-    from portolan_cli.sync.checksums import compute_checksum
+    from portolan_core.checksums import compute_checksum
 
     root = conformant_catalog
     _backend(root, "imagery", "recording")
     item = _raster(root, fixtures_dir)
     with (
         patch("portolan_cli.preparation.compute_checksum", wraps=compute_checksum) as direct,
-        patch("portolan_cli.run_state.compute_checksum", wraps=compute_checksum) as memoized,
+        patch("portolan_core.run_state.compute_checksum", wraps=compute_checksum) as memoized,
     ):
         _, _, failures = add_files(paths=[item], catalog_root=root)
     assert failures == []

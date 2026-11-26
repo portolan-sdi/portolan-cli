@@ -498,7 +498,7 @@ def _fail_imageserver_license(monkeypatch: pytest.MonkeyPatch) -> None:
     """Make the raster extraction raise the license error before any download."""
     from unittest.mock import AsyncMock
 
-    from portolan_cli.errors import MissingLicenseError
+    from portolan_core.errors import MissingLicenseError
 
     monkeypatch.setattr(
         "portolan_cli.extract.arcgis.imageserver.orchestrator.extract_imageserver",

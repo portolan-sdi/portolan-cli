@@ -50,8 +50,8 @@ def _run_deferred(
 ) -> tuple[list[Any], list[Any], list[Any]]:
     """Run phase 3 of add on the deferred files, and return added, skipped, failures."""
     from portolan_cli.add import _plan_deferred, _ProcessResult, _write_deferred
-    from portolan_cli.run_state import RunState
     from portolan_cli.version_ops import commit_run
+    from portolan_core.run_state import RunState
 
     added: list[Any] = []
     skipped: list[Any] = []

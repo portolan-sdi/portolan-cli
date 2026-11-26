@@ -24,8 +24,8 @@ from portolan_cli.convert import (
     place_cog,
     write_cog,
 )
-from portolan_cli.errors import OutputExistsError
-from portolan_cli.run_state import RunState
+from portolan_core.errors import OutputExistsError
+from portolan_core.run_state import RunState
 from tests.conftest import _init_catalog
 
 if TYPE_CHECKING:
@@ -81,7 +81,7 @@ def test_parallel_add_keeps_both_same_stem_outputs(tmp_path: Path) -> None:
     """Phase-2 workers must publish both converted values, in one version."""
     import portolan_cli.preparation as preparation
     from portolan_cli.add import add_files
-    from portolan_cli.versions import read_versions
+    from portolan_core.versions import read_versions
 
     root = _init_catalog(tmp_path / "catalog")
     collection = root / "roads"
@@ -294,8 +294,8 @@ def test_parallel_crash_recovery_keeps_the_existing_output(
 ) -> None:
     """A generated file discovered with its source must not become a new output."""
     from portolan_cli.add import add_files
-    from portolan_cli.sync.checksums import compute_checksum
-    from portolan_cli.versions import read_versions
+    from portolan_core.checksums import compute_checksum
+    from portolan_core.versions import read_versions
     from tests.integration.test_collection_level_asset_workflow import _crashed_add
 
     with monkeypatch.context() as patched:

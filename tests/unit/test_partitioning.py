@@ -978,8 +978,8 @@ class TestPartitionFile:
         from click.testing import CliRunner
 
         from portolan_cli.cli import cli
-        from portolan_cli.errors import PartitionError
         from portolan_cli.partitioning import partition_file
+        from portolan_core.errors import PartitionError
 
         def failing_partition(*args: object, **kwargs: object) -> None:
             raise RuntimeError("Simulated partition failure")

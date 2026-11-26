@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from portolan_cli.versions import (
+from portolan_core.versions import (
     Asset,
     Version,
     VersionsFile,
@@ -707,7 +707,7 @@ class TestSchemaFingerprintInVersion:
     @pytest.mark.unit
     def test_version_accepts_schema_fingerprint(self) -> None:
         """Version dataclass accepts optional schema fingerprint."""
-        from portolan_cli.versions import SchemaInfo
+        from portolan_core.versions import SchemaInfo
 
         schema = SchemaInfo(
             type="geoparquet",
@@ -753,7 +753,7 @@ class TestSchemaFingerprintSerialization:
     @pytest.mark.unit
     def test_serialize_includes_schema_when_present(self, tmp_path: Path) -> None:
         """write_versions includes schema in JSON when present."""
-        from portolan_cli.versions import SchemaInfo
+        from portolan_core.versions import SchemaInfo
 
         schema = SchemaInfo(
             type="geoparquet",
@@ -841,7 +841,7 @@ class TestAddVersionWithSchema:
     @pytest.mark.unit
     def test_add_version_accepts_schema(self) -> None:
         """add_version accepts optional schema parameter."""
-        from portolan_cli.versions import SchemaInfo
+        from portolan_core.versions import SchemaInfo
 
         vf = VersionsFile(spec_version="1.0.0", current_version=None, versions=[])
         assets = {"data.parquet": Asset(sha256="abc123", size_bytes=1024, href="data.parquet")}
@@ -926,7 +926,7 @@ class TestVersionParsing:
     @pytest.mark.unit
     def test_parse_simple_version(self) -> None:
         """parse_version handles standard semver."""
-        from portolan_cli.versions import parse_version
+        from portolan_core.versions import parse_version
 
         assert parse_version("1.0.0") == (1, 0, 0)
         assert parse_version("2.3.4") == (2, 3, 4)
@@ -935,7 +935,7 @@ class TestVersionParsing:
     @pytest.mark.unit
     def test_parse_prerelease_version(self) -> None:
         """parse_version handles semver pre-release (CRITICAL #3)."""
-        from portolan_cli.versions import parse_version
+        from portolan_core.versions import parse_version
 
         # Pre-release versions should be parsed, returning base version
         major, minor, patch = parse_version("1.0.0-beta")
@@ -946,7 +946,7 @@ class TestVersionParsing:
     @pytest.mark.unit
     def test_parse_version_with_build_metadata(self) -> None:
         """parse_version handles build metadata."""
-        from portolan_cli.versions import parse_version
+        from portolan_core.versions import parse_version
 
         major, minor, patch = parse_version("1.0.0+build.123")
         assert major == 1
@@ -956,7 +956,7 @@ class TestVersionParsing:
     @pytest.mark.unit
     def test_parse_version_with_prerelease_and_build(self) -> None:
         """parse_version handles combined pre-release and build metadata."""
-        from portolan_cli.versions import parse_version
+        from portolan_core.versions import parse_version
 
         major, minor, patch = parse_version("1.0.0-alpha.1+build.456")
         assert major == 1
@@ -966,7 +966,7 @@ class TestVersionParsing:
     @pytest.mark.unit
     def test_parse_large_version_numbers(self) -> None:
         """parse_version handles large version numbers without overflow (MAJOR #4)."""
-        from portolan_cli.versions import parse_version
+        from portolan_core.versions import parse_version
 
         # Should not raise integer overflow
         major, minor, patch = parse_version("999999.888888.777777")
@@ -977,7 +977,7 @@ class TestVersionParsing:
     @pytest.mark.unit
     def test_parse_version_invalid_returns_zeros(self) -> None:
         """parse_version returns (0, 0, 0) for invalid versions."""
-        from portolan_cli.versions import parse_version
+        from portolan_core.versions import parse_version
 
         assert parse_version("invalid") == (0, 0, 0)
         assert parse_version("") == (0, 0, 0)
@@ -986,7 +986,7 @@ class TestVersionParsing:
     @pytest.mark.unit
     def test_parse_version_handles_non_numeric(self) -> None:
         """parse_version handles non-numeric parts gracefully (MAJOR #4)."""
-        from portolan_cli.versions import parse_version
+        from portolan_core.versions import parse_version
 
         # Should not raise ValueError or overflow
         assert parse_version("a.b.c") == (0, 0, 0)
@@ -1367,7 +1367,7 @@ class TestTrackGeneratedAssets:
     @pytest.mark.unit
     def test_each_default_call_records_a_new_plain_version(self, tmp_path: Path) -> None:
         """A rebuilt PMTiles keeps its href, so only a new version records the new bytes."""
-        from portolan_cli.versions import track_generated_assets
+        from portolan_core.versions import track_generated_assets
 
         tiles = tmp_path / "roads" / "roads.pmtiles"
         tiles.parent.mkdir()
@@ -1386,7 +1386,7 @@ class TestTrackGeneratedAssets:
 
     @pytest.mark.unit
     def test_a_missing_file_is_named_in_the_error(self, tmp_path: Path) -> None:
-        from portolan_cli.versions import track_generated_assets
+        from portolan_core.versions import track_generated_assets
 
         with pytest.raises(FileNotFoundError, match=r"roads\.pmtiles"):
             track_generated_assets(tmp_path, [tmp_path / "roads.pmtiles"], tmp_path, message="m")
@@ -1400,7 +1400,7 @@ class TestTrackGeneratedAssets:
         A catalog reached through a symlink gave the bare name as key, the
         second key at the collection root, and no href at all.
         """
-        from portolan_cli.versions import track_generated_assets
+        from portolan_core.versions import track_generated_assets
 
         thumb = tmp_path / "real" / "imagery" / "scene" / "scene.thumb.jpg"
         thumb.parent.mkdir(parents=True)
@@ -1418,9 +1418,9 @@ class TestTrackGeneratedAssets:
     @pytest.mark.unit
     def test_with_a_state_the_assets_join_the_staged_version(self, tmp_path: Path) -> None:
         """add stages its version first. A side step amends it, and one commit writes both."""
-        from portolan_cli.run_state import RunState
         from portolan_cli.version_ops import commit_run
-        from portolan_cli.versions import Asset, track_generated_assets
+        from portolan_core.run_state import RunState
+        from portolan_core.versions import Asset, track_generated_assets
 
         data = tmp_path / "roads" / "roads.parquet"
         data.parent.mkdir()
@@ -1444,8 +1444,8 @@ class TestTrackGeneratedAssets:
     @pytest.mark.unit
     def test_a_plugin_backend_keeps_the_direct_write(self, tmp_path: Path) -> None:
         """A plugin publishes in finalize_items and cannot amend, so nothing is staged."""
-        from portolan_cli.run_state import RunState
-        from portolan_cli.versions import track_generated_assets
+        from portolan_core.run_state import RunState
+        from portolan_core.versions import track_generated_assets
 
         (tmp_path / ".portolan").mkdir()
         (tmp_path / ".portolan" / "config.yaml").write_text("backend: iceberg\n")

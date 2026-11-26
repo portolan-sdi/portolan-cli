@@ -33,8 +33,8 @@ from fnmatch import fnmatch
 from os import PathLike
 from typing import TYPE_CHECKING, Any
 
-from portolan_cli.config import ConfigSource, load_catalog_config
-from portolan_cli.trace import count
+from portolan_core.config import ConfigSource, load_catalog_config
+from portolan_core.trace import count
 
 if TYPE_CHECKING:
     from collections.abc import Iterator

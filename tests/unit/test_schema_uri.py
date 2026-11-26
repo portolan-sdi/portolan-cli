@@ -13,9 +13,9 @@ import re
 import pytest
 from rashid_core.api import newest_profile_version
 
-from portolan_cli import constants
-from portolan_cli.constants import PORTOLAN_SCHEMA_URI, PORTOLAN_SPEC_VERSION
 from portolan_cli.stac import ensure_portolan_schema_uri
+from portolan_core import constants
+from portolan_core.constants import PORTOLAN_SCHEMA_URI, PORTOLAN_SPEC_VERSION
 
 pytestmark = pytest.mark.unit
 

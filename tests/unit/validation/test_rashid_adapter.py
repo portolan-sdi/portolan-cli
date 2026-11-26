@@ -9,10 +9,10 @@ import pytest
 import yaml
 from rashid_core.api import Severity
 
-from portolan_cli.errors import InvalidLiveUrlError
 from portolan_cli.validation import run_check
 from portolan_cli.validation.config import load_public_url, load_rules_config
 from portolan_cli.validation.runner import validate_live_base_url
+from portolan_core.errors import InvalidLiveUrlError
 
 if TYPE_CHECKING:
     from pathlib import Path

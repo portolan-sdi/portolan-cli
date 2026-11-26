@@ -30,7 +30,7 @@ from portolan_cli.sync.pull import (
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from portolan_cli.versions import VersionsFile
+    from portolan_core.versions import VersionsFile
 
 # =============================================================================
 # Test Fixtures
@@ -39,7 +39,7 @@ if TYPE_CHECKING:
 
 def _remote_with_files(count: int) -> VersionsFile:
     """Build a remote versions.json whose version 2.0.0 adds ``count`` files."""
-    from portolan_cli.versions import Asset, Version, VersionsFile
+    from portolan_core.versions import Asset, Version, VersionsFile
 
     names = [f"file_{i}.parquet" for i in range(count)]
     return VersionsFile(
@@ -261,7 +261,7 @@ async def test_pull_async_handles_rate_limit(
         patch("portolan_cli.sync.pull._fetch_remote_versions_async") as mock_fetch,
         patch("portolan_cli.sync.pull._download_file_async", mock_download_with_rate_limit),
     ):
-        from portolan_cli.versions import Asset, Version, VersionsFile
+        from portolan_core.versions import Asset, Version, VersionsFile
 
         remote = VersionsFile(
             spec_version="1.0.0",

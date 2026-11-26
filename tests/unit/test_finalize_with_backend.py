@@ -13,8 +13,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from portolan_cli.add import PreparedItem, _finalize_with_backend
-from portolan_cli.run_state import RunState
 from portolan_cli.version_ops import commit_run
+from portolan_core.run_state import RunState
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -29,7 +29,7 @@ def _publish_through_iceberg(tmp_path: Path, item: PreparedItem, state: RunState
     with (
         patch("portolan_cli.version_ops.publish_version") as mock_publish,
         patch("portolan_cli.backends.get_backend") as mock_get_backend,
-        patch("portolan_cli.config.get_setting", return_value=None),
+        patch("portolan_core.config.get_setting", return_value=None),
     ):
         mock_get_backend.return_value = MagicMock(spec=[])
         _finalize_with_backend(
@@ -102,7 +102,7 @@ class TestFinalizeWithBackend:
         with (
             patch("portolan_cli.version_ops.publish_version") as mock_publish,
             patch("portolan_cli.backends.get_backend") as mock_get_backend,
-            patch("portolan_cli.config.get_setting", return_value=None),
+            patch("portolan_core.config.get_setting", return_value=None),
         ):
             mock_backend = MagicMock(spec=[])  # no on_post_add
             mock_get_backend.return_value = mock_backend
@@ -189,7 +189,7 @@ class TestFinalizeWithBackend:
         with (
             patch("portolan_cli.version_ops.publish_version"),
             patch("portolan_cli.backends.get_backend") as mock_get_backend,
-            patch("portolan_cli.config.get_setting", return_value=None),
+            patch("portolan_core.config.get_setting", return_value=None),
         ):
             mock_backend = MagicMock()
             mock_backend.on_post_add.side_effect = RuntimeError("upload failed")
@@ -229,7 +229,7 @@ class TestFinalizeWithBackend:
         with (
             patch("portolan_cli.version_ops.publish_version") as mock_publish,
             patch("portolan_cli.backends.get_backend"),
-            patch("portolan_cli.config.get_setting", return_value=None),
+            patch("portolan_core.config.get_setting", return_value=None),
         ):
             _finalize_with_backend(
                 catalog_root=tmp_path,
@@ -255,7 +255,7 @@ class TestFinalizeWithBackend:
         with (
             patch("portolan_cli.version_ops.publish_version"),
             patch("portolan_cli.backends.get_backend") as mock_get_backend,
-            patch("portolan_cli.config.get_setting", return_value=None),
+            patch("portolan_core.config.get_setting", return_value=None),
         ):
             mock_backend = MagicMock()
             mock_get_backend.return_value = mock_backend

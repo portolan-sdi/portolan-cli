@@ -27,7 +27,7 @@ import math
 from dataclasses import dataclass
 from typing import Any
 
-from portolan_cli.models.schema import BandSchema, ColumnSchema, SchemaModel
+from portolan_core.models.schema import BandSchema, ColumnSchema, SchemaModel
 
 
 def _nodata_equals(a: float | None, b: float | None) -> bool:

@@ -11,8 +11,8 @@ from __future__ import annotations
 
 import pytest
 
-from portolan_cli.errors import InvalidProvidersError
 from portolan_cli.providers import derive_provenance, resolve_providers
+from portolan_core.errors import InvalidProvidersError
 
 pytestmark = pytest.mark.unit
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from portolan_cli import config, trace
+from portolan_core import config, trace
 
 pytestmark = pytest.mark.unit
 

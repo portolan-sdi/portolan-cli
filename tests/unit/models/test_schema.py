@@ -13,7 +13,7 @@ from __future__ import annotations
 import pytest
 
 # These will be implemented - tests first!
-from portolan_cli.models.schema import (
+from portolan_core.models.schema import (
     BandSchema,
     ColumnSchema,
     SchemaModel,

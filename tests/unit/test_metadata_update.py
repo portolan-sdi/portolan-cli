@@ -30,7 +30,7 @@ from portolan_cli.metadata.update import (
     update_item_metadata,
     update_versions_tracking,
 )
-from portolan_cli.versions import (
+from portolan_core.versions import (
     Asset,
     Version,
     VersionsFile,

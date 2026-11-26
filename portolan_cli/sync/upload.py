@@ -84,9 +84,9 @@ from obstore.store import (
     S3Store,
 )
 
-from portolan_cli.errors import InsecureS3EndpointError, ProfileCredentialsError
 from portolan_cli.sync.report import Report, tell
-from portolan_cli.trace import submit
+from portolan_core.errors import InsecureS3EndpointError, ProfileCredentialsError
+from portolan_core.trace import submit
 
 if TYPE_CHECKING:
     from obstore import PutMode, PutResult
@@ -562,7 +562,7 @@ def _resolve_s3_endpoint_settings(
     Returns:
         The resolved endpoint and TLS setting.
     """
-    from portolan_cli.config import resolve_s3_endpoint_settings
+    from portolan_core.config import resolve_s3_endpoint_settings
 
     environment_settings = resolve_s3_endpoint_settings()
     endpoint = s3_endpoint if s3_endpoint is not None else environment_settings.endpoint

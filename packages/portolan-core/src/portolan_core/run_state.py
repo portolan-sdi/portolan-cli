@@ -42,10 +42,10 @@ from typing import TYPE_CHECKING, Any, TypeVar
 
 import yaml
 
-from portolan_cli import config as _config
-from portolan_cli.constants import MTIME_TOLERANCE_SECONDS
-from portolan_cli.sync.checksums import compute_checksum, compute_dir_checksum
-from portolan_cli.versions import (
+from portolan_core import config as _config
+from portolan_core.checksums import compute_checksum, compute_dir_checksum
+from portolan_core.constants import MTIME_TOLERANCE_SECONDS
+from portolan_core.versions import (
     SPEC_VERSION,
     Asset,
     SchemaInfo,

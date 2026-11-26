@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import pytest
 
-from portolan_cli.errors import (
+from portolan_core.errors import (
     ArcGISAuthError,
     AssetKeyCollisionError,
     CatalogAlreadyExistsError,

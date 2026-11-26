@@ -32,13 +32,10 @@ import pystac
 from pystac.layout import AsIsLayoutStrategy
 from pystac.stac_io import DefaultStacIO
 
-from portolan_cli.config import load_merged_metadata, load_own_metadata
 from portolan_cli.hookspecs import EnrichContext
 from portolan_cli.humanize import humanize_slug
-from portolan_cli.json_io import write_json_atomic
 from portolan_cli.metadata import extract_geoparquet_metadata
 from portolan_cli.metadata.geoparquet import GeoParquetMetadata
-from portolan_cli.query import ItemInfo
 from portolan_cli.report import emit
 from portolan_cli.stac import (
     DEFAULT_LICENSE,
@@ -64,9 +61,12 @@ from portolan_cli.stac import (
     update_catalog_provenance,
 )
 from portolan_cli.stac_enrich import enrich_collection_file, enrich_item_file
-from portolan_cli.stac_links import contained_link_target, in_link_order, iter_links
 from portolan_cli.utils import href_root, relative_href
-from portolan_cli.versions import (
+from portolan_core.config import load_merged_metadata, load_own_metadata
+from portolan_core.json_io import write_json_atomic
+from portolan_core.query import ItemInfo
+from portolan_core.stac_links import contained_link_target, in_link_order, iter_links
+from portolan_core.versions import (
     Asset,
     versions_asset_key,
 )
@@ -77,7 +77,7 @@ if TYPE_CHECKING:
     from portolan_cli.backends.protocol import PostAddItemContext
     from portolan_cli.plugins.formats import FormatContext
     from portolan_cli.preparation import PreparedItem
-    from portolan_cli.run_state import RunState
+    from portolan_core.run_state import RunState
 
 logger = logging.getLogger(__name__)
 
@@ -304,13 +304,13 @@ def _declare_conformance_links(
     not write ``collection.json`` again. With ``readme_link`` False, the
     README.md link stays out, because no sweep writes the README.md file.
     """
-    from portolan_cli.agents_md import (
+    from portolan_cli.readme import _ensure_readme_link
+    from portolan_cli.stac import ensure_portolan_schema_uri
+    from portolan_core.agents_md import (
         agents_link_is_wellformed,
         build_agents_link,
         find_agents_link,
     )
-    from portolan_cli.readme import _ensure_readme_link
-    from portolan_cli.stac import ensure_portolan_schema_uri
 
     ensure_portolan_schema_uri(collection_data)
     links = collection_data.setdefault("links", [])
@@ -370,7 +370,7 @@ def _save_collection_with_links(
     # Scaffold AGENTS.md next to the collection. The link is already in the
     # file, so this writes no JSON. It never overwrites an existing AGENTS.md,
     # so re-running `add` preserves human edits.
-    from portolan_cli.agents_md import ensure_agents_md
+    from portolan_core.agents_md import ensure_agents_md
 
     ensure_agents_md(collection_json_path)
 
@@ -1275,7 +1275,7 @@ def add_companion_assets(
     from portolan_cli.preparation import _get_asset_role, _get_media_type
     from portolan_cli.stac import document_tabular_table, set_temporal_extent
     from portolan_cli.stac_parquet import sync_file_extension
-    from portolan_cli.sync.checksums import file_fields_from
+    from portolan_core.checksums import file_fields_from
 
     assets = collection_data.setdefault("assets", {})
     for companion in companions:
@@ -1302,7 +1302,7 @@ def stage_companions(state: RunState, collection_id: str, paths: list[Path]) -> 
     A companion bumps the minor, as it did when ``add`` published it through
     the backend.
     """
-    from portolan_cli.versions import generated_asset_record
+    from portolan_core.versions import generated_asset_record
 
     collection_dir = state.collection_dir(collection_id)
     records = dict(
@@ -1394,7 +1394,7 @@ def aggregate_table_extension(
     """
     if not any(isinstance(m, GeoParquetMetadata) for m in metadata):
         return
-    from portolan_cli.run_state import RunState
+    from portolan_core.run_state import RunState
 
     # FormatContext types its state as a config source for plugins. The run
     # passes a RunState, whose memo holds the footers.
@@ -1651,8 +1651,8 @@ def _finalize_batch(
     # profile schema URI and carries AGENTS.md and README.md behind their links.
     # Swept once per batch so subcatalogs created along the way (
     # nesting) and pre-existing objects are covered, not just what was written.
-    from portolan_cli.agents_md import ensure_agents_md_tree
     from portolan_cli.readme import ensure_readmes
+    from portolan_core.agents_md import ensure_agents_md_tree
 
     ensure_schema_uris(catalog_root)
     ensure_agents_md_tree(catalog_root)

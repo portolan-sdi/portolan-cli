@@ -1,4 +1,4 @@
-"""Tests for portolan_cli.config module.
+"""Tests for portolan_core.config module.
 
 Tests the configuration system including:
 - Loading/saving config from .portolan/config.yaml
@@ -17,8 +17,8 @@ from unittest import mock
 
 import pytest
 
-from portolan_cli import trace
-from portolan_cli.errors import ConfigError
+from portolan_core import trace
+from portolan_core.errors import ConfigError
 from tests.conftest import cleared_environ
 
 
@@ -28,7 +28,7 @@ class TestLoadConfig:
     @pytest.mark.unit
     def test_load_config_returns_empty_dict_when_file_missing(self, tmp_path: Path) -> None:
         """load_config should return empty dict if config file doesn't exist."""
-        from portolan_cli.config import load_config
+        from portolan_core.config import load_config
 
         result = load_config(tmp_path)
 
@@ -37,7 +37,7 @@ class TestLoadConfig:
     @pytest.mark.unit
     def test_load_config_reads_yaml_file(self, tmp_path: Path) -> None:
         """load_config should parse .portolan/config.yaml."""
-        from portolan_cli.config import load_config
+        from portolan_core.config import load_config
 
         # Create config file
         portolan_dir = tmp_path / ".portolan"
@@ -52,7 +52,7 @@ class TestLoadConfig:
     @pytest.mark.unit
     def test_load_config_handles_empty_file(self, tmp_path: Path) -> None:
         """load_config should return empty dict for empty config file."""
-        from portolan_cli.config import load_config
+        from portolan_core.config import load_config
 
         portolan_dir = tmp_path / ".portolan"
         portolan_dir.mkdir()
@@ -66,7 +66,7 @@ class TestLoadConfig:
     @pytest.mark.unit
     def test_load_config_includes_collections_section(self, tmp_path: Path) -> None:
         """load_config should include collections config."""
-        from portolan_cli.config import load_config
+        from portolan_core.config import load_config
 
         portolan_dir = tmp_path / ".portolan"
         portolan_dir.mkdir()
@@ -86,8 +86,8 @@ class TestLoadConfig:
     @pytest.mark.unit
     def test_load_config_raises_on_malformed_yaml(self, tmp_path: Path) -> None:
         """load_config should raise ConfigParseError for malformed YAML."""
-        from portolan_cli.config import load_config
-        from portolan_cli.errors import ConfigParseError
+        from portolan_core.config import load_config
+        from portolan_core.errors import ConfigParseError
 
         portolan_dir = tmp_path / ".portolan"
         portolan_dir.mkdir()
@@ -103,8 +103,8 @@ class TestLoadConfig:
     @pytest.mark.unit
     def test_load_config_raises_on_non_dict_content(self, tmp_path: Path) -> None:
         """load_config should raise ConfigInvalidStructureError for non-dict YAML."""
-        from portolan_cli.config import load_config
-        from portolan_cli.errors import ConfigInvalidStructureError
+        from portolan_core.config import load_config
+        from portolan_core.errors import ConfigInvalidStructureError
 
         portolan_dir = tmp_path / ".portolan"
         portolan_dir.mkdir()
@@ -121,8 +121,8 @@ class TestLoadConfig:
     @pytest.mark.unit
     def test_load_config_raises_on_invalid_collections_structure(self, tmp_path: Path) -> None:
         """load_config should raise ConfigInvalidStructureError if collections is not a dict."""
-        from portolan_cli.config import load_config
-        from portolan_cli.errors import ConfigInvalidStructureError
+        from portolan_core.config import load_config
+        from portolan_core.errors import ConfigInvalidStructureError
 
         portolan_dir = tmp_path / ".portolan"
         portolan_dir.mkdir()
@@ -142,7 +142,7 @@ class TestSaveConfig:
     @pytest.mark.unit
     def test_save_config_creates_yaml_file(self, tmp_path: Path) -> None:
         """save_config should create .portolan/config.yaml."""
-        from portolan_cli.config import save_config
+        from portolan_core.config import save_config
 
         portolan_dir = tmp_path / ".portolan"
         portolan_dir.mkdir()
@@ -160,7 +160,7 @@ class TestSaveConfig:
     @pytest.mark.unit
     def test_save_config_creates_portolan_dir_if_missing(self, tmp_path: Path) -> None:
         """save_config should create .portolan directory if it doesn't exist."""
-        from portolan_cli.config import save_config
+        from portolan_core.config import save_config
 
         save_config(tmp_path, {"remote": "s3://bucket/"})
 
@@ -170,7 +170,7 @@ class TestSaveConfig:
     @pytest.mark.unit
     def test_save_config_preserves_collections_section(self, tmp_path: Path) -> None:
         """save_config should preserve collections config."""
-        from portolan_cli.config import save_config
+        from portolan_core.config import save_config
 
         config = {
             "remote": "s3://bucket/",
@@ -201,7 +201,7 @@ def _setting_through_state(
     A legacy ``collection`` name becomes the directory of that collection. With
     no catalog, the state opens on an empty directory, which holds no config.
     """
-    from portolan_cli.run_state import RunState
+    from portolan_core.run_state import RunState
 
     with tempfile.TemporaryDirectory() as empty:
         root = catalog_path if catalog_path is not None else Path(empty)
@@ -219,14 +219,14 @@ class TestGetSetting:
 
     @pytest.fixture(params=["get_setting", "run_state"])
     def resolve(self, request: pytest.FixtureRequest) -> Resolver:
-        from portolan_cli.config import get_setting
+        from portolan_core.config import get_setting
 
         return get_setting if request.param == "get_setting" else _setting_through_state
 
     @pytest.mark.unit
     def test_cli_value_takes_highest_precedence(self, tmp_path: Path, resolve: Resolver) -> None:
         """CLI value should override all other sources."""
-        from portolan_cli.config import save_config
+        from portolan_core.config import save_config
 
         # Set up catalog config
         (tmp_path / ".portolan").mkdir()
@@ -245,7 +245,7 @@ class TestGetSetting:
     @pytest.mark.unit
     def test_env_var_overrides_config_file(self, tmp_path: Path, resolve: Resolver) -> None:
         """Environment variable should override catalog config."""
-        from portolan_cli.config import save_config
+        from portolan_core.config import save_config
 
         (tmp_path / ".portolan").mkdir()
         save_config(tmp_path, {"remote": "s3://config-value/"})
@@ -260,7 +260,7 @@ class TestGetSetting:
         self, tmp_path: Path, resolve: Resolver
     ) -> None:
         """Collection-level config should override catalog-level."""
-        from portolan_cli.config import save_config
+        from portolan_core.config import save_config
 
         (tmp_path / ".portolan").mkdir()
         # Use non-sensitive key to test precedence without triggering security check
@@ -281,7 +281,7 @@ class TestGetSetting:
     @pytest.mark.unit
     def test_env_var_overrides_collection_config(self, tmp_path: Path, resolve: Resolver) -> None:
         """Environment variable should override collection config."""
-        from portolan_cli.config import save_config
+        from portolan_core.config import save_config
 
         (tmp_path / ".portolan").mkdir()
         save_config(
@@ -302,7 +302,7 @@ class TestGetSetting:
     @pytest.mark.unit
     def test_catalog_config_used_when_no_override(self, tmp_path: Path, resolve: Resolver) -> None:
         """Catalog config should be used when no CLI or env override."""
-        from portolan_cli.config import save_config
+        from portolan_core.config import save_config
 
         (tmp_path / ".portolan").mkdir()
         # Use non-sensitive key to test precedence without triggering security check
@@ -342,7 +342,7 @@ class TestGetSetting:
     @pytest.mark.unit
     def test_empty_env_var_does_not_override(self, tmp_path: Path, resolve: Resolver) -> None:
         """Empty environment variable should not override config file value."""
-        from portolan_cli.config import save_config
+        from portolan_core.config import save_config
 
         (tmp_path / ".portolan").mkdir()
         # Use non-sensitive key to test empty env var behavior
@@ -379,7 +379,7 @@ class TestGetSetting:
         self, tmp_path: Path, resolve: Resolver
     ) -> None:
         """Collection should inherit catalog config for unset keys."""
-        from portolan_cli.config import save_config
+        from portolan_core.config import save_config
 
         (tmp_path / ".portolan").mkdir()
         # Use non-sensitive keys to test fallback behavior
@@ -403,7 +403,7 @@ class TestGetSetting:
     @pytest.mark.unit
     def test_dotted_key_resolves_nested_yaml(self, tmp_path: Path, resolve: Resolver) -> None:
         """Dotted keys like 'pmtiles.src_crs' should traverse nested YAML."""
-        from portolan_cli.config import save_config
+        from portolan_core.config import save_config
 
         (tmp_path / ".portolan").mkdir()
         save_config(tmp_path, {"pmtiles": {"src_crs": "EPSG:3035"}})
@@ -425,7 +425,7 @@ class TestGetSetting:
         self, tmp_path: Path, resolve: Resolver
     ) -> None:
         """Dotted keys should work at arbitrary depth."""
-        from portolan_cli.config import save_config
+        from portolan_core.config import save_config
 
         (tmp_path / ".portolan").mkdir()
         save_config(tmp_path, {"a": {"b": {"c": "deep_value"}}})
@@ -447,7 +447,7 @@ class TestGetSetting:
         self, tmp_path: Path, resolve: Resolver
     ) -> None:
         """Dotted key should return None if any part of path is missing."""
-        from portolan_cli.config import save_config
+        from portolan_core.config import save_config
 
         (tmp_path / ".portolan").mkdir()
         save_config(tmp_path, {"pmtiles": {"min_zoom": 4}})
@@ -469,7 +469,7 @@ class TestGetSetting:
         self, tmp_path: Path, resolve: Resolver
     ) -> None:
         """Dotted key should return None if parent key doesn't exist."""
-        from portolan_cli.config import save_config
+        from portolan_core.config import save_config
 
         (tmp_path / ".portolan").mkdir()
         save_config(tmp_path, {"remote": "s3://bucket/"})
@@ -489,7 +489,7 @@ class TestGetSetting:
     @pytest.mark.unit
     def test_dotted_key_returns_false_boolean(self, tmp_path: Path, resolve: Resolver) -> None:
         """Dotted key should correctly return False (not None) for disabled settings."""
-        from portolan_cli.config import save_config
+        from portolan_core.config import save_config
 
         (tmp_path / ".portolan").mkdir()
         save_config(tmp_path, {"pmtiles": {"enabled": False}})
@@ -509,7 +509,7 @@ class TestGetSetting:
     @pytest.mark.unit
     def test_dotted_key_returns_zero_integer(self, tmp_path: Path, resolve: Resolver) -> None:
         """Dotted key should correctly return 0 (not None) for zero values."""
-        from portolan_cli.config import save_config
+        from portolan_core.config import save_config
 
         (tmp_path / ".portolan").mkdir()
         save_config(tmp_path, {"pmtiles": {"min_zoom": 0}})
@@ -533,7 +533,7 @@ class TestSetSetting:
     @pytest.mark.unit
     def test_set_catalog_level_setting(self, tmp_path: Path) -> None:
         """set_setting should update catalog-level config."""
-        from portolan_cli.config import load_config, set_setting
+        from portolan_core.config import load_config, set_setting
 
         (tmp_path / ".portolan").mkdir()
 
@@ -545,7 +545,7 @@ class TestSetSetting:
     @pytest.mark.unit
     def test_set_collection_level_setting(self, tmp_path: Path) -> None:
         """set_setting with collection should update collection config."""
-        from portolan_cli.config import load_config, set_setting
+        from portolan_core.config import load_config, set_setting
 
         (tmp_path / ".portolan").mkdir()
 
@@ -557,7 +557,7 @@ class TestSetSetting:
     @pytest.mark.unit
     def test_set_preserves_existing_config(self, tmp_path: Path) -> None:
         """set_setting should preserve other existing settings."""
-        from portolan_cli.config import load_config, save_config, set_setting
+        from portolan_core.config import load_config, save_config, set_setting
 
         (tmp_path / ".portolan").mkdir()
         save_config(tmp_path, {"backend": "stac", "statistics": {"enabled": True}})
@@ -571,7 +571,7 @@ class TestSetSetting:
     @pytest.mark.unit
     def test_set_creates_collections_section_if_missing(self, tmp_path: Path) -> None:
         """set_setting should create collections section if needed."""
-        from portolan_cli.config import load_config, set_setting
+        from portolan_core.config import load_config, set_setting
 
         (tmp_path / ".portolan").mkdir()
 
@@ -588,7 +588,7 @@ class TestUnsetSetting:
     @pytest.mark.unit
     def test_unset_removes_catalog_setting(self, tmp_path: Path) -> None:
         """unset_setting should remove setting from catalog config."""
-        from portolan_cli.config import load_config, save_config, unset_setting
+        from portolan_core.config import load_config, save_config, unset_setting
 
         (tmp_path / ".portolan").mkdir()
         save_config(tmp_path, {"remote": "s3://bucket/", "aws_profile": "prod"})
@@ -603,7 +603,7 @@ class TestUnsetSetting:
     @pytest.mark.unit
     def test_unset_returns_false_for_missing_key(self, tmp_path: Path) -> None:
         """unset_setting should return False if key doesn't exist."""
-        from portolan_cli.config import save_config, unset_setting
+        from portolan_core.config import save_config, unset_setting
 
         (tmp_path / ".portolan").mkdir()
         save_config(tmp_path, {"remote": "s3://bucket/"})
@@ -615,7 +615,7 @@ class TestUnsetSetting:
     @pytest.mark.unit
     def test_unset_collection_setting(self, tmp_path: Path) -> None:
         """unset_setting should remove collection-level setting."""
-        from portolan_cli.config import load_config, save_config, unset_setting
+        from portolan_core.config import load_config, save_config, unset_setting
 
         (tmp_path / ".portolan").mkdir()
         save_config(
@@ -640,7 +640,7 @@ class TestUnsetSetting:
     @pytest.mark.unit
     def test_unset_nonexistent_collection_key(self, tmp_path: Path) -> None:
         """unset_setting should return False for nonexistent key in collection."""
-        from portolan_cli.config import save_config, unset_setting
+        from portolan_core.config import save_config, unset_setting
 
         (tmp_path / ".portolan").mkdir()
         save_config(
@@ -665,14 +665,14 @@ class TestConfigConstants:
     @pytest.mark.unit
     def test_sensitive_settings_includes_remote(self) -> None:
         """SENSITIVE_SETTINGS should include 'remote' (Issue #356)."""
-        from portolan_cli.config import SENSITIVE_SETTINGS
+        from portolan_core.config import SENSITIVE_SETTINGS
 
         assert "remote" in SENSITIVE_SETTINGS
 
     @pytest.mark.unit
     def test_sensitive_settings_includes_profile(self) -> None:
         """SENSITIVE_SETTINGS should include 'profile' and 'aws_profile' (Issue #356)."""
-        from portolan_cli.config import SENSITIVE_SETTINGS
+        from portolan_core.config import SENSITIVE_SETTINGS
 
         assert "profile" in SENSITIVE_SETTINGS
         assert "aws_profile" in SENSITIVE_SETTINGS
@@ -680,21 +680,21 @@ class TestConfigConstants:
     @pytest.mark.unit
     def test_sensitive_settings_includes_region(self) -> None:
         """SENSITIVE_SETTINGS should include 'region' (Issue #356)."""
-        from portolan_cli.config import SENSITIVE_SETTINGS
+        from portolan_core.config import SENSITIVE_SETTINGS
 
         assert "region" in SENSITIVE_SETTINGS
 
     @pytest.mark.unit
     def test_known_settings_includes_ignored_files(self) -> None:
         """KNOWN_SETTINGS should include 'ignored_files'."""
-        from portolan_cli.config import KNOWN_SETTINGS
+        from portolan_core.config import KNOWN_SETTINGS
 
         assert "ignored_files" in KNOWN_SETTINGS
 
     @pytest.mark.unit
     def test_sensitive_settings_not_in_known_settings(self) -> None:
         """Sensitive settings should not be in KNOWN_SETTINGS (Issue #356)."""
-        from portolan_cli.config import KNOWN_SETTINGS, SENSITIVE_SETTINGS
+        from portolan_core.config import KNOWN_SETTINGS, SENSITIVE_SETTINGS
 
         for setting in SENSITIVE_SETTINGS:
             assert setting not in KNOWN_SETTINGS, f"{setting} should not be in KNOWN_SETTINGS"
@@ -706,7 +706,7 @@ class TestGetIgnoredFiles:
     @pytest.mark.unit
     def test_returns_default_patterns_when_no_config(self, tmp_path: Path) -> None:
         """get_ignored_files should return DEFAULT_IGNORED_FILES when no config exists."""
-        from portolan_cli.config import DEFAULT_IGNORED_FILES, get_ignored_files
+        from portolan_core.config import DEFAULT_IGNORED_FILES, get_ignored_files
 
         result = get_ignored_files(tmp_path)
 
@@ -715,35 +715,35 @@ class TestGetIgnoredFiles:
     @pytest.mark.unit
     def test_default_patterns_include_ds_store(self) -> None:
         """DEFAULT_IGNORED_FILES should include .DS_Store."""
-        from portolan_cli.config import DEFAULT_IGNORED_FILES
+        from portolan_core.config import DEFAULT_IGNORED_FILES
 
         assert ".DS_Store" in DEFAULT_IGNORED_FILES
 
     @pytest.mark.unit
     def test_default_patterns_include_thumbs_db(self) -> None:
         """DEFAULT_IGNORED_FILES should include Thumbs.db."""
-        from portolan_cli.config import DEFAULT_IGNORED_FILES
+        from portolan_core.config import DEFAULT_IGNORED_FILES
 
         assert "Thumbs.db" in DEFAULT_IGNORED_FILES
 
     @pytest.mark.unit
     def test_default_patterns_include_tmp_glob(self) -> None:
         """DEFAULT_IGNORED_FILES should include *.tmp glob pattern."""
-        from portolan_cli.config import DEFAULT_IGNORED_FILES
+        from portolan_core.config import DEFAULT_IGNORED_FILES
 
         assert "*.tmp" in DEFAULT_IGNORED_FILES
 
     @pytest.mark.unit
     def test_default_patterns_include_git_glob(self) -> None:
         """DEFAULT_IGNORED_FILES should include .git* glob pattern."""
-        from portolan_cli.config import DEFAULT_IGNORED_FILES
+        from portolan_core.config import DEFAULT_IGNORED_FILES
 
         assert ".git*" in DEFAULT_IGNORED_FILES
 
     @pytest.mark.unit
     def test_returns_list_type(self, tmp_path: Path) -> None:
         """get_ignored_files should always return a list."""
-        from portolan_cli.config import get_ignored_files
+        from portolan_core.config import get_ignored_files
 
         result = get_ignored_files(tmp_path)
 
@@ -752,7 +752,7 @@ class TestGetIgnoredFiles:
     @pytest.mark.unit
     def test_loads_ignored_files_from_config(self, tmp_path: Path) -> None:
         """get_ignored_files should load patterns from .portolan/config.yaml."""
-        from portolan_cli.config import get_ignored_files
+        from portolan_core.config import get_ignored_files
 
         portolan_dir = tmp_path / ".portolan"
         portolan_dir.mkdir()
@@ -765,7 +765,7 @@ class TestGetIgnoredFiles:
     @pytest.mark.unit
     def test_config_ignored_files_overrides_defaults(self, tmp_path: Path) -> None:
         """Config ignored_files replaces (not merges with) defaults."""
-        from portolan_cli.config import DEFAULT_IGNORED_FILES, get_ignored_files
+        from portolan_core.config import DEFAULT_IGNORED_FILES, get_ignored_files
 
         portolan_dir = tmp_path / ".portolan"
         portolan_dir.mkdir()
@@ -780,7 +780,7 @@ class TestGetIgnoredFiles:
     @pytest.mark.unit
     def test_empty_ignored_files_list_is_valid(self, tmp_path: Path) -> None:
         """An explicit empty list in config means no files are ignored."""
-        from portolan_cli.config import get_ignored_files
+        from portolan_core.config import get_ignored_files
 
         portolan_dir = tmp_path / ".portolan"
         portolan_dir.mkdir()
@@ -793,8 +793,8 @@ class TestGetIgnoredFiles:
     @pytest.mark.unit
     def test_raises_on_non_list_ignored_files(self, tmp_path: Path) -> None:
         """get_ignored_files should raise ConfigInvalidStructureError if ignored_files is not a list."""
-        from portolan_cli.config import get_ignored_files
-        from portolan_cli.errors import ConfigInvalidStructureError
+        from portolan_core.config import get_ignored_files
+        from portolan_core.errors import ConfigInvalidStructureError
 
         portolan_dir = tmp_path / ".portolan"
         portolan_dir.mkdir()
@@ -808,8 +808,8 @@ class TestGetIgnoredFiles:
     @pytest.mark.unit
     def test_raises_on_non_string_items_in_ignored_files(self, tmp_path: Path) -> None:
         """get_ignored_files should raise ConfigInvalidStructureError if items are not strings."""
-        from portolan_cli.config import get_ignored_files
-        from portolan_cli.errors import ConfigInvalidStructureError
+        from portolan_core.config import get_ignored_files
+        from portolan_core.errors import ConfigInvalidStructureError
 
         portolan_dir = tmp_path / ".portolan"
         portolan_dir.mkdir()
@@ -823,7 +823,7 @@ class TestGetIgnoredFiles:
     @pytest.mark.unit
     def test_works_without_catalog_path(self) -> None:
         """get_ignored_files returns defaults when no catalog_path provided."""
-        from portolan_cli.config import DEFAULT_IGNORED_FILES, get_ignored_files
+        from portolan_core.config import DEFAULT_IGNORED_FILES, get_ignored_files
 
         result = get_ignored_files(None)
 
@@ -832,7 +832,7 @@ class TestGetIgnoredFiles:
     @pytest.mark.unit
     def test_load_config_accepts_ignored_files_list(self, tmp_path: Path) -> None:
         """load_config should parse ignored_files as a list without error."""
-        from portolan_cli.config import load_config
+        from portolan_core.config import load_config
 
         portolan_dir = tmp_path / ".portolan"
         portolan_dir.mkdir()
@@ -852,7 +852,7 @@ class TestConfigFilePath:
     @pytest.mark.unit
     def test_config_file_location(self, tmp_path: Path) -> None:
         """Config file should be at .portolan/config.yaml."""
-        from portolan_cli.config import get_config_path
+        from portolan_core.config import get_config_path
 
         path = get_config_path(tmp_path)
 
@@ -865,7 +865,7 @@ class TestSensitiveSettings:
     @pytest.mark.unit
     def test_set_setting_rejects_remote(self, tmp_path: Path) -> None:
         """set_setting should reject 'remote' as a sensitive setting."""
-        from portolan_cli.config import set_setting
+        from portolan_core.config import set_setting
 
         (tmp_path / ".portolan").mkdir()
 
@@ -879,7 +879,7 @@ class TestSensitiveSettings:
     @pytest.mark.unit
     def test_set_setting_rejects_profile(self, tmp_path: Path) -> None:
         """set_setting should reject 'profile' as a sensitive setting."""
-        from portolan_cli.config import set_setting
+        from portolan_core.config import set_setting
 
         (tmp_path / ".portolan").mkdir()
 
@@ -892,7 +892,7 @@ class TestSensitiveSettings:
     @pytest.mark.unit
     def test_set_setting_rejects_aws_profile(self, tmp_path: Path) -> None:
         """set_setting should reject 'aws_profile' as a sensitive setting."""
-        from portolan_cli.config import set_setting
+        from portolan_core.config import set_setting
 
         (tmp_path / ".portolan").mkdir()
 
@@ -904,7 +904,7 @@ class TestSensitiveSettings:
     @pytest.mark.unit
     def test_set_setting_rejects_region(self, tmp_path: Path) -> None:
         """set_setting should reject 'region' as a sensitive setting."""
-        from portolan_cli.config import set_setting
+        from portolan_core.config import set_setting
 
         (tmp_path / ".portolan").mkdir()
 
@@ -916,7 +916,7 @@ class TestSensitiveSettings:
     @pytest.mark.unit
     def test_set_setting_allows_non_sensitive_keys(self, tmp_path: Path) -> None:
         """set_setting should allow non-sensitive keys like 'ignored_files'."""
-        from portolan_cli.config import load_config, set_setting
+        from portolan_core.config import load_config, set_setting
 
         (tmp_path / ".portolan").mkdir()
 
@@ -932,7 +932,7 @@ class TestDotenvLoading:
     @pytest.mark.unit
     def test_load_dotenv_from_catalog_loads_env_file(self, tmp_path: Path) -> None:
         """load_dotenv_from_catalog should load .env file from catalog root."""
-        from portolan_cli.config import load_dotenv_from_catalog
+        from portolan_cli.cli import load_dotenv_from_catalog
 
         # Create .env file
         env_file = tmp_path / ".env"
@@ -949,7 +949,7 @@ class TestDotenvLoading:
     @pytest.mark.unit
     def test_load_dotenv_returns_false_when_no_env_file(self, tmp_path: Path) -> None:
         """load_dotenv_from_catalog should return False when .env doesn't exist."""
-        from portolan_cli.config import load_dotenv_from_catalog
+        from portolan_cli.cli import load_dotenv_from_catalog
 
         result = load_dotenv_from_catalog(tmp_path)
 
@@ -958,7 +958,7 @@ class TestDotenvLoading:
     @pytest.mark.unit
     def test_load_dotenv_returns_false_for_none_path(self) -> None:
         """load_dotenv_from_catalog should return False when path is None."""
-        from portolan_cli.config import load_dotenv_from_catalog
+        from portolan_cli.cli import load_dotenv_from_catalog
 
         result = load_dotenv_from_catalog(None)
 
@@ -967,7 +967,7 @@ class TestDotenvLoading:
     @pytest.mark.unit
     def test_load_dotenv_does_not_override_existing_env_vars(self, tmp_path: Path) -> None:
         """load_dotenv_from_catalog should not override existing env vars."""
-        from portolan_cli.config import load_dotenv_from_catalog
+        from portolan_cli.cli import load_dotenv_from_catalog
 
         env_file = tmp_path / ".env"
         env_file.write_text("PORTOLAN_REMOTE=s3://from-dotenv/\n")
@@ -981,7 +981,8 @@ class TestDotenvLoading:
     @pytest.mark.unit
     def test_get_setting_reads_from_dotenv_via_env_var(self, tmp_path: Path) -> None:
         """get_setting should read values loaded from .env via env vars."""
-        from portolan_cli.config import get_setting, load_dotenv_from_catalog
+        from portolan_cli.cli import load_dotenv_from_catalog
+        from portolan_core.config import get_setting
 
         (tmp_path / ".portolan").mkdir()
         env_file = tmp_path / ".env"
@@ -1000,7 +1001,7 @@ class TestEnvFileIgnored:
     @pytest.mark.unit
     def test_default_ignored_files_includes_env(self) -> None:
         """DEFAULT_IGNORED_FILES should include .env patterns."""
-        from portolan_cli.config import DEFAULT_IGNORED_FILES
+        from portolan_core.config import DEFAULT_IGNORED_FILES
 
         assert ".env" in DEFAULT_IGNORED_FILES
         assert ".env.*" in DEFAULT_IGNORED_FILES
@@ -1013,7 +1014,7 @@ class TestSensitiveSettingsMigration:
     @pytest.mark.unit
     def test_detects_sensitive_settings_in_config(self, tmp_path: Path) -> None:
         """check_sensitive_settings_in_config should detect sensitive settings."""
-        from portolan_cli.config import check_sensitive_settings_in_config, save_config
+        from portolan_core.config import check_sensitive_settings_in_config, save_config
 
         (tmp_path / ".portolan").mkdir()
         save_config(tmp_path, {"remote": "s3://bucket/", "profile": "prod"})
@@ -1026,7 +1027,7 @@ class TestSensitiveSettingsMigration:
     @pytest.mark.unit
     def test_returns_empty_when_no_sensitive_settings(self, tmp_path: Path) -> None:
         """check_sensitive_settings_in_config should return empty list when clean."""
-        from portolan_cli.config import check_sensitive_settings_in_config, save_config
+        from portolan_core.config import check_sensitive_settings_in_config, save_config
 
         (tmp_path / ".portolan").mkdir()
         save_config(tmp_path, {"backend": "stac", "statistics.enabled": True})
@@ -1038,7 +1039,7 @@ class TestSensitiveSettingsMigration:
     @pytest.mark.unit
     def test_returns_empty_for_empty_config(self, tmp_path: Path) -> None:
         """check_sensitive_settings_in_config should handle empty config."""
-        from portolan_cli.config import check_sensitive_settings_in_config
+        from portolan_core.config import check_sensitive_settings_in_config
 
         (tmp_path / ".portolan").mkdir()
         (tmp_path / ".portolan" / "config.yaml").write_text("")
@@ -1050,7 +1051,7 @@ class TestSensitiveSettingsMigration:
     @pytest.mark.unit
     def test_detects_nested_collection_sensitive_settings(self, tmp_path: Path) -> None:
         """check_sensitive_settings_in_config should detect collection-level sensitive settings."""
-        from portolan_cli.config import check_sensitive_settings_in_config, save_config
+        from portolan_core.config import check_sensitive_settings_in_config, save_config
 
         (tmp_path / ".portolan").mkdir()
         save_config(
@@ -1077,7 +1078,7 @@ class TestListSettings:
     @pytest.mark.unit
     def test_list_settings_basic(self, tmp_path: Path) -> None:
         """list_settings should return all configured settings."""
-        from portolan_cli.config import list_settings, save_config
+        from portolan_core.config import list_settings, save_config
 
         (tmp_path / ".portolan").mkdir()
         # Use non-sensitive keys to test list functionality
@@ -1092,7 +1093,7 @@ class TestListSettings:
     @pytest.mark.unit
     def test_list_settings_with_collection(self, tmp_path: Path) -> None:
         """list_settings should include collection-level settings."""
-        from portolan_cli.config import list_settings, save_config
+        from portolan_core.config import list_settings, save_config
 
         (tmp_path / ".portolan").mkdir()
         # Use non-sensitive keys to test collection config
@@ -1118,7 +1119,7 @@ class TestListSettings:
     @pytest.mark.unit
     def test_list_settings_without_catalog_path(self) -> None:
         """list_settings should work with just env vars if no catalog_path."""
-        from portolan_cli.config import list_settings
+        from portolan_core.config import list_settings
 
         with mock.patch.dict(os.environ, {"PORTOLAN_REMOTE": "s3://env/"}):
             result = list_settings()
@@ -1134,7 +1135,7 @@ class TestGetSettingSource:
     @pytest.mark.unit
     def test_source_returns_default_without_catalog_path(self) -> None:
         """get_setting_source should return 'default' when no catalog_path."""
-        from portolan_cli.config import get_setting_source
+        from portolan_core.config import get_setting_source
 
         result = get_setting_source("remote", catalog_path=None, collection=None)
 
@@ -1143,7 +1144,7 @@ class TestGetSettingSource:
     @pytest.mark.unit
     def test_source_returns_env_when_env_var_set(self) -> None:
         """get_setting_source should return 'env' when env var is set."""
-        from portolan_cli.config import get_setting_source
+        from portolan_core.config import get_setting_source
 
         with mock.patch.dict(os.environ, {"PORTOLAN_REMOTE": "s3://env/"}):
             result = get_setting_source("remote", catalog_path=None, collection=None)
@@ -1153,7 +1154,7 @@ class TestGetSettingSource:
     @pytest.mark.unit
     def test_source_returns_collection_for_collection_setting(self, tmp_path: Path) -> None:
         """get_setting_source should return 'collection' for collection-level."""
-        from portolan_cli.config import get_setting_source, save_config
+        from portolan_core.config import get_setting_source, save_config
 
         (tmp_path / ".portolan").mkdir()
         save_config(
@@ -1175,7 +1176,7 @@ class TestPMTilesConfigSettings:
     @pytest.mark.unit
     def test_pmtiles_settings_are_known(self) -> None:
         """All PMTiles config keys are in KNOWN_SETTINGS."""
-        from portolan_cli.config import KNOWN_SETTINGS
+        from portolan_core.config import KNOWN_SETTINGS
 
         pmtiles_keys = [
             "pmtiles.enabled",
@@ -1196,7 +1197,7 @@ class TestPMTilesConfigSettings:
     @pytest.mark.unit
     def test_pmtiles_default_values(self) -> None:
         """PMTiles settings have correct defaults."""
-        from portolan_cli.config import DEFAULT_SETTINGS
+        from portolan_core.config import DEFAULT_SETTINGS
 
         assert DEFAULT_SETTINGS["pmtiles.enabled"] is False
         assert DEFAULT_SETTINGS["pmtiles.min_zoom"] is None
@@ -1212,7 +1213,7 @@ class TestPMTilesConfigSettings:
     @pytest.mark.unit
     def test_pmtiles_config_loads_from_yaml(self, tmp_path: Path) -> None:
         """PMTiles settings load correctly from config.yaml."""
-        from portolan_cli.config import get_setting, save_config
+        from portolan_core.config import get_setting, save_config
 
         (tmp_path / ".portolan").mkdir()
         save_config(
@@ -1245,7 +1246,7 @@ class TestPMTilesConfigSettings:
     @pytest.mark.unit
     def test_pmtiles_nested_yaml_structure(self, tmp_path: Path) -> None:
         """PMTiles settings work with nested YAML (how users actually write config)."""
-        from portolan_cli.config import get_setting, save_config
+        from portolan_core.config import get_setting, save_config
 
         (tmp_path / ".portolan").mkdir()
         # This is how users write config.yaml (nested, not flat keys)
@@ -1272,14 +1273,14 @@ class TestCoerceHelpers:
 
     @pytest.mark.unit
     def test_coerce_bool_truthy_strings(self) -> None:
-        from portolan_cli.config import coerce_bool
+        from portolan_core.config import coerce_bool
 
         for truthy in ("true", "True", "1", "yes", "on"):
             assert coerce_bool(truthy) is True
 
     @pytest.mark.unit
     def test_coerce_bool_falsey_and_default(self) -> None:
-        from portolan_cli.config import coerce_bool
+        from portolan_core.config import coerce_bool
 
         assert coerce_bool("false") is False
         assert coerce_bool("no") is False
@@ -1289,7 +1290,7 @@ class TestCoerceHelpers:
 
     @pytest.mark.unit
     def test_coerce_int_parses_and_falls_back(self) -> None:
-        from portolan_cli.config import coerce_int
+        from portolan_core.config import coerce_int
 
         assert coerce_int("42", default=0) == 42
         assert coerce_int(7, default=0) == 7
@@ -1308,7 +1309,7 @@ class TestResolvePushSettings:
 
     @pytest.mark.unit
     def test_cli_value_wins_and_profile_defaults(self, tmp_path: Path) -> None:
-        from portolan_cli.config import resolve_push_settings
+        from portolan_core.config import resolve_push_settings
 
         self._init_catalog(tmp_path)
         with mock.patch.dict(os.environ, {}, clear=False):
@@ -1324,7 +1325,7 @@ class TestResolvePushSettings:
 
     @pytest.mark.unit
     def test_env_remote_used_when_no_cli(self, tmp_path: Path) -> None:
-        from portolan_cli.config import resolve_push_settings
+        from portolan_core.config import resolve_push_settings
 
         self._init_catalog(tmp_path)
         with mock.patch.dict(os.environ, {"PORTOLAN_REMOTE": "s3://env-bucket/"}):
@@ -1334,7 +1335,7 @@ class TestResolvePushSettings:
 
     @pytest.mark.unit
     def test_cli_profile_overrides_env(self, tmp_path: Path) -> None:
-        from portolan_cli.config import resolve_push_settings
+        from portolan_core.config import resolve_push_settings
 
         self._init_catalog(tmp_path)
         with mock.patch.dict(os.environ, {"PORTOLAN_AWS_PROFILE": "env-profile"}):
@@ -1345,7 +1346,7 @@ class TestResolvePushSettings:
     @pytest.mark.unit
     def test_stale_sensitive_config_raises(self, tmp_path: Path) -> None:
         """A sensitive setting in config.yaml is rejected (must live in .env)."""
-        from portolan_cli.config import resolve_push_settings
+        from portolan_core.config import resolve_push_settings
 
         self._init_catalog(tmp_path, "remote: s3://stale-from-config/\n")
         with mock.patch.dict(os.environ, {}, clear=False):
@@ -1366,7 +1367,7 @@ class TestDottedKeysNest:
 
     @pytest.mark.unit
     def test_dotted_key_writes_nested_yaml(self, tmp_path: Path) -> None:
-        from portolan_cli.config import set_setting
+        from portolan_core.config import set_setting
 
         set_setting(tmp_path, "conversion.vector.sort", "none")
 
@@ -1374,7 +1375,7 @@ class TestDottedKeysNest:
 
     @pytest.mark.unit
     def test_second_dotted_key_merges_into_existing_block(self, tmp_path: Path) -> None:
-        from portolan_cli.config import save_config, set_setting
+        from portolan_core.config import save_config, set_setting
 
         save_config(tmp_path, {"backend": "file", "conversion": {"cog": {"tile_size": 256}}})
 
@@ -1391,7 +1392,7 @@ class TestDottedKeysNest:
 
     @pytest.mark.unit
     def test_cli_strings_are_stored_as_the_schema_type(self, tmp_path: Path) -> None:
-        from portolan_cli.config import set_setting
+        from portolan_core.config import set_setting
 
         set_setting(tmp_path, "statistics.enabled", "false")
         set_setting(tmp_path, "partitioning.target_rows", "5000")
@@ -1408,7 +1409,7 @@ class TestDottedKeysNest:
 
     @pytest.mark.unit
     def test_collection_level_dotted_key_nests_under_the_collection(self, tmp_path: Path) -> None:
-        from portolan_cli.config import get_setting, set_setting
+        from portolan_core.config import get_setting, set_setting
 
         set_setting(tmp_path, "pmtiles.enabled", "true", collection="demo")
 
@@ -1417,7 +1418,7 @@ class TestDottedKeysNest:
 
     @pytest.mark.unit
     def test_unset_removes_the_nested_leaf_and_empty_parents(self, tmp_path: Path) -> None:
-        from portolan_cli.config import set_setting, unset_setting
+        from portolan_core.config import set_setting, unset_setting
 
         set_setting(tmp_path, "backend", "file")
         set_setting(tmp_path, "conversion.vector.sort", "none")
@@ -1436,7 +1437,7 @@ class TestUnknownKeysRejected:
 
     @pytest.mark.unit
     def test_unknown_key_raises_with_the_known_keys(self, tmp_path: Path) -> None:
-        from portolan_cli.config import set_setting
+        from portolan_core.config import set_setting
 
         with pytest.raises(ConfigError, match=r"Unknown setting 'conversion\.vector\.compression'"):
             set_setting(tmp_path, "conversion.vector.compression", "zstd")
@@ -1450,7 +1451,7 @@ class TestUnknownKeysRejected:
 
     @pytest.mark.unit
     def test_value_of_the_wrong_type_raises(self, tmp_path: Path) -> None:
-        from portolan_cli.config import set_setting
+        from portolan_core.config import set_setting
 
         with pytest.raises(
             ConfigError, match=r"'conversion\.vector\.add_bbox' takes true or false"
@@ -1461,8 +1462,8 @@ class TestUnknownKeysRejected:
 
     @pytest.mark.unit
     def test_handler_pin_takes_any_extension(self, tmp_path: Path) -> None:
-        from portolan_cli.config import set_setting
         from portolan_cli.conversion_config import get_handler_pins
+        from portolan_core.config import set_setting
 
         set_setting(tmp_path, "conversion.handlers..tif", "cog")
 
@@ -1475,8 +1476,8 @@ class TestConversionReadersSeeConfigSet:
 
     @pytest.mark.unit
     def test_vector_settings(self, tmp_path: Path) -> None:
-        from portolan_cli.config import set_setting
         from portolan_cli.conversion_config import get_vector_settings
+        from portolan_core.config import set_setting
 
         set_setting(tmp_path, "conversion.vector.sort", "none")
         set_setting(tmp_path, "conversion.vector.add_bbox", "false")
@@ -1486,8 +1487,8 @@ class TestConversionReadersSeeConfigSet:
 
     @pytest.mark.unit
     def test_cog_settings(self, tmp_path: Path) -> None:
-        from portolan_cli.config import set_setting
         from portolan_cli.conversion_config import get_cog_settings
+        from portolan_core.config import set_setting
 
         set_setting(tmp_path, "conversion.cog.compression", "zstd")
         set_setting(tmp_path, "conversion.cog.tile_size", "256")
@@ -1497,8 +1498,8 @@ class TestConversionReadersSeeConfigSet:
 
     @pytest.mark.unit
     def test_conversion_overrides(self, tmp_path: Path) -> None:
-        from portolan_cli.config import set_setting
         from portolan_cli.conversion_config import get_conversion_overrides
+        from portolan_core.config import set_setting
 
         set_setting(tmp_path, "conversion.extensions.convert", "fgb")
         set_setting(tmp_path, "conversion.paths.preserve", "legacy/**")
@@ -1513,8 +1514,8 @@ class TestLegacyFlatKeys:
 
     @pytest.mark.unit
     def test_flat_key_reads_as_its_nested_equivalent(self, tmp_path: Path) -> None:
-        from portolan_cli.config import get_setting
         from portolan_cli.conversion_config import get_vector_settings
+        from portolan_core.config import get_setting
 
         (tmp_path / ".portolan").mkdir()
         (tmp_path / ".portolan" / "config.yaml").write_text(
@@ -1529,7 +1530,7 @@ class TestLegacyFlatKeys:
 
     @pytest.mark.unit
     def test_next_set_rewrites_flat_keys_as_nested(self, tmp_path: Path) -> None:
-        from portolan_cli.config import set_setting
+        from portolan_core.config import set_setting
 
         (tmp_path / ".portolan").mkdir()
         (tmp_path / ".portolan" / "config.yaml").write_text(
@@ -1582,8 +1583,8 @@ class TestOneParsePerFile:
         import threading
         import time
 
-        from portolan_cli import config
-        from portolan_cli.run_state import RunState
+        from portolan_core import config
+        from portolan_core.run_state import RunState
 
         collection = _hierarchy(tmp_path)
         state = RunState.open(tmp_path)
@@ -1623,7 +1624,7 @@ class TestOneParsePerFile:
             get_handler_pins,
             get_vector_settings,
         )
-        from portolan_cli.run_state import RunState
+        from portolan_core.run_state import RunState
 
         collection = _hierarchy(tmp_path)
         state = RunState.open(tmp_path)
@@ -1648,7 +1649,7 @@ class TestOneParsePerFile:
 
     @pytest.mark.unit
     def test_a_call_without_a_state_parses_again(self, tmp_path: Path) -> None:
-        from portolan_cli.config import get_setting, set_setting
+        from portolan_core.config import get_setting, set_setting
 
         set_setting(tmp_path, "backend", "file")
 
@@ -1660,7 +1661,7 @@ class TestOneParsePerFile:
 
     @pytest.mark.unit
     def test_a_file_rewritten_mid_run_is_parsed_again(self, tmp_path: Path) -> None:
-        from portolan_cli.run_state import RunState
+        from portolan_core.run_state import RunState
 
         collection = _hierarchy(tmp_path)
         config_file = collection / ".portolan" / "config.yaml"
@@ -1676,7 +1677,7 @@ class TestOneParsePerFile:
 
     @pytest.mark.unit
     def test_a_same_size_rewrite_with_a_new_mtime_ns_is_parsed_again(self, tmp_path: Path) -> None:
-        from portolan_cli.run_state import RunState
+        from portolan_core.run_state import RunState
 
         collection = _hierarchy(tmp_path)
         config_file = collection / ".portolan" / "config.yaml"
@@ -1698,8 +1699,8 @@ class TestOneParsePerFile:
     def test_invalidate_drops_a_file_whose_stat_did_not_change(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from portolan_cli import run_state
-        from portolan_cli.run_state import RunState
+        from portolan_core import run_state
+        from portolan_core.run_state import RunState
 
         # A coarse clock gives the rewrite the same status-change time too.
         def coarse_key(st: os.stat_result) -> tuple[int, int, int, int]:
@@ -1722,8 +1723,8 @@ class TestOneParsePerFile:
 
     @pytest.mark.unit
     def test_caller_edits_do_not_reach_the_memo(self, tmp_path: Path) -> None:
-        from portolan_cli.config import set_setting
-        from portolan_cli.run_state import RunState
+        from portolan_core.config import set_setting
+        from portolan_core.run_state import RunState
 
         collection = _hierarchy(tmp_path)
         set_setting(tmp_path, "push.exclude", "*.tmp")
@@ -1748,7 +1749,7 @@ class TestOneParsePerFile:
 
     @pytest.mark.unit
     def test_the_environment_applies_on_each_call(self, tmp_path: Path) -> None:
-        from portolan_cli.run_state import RunState
+        from portolan_core.run_state import RunState
 
         collection = _hierarchy(tmp_path)
         state = RunState.open(tmp_path)
@@ -1762,8 +1763,8 @@ class TestOneParsePerFile:
 
     @pytest.mark.unit
     def test_the_root_config_raises_as_load_catalog_config_does(self, tmp_path: Path) -> None:
-        from portolan_cli.errors import ConfigParseError
-        from portolan_cli.run_state import RunState
+        from portolan_core.errors import ConfigParseError
+        from portolan_core.run_state import RunState
 
         _write_config(tmp_path, "backend: [unclosed\n")
 
@@ -1777,8 +1778,6 @@ def _read_through_state(name: str, root: Path, collection: Path, state: Any) -> 
 
     from portolan_cli import (
         add,
-        catalog_list,
-        config,
         conversion_config,
         finalization,
         formats,
@@ -1790,6 +1789,7 @@ def _read_through_state(name: str, root: Path, collection: Path, state: Any) -> 
     from portolan_cli.stac import MergeStrategy
     from portolan_cli.validation import config as validation_config
     from portolan_cli.viz import pmtiles, style
+    from portolan_core import catalog_list, config
 
     data = collection / "data.parquet"
     calls: dict[str, Callable[[], object]] = {
@@ -1864,7 +1864,7 @@ class TestReadersTakeTheState:
     def test_a_repeated_call_parses_nothing(self, tmp_path: Path, name: str) -> None:
         import json
 
-        from portolan_cli.run_state import RunState
+        from portolan_core.run_state import RunState
 
         collection = _hierarchy(tmp_path)
         (tmp_path / "catalog.json").write_text(json.dumps({"id": "root"}), encoding="utf-8")
@@ -2029,8 +2029,8 @@ class TestCollectionBackendAndRemote:
     def test_the_collection_backend_drives_the_push_block(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, own: str, legacy: str
     ) -> None:
-        from portolan_cli.run_state import RunState
         from portolan_cli.version_ops import check_backend_supports_push
+        from portolan_core.run_state import RunState
 
         self._no_push(monkeypatch)
         catalog = self._catalog(tmp_path / "catalog", own=own, legacy=legacy)
@@ -2047,8 +2047,8 @@ class TestCollectionBackendAndRemote:
     def test_a_collection_config_remote_is_rejected_as_sensitive(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from portolan_cli.run_state import RunState
         from portolan_cli.version_ops import check_backend_supports_push
+        from portolan_core.run_state import RunState
 
         self._no_push(monkeypatch)
         catalog = self._catalog(
@@ -2065,7 +2065,7 @@ class TestCollectionBackendAndRemote:
 
     @pytest.mark.unit
     def test_the_environment_remote_reaches_a_collection(self, tmp_path: Path) -> None:
-        from portolan_cli.run_state import RunState
+        from portolan_core.run_state import RunState
 
         catalog = self._catalog(tmp_path / "catalog", own="backend: lakehouse\n")
         state = RunState.open(catalog)
@@ -2082,8 +2082,8 @@ class TestCheckFixReadsTheState:
 
     @staticmethod
     def _parses_at(root: Path, n: int, *, dry_run: bool) -> int:
-        from portolan_cli.run_state import RunState
         from portolan_cli.scan.check import check_directory
+        from portolan_core.run_state import RunState
 
         catalog = _geo_asset_catalog(root, n)
         with trace.tracing():
@@ -2110,8 +2110,8 @@ class TestCheckFixReadsTheState:
     def test_fix_on_a_subdirectory_converts_what_check_reports(self, tmp_path: Path) -> None:
         """The status and the conversion read the same catalog overrides."""
         from portolan_cli.convert import ConversionStatus
-        from portolan_cli.run_state import RunState
         from portolan_cli.scan.check import check_directory
+        from portolan_core.run_state import RunState
 
         catalog = _geo_asset_catalog(tmp_path / "catalog", 1)
         with (catalog / ".portolan" / "config.yaml").open("a", encoding="utf-8") as handle:
@@ -2161,8 +2161,8 @@ class TestCheckFixReadsTheState:
     def test_a_path_glob_matches_from_the_catalog_root_in_a_subdirectory_fix(
         self, tmp_path: Path
     ) -> None:
-        from portolan_cli.run_state import RunState
         from portolan_cli.scan.check import run_fix_workflow
+        from portolan_core.run_state import RunState
 
         catalog = self._preserved_catalog(tmp_path / "catalog")
 
@@ -2235,7 +2235,7 @@ class TestYamlLoader:
     ) -> None:
         import yaml
 
-        from portolan_cli import config
+        from portolan_core import config
 
         if with_libyaml:
             assert hasattr(yaml, "CSafeLoader"), "this test needs PyYAML built with libyaml"
@@ -2287,7 +2287,7 @@ class TestYamlLoader:
     def test_the_loader_refuses_python_tags(self) -> None:
         import yaml
 
-        from portolan_cli.config import safe_load
+        from portolan_core.config import safe_load
 
         with pytest.raises(yaml.YAMLError):
             safe_load("!!python/object/apply:os.system ['true']\n")
@@ -2306,7 +2306,7 @@ class TestTypedValues:
     def test_int_or_auto_takes_an_integer_or_auto(
         self, tmp_path: Path, text: str, stored: object
     ) -> None:
-        from portolan_cli.config import set_setting
+        from portolan_core.config import set_setting
 
         set_setting(tmp_path, "conversion.vector.resolution", text)
 
@@ -2315,7 +2315,7 @@ class TestTypedValues:
     @pytest.mark.unit
     @pytest.mark.parametrize("value", ["high", True])
     def test_int_or_auto_rejects_other_values(self, tmp_path: Path, value: object) -> None:
-        from portolan_cli.config import set_setting
+        from portolan_core.config import set_setting
 
         with pytest.raises(ConfigError, match="takes an integer or 'auto'"):
             set_setting(tmp_path, "conversion.vector.resolution", value)
@@ -2328,7 +2328,7 @@ class TestTypedValues:
     def test_a_number_takes_the_float_spellings_that_yaml_reads_as_text(
         self, tmp_path: Path, text: str, stored: float
     ) -> None:
-        from portolan_cli.config import set_setting
+        from portolan_core.config import set_setting
 
         set_setting(tmp_path, "partitioning.threshold_gb", text)
 
@@ -2336,7 +2336,7 @@ class TestTypedValues:
 
     @pytest.mark.unit
     def test_an_environment_number_takes_an_exponent(self, tmp_path: Path) -> None:
-        from portolan_cli.config import get_setting
+        from portolan_core.config import get_setting
 
         with cleared_environ(PORTOLAN_PARTITIONING_THRESHOLD_GB="5e-1"):
             assert get_setting("partitioning.threshold_gb", catalog_path=tmp_path) == 0.5
@@ -2346,14 +2346,14 @@ class TestTypedValues:
     def test_an_int_still_rejects_text_that_is_not_an_integer(
         self, tmp_path: Path, text: str
     ) -> None:
-        from portolan_cli.config import set_setting
+        from portolan_core.config import set_setting
 
         with pytest.raises(ConfigError, match="takes an integer"):
             set_setting(tmp_path, "thumbnails.basemap.zoom_adjust", text)
 
     @pytest.mark.unit
     def test_a_string_setting_keeps_yaml_like_text_as_text(self, tmp_path: Path) -> None:
-        from portolan_cli.config import set_setting
+        from portolan_core.config import set_setting
 
         set_setting(tmp_path, "pmtiles.layer", "true")
         set_setting(tmp_path, "backend", "123")
@@ -2366,7 +2366,7 @@ class TestPatternKeys:
 
     @pytest.mark.unit
     def test_get_and_unset_a_handler_pin(self, tmp_path: Path) -> None:
-        from portolan_cli.config import get_setting, set_setting, unset_setting
+        from portolan_core.config import get_setting, set_setting, unset_setting
 
         set_setting(tmp_path, "backend", "file")
         set_setting(tmp_path, "conversion.handlers..tif", "cog")
@@ -2383,7 +2383,7 @@ class TestLegacyFlatKeysInCollections:
     def test_flat_key_under_a_collection_reads_as_its_typed_nested_value(
         self, tmp_path: Path
     ) -> None:
-        from portolan_cli.config import get_setting
+        from portolan_core.config import get_setting
 
         _write_config(tmp_path, "collections:\n  demo:\n    pmtiles.enabled: 'true'\n")
 
@@ -2391,7 +2391,7 @@ class TestLegacyFlatKeysInCollections:
 
     @pytest.mark.unit
     def test_flat_key_with_a_bad_value_keeps_the_value_for_the_reader(self, tmp_path: Path) -> None:
-        from portolan_cli.config import load_config
+        from portolan_core.config import load_config
 
         _write_config(tmp_path, "statistics.enabled: banana\n")
 
@@ -2405,7 +2405,7 @@ class TestLegacyCollectionsMerge:
     def test_legacy_section_overrides_the_root_and_the_folder_overrides_both(
         self, tmp_path: Path
     ) -> None:
-        from portolan_cli.config import load_merged_config
+        from portolan_core.config import load_merged_config
 
         root = tmp_path / "catalog"
         _write_config(
@@ -2428,7 +2428,7 @@ class TestLoadersReturnDeepCopies:
 
     @pytest.mark.unit
     def test_get_setting_and_load_merged_config(self, tmp_path: Path) -> None:
-        from portolan_cli.config import get_setting, load_merged_config
+        from portolan_core.config import get_setting, load_merged_config
 
         _write_config(tmp_path, "check:\n  severity:\n    PTL-PRV-001: warning\n")
 
@@ -2443,7 +2443,7 @@ class TestLoadersReturnDeepCopies:
 
     @pytest.mark.unit
     def test_metadata_loaders(self, tmp_path: Path) -> None:
-        from portolan_cli.config import load_merged_metadata, load_own_metadata
+        from portolan_core.config import load_merged_metadata, load_own_metadata
 
         collection = tmp_path / "demo"
         (collection / ".portolan").mkdir(parents=True)
@@ -2467,7 +2467,7 @@ class TestListNestedSettings:
     def test_catalog_listing_holds_leaves_but_not_the_collections_section(
         self, tmp_path: Path
     ) -> None:
-        from portolan_cli.config import list_settings
+        from portolan_core.config import list_settings
 
         _write_config(
             tmp_path,
@@ -2484,7 +2484,7 @@ class TestListNestedSettings:
 
     @pytest.mark.unit
     def test_collection_listing_holds_a_key_outside_the_schema(self, tmp_path: Path) -> None:
-        from portolan_cli.config import list_settings
+        from portolan_core.config import list_settings
 
         _write_config(tmp_path, "collections:\n  demo:\n    plugin:\n      key: on\n")
 
@@ -2504,7 +2504,7 @@ class TestListNestedSettings:
     def test_a_sensitive_key_in_the_file_lists_as_insecure(
         self, tmp_path: Path, text: str, collection: str | None
     ) -> None:
-        from portolan_cli.config import list_settings
+        from portolan_core.config import list_settings
 
         _write_config(tmp_path, text)
 
@@ -2515,7 +2515,7 @@ class TestListNestedSettings:
 
     @pytest.mark.unit
     def test_an_unset_key_has_the_default_source(self, tmp_path: Path) -> None:
-        from portolan_cli.config import get_setting_source
+        from portolan_core.config import get_setting_source
 
         _write_config(tmp_path, "backend: file\n")
 
@@ -2525,7 +2525,7 @@ class TestListNestedSettings:
 
     @pytest.mark.unit
     def test_the_unknown_key_message_lists_pattern_keys_by_name(self, tmp_path: Path) -> None:
-        from portolan_cli.config import set_setting
+        from portolan_core.config import set_setting
 
         with pytest.raises(ConfigError) as excinfo:
             set_setting(tmp_path, "workers", "8")
@@ -2540,7 +2540,7 @@ class TestCollectionScope:
 
     @pytest.mark.unit
     def test_a_catalog_only_setting_rejects_a_collection(self, tmp_path: Path) -> None:
-        from portolan_cli.config import set_setting
+        from portolan_core.config import set_setting
 
         with pytest.raises(
             ConfigError,
@@ -2552,7 +2552,7 @@ class TestCollectionScope:
 
     @pytest.mark.unit
     def test_a_nested_collection_reads_its_own_section(self, tmp_path: Path) -> None:
-        from portolan_cli.config import get_setting, set_setting
+        from portolan_core.config import get_setting, set_setting
 
         set_setting(tmp_path, "pmtiles.enabled", "true", collection="parent/child")
 
@@ -2581,7 +2581,7 @@ class TestEnvironmentValuesTakeTheSchemaType:
         ],
     )
     def test_env_value(self, tmp_path: Path, key: str, text: str, expected: object) -> None:
-        from portolan_cli.config import _get_env_var_name, get_setting
+        from portolan_core.config import _get_env_var_name, get_setting
 
         with cleared_environ(), mock.patch.dict(os.environ, {_get_env_var_name(key): text}):
             value = get_setting(key, catalog_path=tmp_path)
@@ -2591,7 +2591,7 @@ class TestEnvironmentValuesTakeTheSchemaType:
     @pytest.mark.unit
     def test_config_set_keeps_the_environment_out_of_the_file(self, tmp_path: Path) -> None:
         """The readers see PORTOLAN_<KEY>, but a save writes the file content only."""
-        from portolan_cli.config import get_config_path, load_catalog_config, set_setting
+        from portolan_core.config import get_config_path, load_catalog_config, set_setting
 
         with cleared_environ(PORTOLAN_THUMBNAILS_QUALITY="20"):
             set_setting(tmp_path, "thumbnails.enabled", "false")
@@ -2607,7 +2607,7 @@ class TestSchemaEdges:
 
     @pytest.mark.unit
     def test_a_pattern_is_not_a_key(self, tmp_path: Path) -> None:
-        from portolan_cli.config import set_setting
+        from portolan_core.config import set_setting
 
         with pytest.raises(ConfigError, match=r"Unknown setting 'conversion\.handlers\.\*'"):
             set_setting(tmp_path, "conversion.handlers.*", "cog")
@@ -2615,7 +2615,7 @@ class TestSchemaEdges:
     @pytest.mark.unit
     @pytest.mark.parametrize("text", ["[2024-01-01]", "[[a]]", "[{a: 1}]"])
     def test_a_list_holds_only_scalars(self, tmp_path: Path, text: str) -> None:
-        from portolan_cli.config import set_setting
+        from portolan_core.config import set_setting
 
         with pytest.raises(ConfigError, match=r"'push\.exclude' takes a comma-separated list"):
             set_setting(tmp_path, "push.exclude", text)

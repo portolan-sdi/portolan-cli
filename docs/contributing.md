@@ -217,9 +217,9 @@ number moves to 1 only when a human decides the interface is stable.
 - Use `portolan_cli/output.py` for all user-facing terminal messages
 - Use `logging.getLogger(__name__)` for diagnostic messages. The root `-v` flag
   shows them on stderr. See [Diagnose a run](guides/diagnostics.md).
-- Wrap each new stage of a command in `portolan_cli.trace.span`, and count
-  repeated expensive work with `portolan_cli.trace.count`. Submit thread pool
-  work through `portolan_cli.trace.submit`, so the worker keeps the open span
+- Wrap each new stage of a command in `portolan_core.trace.span`, and count
+  repeated expensive work with `portolan_core.trace.count`. Submit thread pool
+  work through `portolan_core.trace.submit`, so the worker keeps the open span
 - Record a non-obvious decision next to what it governs. User-facing behavior
   goes in `docs/`. Maintainer rationale goes in the docstring or comment at the
   site that enforces it. An accepted upstream limit goes in its `skipif` or

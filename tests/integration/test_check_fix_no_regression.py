@@ -455,8 +455,8 @@ class TestOneFixIsOneRun:
         """
         from click.testing import CliRunner
 
-        from portolan_cli import config, json_io
         from portolan_cli.cli import cli
+        from portolan_core import config, json_io
 
         root = tmp_path / "catalog"
         runner = CliRunner()

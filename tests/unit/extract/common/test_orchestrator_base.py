@@ -483,8 +483,8 @@ class TestSeedCatalogMetadata:
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
         """#1039: the source's attribution is the producer, and no placeholder host is made."""
-        from portolan_cli.config import load_merged_metadata
         from portolan_cli.providers import resolve_providers
+        from portolan_core.config import load_merged_metadata
 
         extracted = ExtractedMetadata(
             source_type="arcgis_featureserver",
@@ -526,7 +526,7 @@ class TestSeedCatalogMetadata:
 class TestLegendFileFields:
     def test_legend_assets_carry_size_and_checksum(self, tmp_path: Path) -> None:
         """#1039: legends/source states file:size and file:checksum (PTL-AST-003)."""
-        from portolan_cli.sync.checksums import file_fields
+        from portolan_core.checksums import file_fields
 
         collection = tmp_path / "a"
         (collection / "legends").mkdir(parents=True)
@@ -549,7 +549,7 @@ class TestParquetRowCount:
     """parquet_row_count reads the footer once and counts the open."""
 
     def test_missing_file_gives_zero_and_opens_nothing(self, tmp_path: Path) -> None:
-        from portolan_cli import trace
+        from portolan_core import trace
 
         with trace.tracing():
             assert parquet_row_count(tmp_path / "none.parquet") == 0
@@ -559,7 +559,7 @@ class TestParquetRowCount:
         import pyarrow as pa
         import pyarrow.parquet as pq
 
-        from portolan_cli import trace
+        from portolan_core import trace
 
         path = tmp_path / "rows.parquet"
         pq.write_table(pa.table({"id": [1, 2, 3]}), path)

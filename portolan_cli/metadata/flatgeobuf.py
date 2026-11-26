@@ -15,7 +15,7 @@ import pyogrio  # type: ignore[import-untyped]
 from pyproj import CRS
 from pyproj.exceptions import CRSError
 
-from portolan_cli.trace import count
+from portolan_core.trace import count
 
 if TYPE_CHECKING:
     from pathlib import Path

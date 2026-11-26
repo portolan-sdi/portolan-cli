@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 import pytest
 
-from portolan_cli.config import resolve_s3_endpoint_settings
+from portolan_core.config import resolve_s3_endpoint_settings
 from tests.conftest import cleared_environ
 
 pytestmark = pytest.mark.unit
@@ -82,8 +82,8 @@ def test_object_store_rejects_credentials_over_http(
     resolved_credentials: tuple[str, str, str | None, None],
 ) -> None:
     """The common store setup never sends resolved credentials over plaintext."""
-    from portolan_cli.errors import InsecureS3EndpointError
     from portolan_cli.sync.upload import _setup_store_and_kwargs
+    from portolan_core.errors import InsecureS3EndpointError
 
     with (
         cleared_environ(),
@@ -128,6 +128,6 @@ def test_default_profile_preserves_environment_credentials() -> None:
 
 def test_endpoint_settings_are_sensitive() -> None:
     """Catalog configuration cannot store S3 endpoint settings."""
-    from portolan_cli.config import SENSITIVE_SETTINGS
+    from portolan_core.config import SENSITIVE_SETTINGS
 
     assert {"s3_endpoint", "s3_use_ssl"} <= SENSITIVE_SETTINGS

@@ -24,7 +24,7 @@ from portolan_cli.add import (
     is_current,
 )
 from portolan_cli.catalog import init_catalog
-from portolan_cli.versions import read_versions
+from portolan_core.versions import read_versions
 
 
 @pytest.fixture

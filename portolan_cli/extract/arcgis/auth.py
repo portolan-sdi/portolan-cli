@@ -13,9 +13,9 @@ from typing import Any, cast
 
 import httpx
 
-from portolan_cli.errors import ArcGISAuthError
 from portolan_cli.extract.arcgis.discovery import ensure_json_format
 from portolan_cli.extract.common.urls import redact_credentials
+from portolan_core.errors import ArcGISAuthError
 
 
 @dataclass

@@ -552,8 +552,8 @@ class TestCheckMetadataFixFlag:
         self, runner: CliRunner, valid_catalog_with_parquet: Path
     ) -> None:
         """--fix --json emits a single envelope carrying both the fixes and the re-check."""
-        from portolan_cli.constants import PORTOLAN_SPEC_VERSION
         from portolan_cli.metadata.models import MetadataReport
+        from portolan_core.constants import PORTOLAN_SPEC_VERSION
 
         with (
             patch(

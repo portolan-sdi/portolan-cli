@@ -75,7 +75,7 @@ from portolan_cli.sync.upload import (
     _setup_store_and_kwargs,
     parse_object_store_url,
 )
-from portolan_cli.trace import submit
+from portolan_core.trace import submit
 
 if TYPE_CHECKING:
     from portolan_cli.sync.report import Report

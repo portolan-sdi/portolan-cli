@@ -23,8 +23,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING
 
-from portolan_cli import extension_registry as _reg
 from portolan_cli.formats import is_geoparquet
+from portolan_core import extension_registry as _reg
 
 if TYPE_CHECKING:
     from pathlib import Path

@@ -64,7 +64,7 @@ from portolan_cli.metadata.fix import FixAction, FixReport, FixResult
 from portolan_cli.validation.remediation import Bucket, remediation_of
 
 if TYPE_CHECKING:
-    from portolan_cli.run_state import RunState
+    from portolan_core.run_state import RunState
 
 #: A fixer sweeps ``catalog_root``. ``dry_run`` means report but do not write.
 #: The run state is the one of the command, or None outside ``check --fix``.
@@ -113,7 +113,7 @@ def _graph(root: Path) -> CatalogGraph:
 
 
 def _write_node(node: Node, *, dry_run: bool) -> None:
-    from portolan_cli.json_io import write_json_atomic
+    from portolan_core.json_io import write_json_atomic
 
     if dry_run:
         return
@@ -252,7 +252,7 @@ def _extent_bboxes(node: Node) -> list[Any] | None:
 
 
 def _looks_valid(box: Any) -> bool:
-    from portolan_cli.bbox import is_valid_bbox, snap_to_wgs84_range, to_2d_bbox
+    from portolan_core.bbox import is_valid_bbox, snap_to_wgs84_range, to_2d_bbox
 
     if not isinstance(box, list) or len(box) not in (4, 6):
         return False
@@ -273,7 +273,7 @@ def _child_bboxes(node: Node, graph: CatalogGraph) -> list[list[float]]:
     Descends through an organizing catalog (core.md:168-170), which carries no
     extent of its own and would otherwise hide the items beneath it.
     """
-    from portolan_cli.bbox import to_2d_bbox
+    from portolan_core.bbox import to_2d_bbox
 
     found: list[list[float]] = []
     for child in graph.children_of(node):
@@ -341,8 +341,8 @@ _BBOX_SKIP_MESSAGE = (
 
 def _fix_item_bbox(node: Node, *, dry_run: bool) -> FixResult | None:
     """Recompute one item's bbox (and, if absent, its geometry) from its assets."""
-    from portolan_cli.bbox import compute_bbox_union
     from portolan_cli.item import _bbox_to_polygon
+    from portolan_core.bbox import compute_bbox_union
 
     declared = "bbox" in node.data
     if declared and _looks_valid(node.data["bbox"]):
@@ -364,8 +364,8 @@ def _fix_container_bbox(node: Node, graph: CatalogGraph, *, dry_run: bool) -> Fi
     boxes = _extent_bboxes(node)
     if boxes is None or all(_looks_valid(box) for box in boxes):
         return None
-    from portolan_cli.errors import InvalidBboxError
     from portolan_cli.stac import build_spatial_extent
+    from portolan_core.errors import InvalidBboxError
 
     # Items were repaired first and graph nodes are shared objects, so a bbox
     # written above is already visible here without reloading the tree. The
@@ -469,7 +469,7 @@ def _fix_checksums(root: Path, dry_run: bool, _state: RunState | None = None) ->
     asset whole: a COG is routinely gigabytes, and the whole point of this fixer
     is that it runs over every asset in the catalog.
     """
-    from portolan_cli.sync.checksums import file_fields
+    from portolan_core.checksums import file_fields
 
     results: list[FixResult] = []
     for node in _graph(root).iter("collection", "item"):
@@ -697,7 +697,7 @@ def _fix_item_mirror(root: Path, dry_run: bool, state: RunState | None = None) -
 
 
 def _is_partitioned(node: Node) -> bool:
-    from portolan_cli.constants import PARTITION_EXTENSION_URI
+    from portolan_core.constants import PARTITION_EXTENSION_URI
 
     if any(key.startswith("partition:") for key in node.data):
         return True
@@ -707,8 +707,8 @@ def _is_partitioned(node: Node) -> bool:
 
 def _fix_partition(root: Path, dry_run: bool, _state: RunState | None = None) -> list[FixResult]:
     """Populate the partition: block from the Hive layout on disk."""
-    from portolan_cli.constants import PARTITION_EXTENSION_URI
     from portolan_cli.partitioning import build_glob_pattern, detect_partitioning
+    from portolan_core.constants import PARTITION_EXTENSION_URI
 
     results: list[FixResult] = []
     for node in _graph(root).iter("collection"):
@@ -779,7 +779,7 @@ def _readme_gap(root: Path, stac_path: Path, data: dict[str, Any]) -> bool:
 
 def _agents_gap(root: Path, stac_path: Path, data: dict[str, Any]) -> bool:
     """True when AGENTS.md is absent or its rel='agents' link is unfit."""
-    from portolan_cli.agents_md import AGENTS_MD_FILENAME, agents_link_gap
+    from portolan_core.agents_md import AGENTS_MD_FILENAME, agents_link_gap
 
     return not (stac_path.parent / AGENTS_MD_FILENAME).exists() or agents_link_gap(
         root, stac_path, data
@@ -838,7 +838,7 @@ def _fix_readme(root: Path, dry_run: bool, state: RunState | None = None) -> lis
 
 def _fix_agents(root: Path, dry_run: bool, _state: RunState | None = None) -> list[FixResult]:
     """Scaffold AGENTS.md and its rel='agents' link."""
-    from portolan_cli.agents_md import ensure_agents_md_tree
+    from portolan_core.agents_md import ensure_agents_md_tree
 
     return _fix_markdown_requirement(
         root,

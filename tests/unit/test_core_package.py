@@ -20,18 +20,21 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 FORBIDDEN = ["click", "rasterio", "pyarrow", "geopandas", "duckdb", "pystac", "portolan_cli"]
 
 _PROBE = f"""
-import json, sys
+import importlib, json, pkgutil, sys
 import portolan_core
-import portolan_core.writer
+modules = [m.name for m in pkgutil.walk_packages(portolan_core.__path__, "portolan_core.")]
+for name in modules:
+    importlib.import_module(name)
 print(json.dumps({{
     "file": portolan_core.__file__,
+    "modules": modules,
     "loaded": sorted(m for m in {FORBIDDEN!r} if m in sys.modules),
 }}))
 """
 
 
 def test_core_import_loads_no_cli_or_geospatial_module() -> None:
-    """`import portolan_core` and its writer load none of the forbidden modules."""
+    """Every portolan_core module imports without loading a forbidden module."""
     result = subprocess.run(
         [sys.executable, "-c", _PROBE], capture_output=True, text=True, check=True
     )
@@ -39,6 +42,7 @@ def test_core_import_loads_no_cli_or_geospatial_module() -> None:
 
     expected = REPO_ROOT / "packages" / "portolan-core" / "src" / "portolan_core" / "__init__.py"
     assert Path(probe["file"]).resolve() == expected
+    assert "portolan_core.versions" in probe["modules"]
     assert probe["loaded"] == []
 
 

@@ -19,7 +19,7 @@ from portolan_cli.validation.runner import run_check
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from portolan_cli.run_state import RunState
+    from portolan_core.run_state import RunState
 
 pytestmark = pytest.mark.unit
 

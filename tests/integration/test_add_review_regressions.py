@@ -14,7 +14,7 @@ from click.testing import CliRunner
 from portolan_cli.add import add_files
 from portolan_cli.cli import cli
 from portolan_cli.extract.common.report import ExtractionReport, ExtractionSummary, LayerResult
-from portolan_cli.versions import read_versions
+from portolan_core.versions import read_versions
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -38,11 +38,11 @@ def _extraction_report() -> ExtractionReport:
 
 def test_extract_post_init_and_tabular_add_share_footer(conformant_catalog: Path) -> None:
     """The post-init format probe and deferred table metadata share one actual open."""
-    from portolan_cli.config import set_setting
     from portolan_cli.extract.common.orchestrator_base import init_extracted_catalog
     from portolan_cli.formats import is_geoparquet
-    from portolan_cli.run_state import RunState
     from portolan_cli.version_ops import commit_run
+    from portolan_core.config import set_setting
+    from portolan_core.run_state import RunState
 
     root = conformant_catalog
     collection = root / "roads"
@@ -105,7 +105,7 @@ def test_thumbnail_registration_and_version_share_one_hash(
     from pathlib import Path
 
     from portolan_cli.collection_thumbnail import ensure_collection_thumbnails
-    from portolan_cli.run_state import RunState
+    from portolan_core.run_state import RunState
 
     root = conformant_catalog
     collection = root / "roads"

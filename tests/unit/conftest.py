@@ -8,8 +8,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from portolan_cli import trace
-from portolan_cli.versions import Asset, Version, VersionsFile, write_versions
+from portolan_core import trace
+from portolan_core.versions import Asset, Version, VersionsFile, write_versions
 from tests.print_report import print_report_fixture  # noqa: F401  (a shared fixture)
 
 if TYPE_CHECKING:

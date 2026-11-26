@@ -38,17 +38,17 @@ from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
 from urllib.parse import quote
 
-from portolan_cli.agents_md import markdown_link_gap
-from portolan_cli.config import load_merged_metadata
-from portolan_cli.errors import ConfigInvalidStructureError
-from portolan_cli.json_io import write_json_atomic
-from portolan_cli.stac_links import owned_item_hrefs
-from portolan_cli.stac_links import visible_stac_files as _visible_stac_files
+from portolan_core.agents_md import markdown_link_gap
+from portolan_core.config import load_merged_metadata
+from portolan_core.errors import ConfigInvalidStructureError
+from portolan_core.json_io import write_json_atomic
+from portolan_core.stac_links import owned_item_hrefs
+from portolan_core.stac_links import visible_stac_files as _visible_stac_files
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
 
-    from portolan_cli.config import ConfigSource
+    from portolan_core.config import ConfigSource
 
 # Keyword-badge rendering limits (#515). A junk-dominated list is a machine dump
 # (e.g. WFS layer ids seeded into metadata.yaml at extraction) and is suppressed;
@@ -188,7 +188,7 @@ def _add_spatial_section(sections: list[str], stac: dict[str, Any]) -> None:
     if len(bbox) < 4:
         return
 
-    from portolan_cli.bbox import to_2d_bbox
+    from portolan_core.bbox import to_2d_bbox
 
     # Reduce to 2D so a 6-element extent shows [west, south, east, north], not
     # its [west, south, min_z, east] slice (issue #592).
@@ -895,7 +895,7 @@ def _compute_bbox_envelope(bboxes: list[list[float]]) -> list[float] | None:
 
     Filters out invalid bboxes (inf/nan/out-of-range) with warnings (issue #516).
     """
-    from portolan_cli.bbox import compute_bbox_union
+    from portolan_core.bbox import compute_bbox_union
 
     if not bboxes:
         return None
@@ -1045,7 +1045,7 @@ def _add_aggregated_extent_section(
     sections.append("")
 
     if bbox:
-        from portolan_cli.bbox import to_2d_bbox
+        from portolan_core.bbox import to_2d_bbox
 
         # Reduce to 2D so east/north are read from the correct indices for a
         # 6-element bbox (issue #592).
@@ -1316,7 +1316,7 @@ def resolve_catalog_dir(catalog_root: Path, path: str | None, *, must_exist: boo
     validate_safe_path(Path(path), catalog_root)
     target = catalog_root / path
     if must_exist and not target.exists():
-        from portolan_cli.errors import PathNotFoundError
+        from portolan_core.errors import PathNotFoundError
 
         raise PathNotFoundError(f"Path '{path}' does not exist in catalog.")
     if must_exist and not target.is_dir():
@@ -1327,7 +1327,7 @@ def resolve_catalog_dir(catalog_root: Path, path: str | None, *, must_exist: boo
 class UnsupportedOptionError(ValueError):
     """An option does not apply to the mode the run is in.
 
-    It is not a ``PortolanError`` for the reason that :class:`portolan_cli.errors.PathNotFoundError` gives.
+    It is not a ``PortolanError`` for the reason that :class:`portolan_core.errors.PathNotFoundError` gives.
     """
 
 

@@ -340,7 +340,7 @@ class TestLicenseOptions:
     @pytest.mark.asyncio
     async def test_missing_license_error_propagates(self, tmp_path: Path) -> None:
         """The library raises the license error. The command prints it and the hint."""
-        from portolan_cli.errors import MissingLicenseError
+        from portolan_core.errors import MissingLicenseError
 
         mock_extract = AsyncMock(
             side_effect=MissingLicenseError(
@@ -454,8 +454,8 @@ class TestCompatibilityWrappers:
     ) -> None:
         import logging
 
-        from portolan_cli.errors import MissingLicenseError
-        from portolan_cli.licensing import CLI_LICENSE_REMEDIATION
+        from portolan_core.errors import MissingLicenseError
+        from portolan_core.licensing import CLI_LICENSE_REMEDIATION
 
         caplog.set_level(logging.INFO, logger="portolan_cli")
         error = MissingLicenseError("this extraction", "the source publishes no license URL")

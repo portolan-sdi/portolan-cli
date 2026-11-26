@@ -338,7 +338,7 @@ class TestVectorRendering:
     @pytest.mark.unit
     def test_tracks_the_rendered_file_in_versions_json(self, tmp_path: Path) -> None:
         """An untracked derived asset breaks push (#519, #735)."""
-        from portolan_cli.versions import read_versions
+        from portolan_core.versions import read_versions
 
         collection_dir = _vector_collection(tmp_path)
         rendered = collection_dir / "roads.thumb.jpg"
@@ -690,7 +690,7 @@ class TestOneAddIsOneVersion:
 
     def _seed_version(self, collection_dir: Path, catalog_root: Path) -> None:
         """Stand in for the snapshot ``add`` writes before the side-steps run."""
-        from portolan_cli.versions import track_generated_assets
+        from portolan_core.versions import track_generated_assets
 
         track_generated_assets(
             collection_dir,

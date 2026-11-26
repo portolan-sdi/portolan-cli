@@ -19,8 +19,8 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 import pytest
 
-from portolan_cli.config import load_merged_config, load_merged_metadata
-from portolan_cli.versions import (
+from portolan_core.config import load_merged_config, load_merged_metadata
+from portolan_core.versions import (
     Asset,
     VersionsFile,
     add_version,

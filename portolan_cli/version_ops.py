@@ -1,7 +1,7 @@
 """Version operations middle layer.
 
 Bridges CLI commands and versioning backends. All imports of
-portolan_cli.backends and portolan_cli.config are lazy (inside function
+portolan_cli.backends and portolan_core.config are lazy (inside function
 bodies) to keep the module lightweight and avoid circular imports.
 """
 
@@ -14,15 +14,15 @@ from dataclasses import dataclass, field, replace
 from functools import partial
 from typing import TYPE_CHECKING, Any
 
-from portolan_cli.trace import count
+from portolan_core.trace import count
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
     from pathlib import Path
 
     from portolan_cli.backends.protocol import SchemaFingerprint
-    from portolan_cli.run_state import RunState, StagedVersion
-    from portolan_cli.versions import Version
+    from portolan_core.run_state import RunState, StagedVersion
+    from portolan_core.versions import Version
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +48,7 @@ def _resolve_backend_name(
         # collection's configuration rather than silently selecting file.
         resolved = _collection_setting("backend", catalog_root or Path.cwd(), collection, None)
     else:
-        from portolan_cli.config import get_setting
+        from portolan_core.config import get_setting
 
         resolved = get_setting("backend", catalog_path=catalog_root, collection=collection)
     if resolved is not None:
@@ -62,7 +62,7 @@ def _collection_setting(
 ) -> Any | None:
     """Read a setting for a collection through the run state."""
     if state is None:
-        from portolan_cli.run_state import RunState
+        from portolan_core.run_state import RunState
 
         state = RunState.open(catalog_path)
     collection_dir = state.collection_dir(collection) if collection else None
@@ -297,8 +297,8 @@ def bump_collection_version(
     Returns:
         The planned bump, with the published version or the error.
     """
-    from portolan_cli.status import detect_deleted_files, detect_modified_files
-    from portolan_cli.versions import read_versions
+    from portolan_core.status import detect_deleted_files, detect_modified_files
+    from portolan_core.versions import read_versions
 
     def failed(error_type: str, message: str) -> VersionBumpResult:
         return VersionBumpResult(collection, error=(error_type, message))
@@ -408,7 +408,7 @@ def commit_run(state: RunState) -> dict[str, Version]:
         Collection id to the version written, for each collection that got one.
     """
     from portolan_cli.catalog import CollectionSummary, collection_summaries, update_catalog_index
-    from portolan_cli.versions import write_versions
+    from portolan_core.versions import write_versions
 
     pending = state.take_staged()
     reconcile_index = not pending
@@ -477,7 +477,7 @@ def owned_run(catalog_root: Path, state: RunState | None = None) -> Iterator[Run
     if state is not None:
         yield state
         return
-    from portolan_cli.run_state import RunState
+    from portolan_core.run_state import RunState
 
     own = RunState.open(catalog_root)
     yield own
@@ -508,8 +508,8 @@ def check_backend_supports_push(
     blocking message if push is not supported.
     """
     from portolan_cli.backends import get_backend
-    from portolan_cli.run_state import RunState
-    from portolan_cli.stac_links import catalog_collections, versioned_collections
+    from portolan_core.run_state import RunState
+    from portolan_core.stac_links import catalog_collections, versioned_collections
 
     if state is None:
         state = RunState.open(catalog_path)
@@ -575,8 +575,8 @@ def try_backend_pull(
     turn, and the result sums them (issue #977).
     """
     from portolan_cli.backends import get_backend
-    from portolan_cli.run_state import RunState
-    from portolan_cli.stac_links import catalog_collections
+    from portolan_core.run_state import RunState
+    from portolan_core.stac_links import catalog_collections
 
     if state is None:
         state = RunState.open(catalog_path)

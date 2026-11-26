@@ -26,7 +26,7 @@ import yaml
 from click.testing import CliRunner
 
 from portolan_cli.cli import cli
-from portolan_cli.constants import PORTOLAN_SCHEMA_URI
+from portolan_core.constants import PORTOLAN_SCHEMA_URI
 
 pytestmark = pytest.mark.integration
 

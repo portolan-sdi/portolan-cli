@@ -24,7 +24,7 @@ from portolan_cli.add import (
     get_item_info,
     list_items,
 )
-from portolan_cli.sync.checksums import compute_checksum
+from portolan_core.checksums import compute_checksum
 
 if TYPE_CHECKING:
     from pathlib import Path

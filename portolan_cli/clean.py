@@ -24,7 +24,7 @@ import shutil
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from portolan_cli.constants import PORTOLAN_DIR
+from portolan_core.constants import PORTOLAN_DIR
 
 if TYPE_CHECKING:
     from pathlib import Path

@@ -14,8 +14,8 @@ from typing import TYPE_CHECKING
 import click
 
 from portolan_cli.cli import should_output_json
-from portolan_cli.errors import MissingLicenseError
 from portolan_cli.extract.common import cli_helpers
+from portolan_core.errors import MissingLicenseError
 
 if TYPE_CHECKING:
     from portolan_cli.extract.common.source import LayerSource

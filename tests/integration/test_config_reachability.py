@@ -32,7 +32,7 @@ import pyarrow.parquet as pq
 import pytest
 import yaml
 
-from portolan_cli.config import KNOWN_SETTINGS
+from portolan_core.config import KNOWN_SETTINGS
 from tests.catalog_invariants import load_exemptions
 
 if TYPE_CHECKING:
@@ -1228,12 +1228,12 @@ def test_a_catalog_only_key_in_a_collection_config_warns(
     config_file.parent.mkdir()
     config_file.write_text("thumbnails:\n  enabled: false\n", encoding="utf-8")
 
-    with caplog.at_level("WARNING", logger="portolan_cli.config"):
+    with caplog.at_level("WARNING", logger="portolan_core.config"):
         _add(run_cli, catalog, scene)
 
     # GDAL logs its own warnings while add writes the COG. Only the config
     # logger's records are about the setting.
-    records = [r for r in caplog.records if r.name == "portolan_cli.config"]
+    records = [r for r in caplog.records if r.name == "portolan_core.config"]
     assert [(r.levelname, r.getMessage()) for r in records] == [
         (
             "WARNING",

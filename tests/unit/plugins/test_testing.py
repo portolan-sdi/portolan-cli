@@ -9,7 +9,7 @@ import pytest
 
 from portolan_cli.backends.json_file import JsonFileBackend
 from portolan_cli.testing import ConformanceError, check_backend, check_format_handler
-from portolan_cli.versions import Version
+from portolan_core.versions import Version
 from tests.unit.plugins.stub_handler import StubHandler
 
 if TYPE_CHECKING:

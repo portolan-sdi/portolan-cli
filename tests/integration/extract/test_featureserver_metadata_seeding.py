@@ -18,13 +18,13 @@ from unittest.mock import patch
 import pytest
 import yaml
 
-from portolan_cli.constants import TODO_MARKER
 from portolan_cli.extract.arcgis.discovery import LayerInfo, ServiceDiscoveryResult
 from portolan_cli.extract.arcgis.orchestrator import (
     ArcGISLayerSource,
     ExtractionOptions,
     extract_arcgis_catalog,
 )
+from portolan_core.constants import TODO_MARKER
 
 if TYPE_CHECKING:
     from pathlib import Path

@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from portolan_cli.models.schema import ColumnSchema, SchemaModel
+from portolan_core.models.schema import ColumnSchema, SchemaModel
 
 
 class TestGeoParquetSchemaExtraction:

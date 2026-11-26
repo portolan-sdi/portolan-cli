@@ -25,7 +25,7 @@ class TestStacVersion:
     @pytest.mark.unit
     def test_stac_version_is_1_1_0(self) -> None:
         """STAC_VERSION constant should be 1.1.0."""
-        from portolan_cli.constants import STAC_VERSION
+        from portolan_core.constants import STAC_VERSION
 
         assert STAC_VERSION == "1.1.0"
 
@@ -409,7 +409,7 @@ class TestBboxWgs84Transformation:
     def test_transform_bbox_to_wgs84_handles_none_crs(self) -> None:
         """None CRS passes lon/lat-range bboxes through; out-of-range raises (#785)."""
         from portolan_cli.crs import transform_bbox_to_wgs84
-        from portolan_cli.errors import CRSMismatchError
+        from portolan_core.errors import CRSMismatchError
 
         bbox = (10.0, 20.0, 30.0, 40.0)
         assert transform_bbox_to_wgs84(bbox, None) == bbox
@@ -574,8 +574,8 @@ class TestStacVersionInModels:
     @pytest.mark.unit
     def test_item_model_uses_stac_version_constant(self) -> None:
         """ItemModel.stac_version should use STAC_VERSION constant."""
-        from portolan_cli.constants import STAC_VERSION
-        from portolan_cli.models.item import ItemModel
+        from portolan_core.constants import STAC_VERSION
+        from portolan_core.models.item import ItemModel
 
         item = ItemModel(
             id="test-item",
@@ -591,8 +591,8 @@ class TestStacVersionInModels:
     @pytest.mark.unit
     def test_collection_model_uses_stac_version_constant(self) -> None:
         """CollectionModel.stac_version should use STAC_VERSION constant."""
-        from portolan_cli.constants import STAC_VERSION
-        from portolan_cli.models.collection import (
+        from portolan_core.constants import STAC_VERSION
+        from portolan_core.models.collection import (
             CollectionModel,
             ExtentModel,
             SpatialExtent,
@@ -613,8 +613,8 @@ class TestStacVersionInModels:
     @pytest.mark.unit
     def test_catalog_model_uses_stac_version_constant(self) -> None:
         """CatalogModel.stac_version should use STAC_VERSION constant."""
-        from portolan_cli.constants import STAC_VERSION
-        from portolan_cli.models.catalog import CatalogModel
+        from portolan_core.constants import STAC_VERSION
+        from portolan_core.models.catalog import CatalogModel
 
         catalog = CatalogModel(
             id="test-catalog",
@@ -1215,8 +1215,8 @@ class TestExtensionRegistryVersions:
     @pytest.mark.unit
     def test_extension_urls_match_spec_registry(self) -> None:
         """Every EXTENSION_URLS entry carries the spec-registry version."""
-        from portolan_cli.constants import PARTITION_EXTENSION_URI
         from portolan_cli.stac import EXTENSION_URLS
+        from portolan_core.constants import PARTITION_EXTENSION_URI
 
         assert EXTENSION_URLS == {
             "table": "https://stac-extensions.github.io/table/v1.2.0/schema.json",

@@ -10,15 +10,15 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from portolan_cli.run_state import RunState
 from portolan_cli.version_ops import commit_run
-from portolan_cli.versions import Asset, read_versions
+from portolan_core.run_state import RunState
+from portolan_core.versions import Asset, read_versions
 
 if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
-    from portolan_cli.versions import VersionsFile
+    from portolan_core.versions import VersionsFile
 
 pytestmark = pytest.mark.unit
 
@@ -42,7 +42,7 @@ def _commit_failing_at_b(
     state: RunState, collections: tuple[str, ...], monkeypatch: pytest.MonkeyPatch
 ) -> Callable[[Path, VersionsFile], None]:
     """Stage ``collections`` and commit with a write that fails for ``b``. Return the real write."""
-    from portolan_cli import versions
+    from portolan_core import versions
 
     for collection in collections:
         _stage(state, collection)
@@ -74,7 +74,7 @@ def test_failed_commit_keeps_unpublished_stages(
     catalog: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Retry commits the unfinished collections without publishing successes twice."""
-    from portolan_cli import versions
+    from portolan_core import versions
 
     state = RunState.open(catalog)
     write = _commit_failing_at_b(state, ("a", "b", "c"), monkeypatch)
@@ -144,7 +144,7 @@ def test_invalidation_during_load_is_not_lost(tmp_path: Path) -> None:
 
 
 def test_config_loader_can_read_metadata(catalog: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from portolan_cli import config
+    from portolan_core import config
 
     state = RunState.open(catalog)
     metadata = catalog / ".portolan/metadata.yaml"
@@ -164,7 +164,7 @@ def test_config_merge_does_not_hold_lock_while_waiting_for_loader(
     catalog: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A YAML flight owned by a different worker can itself read metadata."""
-    from portolan_cli import config
+    from portolan_core import config
 
     state = RunState.open(catalog)
     config_path = catalog / ".portolan/config.yaml"
@@ -203,8 +203,8 @@ def test_config_merge_does_not_hold_lock_while_waiting_for_loader(
 @pytest.mark.parametrize("reader", ["unchanged", "status", "pull"])
 def test_coarse_record_does_not_hide_fractional_edit(catalog: Path, reader: str) -> None:
     """A whole-second record does not prove the next write uses a coarse clock."""
-    from portolan_cli.status import detect_modified_files
     from portolan_cli.sync.pull import detect_uncommitted_changes
+    from portolan_core.status import detect_modified_files
 
     state = RunState.open(catalog)
     asset = _stage(state, "c")
@@ -224,7 +224,7 @@ def test_coarse_record_does_not_hide_fractional_edit(catalog: Path, reader: str)
 
 
 def test_is_current_sees_first_staged_version(catalog: Path) -> None:
-    from portolan_cli.query import is_current
+    from portolan_core.query import is_current
 
     state = RunState.open(catalog)
     _stage(state, "c")
@@ -260,7 +260,7 @@ def test_plugin_partial_failure_retries_only_unpublished(
     from datetime import UTC, datetime
 
     from portolan_cli import version_ops
-    from portolan_cli.versions import Version
+    from portolan_core.versions import Version
 
     (catalog / ".portolan/config.yaml").write_text("backend: fake\n")
     state = RunState.open(catalog)
@@ -289,7 +289,7 @@ def test_failed_commit_preserves_newer_stage_calls(
 ) -> None:
     from dataclasses import replace
 
-    from portolan_cli import versions
+    from portolan_core import versions
 
     state = RunState.open(catalog)
     original = _stage(state, "c")

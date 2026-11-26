@@ -238,7 +238,7 @@ class TestVerifySkippedAssets:
     @pytest.mark.unit
     def test_mismatched_object_without_etag_fails_closed(self) -> None:
         """An existing object without an ETag cannot be safely repaired."""
-        from portolan_cli.errors import PushVerifyError
+        from portolan_core.errors import PushVerifyError
 
         data = _versions("1.0.0", _snapshot("1.0.0", {"a.parquet": b"good"}))
 
@@ -254,7 +254,7 @@ class TestVerifySkippedAssets:
     @pytest.mark.unit
     def test_head_error_other_than_not_found_fails_the_verify(self) -> None:
         """A HEAD that fails for another reason raises, and it does not pass as a match."""
-        from portolan_cli.errors import PushVerifyError
+        from portolan_core.errors import PushVerifyError
 
         data = _versions("1.0.0", _snapshot("1.0.0", {"a.parquet": b"x"}))
 
@@ -719,7 +719,7 @@ class TestCliVerifyFlag:
     @pytest.mark.unit
     def test_catalog_verification_error_keeps_type_and_code(self, tmp_path: Path) -> None:
         """An exception from a collection retains its identity through aggregation."""
-        from portolan_cli.errors import PushVerifyError
+        from portolan_core.errors import PushVerifyError
 
         failure = PushVerifyError(["test/a.parquet: HEAD denied"])
         with patch("portolan_cli.sync.push.push_async", side_effect=failure):
@@ -743,7 +743,7 @@ class TestRepairSafety:
     @pytest.mark.unit
     def test_edited_local_file_aborts_before_any_upload(self, tmp_path: Path) -> None:
         """Preflight checks every flagged file, including a same-size local edit."""
-        from portolan_cli.errors import PushVerifyError
+        from portolan_core.errors import PushVerifyError
 
         data = _versions("1.0.0", _snapshot("1.0.0", {"a.parquet": b"one", "b.parquet": b"two"}))
         root = tmp_path / "catalog"

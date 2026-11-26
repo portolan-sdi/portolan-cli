@@ -83,7 +83,7 @@ class TestEnums:
 
     def test_format_families_have_their_json_names(self) -> None:
         """Scan JSON output writes the built-in families as "vector" and "raster"."""
-        from portolan_cli.format_families import RASTER, VECTOR
+        from portolan_core.format_families import RASTER, VECTOR
 
         assert (VECTOR, RASTER) == ("vector", "raster")
 

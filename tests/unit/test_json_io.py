@@ -1,4 +1,4 @@
-"""Unit tests for the shared atomic JSON writer (``portolan_cli.json_io``).
+"""Unit tests for the shared atomic JSON writer (``portolan_core.json_io``).
 
 Every STAC/Portolan JSON write funnels through :func:`write_json_atomic`, so the
 guarantees tested here — atomicity, unescaped unicode, trailing newline — hold
@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from portolan_cli.json_io import write_json_atomic, write_text_atomic
+from portolan_core.json_io import write_json_atomic, write_text_atomic
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -88,7 +88,7 @@ class TestWriteJsonAtomic:
             seen.extend(_temp_siblings(tmp_path))
             return real_fdopen(fd, *args, **kwargs)  # type: ignore[arg-type]
 
-        monkeypatch.setattr("portolan_cli.json_io.os.fdopen", _spy_fdopen)
+        monkeypatch.setattr("portolan_core.json_io.os.fdopen", _spy_fdopen)
         write_json_atomic(target, {"id": "root"})
 
         assert len(seen) == 1, "expected exactly one temp file to exist mid-write"
@@ -123,7 +123,7 @@ class TestWriteTextAtomic:
         def _boom(src: str, dst: Path) -> None:
             raise OSError("disk full")
 
-        monkeypatch.setattr("portolan_cli.json_io.os.replace", _boom)
+        monkeypatch.setattr("portolan_core.json_io.os.replace", _boom)
         with pytest.raises(OSError, match="disk full"):
             write_text_atomic(target, "replacement\n")
 
@@ -187,7 +187,7 @@ def _fail_replace(monkeypatch: pytest.MonkeyPatch) -> None:
     def _boom(src: str, dst: object) -> None:
         raise OSError("disk full")
 
-    monkeypatch.setattr("portolan_cli.json_io.os.replace", _boom)
+    monkeypatch.setattr("portolan_core.json_io.os.replace", _boom)
 
 
 class TestSitesAdoptedInIssue687:
@@ -274,7 +274,7 @@ class TestSitesAdoptedInIssue687:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         from portolan_cli.collection import write_collection_json
-        from portolan_cli.models.collection import (
+        from portolan_core.models.collection import (
             CollectionModel,
             ExtentModel,
             SpatialExtent,
@@ -312,7 +312,7 @@ class TestWriteCounters:
         ],
     )
     def test_each_write_counts_once(self, tmp_path: Path, name: str, counter: str) -> None:
-        from portolan_cli import trace
+        from portolan_core import trace
 
         with trace.tracing():
             write_json_atomic(tmp_path / name, {})

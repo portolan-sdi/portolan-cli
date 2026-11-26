@@ -21,40 +21,40 @@ from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, TypeVar
 
-from portolan_cli import extension_registry as _reg
+from portolan_core import extension_registry as _reg
 
 # The extension-only detection lives in a leaf module that loads no third-party
 # package. The read modules import it directly (issue #944). This module
 # re-exports it, so `portolan_cli.formats.detect_format` keeps working.
-from portolan_cli.format_families import (
+from portolan_core.format_families import (
     FORMAT_DISPLAY_NAMES as FORMAT_DISPLAY_NAMES,
 )
-from portolan_cli.format_families import (
+from portolan_core.format_families import (
     RASTER as RASTER,
 )
-from portolan_cli.format_families import (
+from portolan_core.format_families import (
     RASTER_EXTENSIONS as RASTER_EXTENSIONS,
 )
-from portolan_cli.format_families import (
+from portolan_core.format_families import (
     VECTOR as VECTOR,
 )
-from portolan_cli.format_families import (
+from portolan_core.format_families import (
     VECTOR_EXTENSIONS as VECTOR_EXTENSIONS,
 )
-from portolan_cli.format_families import (
+from portolan_core.format_families import (
     detect_family,
     is_geojson,
 )
-from portolan_cli.trace import count
+from portolan_core.trace import count
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
 
     import pyarrow.parquet as pq
 
-    from portolan_cli.config import ConfigSource
     from portolan_cli.conversion_config import ConversionOverrides
     from portolan_cli.plugins.formats import FormatHandler
+    from portolan_core.config import ConfigSource
 
 logger = logging.getLogger(__name__)
 
@@ -204,7 +204,7 @@ class FormatInfo:
 # Cloud-Native Format Constants
 # =============================================================================
 
-# The extension vocabulary below is DERIVED from portolan_cli.extension_registry
+# The extension vocabulary below is DERIVED from portolan_core.extension_registry
 # (the single source). Edit rows there, not these frozensets.
 
 # Cloud-native formats that pass through without conversion. Statically

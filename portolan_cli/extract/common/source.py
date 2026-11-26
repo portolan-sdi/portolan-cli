@@ -36,9 +36,9 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path, PurePath
 from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
 
-from portolan_cli.errors import PortolanError
 from portolan_cli.extract.common.urls import redact_credentials
-from portolan_cli.trace import count, span, submit
+from portolan_core.errors import PortolanError
+from portolan_core.trace import count, span, submit
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -55,8 +55,8 @@ if TYPE_CHECKING:
         LayerResult,
         MetadataExtracted,
     )
-    from portolan_cli.licensing import ResolvedLicense
     from portolan_cli.metadata_extraction import ExtractedMetadata
+    from portolan_core.licensing import ResolvedLicense
 
 logger = logging.getLogger(__name__)
 
@@ -817,7 +817,7 @@ def _fetch_parallel(
 
 
 def _resolve_license(discovery: Discovery, options: LayerSourceOptions) -> ResolvedLicense | None:
-    from portolan_cli.licensing import resolve_harvest_license
+    from portolan_core.licensing import resolve_harvest_license
 
     if options.raw:
         return None
@@ -835,11 +835,11 @@ def _post_init(
     on_message: MessageCallback | None,
 ) -> Callable[[Path, list[Path], bool], None]:
     def post_init(out: Path, files: list[Path], fresh: bool) -> None:
-        from portolan_cli.config import set_setting
         from portolan_cli.extract.common.orchestrator_base import seed_catalog_metadata
         from portolan_cli.formats import is_geoparquet
         from portolan_cli.metadata_extraction import ExtractedMetadata
         from portolan_cli.stac import update_stac_metadata
+        from portolan_core.config import set_setting
 
         # A plain Parquet output, from a table with no geometry, becomes a
         # tabular collection. add_files accepts it only with tabular support.
@@ -968,8 +968,8 @@ def build_catalog(
         register_collection_styles,
     )
     from portolan_cli.report import reporting
-    from portolan_cli.run_state import RunState
     from portolan_cli.version_ops import commit_run
+    from portolan_core.run_state import RunState
 
     # One run state holds the add and the thumbnails. The commit at the end
     # writes one version per collection and the catalog index once.

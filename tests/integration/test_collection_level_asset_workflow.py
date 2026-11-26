@@ -425,7 +425,7 @@ class TestCollectionLevelNonGeoCompanionWorkflow:
         tracks there, and track the CSV as its companion.
         """
         from portolan_cli.add import add_files
-        from portolan_cli.versions import read_versions
+        from portolan_core.versions import read_versions
 
         catalog = fresh_catalog_no_versions
         collection_dir = catalog / "buildings"
@@ -449,7 +449,7 @@ class TestCollectionLevelNonGeoCompanionWorkflow:
     ) -> None:
         """The same holds for an item directory: the raster item keeps its CSV."""
         from portolan_cli.add import add_files
-        from portolan_cli.versions import read_versions
+        from portolan_core.versions import read_versions
 
         catalog = fresh_catalog_no_versions
         csv = _raster_item_with_csv(catalog, fixtures_dir)
@@ -619,7 +619,7 @@ class TestOneAddIsOneVersion:
     def test_the_pmtiles_and_the_thumbnail_join_the_add_version(
         self, tmp_path: Path, fixtures_dir: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from portolan_cli.versions import read_versions
+        from portolan_core.versions import read_versions
 
         root = tmp_path / "catalog"
         _init_catalog(root)
@@ -633,7 +633,7 @@ class TestOneAddIsOneVersion:
         )
         _stub_thumbnail(monkeypatch)
 
-        from portolan_cli import json_io
+        from portolan_core import json_io
 
         written: list[Path] = []
         write_text_atomic = json_io.write_text_atomic
@@ -674,7 +674,7 @@ class TestOneAddIsOneVersion:
         side steps included. A re-add that changes nothing leaves the index bytes.
         """
         from portolan_cli.catalog import CollectionSummary
-        from portolan_cli.versions import read_versions
+        from portolan_core.versions import read_versions
 
         root = tmp_path / "catalog"
         _init_catalog(root)
@@ -711,7 +711,7 @@ class TestOneAddIsOneVersion:
         self, tmp_path: Path, fixtures_dir: Path
     ) -> None:
         from portolan_cli.add import add_files
-        from portolan_cli.versions import read_versions
+        from portolan_core.versions import read_versions
 
         root = tmp_path / "catalog"
         _init_catalog(root)
@@ -751,8 +751,8 @@ class TestOneAddIsOneVersion:
         collection.json then agree.
         """
         from portolan_cli.add import add_files
-        from portolan_cli.sync.checksums import compute_checksum
-        from portolan_cli.versions import read_versions
+        from portolan_core.checksums import compute_checksum
+        from portolan_core.versions import read_versions
 
         with monkeypatch.context() as patched:
             root, collection_dir = _crashed_add(tmp_path, fixtures_dir, patched)
@@ -798,7 +798,7 @@ class TestTheBumpOfAnAdd:
 
     @staticmethod
     def _versions(collection_dir: Path) -> list[str]:
-        from portolan_cli.versions import read_versions
+        from portolan_core.versions import read_versions
 
         return [v.version for v in read_versions(collection_dir / "versions.json").versions]
 

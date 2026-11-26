@@ -11,9 +11,9 @@ import rasterio
 from rasterio.enums import Resampling
 from rasterio.transform import from_origin
 
-from portolan_cli import trace
 from portolan_cli.conversion_config import CogSettings
 from portolan_cli.convert import validate_cog, write_cog
+from portolan_core import trace
 
 if TYPE_CHECKING:
     from pathlib import Path

@@ -260,7 +260,7 @@ def _setup_re_add(root: Path, history: int) -> None:
 
 def _setup_missing_raster_items(root: Path, history: int) -> None:
     """Remove N published item documents, retaining their rasters and collection."""
-    from portolan_cli.stac_links import owned_item_hrefs
+    from portolan_core.stac_links import owned_item_hrefs
 
     setup_add(root)
     for _href, item_path in owned_item_hrefs(root / "scenes" / "collection.json"):

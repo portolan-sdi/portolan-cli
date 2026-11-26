@@ -15,9 +15,10 @@ import pytest
 import yaml
 
 from portolan_cli.catalog import init_catalog
-from portolan_cli.catalog_list import list_catalog_contents
 from portolan_cli.clean import clean_metadata
-from portolan_cli.config import (
+from portolan_cli.remove import SafetyError, remove_path
+from portolan_core.catalog_list import list_catalog_contents
+from portolan_core.config import (
     clear_setting,
     load_config,
     read_setting,
@@ -25,10 +26,9 @@ from portolan_cli.config import (
     set_setting,
     store_setting,
 )
-from portolan_cli.errors import CatalogAlreadyExistsError, ConfigError
-from portolan_cli.remove import SafetyError, remove_path
-from portolan_cli.status import get_catalog_status
-from portolan_cli.versions import read_versions
+from portolan_core.errors import CatalogAlreadyExistsError, ConfigError
+from portolan_core.status import get_catalog_status
+from portolan_core.versions import read_versions
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator

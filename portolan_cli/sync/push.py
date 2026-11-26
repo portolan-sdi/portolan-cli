@@ -45,12 +45,8 @@ from portolan_cli.async_utils import (
     get_default_concurrency,
 )
 from portolan_cli.catalog import intermediate_catalog_ids
-from portolan_cli.constants import LEGACY_GLOB_FIELD
 from portolan_cli.derived_assets import is_optional_derivative
-from portolan_cli.errors import PushVerifyError
 from portolan_cli.logo import LOGO_ASSETS_DIRNAME
-from portolan_cli.stac_links import published_tree
-from portolan_cli.sync.checksums import compute_checksum
 from portolan_cli.sync.report import Report, tell
 from portolan_cli.sync.upload import (
     ObjectStore,
@@ -59,7 +55,11 @@ from portolan_cli.sync.upload import (
     put_object_async,
     setup_store,
 )
-from portolan_cli.trace import count, span, submit
+from portolan_core.checksums import compute_checksum
+from portolan_core.constants import LEGACY_GLOB_FIELD
+from portolan_core.errors import PushVerifyError
+from portolan_core.stac_links import published_tree
+from portolan_core.trace import count, span, submit
 
 if TYPE_CHECKING:
     from obstore import PutMode, PutResult
@@ -1285,7 +1285,7 @@ def _get_exclude_patterns(catalog_root: Path | None = None) -> list[str]:
     Returns:
         List of exclusion patterns.
     """
-    from portolan_cli.config import DEFAULT_SETTINGS, get_setting
+    from portolan_core.config import DEFAULT_SETTINGS, get_setting
 
     if catalog_root is None:
         return list(DEFAULT_SETTINGS.get("push.exclude", []))

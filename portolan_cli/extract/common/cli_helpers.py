@@ -13,16 +13,16 @@ import click
 from portolan_cli.cli import output_json_envelope
 from portolan_cli.extract.common.urls import redact_credentials
 from portolan_cli.json_output import ErrorDetail, error_envelope, success_envelope
-from portolan_cli.licensing import CLI_LICENSE_REMEDIATION
 from portolan_cli.output import info as info_output
 from portolan_cli.validation import InputValidationError, validate_catalog_id
+from portolan_core.licensing import CLI_LICENSE_REMEDIATION
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from portolan_cli.errors import MissingLicenseError
     from portolan_cli.extract.common.progress import ExtractionProgress, LayerProgressCallback
     from portolan_cli.extract.common.report import ExtractRunResult
+    from portolan_core.errors import MissingLicenseError
 
 
 def parse_filter_patterns(pattern_str: str | None) -> list[str] | None:

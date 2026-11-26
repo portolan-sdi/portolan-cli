@@ -17,10 +17,10 @@ from pathlib import Path
 from typing import Any
 
 from portolan_cli.catalog import init_catalog, intermediate_catalog_ids
-from portolan_cli.json_io import write_json_atomic
 from portolan_cli.sync.download import download_file
 from portolan_cli.sync.pull import PullError, PullResult, pull
 from portolan_cli.sync.report import Report, silent
+from portolan_core.json_io import write_json_atomic
 
 # =============================================================================
 # URL Parsing Utilities

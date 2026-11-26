@@ -12,11 +12,6 @@ from pathlib import Path
 
 import pytest
 
-from portolan_cli.errors import (
-    LogoSourceNotFoundError,
-    RemoteLogoSourceError,
-    UnsupportedLogoFormatError,
-)
 from portolan_cli.logo import (
     LOGO_ASSETS_DIRNAME,
     LOGO_LINK_REL,
@@ -26,6 +21,11 @@ from portolan_cli.logo import (
     find_logo_link,
     logo_media_type,
     set_catalog_logo,
+)
+from portolan_core.errors import (
+    LogoSourceNotFoundError,
+    RemoteLogoSourceError,
+    UnsupportedLogoFormatError,
 )
 
 pytestmark = pytest.mark.unit
@@ -242,7 +242,7 @@ class TestSetCatalogLogo:
         assert str(tmp_path) not in (tmp_path / "catalog.json").read_text(encoding="utf-8")
 
     def test_missing_catalog_json(self, tmp_path: Path) -> None:
-        from portolan_cli.errors import CatalogNotFoundError
+        from portolan_core.errors import CatalogNotFoundError
 
         with pytest.raises(CatalogNotFoundError):
             set_catalog_logo(tmp_path, _image(tmp_path))

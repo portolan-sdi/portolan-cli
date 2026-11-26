@@ -7,15 +7,15 @@ import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from portolan_cli.format_families import family_of_asset
-from portolan_cli.run_state import RunState
-from portolan_cli.stac_links import catalog_collections, owned_item_hrefs
+from portolan_core.format_families import family_of_asset
+from portolan_core.run_state import RunState
+from portolan_core.stac_links import catalog_collections, owned_item_hrefs
 
 if TYPE_CHECKING:
     from datetime import datetime
     from pathlib import Path
 
-    from portolan_cli.versions import Asset
+    from portolan_core.versions import Asset
 
 logger = logging.getLogger(__name__)
 

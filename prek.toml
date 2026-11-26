@@ -125,7 +125,7 @@ hooks = [
     name = "auto-update freshness markers",
     entry = "uv run python scripts/update_freshness.py",
     language = "system",
-    files = { glob = ["portolan_cli/output.py", "portolan_cli/errors.py", "portolan_cli/constants.py", "portolan_cli/json_output.py", "portolan_cli/cli.py"] },
+    files = { glob = ["portolan_cli/output.py", "packages/portolan-core/src/portolan_core/errors.py", "packages/portolan-core/src/portolan_core/constants.py", "portolan_cli/json_output.py", "portolan_cli/cli.py"] },
     pass_filenames = true,
   },
 

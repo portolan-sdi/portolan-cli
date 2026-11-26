@@ -30,12 +30,12 @@ from typing import TYPE_CHECKING, Any
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from portolan_cli.trace import count
+from portolan_core.trace import count
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from portolan_cli.config import ConfigSource
+    from portolan_core.config import ConfigSource
 
 
 @dataclass
@@ -143,7 +143,7 @@ def find_large_partition_candidates(
     Returns:
         A :class:`PartitionPromptDecision` describing the gating and candidates.
     """
-    from portolan_cli.config import get_setting
+    from portolan_core.config import get_setting
 
     def _setting(key: str) -> Any:
         if state is not None:
@@ -737,8 +737,8 @@ def _directory_setting(
     The partition settings that ``add`` resolved through its run state win.
     A format handler calls ``partition_vector_file`` without the state.
     """
-    from portolan_cli.config import get_setting
     from portolan_cli.conversion_config import partition_override
+    from portolan_core.config import get_setting
 
     override = partition_override(directory)
     if override is not None and key in override.values:
@@ -776,7 +776,7 @@ def partition_vector_file(
     if strategy is None or catalog_root is None:
         return []
 
-    from portolan_cli.errors import PartitionCollisionError
+    from portolan_core.errors import PartitionCollisionError
 
     column = PARTITION_COLUMNS.get(strategy, f"{strategy}_cell")
     existing = sorted(p.name for p in path.parent.glob(f"{column}=*") if p.is_dir())
@@ -878,7 +878,7 @@ def partition_file(
             A failure removes the partial partitions.
     """
     if preview:
-        from portolan_cli.config import get_setting
+        from portolan_core.config import get_setting
 
         threshold_gb = get_setting("partitioning.threshold_gb") or 2.0
         enabled = get_setting("partitioning.enabled")
@@ -892,7 +892,7 @@ def partition_file(
             target_rows=target_rows,
         )
 
-    from portolan_cli.errors import PartitionError
+    from portolan_core.errors import PartitionError
 
     if output_dir is None:
         raise PartitionError("output_dir is required unless preview is set")

@@ -93,7 +93,7 @@ def run_scan(
         PathNotFoundError: If `path` does not exist.
         NotADirectoryError: If `path` is not a directory.
     """
-    from portolan_cli.errors import PathNotFoundError
+    from portolan_core.errors import PathNotFoundError
 
     if not path.exists():
         raise PathNotFoundError(f"Directory does not exist: {path}")

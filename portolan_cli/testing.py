@@ -179,7 +179,7 @@ def check_backend(factory: Callable[..., Any], catalog_root: Path) -> None:
         ConformanceError: With one line per problem found.
     """
     from portolan_cli.backends.protocol import DriftReport, SchemaFingerprint, VersioningBackend
-    from portolan_cli.versions import Version
+    from portolan_core.versions import Version
 
     backend = factory(catalog_root=catalog_root)
     if not isinstance(backend, VersioningBackend):
@@ -246,7 +246,7 @@ def _check_drift_report(report: Any, report_type: type) -> list[str]:
 
 def _check_optional(backend: Any, first_version: str) -> list[str]:
     """Check ``prune`` and ``rollback`` when the backend implements them."""
-    from portolan_cli.versions import Version
+    from portolan_core.versions import Version
 
     problems: list[str] = []
     try:

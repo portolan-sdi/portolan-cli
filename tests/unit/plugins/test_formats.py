@@ -6,10 +6,10 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from portolan_cli.errors import AmbiguousFormatError, UnknownFormatHandlerError
 from portolan_cli.hookspecs import hookimpl
 from portolan_cli.plugins.formats import FormatHandler, format_handlers, handler_for
 from portolan_cli.plugins.manager import PluginWarning
+from portolan_core.errors import AmbiguousFormatError, UnknownFormatHandlerError
 from tests.unit.plugins.stub_handler import StubHandler
 
 if TYPE_CHECKING:

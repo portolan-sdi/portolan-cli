@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
-from portolan_cli.run_state import file_mtime_matches
+from portolan_core.run_state import file_mtime_matches
 
 if TYPE_CHECKING:
     from pathlib import Path

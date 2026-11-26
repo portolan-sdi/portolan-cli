@@ -2,7 +2,7 @@
 
 An in-place write truncates the destination before the new bytes land, so a
 process killed mid-write leaves a zero-length ``collection.json`` where a valid
-one used to be. :func:`portolan_cli.json_io.write_json_atomic` writes to a temp
+one used to be. :func:`portolan_core.json_io.write_json_atomic` writes to a temp
 file and ``os.replace``s it into position, which cannot truncate. Issue #682
 introduced the helper, #687 finished adopting it, and this sweep keeps a raw
 ``json.dump(data, handle)`` or ``path.write_text(json.dumps(data))`` from
@@ -83,7 +83,7 @@ class TestNoInPlaceJsonWrites:
             )
         assert offenders == [], (
             "These writes truncate the destination before the new JSON lands. "
-            "Use portolan_cli.json_io.write_json_atomic instead:\n" + "\n".join(offenders)
+            "Use portolan_core.json_io.write_json_atomic instead:\n" + "\n".join(offenders)
         )
 
     def test_the_sweep_reads_the_package_it_grades(self) -> None:

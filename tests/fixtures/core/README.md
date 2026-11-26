@@ -68,4 +68,4 @@ sorted by path. The `agents` and `describedby` links follow, then the other
 links in their input order.
 
 The JSON is two-space indented UTF-8 with literal non-ASCII characters and a
-trailing newline, the same format as `portolan_cli.json_io`.
+trailing newline, the same format as `portolan_core.json_io`.

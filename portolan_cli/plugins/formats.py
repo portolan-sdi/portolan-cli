@@ -19,13 +19,13 @@ import warnings
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
-from portolan_cli import extension_registry as _reg
-from portolan_cli.errors import AmbiguousFormatError, UnknownFormatHandlerError
+from portolan_core import extension_registry as _reg
+from portolan_core.errors import AmbiguousFormatError, UnknownFormatHandlerError
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from portolan_cli.config import ConfigSource
+    from portolan_core.config import ConfigSource
 
 BUILTIN_PREFIX = "builtin:"
 

@@ -9,10 +9,10 @@ import csv
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from portolan_cli.json_io import write_json_atomic
+from portolan_core.json_io import write_json_atomic
 
 if TYPE_CHECKING:
-    from portolan_cli.models.schema import SchemaModel
+    from portolan_core.models.schema import SchemaModel
 
 
 def export_schema_json(schema: SchemaModel, path: Path) -> Path:

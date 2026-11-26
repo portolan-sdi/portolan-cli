@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from portolan_cli.versions import Asset, Version, VersionsFile
+from portolan_core.versions import Asset, Version, VersionsFile
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -84,7 +84,7 @@ class TestDetectModifiedFiles:
     @pytest.mark.unit
     def test_no_modifications_when_checksums_match(self, tmp_path: Path) -> None:
         """Files with matching checksums are not reported as modified."""
-        from portolan_cli.status import detect_modified_files
+        from portolan_core.status import detect_modified_files
 
         # Create a file with known content
         collection_path = tmp_path / "collection"
@@ -111,7 +111,7 @@ class TestDetectModifiedFiles:
     @pytest.mark.unit
     def test_detects_modified_file(self, tmp_path: Path) -> None:
         """Files with different checksums are reported as modified."""
-        from portolan_cli.status import detect_modified_files
+        from portolan_core.status import detect_modified_files
 
         # Create a file with content different from versions.json
         collection_path = tmp_path / "collection"
@@ -137,7 +137,7 @@ class TestDetectModifiedFiles:
     @pytest.mark.unit
     def test_deleted_file_not_reported_as_modified(self, tmp_path: Path) -> None:
         """Files in versions.json but missing from disk are not in modified list."""
-        from portolan_cli.status import detect_modified_files
+        from portolan_core.status import detect_modified_files
 
         # Create collection without the file
         collection_path = tmp_path / "collection"
@@ -164,7 +164,7 @@ class TestDetectDeletedFiles:
     @pytest.mark.unit
     def test_detects_deleted_file(self, tmp_path: Path) -> None:
         """Files in versions.json but missing from disk are reported as deleted."""
-        from portolan_cli.status import detect_deleted_files
+        from portolan_core.status import detect_deleted_files
 
         collection_path = tmp_path / "collection"
         collection_path.mkdir()
@@ -185,7 +185,7 @@ class TestDetectDeletedFiles:
     @pytest.mark.unit
     def test_no_deleted_when_all_files_exist(self, tmp_path: Path) -> None:
         """No deleted files when all versioned files exist on disk."""
-        from portolan_cli.status import detect_deleted_files
+        from portolan_core.status import detect_deleted_files
 
         collection_path = tmp_path / "collection"
         collection_path.mkdir()
@@ -211,7 +211,7 @@ class TestDetectUntrackedFiles:
     @pytest.mark.unit
     def test_detects_untracked_file(self, tmp_path: Path) -> None:
         """Files on disk but not in versions.json are reported as untracked."""
-        from portolan_cli.status import detect_untracked_files
+        from portolan_core.status import detect_untracked_files
 
         collection_path = tmp_path / "collection"
         collection_path.mkdir()
@@ -225,7 +225,7 @@ class TestDetectUntrackedFiles:
     @pytest.mark.unit
     def test_no_untracked_when_all_tracked(self, tmp_path: Path) -> None:
         """No untracked files when all files are in versions.json."""
-        from portolan_cli.status import detect_untracked_files
+        from portolan_core.status import detect_untracked_files
 
         collection_path = tmp_path / "collection"
         collection_path.mkdir()
@@ -247,7 +247,7 @@ class TestDetectUntrackedFiles:
     @pytest.mark.unit
     def test_excludes_versions_json(self, tmp_path: Path) -> None:
         """versions.json itself is never reported as untracked."""
-        from portolan_cli.status import detect_untracked_files
+        from portolan_core.status import detect_untracked_files
 
         collection_path = tmp_path / "collection"
         collection_path.mkdir()
@@ -261,7 +261,7 @@ class TestDetectUntrackedFiles:
     @pytest.mark.unit
     def test_ignores_subdirectories(self, tmp_path: Path) -> None:
         """Subdirectories are not reported as untracked files."""
-        from portolan_cli.status import detect_untracked_files
+        from portolan_core.status import detect_untracked_files
 
         collection_path = tmp_path / "collection"
         collection_path.mkdir()
@@ -275,7 +275,7 @@ class TestDetectUntrackedFiles:
     @pytest.mark.unit
     def test_all_files_untracked_with_no_versions(self, tmp_path: Path) -> None:
         """All files are untracked when versions list is empty."""
-        from portolan_cli.status import detect_untracked_files
+        from portolan_core.status import detect_untracked_files
 
         collection_path = tmp_path / "collection"
         collection_path.mkdir()
@@ -294,7 +294,7 @@ class TestDetectUntrackedFiles:
     @pytest.mark.unit
     def test_excludes_collection_json(self, tmp_path: Path) -> None:
         """collection.json is a managed file and never reported as untracked."""
-        from portolan_cli.status import detect_untracked_files
+        from portolan_core.status import detect_untracked_files
 
         collection_path = tmp_path / "collection"
         collection_path.mkdir()
@@ -308,7 +308,7 @@ class TestDetectUntrackedFiles:
     @pytest.mark.unit
     def test_excludes_readme(self, tmp_path: Path) -> None:
         """README.md is a managed file and never reported as untracked."""
-        from portolan_cli.status import detect_untracked_files
+        from portolan_core.status import detect_untracked_files
 
         collection_path = tmp_path / "collection"
         collection_path.mkdir()
@@ -322,7 +322,7 @@ class TestDetectUntrackedFiles:
     @pytest.mark.unit
     def test_excludes_stac_item_files(self, tmp_path: Path) -> None:
         """STAC item JSON files (type: Feature) are not reported as untracked."""
-        from portolan_cli.status import detect_untracked_files
+        from portolan_core.status import detect_untracked_files
 
         collection_path = tmp_path / "collection"
         collection_path.mkdir()
@@ -342,7 +342,7 @@ class TestDetectUntrackedFiles:
     @pytest.mark.unit
     def test_excludes_metadata_yaml(self, tmp_path: Path) -> None:
         """metadata.yaml is a managed file and never reported as untracked."""
-        from portolan_cli.status import detect_untracked_files
+        from portolan_core.status import detect_untracked_files
 
         collection_path = tmp_path / "collection"
         collection_path.mkdir()
@@ -360,7 +360,7 @@ class TestParseVersion:
     @pytest.mark.unit
     def test_parses_standard_semver(self) -> None:
         """Standard semver strings are parsed correctly."""
-        from portolan_cli.status import CollectionStatus
+        from portolan_core.status import CollectionStatus
 
         result = CollectionStatus._parse_version("1.2.3")
         assert result == (1, 2, 3)
@@ -368,7 +368,7 @@ class TestParseVersion:
     @pytest.mark.unit
     def test_parses_semver_with_prerelease(self) -> None:
         """Prerelease tags are stripped before parsing."""
-        from portolan_cli.status import CollectionStatus
+        from portolan_core.status import CollectionStatus
 
         result = CollectionStatus._parse_version("1.2.3-beta.1")
         assert result == (1, 2, 3)
@@ -376,7 +376,7 @@ class TestParseVersion:
     @pytest.mark.unit
     def test_parses_semver_with_build_metadata(self) -> None:
         """Build metadata is stripped before parsing."""
-        from portolan_cli.status import CollectionStatus
+        from portolan_core.status import CollectionStatus
 
         result = CollectionStatus._parse_version("1.2.3+build.456")
         assert result == (1, 2, 3)
@@ -384,7 +384,7 @@ class TestParseVersion:
     @pytest.mark.unit
     def test_handles_invalid_version(self) -> None:
         """Invalid version strings return (0, 0, 0)."""
-        from portolan_cli.status import CollectionStatus
+        from portolan_core.status import CollectionStatus
 
         result = CollectionStatus._parse_version("not-a-version")
         assert result == (0, 0, 0)
@@ -392,7 +392,7 @@ class TestParseVersion:
     @pytest.mark.unit
     def test_handles_partial_version(self) -> None:
         """Partial version strings return (0, 0, 0)."""
-        from portolan_cli.status import CollectionStatus
+        from portolan_core.status import CollectionStatus
 
         result = CollectionStatus._parse_version("1.2")
         assert result == (0, 0, 0)
@@ -400,7 +400,7 @@ class TestParseVersion:
     @pytest.mark.unit
     def test_handles_empty_string(self) -> None:
         """Empty string returns (0, 0, 0)."""
-        from portolan_cli.status import CollectionStatus
+        from portolan_core.status import CollectionStatus
 
         result = CollectionStatus._parse_version("")
         assert result == (0, 0, 0)
@@ -412,7 +412,7 @@ class TestCollectionStatus:
     @pytest.mark.unit
     def test_returns_local_version(self, tmp_path: Path) -> None:
         """Status includes the current local version."""
-        from portolan_cli.status import CollectionStatus, get_collection_status
+        from portolan_core.status import CollectionStatus, get_collection_status
 
         # Set up collection with versions.json
         collection_path = tmp_path / "collection"
@@ -449,7 +449,7 @@ class TestCollectionStatus:
     @pytest.mark.unit
     def test_no_versions_json_returns_none_version(self, tmp_path: Path) -> None:
         """Status returns None for local_version when no versions.json exists."""
-        from portolan_cli.status import get_collection_status
+        from portolan_core.status import get_collection_status
 
         collection_path = tmp_path / "collection"
         collection_path.mkdir()
@@ -465,7 +465,7 @@ class TestCollectionStatus:
     @pytest.mark.unit
     def test_offline_mode_skips_remote_check(self, tmp_path: Path) -> None:
         """Offline mode does not attempt to fetch remote versions."""
-        from portolan_cli.status import get_collection_status
+        from portolan_core.status import get_collection_status
 
         collection_path = tmp_path / "collection"
         collection_path.mkdir()
@@ -506,7 +506,7 @@ class TestRemoteVersionFetcher:
     @pytest.mark.unit
     def test_fetcher_supplies_the_remote_version(self, tmp_path: Path) -> None:
         """The injected fetcher gets (remote_url, collection) and its version is used."""
-        from portolan_cli.status import get_collection_status
+        from portolan_core.status import get_collection_status
 
         (tmp_path / "collection").mkdir()
         calls: list[tuple[str, str]] = []
@@ -528,7 +528,7 @@ class TestRemoteVersionFetcher:
     @pytest.mark.unit
     def test_fetcher_failure_gives_no_remote_version(self, tmp_path: Path) -> None:
         """A fetch error leaves the remote version unknown instead of raising."""
-        from portolan_cli.status import get_collection_status
+        from portolan_core.status import get_collection_status
 
         (tmp_path / "collection").mkdir()
 
@@ -547,7 +547,7 @@ class TestRemoteVersionFetcher:
     @pytest.mark.unit
     def test_offline_never_calls_the_fetcher(self, tmp_path: Path) -> None:
         """Offline mode skips the fetcher even when a remote is configured."""
-        from portolan_cli.status import get_collection_status
+        from portolan_core.status import get_collection_status
 
         (tmp_path / "collection").mkdir()
 
@@ -571,7 +571,7 @@ class TestStatusOutput:
     @pytest.mark.unit
     def test_status_to_dict_for_json_output(self) -> None:
         """CollectionStatus can be serialized to dict for JSON output."""
-        from portolan_cli.status import CollectionStatus
+        from portolan_core.status import CollectionStatus
 
         status = CollectionStatus(
             collection="demographics",
@@ -594,7 +594,7 @@ class TestStatusOutput:
     @pytest.mark.unit
     def test_sync_state_behind(self) -> None:
         """Sync state is 'behind' when remote is ahead."""
-        from portolan_cli.status import CollectionStatus
+        from portolan_core.status import CollectionStatus
 
         status = CollectionStatus(
             collection="test",
@@ -610,7 +610,7 @@ class TestStatusOutput:
     @pytest.mark.unit
     def test_sync_state_ahead(self) -> None:
         """Sync state is 'ahead' when local has unpushed versions."""
-        from portolan_cli.status import CollectionStatus
+        from portolan_core.status import CollectionStatus
 
         status = CollectionStatus(
             collection="test",
@@ -626,7 +626,7 @@ class TestStatusOutput:
     @pytest.mark.unit
     def test_sync_state_in_sync(self) -> None:
         """Sync state is 'in_sync' when versions match."""
-        from portolan_cli.status import CollectionStatus
+        from portolan_core.status import CollectionStatus
 
         status = CollectionStatus(
             collection="test",
@@ -642,7 +642,7 @@ class TestStatusOutput:
     @pytest.mark.unit
     def test_sync_state_unknown_when_offline(self) -> None:
         """Sync state is 'unknown' when remote version is None."""
-        from portolan_cli.status import CollectionStatus
+        from portolan_core.status import CollectionStatus
 
         status = CollectionStatus(
             collection="test",

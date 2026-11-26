@@ -16,7 +16,7 @@ from portolan_cli.crs import (
     transform_bbox_to_wgs84,
     validate_bbox_crs,
 )
-from portolan_cli.errors import CRSMismatchError
+from portolan_core.errors import CRSMismatchError
 
 pytestmark = pytest.mark.unit
 
@@ -235,7 +235,7 @@ class TestRejectNonWgs84Magnitudes:
     LONLAT_BBOX = (-7.33, 38.04, -4.70, 40.49)
 
     def test_none_crs_with_meter_bbox_raises(self) -> None:
-        from portolan_cli.errors import CRSMismatchError
+        from portolan_core.errors import CRSMismatchError
 
         with pytest.raises(CRSMismatchError):
             transform_bbox_to_wgs84(self.METER_BBOX, None)
@@ -244,7 +244,7 @@ class TestRejectNonWgs84Magnitudes:
         assert transform_bbox_to_wgs84(self.LONLAT_BBOX, None) == self.LONLAT_BBOX
 
     def test_declared_wgs84_with_meter_bbox_raises(self) -> None:
-        from portolan_cli.errors import CRSMismatchError
+        from portolan_core.errors import CRSMismatchError
 
         with pytest.raises(CRSMismatchError):
             transform_bbox_to_wgs84(self.METER_BBOX, "EPSG:4326")
@@ -286,13 +286,13 @@ class TestWgs84EdgeTolerance:
 
     def test_a_degree_past_the_bound_still_raises(self) -> None:
         """The tolerance admits rounding, not a real coordinate outside the range."""
-        from portolan_cli.errors import CRSMismatchError
+        from portolan_core.errors import CRSMismatchError
 
         with pytest.raises(CRSMismatchError):
             transform_bbox_to_wgs84((-180.0, -90.0, 181.0, 83.6), None)
 
     def test_projected_coordinates_still_raise(self) -> None:
-        from portolan_cli.errors import CRSMismatchError
+        from portolan_core.errors import CRSMismatchError
 
         with pytest.raises(CRSMismatchError):
             transform_bbox_to_wgs84((121577.87, 4214399.77, 353182.80, 4486795.22), None)

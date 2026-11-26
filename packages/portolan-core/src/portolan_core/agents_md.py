@@ -23,8 +23,8 @@ from typing import Any
 
 from rashid_core.api import CatalogGraph, sidecar_link_gaps
 
-from portolan_cli.json_io import write_json_atomic
-from portolan_cli.stac_links import visible_stac_files
+from portolan_core.json_io import write_json_atomic
+from portolan_core.stac_links import visible_stac_files
 
 #: Canonical filename for the AI/agent metadata file (uppercase, matching the
 #: cross-tool ``AGENTS.md`` convention — like ``README.md``).

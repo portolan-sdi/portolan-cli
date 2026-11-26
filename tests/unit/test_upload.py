@@ -1563,8 +1563,8 @@ class TestProfileEndpointStore:
     @pytest.mark.unit
     def test_plaintext_profile_endpoint_is_refused(self, mock_profile_endpoint: Path) -> None:
         """An http profile endpoint with credentials should raise."""
-        from portolan_cli.errors import InsecureS3EndpointError
         from portolan_cli.sync.upload import _create_s3_store
+        from portolan_core.errors import InsecureS3EndpointError
 
         with cleared_environ(), pytest.raises(InsecureS3EndpointError):
             _create_s3_store("s3://mybucket", "plaintext", None, None, None)
@@ -1632,8 +1632,8 @@ class TestFailingCredentialProcess:
     def test_credential_process_failure_raises(self, failing_credential_process: Path) -> None:
         """A credential_process that fails must stop with its message."""
         pytest.importorskip("boto3")
-        from portolan_cli.errors import ProfileCredentialsError
         from portolan_cli.sync.upload import _create_s3_store
+        from portolan_core.errors import ProfileCredentialsError
 
         with (
             cleared_environ(AWS_CONFIG_FILE=str(failing_credential_process / "config")),
@@ -1660,8 +1660,8 @@ class TestGuardedCredentialProvider:
     @pytest.mark.unit
     def test_refresh_failure_raises_profile_error(self) -> None:
         """A provider that fails on a later call must report the profile."""
-        from portolan_cli.errors import ProfileCredentialsError
         from portolan_cli.sync.upload import _GuardedCredentialProvider
+        from portolan_core.errors import ProfileCredentialsError
 
         def failing_provider() -> dict[str, str]:
             raise RuntimeError("credential_process returned nonzero")

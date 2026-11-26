@@ -169,7 +169,7 @@ def _apply_compiled(fault: Fault, root: Path, faulty: bool) -> None:
 # Faults
 # ---------------------------------------------------------------------------
 
-BBOX = "portolan_cli/bbox.py"
+BBOX = "packages/portolan-core/src/portolan_core/bbox.py"
 
 
 def _apply_library_print(root: Path, faulty: bool) -> None:
@@ -281,7 +281,7 @@ def _apply_unreachable_branch(root: Path, faulty: bool) -> None:
 def _apply_versions_read_per_file(root: Path, faulty: bool) -> None:
     if faulty:
         _replace_once(
-            root / "portolan_cli/query.py",
+            root / "packages/portolan-core/src/portolan_core/query.py",
             "    versions_file = state.versions(collection_dir)\n",
             "    RunState.open(collection_dir.parent).versions(collection_dir)\n"
             "    versions_file = state.versions(collection_dir)\n",
@@ -292,7 +292,7 @@ def _apply_yaml_parse_per_call(root: Path, faulty: bool) -> None:
     if faulty:
         # The fault parses the file again on each read, beside the RunState memo.
         _replace_once(
-            root / "portolan_cli/run_state.py",
+            root / "packages/portolan-core/src/portolan_core/run_state.py",
             '        return self.memo("config.yaml", path, _config.parse_yaml)',
             "        _config.parse_yaml(path)\n"
             '        return self.memo("config.yaml", path, _config.parse_yaml)',

@@ -12,8 +12,8 @@ import os
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from portolan_cli.errors import NotACatalogError
-from portolan_cli.trace import span
+from portolan_core.errors import NotACatalogError
+from portolan_core.trace import span
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -21,9 +21,9 @@ if TYPE_CHECKING:
 
     from portolan_cli.convert import ConversionResult
     from portolan_cli.metadata.fix import FixReport
-    from portolan_cli.run_state import RunState
     from portolan_cli.scan.check import FixWorkflowOutcome
     from portolan_cli.validation.runner import CheckOutcome
+    from portolan_core.run_state import RunState
 
     #: Receives one fix report and the conversion report that goes with it, or None.
     FixReportCallback = Callable[[FixReport | None, Any], None]

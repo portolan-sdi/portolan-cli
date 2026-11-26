@@ -30,16 +30,16 @@ at = _load()
 
 # A small fake repository: cli imports add, add imports bbox.
 IMPORTERS = {
-    "portolan_cli.bbox": {"portolan_cli.add", "portolan_cli.cli"},
+    "portolan_core.bbox": {"portolan_cli.add", "portolan_cli.cli"},
     "portolan_cli.add": {"portolan_cli.cli"},
     "portolan_cli.cli": set(),
-    "portolan_cli.versions": set(),
+    "portolan_core.versions": set(),
 }
 TESTS = {
-    "tests/unit/test_bbox.py": {"portolan_cli.bbox"},
+    "tests/unit/test_bbox.py": {"portolan_core.bbox"},
     "tests/unit/test_add.py": {"portolan_cli.add"},
     "tests/integration/test_cli.py": {"portolan_cli.cli"},
-    "tests/unit/test_versions.py": {"portolan_cli.versions"},
+    "tests/unit/test_versions.py": {"portolan_core.versions"},
 }
 TEXTS = {
     "tests/unit/test_bbox.py": "",
@@ -60,14 +60,16 @@ def _select(changes: list[tuple[str, str]], deleted_importers: set[str] | None =
 
 
 def test_module_name_for_paths() -> None:
-    assert at.module_name("portolan_cli/bbox.py") == "portolan_cli.bbox"
+    assert (
+        at.module_name("packages/portolan-core/src/portolan_core/bbox.py") == "portolan_core.bbox"
+    )
     assert at.module_name("portolan_cli/plugins/__init__.py") == "portolan_cli.plugins"
     assert at.module_name("tests/unit/test_bbox.py") is None
     assert at.module_name("portolan_cli/data.json") is None
 
 
 def test_a_leaf_change_selects_tests_of_every_importer() -> None:
-    selection = _select([("M", "portolan_cli/bbox.py")])
+    selection = _select([("M", "packages/portolan-core/src/portolan_core/bbox.py")])
 
     assert selection.full is False
     assert selection.targets == [
@@ -78,7 +80,7 @@ def test_a_leaf_change_selects_tests_of_every_importer() -> None:
 
 
 def test_an_unrelated_module_selects_only_its_own_tests() -> None:
-    selection = _select([("M", "portolan_cli/versions.py")])
+    selection = _select([("M", "packages/portolan-core/src/portolan_core/versions.py")])
 
     assert selection.targets == ["tests/unit/test_versions.py"]
 
@@ -145,7 +147,7 @@ def test_test_imports_follow_patch_targets_and_string_modules(tmp_path: Path) ->
         "import importlib\n"
         "from unittest.mock import patch\n"
         "from portolan_cli import output\n"
-        "import portolan_cli.versions\n"
+        "import portolan_core.versions\n"
         "cli = importlib.import_module('portolan_cli.cli')\n"
         "patch('portolan_cli.sync.push.obs.put_async')\n",
         encoding="utf-8",
@@ -153,7 +155,7 @@ def test_test_imports_follow_patch_targets_and_string_modules(tmp_path: Path) ->
     known = {
         "portolan_cli",
         "portolan_cli.output",
-        "portolan_cli.versions",
+        "portolan_core.versions",
         "portolan_cli.cli",
         "portolan_cli.sync",
         "portolan_cli.sync.push",
@@ -161,7 +163,7 @@ def test_test_imports_follow_patch_targets_and_string_modules(tmp_path: Path) ->
 
     assert at.imported_modules(source.read_text(encoding="utf-8"), known) == {
         "portolan_cli.output",
-        "portolan_cli.versions",
+        "portolan_core.versions",
         "portolan_cli.cli",
         "portolan_cli.sync.push",
     }
@@ -200,8 +202,8 @@ def test_referenced_names_resolve_parent_package_and_relative_imports() -> None:
         "from portolan_cli import legacy\n"
         "from .legacy import Item\n"
         "from ..sync import push\n"
-        "import portolan_cli.versions\n"
-        "patch('portolan_cli.bbox.to_2d_bbox')\n"
+        "import portolan_core.versions\n"
+        "patch('portolan_core.bbox.to_2d_bbox')\n"
     )
 
     names = at.referenced_names(source, "portolan_cli/sub/mod.py")
@@ -210,8 +212,8 @@ def test_referenced_names_resolve_parent_package_and_relative_imports() -> None:
     assert "portolan_cli.sub.legacy" in names
     assert "portolan_cli.sub.legacy.Item" in names
     assert "portolan_cli.sync.push" in names
-    assert "portolan_cli.versions" in names
-    assert "portolan_cli.bbox.to_2d_bbox" in names
+    assert "portolan_core.versions" in names
+    assert "portolan_core.bbox.to_2d_bbox" in names
 
 
 def test_a_relative_import_in_a_package_init_resolves_from_the_package() -> None:
@@ -264,7 +266,7 @@ FOUNDATION_TESTS = {
 @pytest.mark.parametrize(
     "path",
     [
-        "portolan_cli/config.py",
+        "packages/portolan-core/src/portolan_core/config.py",
         "portolan_cli/output.py",
         "portolan_cli/stac.py",
         "portolan_cli/finalization.py",
@@ -299,7 +301,7 @@ def test_a_foundation_file_keeps_its_import_graph_selection() -> None:
 
 
 def test_a_module_outside_the_foundation_does_not_select_the_conformance_tests() -> None:
-    selection = _select([("M", "portolan_cli/bbox.py")])
+    selection = _select([("M", "packages/portolan-core/src/portolan_core/bbox.py")])
 
     assert not set(selection.targets) & FOUNDATION_TESTS
 

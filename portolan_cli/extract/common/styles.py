@@ -43,8 +43,8 @@ from portolan_cli.extract.common.urls import (
     merge_query,
     redact_credentials,
 )
-from portolan_cli.json_io import write_json_atomic
 from portolan_cli.utils import CREDENTIAL_QUERY_PARAMS
+from portolan_core.json_io import write_json_atomic
 
 if TYPE_CHECKING:
     from collections.abc import Callable

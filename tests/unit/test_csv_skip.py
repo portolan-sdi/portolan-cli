@@ -23,15 +23,15 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from portolan_cli import errors
 from portolan_cli.add import (
     _copy_non_geo_to_item_dir,
     _update_item_with_asset,
     add_files,
     iter_files_with_sidecars,
 )
-from portolan_cli.constants import GEOSPATIAL_EXTENSIONS, TABULAR_EXTENSIONS
-from portolan_cli.run_state import RunState
+from portolan_core import errors
+from portolan_core.constants import GEOSPATIAL_EXTENSIONS, TABULAR_EXTENSIONS
+from portolan_core.run_state import RunState
 from tests.unit.add_stubs import add_mixed_directory_without_raising, write_point_geojson
 
 

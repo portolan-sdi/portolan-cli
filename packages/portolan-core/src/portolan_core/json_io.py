@@ -20,7 +20,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from portolan_cli.trace import count
+from portolan_core.trace import count
 
 #: The file names whose writes ``trace`` counts, and the counter for each.
 _COUNTED_WRITES = {

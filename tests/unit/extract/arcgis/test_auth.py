@@ -9,11 +9,11 @@ from __future__ import annotations
 import httpx
 import pytest
 
-from portolan_cli.errors import ArcGISAuthError
 from portolan_cli.extract.arcgis.auth import (
     ArcGISCredentials,
     resolve_token,
 )
+from portolan_core.errors import ArcGISAuthError
 
 pytestmark = pytest.mark.unit
 

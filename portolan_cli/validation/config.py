@@ -27,7 +27,7 @@ from rashid_core.api import RulesConfig
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from portolan_cli.config import ConfigSource
+    from portolan_core.config import ConfigSource
 
 #: Config block replaced by ``check:``. Its keys named native ``RULE-*`` rules
 #: that no longer exist, so there is nothing to translate —.
@@ -35,7 +35,7 @@ LEGACY_BLOCK = "stac_lint"
 
 
 def _load(root: Path, state: ConfigSource | None) -> dict[str, Any]:
-    from portolan_cli.config import load_catalog_config
+    from portolan_core.config import load_catalog_config
 
     return load_catalog_config(root, state=state).data
 

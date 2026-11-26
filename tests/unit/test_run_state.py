@@ -11,15 +11,15 @@ from typing import TYPE_CHECKING, Any, TypeVar
 
 import pytest
 
-from portolan_cli.constants import MTIME_TOLERANCE_SECONDS
-from portolan_cli.run_state import RunState, mtime_matches, stat_matches
-from portolan_cli.versions import Asset, read_versions
+from portolan_core.constants import MTIME_TOLERANCE_SECONDS
+from portolan_core.run_state import RunState, mtime_matches, stat_matches
+from portolan_core.versions import Asset, read_versions
 
 if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
-    from portolan_cli.versions import VersionsFile
+    from portolan_core.versions import VersionsFile
 
     Snapshot = Callable[[Path, dict[str, Asset]], None]
 
@@ -120,7 +120,7 @@ class TestChecksumMemo:
     def test_threads_that_hash_one_file_together_hash_it_once(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from portolan_cli import run_state
+        from portolan_core import run_state
 
         f = tmp_path / "a.bin"
         f.write_bytes(b"a")
@@ -357,7 +357,7 @@ class TestStage:
         before versions() stores it, which is the order a second thread can
         take.
         """
-        from portolan_cli.run_state import StagedVersion
+        from portolan_core.run_state import StagedVersion
 
         coll, a, b = self._two_files(tmp_path)
         state = RunState.open(tmp_path)
@@ -427,7 +427,7 @@ class TestTrackedAssets:
         write_snapshot: Snapshot,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        from portolan_cli import run_state
+        from portolan_core import run_state
 
         coll, a, b = TestStage._two_files(tmp_path)
         write_snapshot(coll, {"a.bin": a, "b.bin": b})
@@ -579,7 +579,7 @@ class TestConfigSeam:
         The ``--workers 4`` scale gate sees this race only when the threads
         meet in it, so this test makes them meet.
         """
-        from portolan_cli import config
+        from portolan_core import config
 
         (catalog / ".portolan" / "config.yaml").write_text("backend: root\n")
         coll = catalog / "c"

@@ -39,11 +39,11 @@ if TYPE_CHECKING:
 
     from portolan_cli.extract.common.progress import MessageCallback
     from portolan_cli.extract.common.report import ExtractionReport, LayerResult
-    from portolan_cli.licensing import ResolvedLicense
     from portolan_cli.metadata_extraction import ExtractedMetadata
-    from portolan_cli.query import ItemInfo
-    from portolan_cli.run_state import RunState
     from portolan_cli.viz.style import LegendInfo
+    from portolan_core.licensing import ResolvedLicense
+    from portolan_core.query import ItemInfo
+    from portolan_core.run_state import RunState
 
 logger = logging.getLogger(__name__)
 
@@ -87,7 +87,7 @@ def parquet_row_count(path: Path) -> int:
         return 0
     import pyarrow.parquet as pq
 
-    from portolan_cli.trace import count
+    from portolan_core.trace import count
 
     count("parquet.opens")
     return int(pq.read_metadata(path).num_rows)
@@ -274,8 +274,8 @@ def register_collection_styles(
 
 def _stamp_legends(collection_dir: Path, legends: list[LegendInfo]) -> None:
     """Write ``file:size`` and ``file:checksum`` on the legend assets (PTL-AST-003)."""
-    from portolan_cli.json_io import write_json_atomic
     from portolan_cli.stac_parquet import stamp_file_fields
+    from portolan_core.json_io import write_json_atomic
 
     collection_json = collection_dir / "collection.json"
     if not collection_json.exists():

@@ -17,7 +17,8 @@ from rashid_core import validate
 from rashid_core.api import CatalogGraph, ValidationOptions
 
 from portolan_cli.cli import cli
-from portolan_cli.stac_links import (
+from portolan_cli.validation.fixers import apply_fixers
+from portolan_core.stac_links import (
     catalog_collections,
     iter_links,
     iter_stac_objects,
@@ -25,7 +26,6 @@ from portolan_cli.stac_links import (
     published_tree,
     resolve_href,
 )
-from portolan_cli.validation.fixers import apply_fixers
 
 _EXTENT = {"spatial": {"bbox": [[0, 0, 1, 1]]}, "temporal": {"interval": [[None, None]]}}
 
@@ -282,7 +282,7 @@ class TestStatusMatchesPush:
     @pytest.mark.unit
     def test_versioned_collections(self, tmp_path: Path) -> None:
         """Every visible directory below the root that holds versions.json."""
-        from portolan_cli.stac_links import versioned_collections
+        from portolan_core.stac_links import versioned_collections
 
         for rel in ("orphan", "a/nested", ".portolan/backup", ""):
             (tmp_path / rel).mkdir(parents=True, exist_ok=True)

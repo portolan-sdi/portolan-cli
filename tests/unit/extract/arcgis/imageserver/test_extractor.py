@@ -998,7 +998,7 @@ class TestLicenseResolution:
     def test_missing_license_stops_before_download(
         self, tmp_path: Path, small_extent_metadata: ImageServerMetadata
     ) -> None:
-        from portolan_cli.errors import MissingLicenseError
+        from portolan_core.errors import MissingLicenseError
 
         assert small_extent_metadata.license_info is None
 

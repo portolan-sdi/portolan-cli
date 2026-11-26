@@ -11,20 +11,20 @@ import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from portolan_cli.bbox import compute_bbox_union, to_2d_bbox
-from portolan_cli.json_io import write_json_atomic
-from portolan_cli.models.collection import (
+from portolan_core.bbox import compute_bbox_union, to_2d_bbox
+from portolan_core.json_io import write_json_atomic
+from portolan_core.models.collection import (
     CollectionModel,
     ExtentModel,
     SpatialExtent,
     TemporalExtent,
 )
-from portolan_cli.stac_links import catalog_collections
+from portolan_core.stac_links import catalog_collections
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from portolan_cli.models.schema import SchemaModel
+    from portolan_core.models.schema import SchemaModel
 
 logger = logging.getLogger(__name__)
 
@@ -222,7 +222,7 @@ def _compute_union_bbox(bboxes: list[list[float]]) -> list[float]:
         Union bbox [min_west, min_south, max_east, max_north].
         Returns global fallback if all bboxes are invalid.
     """
-    from portolan_cli.bbox import compute_bbox_union
+    from portolan_core.bbox import compute_bbox_union
 
     if not bboxes:
         return [-180.0, -90.0, 180.0, 90.0]  # Global fallback
@@ -249,7 +249,7 @@ def _get_metadata_yaml_bbox(collection_dir: Path) -> list[float] | None:
         return None
 
     try:
-        from portolan_cli.config import safe_load
+        from portolan_core.config import safe_load
 
         metadata = safe_load(metadata_path.read_text(encoding="utf-8")) or {}
 

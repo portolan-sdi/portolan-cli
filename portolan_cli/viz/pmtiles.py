@@ -28,13 +28,9 @@ import shutil
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from portolan_cli.constants import ROLE_VISUAL
-from portolan_cli.errors import PortolanError
 from portolan_cli.formats import is_geoparquet, run_scope
-from portolan_cli.json_io import write_json_atomic
 from portolan_cli.report import emit
 from portolan_cli.stac_parquet import stamp_file_fields, sync_file_extension
-from portolan_cli.versions import track_generated_assets
 
 # The PMTiles constants and pure asset/link classifiers now live in the
 # framework-free leaf pmtiles_links.py so validation/ can reach them without
@@ -52,13 +48,17 @@ from portolan_cli.viz.thumbnail import (
     get_thumbnail_config,
     thumbnail_path_for,
 )
+from portolan_core.constants import ROLE_VISUAL
+from portolan_core.errors import PortolanError
+from portolan_core.json_io import write_json_atomic
+from portolan_core.versions import track_generated_assets
 
 if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
-    from portolan_cli.config import ConfigSource
-    from portolan_cli.run_state import RunState
+    from portolan_core.config import ConfigSource
+    from portolan_core.run_state import RunState
 
 logger = logging.getLogger(__name__)
 
@@ -978,7 +978,7 @@ def get_pmtiles_settings(
 
     With a run state, the ten keys share one merge of the collection config.
     """
-    from portolan_cli.config import coerce_bool, coerce_int, get_setting
+    from portolan_core.config import coerce_bool, coerce_int, get_setting
 
     def get(key: str) -> Any:
         if state is not None:

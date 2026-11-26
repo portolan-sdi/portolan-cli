@@ -14,9 +14,9 @@ import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from portolan_cli.stac_links import catalog_collections
 from portolan_cli.stac_parquet import count_items
-from portolan_cli.versions import read_versions
+from portolan_core.stac_links import catalog_collections
+from portolan_core.versions import read_versions
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -93,7 +93,7 @@ class FileInfo:
         lines.append(f"CRS: {self.crs or 'Unknown'}")
 
         if self.bbox:
-            from portolan_cli.bbox import to_2d_bbox
+            from portolan_core.bbox import to_2d_bbox
 
             # Reduce to 2D so a 6-element bbox shows [west, south, east, north]
             # instead of its [west, south, min_z, east] slice (issue #592).
@@ -162,7 +162,7 @@ class CollectionInfo:
             size_mb = self.total_size_bytes / (1024 * 1024)
             lines.append(f"Total Size: {size_mb:.2f} MB")
         if self.bbox:
-            from portolan_cli.bbox import to_2d_bbox
+            from portolan_core.bbox import to_2d_bbox
 
             # Reduce to 2D so a 6-element bbox shows [west, south, east, north]
             # instead of its [west, south, min_z, east] slice (issue #592).

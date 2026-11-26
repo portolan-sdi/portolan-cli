@@ -219,8 +219,8 @@ def validate_metadata_files(
         PermissionError: When the recursive walk cannot list a directory.
         ConfigInvalidStructureError: When a single-path run reads invalid YAML.
     """
-    from portolan_cli.errors import ConfigInvalidStructureError
     from portolan_cli.metadata_yaml import load_and_validate_metadata
+    from portolan_core.errors import ConfigInvalidStructureError
 
     base_dir = resolve_catalog_dir(catalog_root, path, must_exist=recursive)
 

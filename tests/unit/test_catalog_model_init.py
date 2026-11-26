@@ -18,8 +18,8 @@ from typing import Any
 import pytest
 
 from portolan_cli.catalog import _sanitize_id, create_catalog
-from portolan_cli.constants import STAC_VERSION
-from portolan_cli.errors import CatalogAlreadyExistsError
+from portolan_core.constants import STAC_VERSION
+from portolan_core.errors import CatalogAlreadyExistsError
 
 
 class TestSanitizeIdEdgeCases:
@@ -475,7 +475,7 @@ class TestInitCatalogFilesystemErrors:
 
         # versions.json is written through the atomic helper; fail only that
         # path so the rest of init proceeds normally up to the error.
-        from portolan_cli.json_io import write_json_atomic as real_write
+        from portolan_core.json_io import write_json_atomic as real_write
 
         def failing_write_json_atomic(path: Path, data: Any) -> None:
             if "versions.json" in str(path):

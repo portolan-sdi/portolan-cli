@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from portolan_cli.collection_id import CollectionIdError, normalize_collection_id
-from portolan_cli.constants import WINDOWS_RESERVED_NAMES
+from portolan_core.constants import WINDOWS_RESERVED_NAMES
 
 if TYPE_CHECKING:
     from portolan_cli.scan.core import ScanIssue
@@ -45,7 +45,7 @@ INVALID_CHAR_PATTERN: re.Pattern[str] = re.compile(r"[\s()\[\]{}/\\\x00-\x1f\x7f
 # This threshold is for the FULL path, not just filename
 LONG_PATH_THRESHOLD: int = 200
 
-# WINDOWS_RESERVED_NAMES imported from portolan_cli.constants
+# WINDOWS_RESERVED_NAMES imported from portolan_core.constants
 
 # Shapefile sidecar extensions
 # Comprehensive list including all known sidecar types

@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from portolan_cli import extension_registry as _reg
+from portolan_core import extension_registry as _reg
 
 VECTOR = "vector"
 RASTER = "raster"

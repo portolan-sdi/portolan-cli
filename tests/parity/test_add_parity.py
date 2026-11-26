@@ -15,8 +15,8 @@ from typing import TYPE_CHECKING, Any
 import pytest
 
 from portolan_cli.add import AddOutcome, run_add
-from portolan_cli.errors import MissingLicenseError
 from portolan_cli.external import ExternalAddResult, add_external
+from portolan_core.errors import MissingLicenseError
 
 if TYPE_CHECKING:
     from collections.abc import Callable

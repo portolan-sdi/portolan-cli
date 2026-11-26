@@ -12,15 +12,15 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from portolan_cli.constants import MANAGED_FILES
-from portolan_cli.run_state import RunState
-from portolan_cli.stac_links import catalog_collections, versioned_collections
+from portolan_core.constants import MANAGED_FILES
+from portolan_core.run_state import RunState
+from portolan_core.stac_links import catalog_collections, versioned_collections
 
 if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
-    from portolan_cli.versions import VersionsFile
+    from portolan_core.versions import VersionsFile
 
 
 @dataclass

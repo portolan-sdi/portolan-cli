@@ -3,7 +3,7 @@ paths:
   - "portolan_cli/cli.py"
   - "portolan_cli/output.py"
   - "portolan_cli/json_output.py"
-  - "portolan_cli/errors.py"
+  - "packages/portolan-core/src/portolan_core/errors.py"
   - "portolan_cli/input_hardening.py"
   - "portolan_cli/add_progress.py"
   - "portolan_cli/scan_progress.py"

@@ -27,8 +27,8 @@ INSTRUCTIONS_FILE = "AGENTS.md"
 # When a mapped file changes, update the freshness marker for that section
 FILE_TO_SECTION_MAP: dict[str, list[str]] = {
     "portolan_cli/output.py": ["Standardized Terminal Output"],
-    "portolan_cli/errors.py": ["Standardized Terminal Output"],
-    "portolan_cli/constants.py": ["Design Principles"],
+    "packages/portolan-core/src/portolan_core/errors.py": ["Standardized Terminal Output"],
+    "packages/portolan-core/src/portolan_core/constants.py": ["Design Principles"],
     "portolan_cli/json_output.py": ["Standardized Terminal Output"],
     "portolan_cli/cli.py": ["Common Commands", "CLI Commands"],
 }

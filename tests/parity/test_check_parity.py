@@ -8,8 +8,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from portolan_cli.errors import InvalidLiveUrlError
 from portolan_cli.validation.workflow import CheckWorkflowResult, run_check_workflow
+from portolan_core.errors import InvalidLiveUrlError
 
 if TYPE_CHECKING:
     from collections.abc import Callable

@@ -33,11 +33,6 @@ from portolan_cli.collection_id import (
     infer_nested_collection_id,
     resolve_collection_id,  # noqa: F401
 )
-from portolan_cli.config import get_ignored_files, load_merged_metadata
-from portolan_cli.constants import (
-    GEOSPATIAL_EXTENSIONS,
-    TABULAR_EXTENSIONS,
-)
 from portolan_cli.conversion_config import (
     VectorSettings,
     get_vector_settings,
@@ -46,12 +41,6 @@ from portolan_cli.conversion_config import (
 )
 from portolan_cli.convert import convert_multilayer_file
 from portolan_cli.discovery import get_sidecars, iter_files_with_sidecars, iter_geospatial_files
-from portolan_cli.errors import (
-    AssetKeyCollisionError,
-    MissingLicenseError,
-    NoGeometryError,
-    PartitionCollisionError,
-)
 from portolan_cli.finalization import (
     CompanionAsset,
     add_companion_assets,
@@ -95,7 +84,6 @@ from portolan_cli.finalization import (
 from portolan_cli.finalization import (
     finalize_items as finalize_items,  # noqa: PLC0414
 )
-from portolan_cli.format_families import VECTOR
 from portolan_cli.formats import (
     in_run,
     is_geoparquet,
@@ -104,8 +92,6 @@ from portolan_cli.formats import (
 )
 from portolan_cli.hookspecs import EnrichContext
 from portolan_cli.humanize import humanize_slug
-from portolan_cli.json_io import write_json_atomic
-from portolan_cli.licensing import LICENSE_REL, license_gap, resolve_license
 from portolan_cli.plugins.formats import handler_for, plugin_extensions
 from portolan_cli.preparation import (
     _MEDIA_TYPE_MAP as _MEDIA_TYPE_MAP,  # noqa: PLC0414
@@ -167,7 +153,6 @@ from portolan_cli.preparation import (
 from portolan_cli.preparation import (
     prepare_item as prepare_item,  # noqa: PLC0414
 )
-from portolan_cli.query import ItemInfo, get_item_info, is_current, list_items  # noqa: F401
 from portolan_cli.remove import remove_files  # noqa: F401
 from portolan_cli.report import emit
 from portolan_cli.stac import (
@@ -177,10 +162,25 @@ from portolan_cli.stac import (
 )
 from portolan_cli.stac_enrich import enrich_collection_file, enrich_item_file
 from portolan_cli.stac_parquet import PARQUET_FILENAME
-from portolan_cli.trace import span, submit
-from portolan_cli.versions import Asset, versions_asset_key
 from portolan_cli.viz.pmtiles_links import PMTILES_SUFFIX
 from portolan_cli.viz.style import enrich_cog_assets
+from portolan_core.config import get_ignored_files, load_merged_metadata
+from portolan_core.constants import (
+    GEOSPATIAL_EXTENSIONS,
+    TABULAR_EXTENSIONS,
+)
+from portolan_core.errors import (
+    AssetKeyCollisionError,
+    MissingLicenseError,
+    NoGeometryError,
+    PartitionCollisionError,
+)
+from portolan_core.format_families import VECTOR
+from portolan_core.json_io import write_json_atomic
+from portolan_core.licensing import LICENSE_REL, license_gap, resolve_license
+from portolan_core.query import ItemInfo, get_item_info, is_current, list_items  # noqa: F401
+from portolan_core.trace import span, submit
+from portolan_core.versions import Asset, versions_asset_key
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -188,9 +188,9 @@ if TYPE_CHECKING:
     from datetime import datetime
 
     from portolan_cli.extract.common.progress import MessageCallback
-    from portolan_cli.run_state import RunState
     from portolan_cli.stac_parquet import MirrorReport
     from portolan_cli.viz.pmtiles import PMTilesOutcome, PMTilesReport
+    from portolan_core.run_state import RunState
 
 
 logger = logging.getLogger(__name__)
@@ -547,13 +547,13 @@ def _sweep_catalog(catalog_root: Path, state: RunState) -> None:
     AGENTS.md and README.md files with their links and the profile schema URI
     (issue #654), and the root sync stamp of an all-mirror tree (issue #684).
     """
-    from portolan_cli.agents_md import ensure_agents_md_tree
     from portolan_cli.catalog import (
         apply_catalog_human_titles,
         ensure_link_titles,
         ensure_schema_uris,
     )
     from portolan_cli.readme import ensure_readmes
+    from portolan_core.agents_md import ensure_agents_md_tree
 
     apply_catalog_human_titles(catalog_root, state=state)
     ensure_link_titles(catalog_root)
@@ -618,7 +618,7 @@ def add_directory(
 # Sidecar auto-detection (per issue #97)
 # ─────────────────────────────────────────────────────────────────────────────
 
-# Note: SIDECAR_PATTERNS imported from portolan_cli.constants
+# Note: SIDECAR_PATTERNS imported from portolan_core.constants
 
 
 def _copy_non_geo_to_item_dir(
@@ -1557,14 +1557,14 @@ def run_add(
     Returns:
         The outcome of the run, for the caller to report.
     """
-    from portolan_cli import trace
     from portolan_cli.collection_thumbnail import ensure_collection_thumbnails
     from portolan_cli.report import reporting
-    from portolan_cli.run_state import RunState
     from portolan_cli.stac import MergeStrategy
     from portolan_cli.stac_parquet import generate_parquet_mirrors
     from portolan_cli.version_ops import commit_run
     from portolan_cli.viz import pmtiles
+    from portolan_core import trace
+    from portolan_core.run_state import RunState
 
     if state is None:
         state = RunState.open(catalog_root)
@@ -1721,7 +1721,7 @@ def _map_recorded_geo_dirs(
         catalog_root: Root directory of the catalog.
         state: The run state, which reads each ``versions.json`` once.
     """
-    from portolan_cli.stac_links import owned_item_hrefs
+    from portolan_core.stac_links import owned_item_hrefs
 
     root = catalog_root.resolve()
     item_paths: dict[Path, dict[Path, Path]] = {}

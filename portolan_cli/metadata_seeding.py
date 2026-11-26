@@ -33,10 +33,10 @@ from typing import TYPE_CHECKING, Any
 
 import yaml
 
-from portolan_cli.constants import TODO_MARKER
 from portolan_cli.extract.common.urls import sanitize_published_string
-from portolan_cli.licensing import OTHER_LICENSE, ResolvedLicense
 from portolan_cli.providers import PRODUCER_ROLE
+from portolan_core.constants import TODO_MARKER
+from portolan_core.licensing import OTHER_LICENSE, ResolvedLicense
 
 if TYPE_CHECKING:
     from portolan_cli.metadata_extraction import ExtractedMetadata

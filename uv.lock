@@ -3785,12 +3785,14 @@ version = "0.9.0"
 source = { editable = "packages/portolan-core" }
 dependencies = [
     { name = "obstore" },
+    { name = "pyyaml" },
     { name = "rashid-core" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "obstore", specifier = ">=0.12.1" },
+    { name = "pyyaml", specifier = ">=6.0" },
     { name = "rashid-core", specifier = ">=0.5.1,<0.6.0" },
 ]
 

@@ -9,8 +9,8 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from portolan_cli.errors import PathNotFoundError
 from portolan_cli.scan.workflow import ScanOutcome, run_scan
+from portolan_core.errors import PathNotFoundError
 
 if TYPE_CHECKING:
     from collections.abc import Callable

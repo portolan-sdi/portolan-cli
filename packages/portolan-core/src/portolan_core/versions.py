@@ -40,14 +40,14 @@ from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-from portolan_cli.json_io import write_json_atomic
-from portolan_cli.sync.checksums import compute_checksum
-from portolan_cli.trace import count
+from portolan_core.checksums import compute_checksum
+from portolan_core.json_io import write_json_atomic
+from portolan_core.trace import count
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from portolan_cli.run_state import RunState
+    from portolan_core.run_state import RunState
 
 # Spec version constant (MINOR #12)
 SPEC_VERSION = "1.0.0"

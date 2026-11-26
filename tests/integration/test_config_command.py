@@ -300,7 +300,7 @@ class TestDottedKeysReachTheReaders:
     def test_value_is_stored_as_the_type_of_its_setting(
         self, catalog: Path, key: str, text: str, stored: object
     ) -> None:
-        from portolan_cli.config import get_setting
+        from portolan_core.config import get_setting
 
         result = CliRunner().invoke(cli, ["config", "set", key, text])
 

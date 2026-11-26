@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from portolan_cli.sync.checksums import file_fields, file_fields_from, multihash_sha256
+from portolan_core.checksums import file_fields, file_fields_from, multihash_sha256
 
 if TYPE_CHECKING:
     from pathlib import Path

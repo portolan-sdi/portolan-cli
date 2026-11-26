@@ -14,10 +14,10 @@ from datetime import UTC, datetime
 
 import pytest
 
-from portolan_cli.constants import STAC_VERSION
+from portolan_core.constants import STAC_VERSION
 
 # These will be implemented - tests first!
-from portolan_cli.models.catalog import CatalogModel, Link
+from portolan_core.models.catalog import CatalogModel, Link
 
 
 class TestCatalogModelCreation:

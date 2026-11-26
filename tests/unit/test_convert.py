@@ -416,7 +416,7 @@ class TestClaimOutput:
         import pyarrow.parquet as pq
 
         from portolan_cli.convert import PROVENANCE_KEY
-        from portolan_cli.sync.checksums import compute_checksum
+        from portolan_core.checksums import compute_checksum
 
         table = pa.table({"a": [1]}).replace_schema_metadata(
             {
@@ -468,7 +468,7 @@ class TestClaimOutput:
     @pytest.mark.unit
     def test_no_free_name_raises(self, tmp_path: Path) -> None:
         from portolan_cli.convert import claim_output
-        from portolan_cli.errors import OutputExistsError
+        from portolan_core.errors import OutputExistsError
 
         (tmp_path / "a.csv").write_text("x\n")
         (tmp_path / "a.parquet").write_bytes(b"operator data")
@@ -1440,7 +1440,7 @@ class TestConvertFileErrorTypes:
         a conversion error.
         """
         from portolan_cli.convert import ConversionStatus, convert_file
-        from portolan_cli.errors import UnsupportedFormatError
+        from portolan_core.errors import UnsupportedFormatError
 
         # Create a NetCDF file (unsupported format)
         netcdf = tmp_path / "data.nc"
@@ -1469,7 +1469,7 @@ class TestConvertFileErrorTypes:
         function should catch it and use ConversionFailedError for context.
         """
         from portolan_cli.convert import ConversionStatus, convert_file
-        from portolan_cli.errors import ConversionFailedError
+        from portolan_core.errors import ConversionFailedError
 
         # Create a malformed GeoJSON that will fail conversion
         bad_file = tmp_path / "bad.geojson"
@@ -1512,7 +1512,7 @@ class TestConvertFileErrorTypes:
     @pytest.mark.unit
     def test_error_codes_match_portolan_error_pattern(self) -> None:
         """All conversion error types should have correct PRTLN-CNV* codes."""
-        from portolan_cli.errors import (
+        from portolan_core.errors import (
             ConversionError,
             ConversionFailedError,
             UnsupportedFormatError,
@@ -2808,7 +2808,7 @@ class TestPartitionedOutputWithGeoparquetIO:
         the same directory would lose the rows in each shared cell.
         """
         from portolan_cli import partitioning
-        from portolan_cli.errors import PartitionCollisionError
+        from portolan_core.errors import PartitionCollisionError
 
         (tmp_path / "kdtree_cell=0000").mkdir()
         (tmp_path / "kdtree_cell=0000" / "0000.parquet").write_bytes(b"PAR1")
@@ -2856,7 +2856,7 @@ class TestPartitionedOutputWithGeoparquetIO:
         """
         from portolan_cli import partitioning
         from portolan_cli.add import _maybe_partition_large_file
-        from portolan_cli.errors import PartitionCollisionError
+        from portolan_core.errors import PartitionCollisionError
 
         coll = tmp_path / "coll"
         (coll / "kdtree_cell=0000").mkdir(parents=True)

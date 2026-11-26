@@ -34,11 +34,11 @@ from typing import TYPE_CHECKING, Any
 
 from rashid_core.api import is_absolute_href
 
-from portolan_cli.constants import ROLE_COLLECTION_MIRROR
-from portolan_cli.json_io import write_json_atomic
-from portolan_cli.stac_links import owned_item_hrefs, resolve_href
-from portolan_cli.sync.checksums import file_fields, file_fields_from
-from portolan_cli.trace import count
+from portolan_core.checksums import file_fields, file_fields_from
+from portolan_core.constants import ROLE_COLLECTION_MIRROR
+from portolan_core.json_io import write_json_atomic
+from portolan_core.stac_links import owned_item_hrefs, resolve_href
+from portolan_core.trace import count
 
 if TYPE_CHECKING:
     from collections.abc import Set as AbstractSet
@@ -46,7 +46,7 @@ if TYPE_CHECKING:
 
     import pyarrow as pa
 
-    from portolan_cli.run_state import RunState
+    from portolan_core.run_state import RunState
 
 # Constants
 PARQUET_FILENAME = "items.parquet"
@@ -180,7 +180,7 @@ def _mirror_is_current(run: RunState, collection_path: Path, fingerprint: str) -
     The record must hold the same item fingerprint, and the file must still hold
     the recorded bytes. A file that another writer replaced fails the second test.
     """
-    from portolan_cli.versions import versions_asset_key
+    from portolan_core.versions import versions_asset_key
 
     output_path = collection_path / PARQUET_FILENAME
     record = run.tracked_assets(collection_path).get(
@@ -243,7 +243,7 @@ def generate_items_parquet(collection_path: Path, *, state: RunState | None = No
             "stac-geoparquet is required for items.parquet generation. "
             "Install with: pip install stac-geoparquet"
         ) from e
-    from portolan_cli.run_state import RunState
+    from portolan_core.run_state import RunState
 
     run = state if state is not None else RunState.open(collection_path.parent)
     output_path = collection_path / PARQUET_FILENAME
@@ -705,7 +705,7 @@ def track_parquet_in_versions(
         FileNotFoundError: If items.parquet doesn't exist.
     """
     from portolan_cli.version_ops import owned_run
-    from portolan_cli.versions import generated_asset_record, track_generated_assets
+    from portolan_core.versions import generated_asset_record, track_generated_assets
 
     root = catalog_root if catalog_root is not None else collection_path.parent
     parquet_path = collection_path / PARQUET_FILENAME
@@ -799,8 +799,8 @@ def generate_parquet_mirrors(
     if not affected_collections:
         return report
 
-    from portolan_cli.config import coerce_bool
     from portolan_cli.version_ops import owned_run
+    from portolan_core.config import coerce_bool
 
     with owned_run(catalog_root, state) as run:
         for coll_id in affected_collections:
@@ -847,7 +847,7 @@ def collections_with_items(catalog_root: Path) -> list[str]:
     Returns:
         Sorted list of collection IDs relative to catalog_root.
     """
-    from portolan_cli.stac_links import catalog_collections
+    from portolan_core.stac_links import catalog_collections
 
     collections: list[str] = []
     for collection_id in catalog_collections(catalog_root):

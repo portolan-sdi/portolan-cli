@@ -180,7 +180,7 @@ class TestConfigGet:
     @pytest.mark.unit
     def test_get_reads_from_config_file(self, runner: CliRunner, tmp_path: Path) -> None:
         """config get should read value from config file."""
-        from portolan_cli.config import save_config
+        from portolan_core.config import save_config
 
         with runner.isolated_filesystem(temp_dir=tmp_path):
             runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
@@ -195,7 +195,7 @@ class TestConfigGet:
     @pytest.mark.unit
     def test_get_shows_source(self, runner: CliRunner, tmp_path: Path) -> None:
         """config get should show the source of the value."""
-        from portolan_cli.config import save_config
+        from portolan_core.config import save_config
 
         with runner.isolated_filesystem(temp_dir=tmp_path):
             runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
@@ -210,7 +210,7 @@ class TestConfigGet:
     @pytest.mark.unit
     def test_get_env_var_override(self, runner: CliRunner, tmp_path: Path) -> None:
         """config get should show env var when it overrides config."""
-        from portolan_cli.config import save_config
+        from portolan_core.config import save_config
 
         with runner.isolated_filesystem(temp_dir=tmp_path):
             runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
@@ -249,7 +249,7 @@ class TestConfigGet:
     @pytest.mark.unit
     def test_get_json_output(self, runner: CliRunner, tmp_path: Path) -> None:
         """config get should output JSON envelope with --format json."""
-        from portolan_cli.config import save_config
+        from portolan_core.config import save_config
 
         with runner.isolated_filesystem(temp_dir=tmp_path):
             runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
@@ -277,7 +277,7 @@ class TestConfigList:
     @pytest.mark.unit
     def test_list_shows_all_settings(self, runner: CliRunner, tmp_path: Path) -> None:
         """config list should show all configured settings."""
-        from portolan_cli.config import save_config
+        from portolan_core.config import save_config
 
         with runner.isolated_filesystem(temp_dir=tmp_path):
             runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
@@ -292,7 +292,7 @@ class TestConfigList:
     @pytest.mark.unit
     def test_list_shows_sources(self, runner: CliRunner, tmp_path: Path) -> None:
         """config list should show source for each setting."""
-        from portolan_cli.config import save_config
+        from portolan_core.config import save_config
 
         with runner.isolated_filesystem(temp_dir=tmp_path):
             runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
@@ -309,7 +309,7 @@ class TestConfigList:
     @pytest.mark.unit
     def test_list_json_output(self, runner: CliRunner, tmp_path: Path) -> None:
         """config list should output JSON envelope with --format json."""
-        from portolan_cli.config import save_config
+        from portolan_core.config import save_config
 
         with runner.isolated_filesystem(temp_dir=tmp_path):
             runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
@@ -348,7 +348,7 @@ class TestConfigList:
     @pytest.mark.unit
     def test_list_shows_collection_in_text(self, runner: CliRunner, tmp_path: Path) -> None:
         """config list --collection should mention collection in text output."""
-        from portolan_cli.config import save_config
+        from portolan_core.config import save_config
 
         with runner.isolated_filesystem(temp_dir=tmp_path):
             runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
@@ -374,7 +374,7 @@ class TestConfigUnset:
     @pytest.mark.unit
     def test_unset_removes_setting(self, runner: CliRunner, tmp_path: Path) -> None:
         """config unset should remove setting from config file."""
-        from portolan_cli.config import save_config
+        from portolan_core.config import save_config
 
         with runner.isolated_filesystem(temp_dir=tmp_path):
             runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
@@ -412,7 +412,7 @@ class TestConfigUnset:
     @pytest.mark.unit
     def test_unset_json_output(self, runner: CliRunner, tmp_path: Path) -> None:
         """config unset should output JSON envelope with --format json."""
-        from portolan_cli.config import save_config
+        from portolan_core.config import save_config
 
         with runner.isolated_filesystem(temp_dir=tmp_path):
             runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
@@ -430,7 +430,7 @@ class TestConfigUnset:
     @pytest.mark.unit
     def test_unset_collection_level(self, runner: CliRunner, tmp_path: Path) -> None:
         """config unset --collection should remove collection-level setting."""
-        from portolan_cli.config import save_config
+        from portolan_core.config import save_config
 
         with runner.isolated_filesystem(temp_dir=tmp_path):
             runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
@@ -490,7 +490,7 @@ class TestConfigErrorMessages:
     @pytest.mark.unit
     def test_get_collection_json_output(self, runner: CliRunner, tmp_path: Path) -> None:
         """config get --collection should include collection in JSON output."""
-        from portolan_cli.config import save_config
+        from portolan_core.config import save_config
 
         with runner.isolated_filesystem(temp_dir=tmp_path):
             runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
@@ -538,7 +538,7 @@ class TestConfigErrorMessages:
     @pytest.mark.unit
     def test_list_collection_json_output(self, runner: CliRunner, tmp_path: Path) -> None:
         """config list --collection should include collection in JSON output."""
-        from portolan_cli.config import save_config
+        from portolan_core.config import save_config
 
         with runner.isolated_filesystem(temp_dir=tmp_path):
             runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
@@ -599,7 +599,7 @@ class TestConfigErrorMessages:
     @pytest.mark.unit
     def test_unset_collection_json_output(self, runner: CliRunner, tmp_path: Path) -> None:
         """config unset --collection should include collection in JSON output."""
-        from portolan_cli.config import save_config
+        from portolan_core.config import save_config
 
         with runner.isolated_filesystem(temp_dir=tmp_path):
             runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])

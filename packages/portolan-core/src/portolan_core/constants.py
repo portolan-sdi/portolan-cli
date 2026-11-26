@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from rashid_core.api import newest_profile_version
 
-from portolan_cli import extension_registry as _reg
+from portolan_core import extension_registry as _reg
 
 # Version of the Portolan specification this CLI validates against (issue #566).
 #
@@ -109,7 +109,7 @@ PARTITION_EXTENSION_URI: str = (
     "https://schemas.portolan-sdi.org/incubating/partition/v1.0.0/schema.json"
 )
 
-# The extension vocabulary below is DERIVED from portolan_cli.extension_registry
+# The extension vocabulary below is DERIVED from portolan_core.extension_registry
 # (the single source). Edit rows there, not these members.
 
 # Extensions we recognize as geospatial files (.gdb is a FileGDB directory,

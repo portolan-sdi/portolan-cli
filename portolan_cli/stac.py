@@ -21,15 +21,15 @@ from typing import TYPE_CHECKING, Any
 
 import pystac
 
-from portolan_cli.bbox import compute_bbox_union, to_2d_bbox
-from portolan_cli.constants import PARTITION_EXTENSION_URI, PORTOLAN_SCHEMA_URI, ROLE_VISUAL
-from portolan_cli.errors import AssetKeyCollisionError, InvalidBboxError
-from portolan_cli.extension_registry import EXTENSION_REGISTRY
 from portolan_cli.humanize import humanize_slug
-from portolan_cli.json_io import write_json_atomic
 from portolan_cli.providers import derive_provenance, resolve_providers
 from portolan_cli.report import emit
 from portolan_cli.viz.pmtiles_links import PMTILES_MEDIA_TYPE, pmtiles_asset_key
+from portolan_core.bbox import compute_bbox_union, to_2d_bbox
+from portolan_core.constants import PARTITION_EXTENSION_URI, PORTOLAN_SCHEMA_URI, ROLE_VISUAL
+from portolan_core.errors import AssetKeyCollisionError, InvalidBboxError
+from portolan_core.extension_registry import EXTENSION_REGISTRY
+from portolan_core.json_io import write_json_atomic
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Mapping, Sequence
@@ -929,7 +929,7 @@ def ensure_portolan_schema_uri(document: dict[str, Any]) -> bool:
 
     The profile URI is the machine-readable conformance claim: every catalog and
     collection MUST carry exactly one (issue #654). This appends
-    :data:`~portolan_cli.constants.PORTOLAN_SCHEMA_URI` when absent, and rewrites
+    :data:`~portolan_core.constants.PORTOLAN_SCHEMA_URI` when absent, and rewrites
     a URI left over from an older spec version in place, so re-stamping a catalog
     upgrades it instead of accumulating claims. Other extension declarations keep
     their relative order.
@@ -1223,7 +1223,7 @@ def _compute_bbox_union(
     rejects inf/nan and "effectively infinite" sentinel poison values such as
     ±1.79e308 while accepting legitimate projected coordinates (issue #516).
     """
-    from portolan_cli.bbox import compute_bbox_union
+    from portolan_core.bbox import compute_bbox_union
 
     all_bboxes: list[list[float]] = []
     for m in metadata_list:

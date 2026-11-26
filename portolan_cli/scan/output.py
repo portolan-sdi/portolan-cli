@@ -23,7 +23,6 @@ from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from portolan_cli.format_families import RASTER, VECTOR
 from portolan_cli.scan.classify import FileCategory, SkippedFile
 from portolan_cli.scan.core import (
     IssueType,
@@ -32,6 +31,7 @@ from portolan_cli.scan.core import (
     ScanResult,
     Severity,
 )
+from portolan_core.format_families import RASTER, VECTOR
 
 if TYPE_CHECKING:
     from portolan_cli.scan.infer import CollectionSuggestion

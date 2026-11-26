@@ -115,8 +115,8 @@ class WFSMetadata:
         Returns:
             ExtractedMetadata for use with metadata seeding.
         """
-        from portolan_cli.licensing import license_url_from_text
         from portolan_cli.metadata_extraction import ExtractedMetadata
+        from portolan_core.licensing import license_url_from_text
 
         # Use abstract unless it's boilerplate, then fall back to title
         description = self.service_abstract

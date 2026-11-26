@@ -6,7 +6,7 @@ lives in ``constants.py``, which loads neither pystac nor ``stac.py``.
 
 from __future__ import annotations
 
-from portolan_cli.constants import STAC_VERSION
+from portolan_core.constants import STAC_VERSION
 
 
 def get_stac_version() -> str:

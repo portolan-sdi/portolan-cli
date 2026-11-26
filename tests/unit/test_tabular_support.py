@@ -20,11 +20,11 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
-from portolan_cli.constants import PORTOLAN_SCHEMA_URI
 from portolan_cli.scan.classify import (
     FileCategory,
     classify_file,
 )
+from portolan_core.constants import PORTOLAN_SCHEMA_URI
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -121,19 +121,19 @@ class TestTabularConfig:
 
     def test_tabular_enabled_default_is_false(self) -> None:
         """tabular.enabled should default to false."""
-        from portolan_cli.config import DEFAULT_SETTINGS
+        from portolan_core.config import DEFAULT_SETTINGS
 
         assert DEFAULT_SETTINGS.get("tabular.enabled") is False
 
     def test_tabular_convert_default_is_true(self) -> None:
         """tabular.convert should default to true."""
-        from portolan_cli.config import DEFAULT_SETTINGS
+        from portolan_core.config import DEFAULT_SETTINGS
 
         assert DEFAULT_SETTINGS.get("tabular.convert") is True
 
     def test_tabular_settings_in_known_settings(self) -> None:
         """Tabular settings should be in KNOWN_SETTINGS."""
-        from portolan_cli.config import KNOWN_SETTINGS
+        from portolan_core.config import KNOWN_SETTINGS
 
         assert "tabular.enabled" in KNOWN_SETTINGS
         assert "tabular.convert" in KNOWN_SETTINGS
@@ -145,21 +145,21 @@ class TestConstantsUnification:
 
     def test_constants_tabular_includes_parquet(self) -> None:
         """constants.py TABULAR_EXTENSIONS should include .parquet."""
-        from portolan_cli.constants import TABULAR_EXTENSIONS
+        from portolan_core.constants import TABULAR_EXTENSIONS
 
         assert ".parquet" in TABULAR_EXTENSIONS
 
     def test_constants_tabular_includes_excel(self) -> None:
         """constants.py TABULAR_EXTENSIONS should include Excel formats."""
-        from portolan_cli.constants import TABULAR_EXTENSIONS
+        from portolan_core.constants import TABULAR_EXTENSIONS
 
         assert ".xlsx" in TABULAR_EXTENSIONS
         assert ".xls" in TABULAR_EXTENSIONS
 
     def test_scan_classify_tabular_matches_constants(self) -> None:
         """scan_classify.py TABULAR_EXTENSIONS should exactly match constants.py."""
-        from portolan_cli.constants import TABULAR_EXTENSIONS as CONST_TABULAR
         from portolan_cli.scan.classify import TABULAR_EXTENSIONS as SCAN_TABULAR
+        from portolan_core.constants import TABULAR_EXTENSIONS as CONST_TABULAR
 
         # Exact equality required — any drift (in either direction) should fail
         # This prevents constants.py and scan_classify.py from diverging silently

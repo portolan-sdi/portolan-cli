@@ -45,7 +45,7 @@ from portolan_cli.extract.common.source import (
 from portolan_cli.extract.common.styles import extract_wms_legend, extract_wms_style
 from portolan_cli.extract.common.urls import merge_query, redact_credentials
 from portolan_cli.extract.wfs.discovery import LayerInfo, WFSDiscoveryResult, discover_layers
-from portolan_cli.licensing import license_url_from_text
+from portolan_core.licensing import license_url_from_text
 
 if TYPE_CHECKING:
     from pathlib import Path

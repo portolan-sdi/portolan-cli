@@ -5,7 +5,7 @@ object after one flag check, and ``count`` returns at once.
 
 Usage::
 
-    from portolan_cli.trace import count, span
+    from portolan_core.trace import count, span
 
     with span("add.prepare", files=len(batch)) as s:
         ...
@@ -430,7 +430,7 @@ def chrome_trace_events() -> list[dict[str, Any]]:
 
 def write_chrome_trace(path: Path) -> None:
     """Write the spans to ``path`` as a Chrome trace file. Perfetto opens it."""
-    from portolan_cli.json_io import write_json_atomic  # json_io imports this module
+    from portolan_core.json_io import write_json_atomic  # json_io imports this module
 
     write_json_atomic(path, {"traceEvents": chrome_trace_events(), "displayTimeUnit": "ms"})
 

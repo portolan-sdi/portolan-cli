@@ -92,8 +92,8 @@ def test_a_companion_that_meets_an_asset_key_collision_is_a_skip(tmp_path: Path)
     so the item directory and the item JSON stay as they were.
     """
     from portolan_cli.add import _DeferredPlan, _write_deferred
-    from portolan_cli.run_state import RunState
     from portolan_cli.stac import MergeStrategy
+    from portolan_core.run_state import RunState
 
     item_dir = tmp_path / "land" / "scene"
     item_dir.mkdir(parents=True)

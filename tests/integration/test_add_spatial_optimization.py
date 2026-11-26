@@ -120,8 +120,9 @@ class TestTheSourceFooterIsReadOnce:
     def test_the_in_place_rewrite_opens_the_source_once(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from portolan_cli import preparation, trace
+        from portolan_cli import preparation
         from portolan_cli.conversion_config import VectorSettings
+        from portolan_core import trace
 
         source = tmp_path / "roads.parquet"
         shutil.copy(POINTS, source)
@@ -702,9 +703,9 @@ class TestTheGuardsCoverEveryRewritePath:
         import pytest
         from shapely.geometry import Point
 
-        from portolan_cli.errors import RewriteFidelityError
         from portolan_cli.metadata.geoparquet import read_rewrite_fidelity
         from portolan_cli.preparation import _assert_rewrite_kept_everything
+        from portolan_core.errors import RewriteFidelityError
 
         source = tmp_path / "a.parquet"
         rewritten = tmp_path / "b.parquet"

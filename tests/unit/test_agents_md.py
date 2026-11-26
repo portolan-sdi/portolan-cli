@@ -1,6 +1,6 @@
 """Unit tests for AGENTS.md scaffolding, link injection, and gap detection.
 
-Covers the framework-free leaf ``portolan_cli.agents_md``. The ``check --fix``
+Covers the framework-free leaf ``portolan_core.agents_md``. The ``check --fix``
 repair is ``validation.fixers`` fixer ``agents`` (PTL-FIL-001/-002).
 """
 
@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from portolan_cli.agents_md import (
+from portolan_core.agents_md import (
     AGENTS_LINK_REL,
     AGENTS_MD_FILENAME,
     AGENTS_MEDIA_TYPE,
@@ -119,7 +119,7 @@ class TestEnsureAgentsMd:
 
     def test_a_new_file_beside_a_right_link_writes_no_json(self, tmp_path: Path) -> None:
         """Only the link lives in the JSON, so scaffolding the file leaves it alone."""
-        from portolan_cli import trace
+        from portolan_core import trace
 
         coll = {"type": "Collection", "id": "roads", "links": [build_agents_link()]}
         cj = _write(tmp_path / "collection.json", coll)
@@ -141,7 +141,7 @@ class TestEnsureAgentsMd:
     def test_a_new_or_changed_link_writes_the_json_once(
         self, tmp_path: Path, links: list[dict[str, str]]
     ) -> None:
-        from portolan_cli import trace
+        from portolan_core import trace
 
         cj = _write(tmp_path / "collection.json", {"type": "Collection", "id": "r", "links": links})
         with trace.tracing():

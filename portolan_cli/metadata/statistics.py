@@ -20,7 +20,7 @@ import pyarrow.parquet as pq
 import rasterio
 from rasterio import Statistics as RasterioStats
 
-from portolan_cli.trace import count
+from portolan_core.trace import count
 
 
 def _serialize_stat_value(value: Any) -> Any:

@@ -28,7 +28,7 @@ from portolan_cli.scan.core import ScanResult, scan_directory
 from portolan_cli.sync.pull import PullError, PullResult, pull
 from portolan_cli.sync.push import PushConflictError, PushResult, push_async
 from portolan_cli.sync.report import Level, Report, silent
-from portolan_cli.trace import span
+from portolan_core.trace import span
 
 if TYPE_CHECKING:
     from pathlib import Path

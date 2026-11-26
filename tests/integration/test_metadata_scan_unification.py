@@ -30,7 +30,7 @@ from click.testing import CliRunner
 from portolan_cli.cli import cli
 from portolan_cli.metadata.models import MetadataStatus
 from portolan_cli.metadata.scan import scan_catalog_metadata
-from portolan_cli.sync.checksums import file_fields
+from portolan_core.checksums import file_fields
 
 if TYPE_CHECKING:
     from pathlib import Path

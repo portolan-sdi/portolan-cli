@@ -10,8 +10,8 @@ from typing import TYPE_CHECKING, Any
 
 from portolan_cli.collection_id import resolve_collection_id
 from portolan_cli.discovery import get_sidecars
-from portolan_cli.json_io import write_json_atomic
-from portolan_cli.versions import (
+from portolan_core.json_io import write_json_atomic
+from portolan_core.versions import (
     Version,
     read_versions,
 )

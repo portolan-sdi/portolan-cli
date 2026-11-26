@@ -216,7 +216,7 @@ def test_arcgis_author_is_a_producer_and_never_the_contact(tmp_path: Path, run_c
     """The service author names a producer. The contact and the host stay with the mirror."""
     import yaml
 
-    from portolan_cli.constants import TODO_MARKER
+    from portolan_core.constants import TODO_MARKER
 
     result, server, out = _run("layer_url", tmp_path, run_cli)
 
@@ -410,7 +410,7 @@ def test_discovery_failure_names_the_host_and_not_the_credential(
 def test_wfs_layer_that_add_skips_is_named(tmp_path: Path, run_cli: RunCli) -> None:
     """A layer file that ``ignored_files`` matches is skipped with a warning, not in silence."""
     from portolan_cli.catalog import init_catalog
-    from portolan_cli.config import set_setting
+    from portolan_core.config import set_setting
 
     init_catalog(tmp_path / "out", catalog_id="recorded", license_id="CC-BY-4.0")
     set_setting(tmp_path / "out", "ignored_files", ["topp_states*"])

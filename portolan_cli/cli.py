@@ -18,43 +18,22 @@ if TYPE_CHECKING:
     from portolan_cli.add import AddFailure
     from portolan_cli.convert import ConversionResult
     from portolan_cli.metadata.fix import FixReport
-    from portolan_cli.query import ItemInfo
-    from portolan_cli.run_state import RunState
-    from portolan_cli.status import CollectionStatus
     from portolan_cli.sync.pull import PullResult
+    from portolan_core.query import ItemInfo
+    from portolan_core.run_state import RunState
+    from portolan_core.status import CollectionStatus
 
 import click
 from rashid_core.api import Severity as RashidSeverity
 
-from portolan_cli import trace
 from portolan_cli.add_progress import AddProgressReporter, count_files
 from portolan_cli.catalog import find_catalog_root
-from portolan_cli.catalog_list import (
-    AssetInfo,
-    AssetStatus,
-    CatalogListResult,
-    list_catalog_contents,
-)
 from portolan_cli.cli_types import FLEXIBLE_DATETIME
 from portolan_cli.collection_id import resolve_collection_id
 from portolan_cli.discovery import get_sidecars
 from portolan_cli.emit import emit_error, emit_success
-from portolan_cli.errors import (
-    AssetKeyCollisionError,
-    ConfigError,
-    InvalidLiveUrlError,
-    MissingLicenseError,
-    PortolanError,
-    UnknownFormatHandlerError,
-)
 from portolan_cli.input_hardening import InputValidationError
 from portolan_cli.json_output import ErrorDetail, error_envelope, success_envelope
-from portolan_cli.licensing import (
-    CLI_LICENSE_REMEDIATION,
-    METADATA_LICENSE_REMEDIATION,
-    OTHER_LICENSE,
-    license_gap,
-)
 from portolan_cli.logging_setup import configure_logging
 from portolan_cli.output import detail, error, set_writer, stdout_to_stderr, success, warn
 from portolan_cli.output import info as info_output
@@ -78,6 +57,27 @@ from portolan_cli.scan.output import (
 )
 from portolan_cli.scan.progress import ScanProgressReporter, count_directories
 from portolan_cli.utils import format_size
+from portolan_core import trace
+from portolan_core.catalog_list import (
+    AssetInfo,
+    AssetStatus,
+    CatalogListResult,
+    list_catalog_contents,
+)
+from portolan_core.errors import (
+    AssetKeyCollisionError,
+    ConfigError,
+    InvalidLiveUrlError,
+    MissingLicenseError,
+    PortolanError,
+    UnknownFormatHandlerError,
+)
+from portolan_core.licensing import (
+    CLI_LICENSE_REMEDIATION,
+    METADATA_LICENSE_REMEDIATION,
+    OTHER_LICENSE,
+    license_gap,
+)
 
 
 def click_writer(
@@ -251,6 +251,37 @@ def output_json_envelope(envelope: Any) -> None:
     click.echo(envelope.to_json())
 
 
+def load_dotenv_from_catalog(catalog_path: Path | None = None) -> bool:
+    """Load environment variables from .env file in catalog root.
+
+    It lives in the CLI layer because python-dotenv is a portolan-cli
+    dependency. portolan-core does not install it (#1133).
+
+    Searches for .env file in catalog root directory and loads it using
+    python-dotenv. Does NOT override existing environment variables.
+
+    This enables storing sensitive settings (remote, profile, region) in
+    a .env file that won't be pushed to remote storage.
+
+    Args:
+        catalog_path: Path to catalog root. If None, attempts to find it.
+
+    Returns:
+        True if a .env file was found and loaded, False otherwise.
+    """
+    from dotenv import load_dotenv
+
+    if catalog_path is None:
+        return False
+
+    env_file = catalog_path / ".env"
+    if not env_file.is_file():
+        return False
+
+    load_dotenv(env_file, override=False)
+    return True
+
+
 def load_dotenv_and_warn_sensitive(catalog_path: Path, *, state: RunState | None = None) -> None:
     """Load .env from catalog and warn if config.yaml has sensitive settings.
 
@@ -262,7 +293,7 @@ def load_dotenv_and_warn_sensitive(catalog_path: Path, *, state: RunState | None
         catalog_path: Resolved catalog root path.
         state: The run state, which parses config.yaml once per run.
     """
-    from portolan_cli.config import check_sensitive_settings_in_config, load_dotenv_from_catalog
+    from portolan_core.config import check_sensitive_settings_in_config
 
     load_dotenv_from_catalog(catalog_path)
 
@@ -323,7 +354,7 @@ def resolve_remote(
     Returns:
         Resolved destination URL or None if not configured.
     """
-    from portolan_cli.config import get_setting
+    from portolan_core.config import get_setting
 
     return get_setting(
         "remote",
@@ -353,7 +384,7 @@ def resolve_aws_profile(
     Returns:
         The profile name, or None when nothing here names one.
     """
-    from portolan_cli.config import get_setting
+    from portolan_core.config import get_setting
 
     return get_setting(
         "aws_profile",
@@ -595,7 +626,7 @@ def init(
         portolan init --auto --license CC-BY-4.0 --logo brand.png
     """
     from portolan_cli.catalog import CatalogState, detect_state, init_catalog
-    from portolan_cli.errors import (
+    from portolan_core.errors import (
         CatalogAlreadyExistsError,
         LogoError,
         UnmanagedStacCatalogError,
@@ -685,7 +716,7 @@ def _get_format_display_name(format_type: str | None) -> str:
         Human-readable format name (e.g., "GeoParquet", "COG"). A family
         from a plugin format shows as written.
     """
-    from portolan_cli.format_families import RASTER, VECTOR
+    from portolan_core.format_families import RASTER, VECTOR
 
     if format_type == VECTOR:
         return "GeoParquet"
@@ -929,8 +960,8 @@ def status_cmd(
 
     from functools import partial
 
-    from portolan_cli.status import get_catalog_status
     from portolan_cli.sync.pull import fetch_remote_versions
+    from portolan_core.status import get_catalog_status
 
     result = get_catalog_status(
         catalog_path,
@@ -1359,8 +1390,8 @@ def check(
     if data_scope != "all" and no_data:
         warn("--data-scope has no effect with --no-data")
 
-    from portolan_cli.errors import NotACatalogError
     from portolan_cli.validation.workflow import run_check_workflow
+    from portolan_core.errors import NotACatalogError
 
     def show_conversion_progress(result: ConversionResult) -> None:
         if result.source:
@@ -2796,7 +2827,7 @@ def add_cmd(
     # Resolve and validate catalog root (git-style auto-detection)
     catalog_root = _resolve_catalog_root_for_add(catalog_path, use_json)
 
-    from portolan_cli.run_state import RunState
+    from portolan_core.run_state import RunState
 
     # One state for the whole command: each YAML file parses once (issue #994).
     # run_add commits it.
@@ -3261,7 +3292,7 @@ def _resolve_push_settings(
     Raises:
         SystemExit: If config.yaml contains stale sensitive settings
     """
-    from portolan_cli.config import resolve_push_settings
+    from portolan_core.config import resolve_push_settings
 
     try:
         return resolve_push_settings(destination, profile, catalog_path, collection)
@@ -3305,8 +3336,8 @@ def _report_push_error(err: Exception, *, collection: str | None, use_json: bool
     Returns:
         False when the caller must re-raise the error.
     """
-    from portolan_cli.errors import ProfileCredentialsError, PushVerifyError
     from portolan_cli.sync.push import PushConflictError
+    from portolan_core.errors import ProfileCredentialsError, PushVerifyError
 
     if isinstance(err, PushConflictError):
         if use_json:
@@ -3551,8 +3582,8 @@ def push(
         # Repair objects that disagree with the manifest
         portolan push s3://mybucket/catalog -c demographics --verify
     """
-    from portolan_cli.errors import ProfileCredentialsError
     from portolan_cli.sync.push import PushAllResult, run_push
+    from portolan_core.errors import ProfileCredentialsError
 
     use_json = should_output_json(ctx, json_output)
 
@@ -3907,8 +3938,8 @@ def sync(
         portolan sync s3://mybucket/catalog -c data --profile prod
         portolan sync --collection demographics  # Uses configured remote
     """
-    from portolan_cli.errors import ProfileCredentialsError
     from portolan_cli.sync.core import sync as sync_fn
+    from portolan_core.errors import ProfileCredentialsError
 
     use_json = should_output_json(ctx, json_output)
 
@@ -4166,7 +4197,7 @@ def config_set(
         portolan config set conversion.vector.sort none
         portolan config set pmtiles.enabled false --collection demographics
     """
-    from portolan_cli.config import store_setting
+    from portolan_core.config import store_setting
 
     use_json = should_output_json(ctx, json_output)
 
@@ -4245,8 +4276,8 @@ def config_get(ctx: click.Context, json_output: bool, key: str, collection: str 
         portolan config get remote
         portolan config get aws_profile --collection restricted
     """
-    from portolan_cli.config import _get_env_var_name, read_setting
-    from portolan_cli.run_state import RunState
+    from portolan_core.config import _get_env_var_name, read_setting
+    from portolan_core.run_state import RunState
 
     use_json = should_output_json(ctx, json_output)
 
@@ -4295,8 +4326,8 @@ def config_list(ctx: click.Context, json_output: bool, collection: str | None) -
         portolan config list
         portolan config list --collection demographics
     """
-    from portolan_cli.config import read_settings
-    from portolan_cli.run_state import RunState
+    from portolan_core.config import read_settings
+    from portolan_core.run_state import RunState
 
     use_json = should_output_json(ctx, json_output)
 
@@ -4350,7 +4381,7 @@ def config_unset(ctx: click.Context, json_output: bool, key: str, collection: st
         portolan config unset remote
         portolan config unset aws_profile --collection restricted
     """
-    from portolan_cli.config import clear_setting
+    from portolan_core.config import clear_setting
 
     use_json = should_output_json(ctx, json_output)
 
@@ -4549,8 +4580,8 @@ def metadata_init(
         portolan metadata init --no-recursive     # Only at catalog root
         portolan metadata init demographics --no-recursive  # Only for collection
     """
-    from portolan_cli.errors import PathNotFoundError
     from portolan_cli.metadata.yaml_tree import init_metadata_templates
+    from portolan_core.errors import PathNotFoundError
 
     use_json = should_output_json(ctx, json_output)
     catalog_path = _metadata_catalog_root("metadata init", use_json)
@@ -4604,8 +4635,8 @@ def metadata_validate(
         portolan metadata validate --no-recursive     # Only at catalog root
         portolan metadata validate demographics --no-recursive  # Only for collection
     """
-    from portolan_cli.errors import ConfigInvalidStructureError, PathNotFoundError
     from portolan_cli.metadata.yaml_tree import validate_metadata_files
+    from portolan_core.errors import ConfigInvalidStructureError, PathNotFoundError
 
     use_json = should_output_json(ctx, json_output)
     catalog_path = _metadata_catalog_root("metadata validate", use_json)
@@ -4630,9 +4661,9 @@ def metadata_validate(
 
 
 if TYPE_CHECKING:
-    from portolan_cli.errors import ConfigInvalidStructureError
     from portolan_cli.metadata.yaml_tree import MetadataInitResult, MetadataValidateResult
     from portolan_cli.readme import ReadmeRunResult
+    from portolan_core.errors import ConfigInvalidStructureError
 
 
 def _metadata_catalog_root(command: str, use_json: bool) -> Path:
@@ -4814,8 +4845,8 @@ def readme(
         portolan readme demographics --no-recursive  # Only for collection
         portolan readme --stdout --no-recursive      # Print single README
     """
-    from portolan_cli.errors import ConfigInvalidStructureError, PathNotFoundError
     from portolan_cli.readme import UnsupportedOptionError, generate_readmes
+    from portolan_core.errors import ConfigInvalidStructureError, PathNotFoundError
 
     use_json = should_output_json(ctx, json_output)
     catalog_path = _metadata_catalog_root("readme", use_json)
@@ -4880,8 +4911,8 @@ def logo_cmd(
       portolan logo brand.png                     # Title from the catalog
       portolan logo brand.png --title "Acme GIS"  # Explicit title
     """
-    from portolan_cli.errors import LogoError
     from portolan_cli.logo import set_catalog_logo
+    from portolan_core.errors import LogoError
 
     use_json = should_output_json(ctx, json_output)
     catalog_root = require_catalog_root(use_json, "logo")
@@ -4986,8 +5017,8 @@ def partition(
         # Custom target rows
         portolan partition buildings.parquet output/ --target-rows 50000
     """
-    from portolan_cli.errors import PartitionError
     from portolan_cli.partitioning import PartitionPreview, partition_file
+    from portolan_core.errors import PartitionError
 
     use_json = should_output_json(ctx)
 

@@ -76,12 +76,12 @@ from portolan_cli.extract.arcgis.imageserver.tiling import TileSpec, compute_til
 from portolan_cli.extract.common.progress import emit_message
 from portolan_cli.extract.common.retry import PERMANENT_NOTE, permanent_status
 from portolan_cli.extract.common.urls import redact_credentials
-from portolan_cli.licensing import (
+from portolan_cli.metadata_seeding import seed_metadata_yaml
+from portolan_core.licensing import (
     ResolvedLicense,
     license_url_from_text,
     resolve_harvest_license,
 )
-from portolan_cli.metadata_seeding import seed_metadata_yaml
 
 if TYPE_CHECKING:
     from collections.abc import Callable

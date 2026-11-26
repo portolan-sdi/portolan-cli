@@ -14,14 +14,14 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from portolan_cli.constants import STAC_VERSION
-from portolan_cli.models.collection import (
+from portolan_core.constants import STAC_VERSION
+from portolan_core.models.collection import (
     CollectionModel,
     ExtentModel,
     SpatialExtent,
     TemporalExtent,
 )
-from portolan_cli.models.schema import ColumnSchema, SchemaModel
+from portolan_core.models.schema import ColumnSchema, SchemaModel
 
 if TYPE_CHECKING:
     from pathlib import Path

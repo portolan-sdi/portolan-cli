@@ -14,11 +14,11 @@ from datetime import UTC, datetime
 
 import pytest
 
-from portolan_cli.constants import STAC_VERSION
-from portolan_cli.models.catalog import Link
+from portolan_core.constants import STAC_VERSION
+from portolan_core.models.catalog import Link
 
 # These will be implemented - tests first!
-from portolan_cli.models.collection import (
+from portolan_core.models.collection import (
     CollectionModel,
     ExtentModel,
     Provider,

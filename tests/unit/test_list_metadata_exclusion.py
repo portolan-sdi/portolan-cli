@@ -17,12 +17,12 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
-from portolan_cli.catalog_list import (
+from portolan_cli.cli import cli
+from portolan_core.catalog_list import (
     _STAC_METADATA_FILES,
     _get_format_display_name,
     _is_ignored,
 )
-from portolan_cli.cli import cli
 
 
 @pytest.fixture
@@ -71,7 +71,7 @@ class TestMetadataFileExclusion:
         STAC items have "type": "Feature" like GeoJSON, but they also have
         "stac_version" which distinguishes them. They are JSON, not GeoJSON.
         """
-        from portolan_cli.format_families import is_geojson
+        from portolan_core.format_families import is_geojson
 
         # Create a STAC item JSON file
         stac_item = tmp_path / "item.json"

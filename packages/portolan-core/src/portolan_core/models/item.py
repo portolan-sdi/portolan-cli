@@ -9,8 +9,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from portolan_cli.models._stac_version import get_stac_version
-from portolan_cli.models.catalog import Link
+from portolan_core.models._stac_version import get_stac_version
+from portolan_core.models.catalog import Link
 
 
 @dataclass

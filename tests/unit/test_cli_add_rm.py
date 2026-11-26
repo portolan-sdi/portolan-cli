@@ -1312,7 +1312,7 @@ class TestSideStepExitAfterAdd:
 
     @staticmethod
     def _assert_catalog_agrees(root: Path, collection_ids: list[str]) -> None:
-        from portolan_cli.sync.checksums import compute_checksum
+        from portolan_core.checksums import compute_checksum
 
         index = json.loads((root / "versions.json").read_text(encoding="utf-8"))["collections"]
         for collection_id in collection_ids:
@@ -1422,7 +1422,7 @@ class _RecordingBackend:
     ) -> Any:
         from datetime import datetime
 
-        from portolan_cli.versions import Version
+        from portolan_core.versions import Version
 
         self.published.append((collection, sorted(assets)))
         return Version(

@@ -399,7 +399,7 @@ class TestPushExcludeConfig:
     @pytest.mark.unit
     def test_default_exclude_patterns(self) -> None:
         """Default exclusion patterns should include common non-syncable files."""
-        from portolan_cli.config import DEFAULT_SETTINGS
+        from portolan_core.config import DEFAULT_SETTINGS
 
         defaults = DEFAULT_SETTINGS.get("push.exclude", [])
 
@@ -413,7 +413,7 @@ class TestPushExcludeConfig:
     @pytest.mark.unit
     def test_exclude_patterns_from_config(self, tmp_path: Path) -> None:
         """Exclusion patterns should be loadable from config.yaml."""
-        from portolan_cli.config import get_setting
+        from portolan_core.config import get_setting
 
         # Create config with custom exclusions
         portolan_dir = tmp_path / ".portolan"

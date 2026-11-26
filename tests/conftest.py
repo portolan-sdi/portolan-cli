@@ -896,7 +896,8 @@ def isolate_trace_and_logging(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]
     run. Both are process-wide, so a test that invokes the CLI would leak them
     into the next test.
     """
-    from portolan_cli import logging_setup, trace
+    from portolan_cli import logging_setup
+    from portolan_core import trace
 
     for name in (
         trace.TIMINGS_ENV,

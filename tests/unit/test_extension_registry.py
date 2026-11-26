@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-from portolan_cli import extension_registry as reg
+from portolan_core import extension_registry as reg
 
 pytestmark = pytest.mark.unit
 
@@ -239,7 +239,7 @@ class TestModulesUseRegistry:
         assert reg.field_map("unsupported_message") == formats.UNSUPPORTED_ERROR_MESSAGES
 
     def test_constants_module(self) -> None:
-        from portolan_cli import constants
+        from portolan_core import constants
 
         assert reg.extensions_where(is_geospatial=True) == constants.GEOSPATIAL_EXTENSIONS
         assert reg.extensions_where(is_tabular=True) == constants.TABULAR_EXTENSIONS

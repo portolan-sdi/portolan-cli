@@ -16,11 +16,11 @@ from typing import TYPE_CHECKING, cast
 import click
 
 from portolan_cli.cli import output_json_envelope, should_output_json
-from portolan_cli.errors import MissingLicenseError
 from portolan_cli.extract.common import cli_helpers
 from portolan_cli.extract.common.urls import redact_credentials
 from portolan_cli.json_output import ErrorDetail, error_envelope, success_envelope
 from portolan_cli.output import warn
+from portolan_core.errors import MissingLicenseError
 
 if TYPE_CHECKING:
     from portolan_cli.extract.arcgis.imageserver.extractor import TileProgress
@@ -137,8 +137,8 @@ def _handle_imageserver_extraction(
         ImageServerRunResult,
     )
     from portolan_cli.extract.arcgis.orchestrator import run_extract_arcgis
-    from portolan_cli.licensing import CLI_LICENSE_REMEDIATION
     from portolan_cli.output import error, info
+    from portolan_core.licensing import CLI_LICENSE_REMEDIATION
 
     bbox_tuple = _parse_imageserver_bbox(bbox, url, json_output)
 

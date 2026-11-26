@@ -19,7 +19,6 @@ import shutil
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from portolan_cli.constants import GEOSPATIAL_EXTENSIONS, PARQUET_EXTENSION, SIDECAR_PATTERNS
 from portolan_cli.conversion_config import ConversionOverrides, get_conversion_overrides
 from portolan_cli.convert import (
     ConversionReport,
@@ -34,13 +33,14 @@ from portolan_cli.formats import (
     is_geoparquet,
 )
 from portolan_cli.scan.detect import is_filegdb
+from portolan_core.constants import GEOSPATIAL_EXTENSIONS, PARQUET_EXTENSION, SIDECAR_PATTERNS
 
 if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
     from portolan_cli.metadata.fix import FixReport
-    from portolan_cli.run_state import RunState
+    from portolan_core.run_state import RunState
 
 logger = logging.getLogger(__name__)
 
@@ -563,7 +563,7 @@ def resolve_catalog_root_for_check(path: Path) -> Path | None:
     ``find_catalog_root`` insists on. Returns None if no ``catalog.json`` is
     found within the search depth.
     """
-    from portolan_cli.constants import MAX_CATALOG_SEARCH_DEPTH
+    from portolan_core.constants import MAX_CATALOG_SEARCH_DEPTH
 
     candidate = path.resolve() if path.exists() else path
     for _ in range(MAX_CATALOG_SEARCH_DEPTH):

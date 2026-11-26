@@ -11,7 +11,7 @@ The change is the working tree, committed or not, against the merge base with
 
 Selection:
 
-- A changed ``portolan_cli`` module selects each test file that imports it or
+- A changed ``portolan_cli`` or ``portolan_core`` module selects each test file that imports it or
   imports a module that imports it, directly or indirectly. grimp builds the
   import graph, and imports inside functions count. ``TYPE_CHECKING`` imports
   do not, because they never run.
@@ -51,7 +51,11 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
 
-PACKAGE = "portolan_cli"
+# Import name -> source folder. portolan-core is a workspace member (#1133).
+PACKAGES = {
+    "portolan_cli": "portolan_cli",
+    "portolan_core": "packages/portolan-core/src/portolan_core",
+}
 TESTS_DIR = "tests"
 FULL_SUITE_FILES = frozenset({"pyproject.toml", "uv.lock", "tests/conftest.py"})
 FULL_SUITE_PREFIXES = ("tests/fixtures/",)
@@ -59,7 +63,7 @@ FULL_SUITE_PREFIXES = ("tests/fixtures/",)
 # in one shows up as a catalog that breaks an invariant, not as a failed import.
 FOUNDATION_FILES = frozenset(
     {
-        "portolan_cli/config.py",
+        "packages/portolan-core/src/portolan_core/config.py",
         "portolan_cli/output.py",
         "portolan_cli/stac.py",
         "portolan_cli/finalization.py",
@@ -85,11 +89,16 @@ class Selection:
 
 
 def module_name(path: str) -> str | None:
-    """Return the dotted module name of a ``portolan_cli`` source file, or None."""
+    """Return the dotted module name of a package source file, or None."""
     pure = PurePosixPath(path)
-    if pure.suffix != ".py" or not pure.parts or pure.parts[0] != PACKAGE:
+    if pure.suffix != ".py":
         return None
-    parts = list(pure.with_suffix("").parts)
+    for package, folder in PACKAGES.items():
+        if pure.is_relative_to(folder):
+            parts = [package, *pure.relative_to(folder).with_suffix("").parts]
+            break
+    else:
+        return None
     if parts[-1] == "__init__":
         parts.pop()
     return ".".join(parts)
@@ -148,7 +157,8 @@ def referenced_names(source: str, path: str | None = None) -> set[str]:
         elif (
             isinstance(node, ast.Constant)
             and isinstance(node.value, str)
-            and node.value.startswith(f"{PACKAGE}.")
+            and node.value.split(".")[0] in PACKAGES
+            and "." in node.value
             and " " not in node.value
         ):
             names.add(node.value)
@@ -156,7 +166,7 @@ def referenced_names(source: str, path: str | None = None) -> set[str]:
 
 
 def imported_modules(source: str, known: set[str]) -> set[str]:
-    """Return the ``portolan_cli`` modules a test file's source refers to.
+    """Return the package modules a test file's source refers to.
 
     Args:
         source: Python source of the test file.
@@ -169,10 +179,10 @@ def imported_modules(source: str, known: set[str]) -> set[str]:
     """
     found = set()
     for name in referenced_names(source):
-        if name.split(".")[0] != PACKAGE:
+        if name.split(".")[0] not in PACKAGES:
             continue
         module = _longest_known_prefix(name, known)
-        if module is not None and module != PACKAGE:
+        if module is not None and module not in PACKAGES:
             found.add(module)
     return found
 
@@ -295,7 +305,18 @@ def _deleted_importers_at(repo: Path, base: str) -> Callable[[str], set[str]]:
         # for it finds every candidate. The parse then drops the false matches.
         leaf = module.rsplit(".", 1)[-1]
         result = subprocess.run(
-            ["git", "grep", "-l", "-w", "-F", leaf, merge_base(), "--", PACKAGE, TESTS_DIR],
+            [
+                "git",
+                "grep",
+                "-l",
+                "-w",
+                "-F",
+                leaf,
+                merge_base(),
+                "--",
+                *PACKAGES.values(),
+                TESTS_DIR,
+            ],
             cwd=repo,
             capture_output=True,
             text=True,
@@ -326,7 +347,7 @@ def select_for_repo(
     sys.path.insert(0, str(repo))
     # cache_dir=None: grimp writes its cache into the working directory by
     # default, which leaves .grimp_cache/ in the repository root.
-    graph = grimp.build_graph(PACKAGE, exclude_type_checking_imports=True, cache_dir=None)
+    graph = grimp.build_graph(*PACKAGES, exclude_type_checking_imports=True, cache_dir=None)
     known = set(graph.modules)
     test_imports, test_texts = _test_index(repo, known)
     return select(

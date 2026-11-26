@@ -22,15 +22,15 @@ from portolan_cli.finalization import (
 )
 from portolan_cli.metadata.detection import get_current_metadata
 from portolan_cli.preparation import PreparedItem
-from portolan_cli.run_state import RunState
 from portolan_cli.stac import create_collection
-from portolan_cli.sync.checksums import compute_checksum
 from portolan_cli.version_ops import commit_run
+from portolan_core.checksums import compute_checksum
+from portolan_core.run_state import RunState
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from portolan_cli.versions import Version
+    from portolan_core.versions import Version
 
 pytestmark = pytest.mark.unit
 

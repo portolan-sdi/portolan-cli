@@ -16,7 +16,6 @@ from typing import TYPE_CHECKING, Any, TypeVar
 import pytest
 import yaml
 
-from portolan_cli.errors import PathNotFoundError
 from portolan_cli.input_hardening import InputValidationError
 from portolan_cli.metadata.yaml_tree import init_metadata_templates, validate_metadata_files
 from portolan_cli.metadata_yaml import generate_metadata_template
@@ -26,6 +25,7 @@ from portolan_cli.readme import (
     generate_readme_for_collection,
     generate_readmes,
 )
+from portolan_core.errors import PathNotFoundError
 
 if TYPE_CHECKING:
     from collections.abc import Callable

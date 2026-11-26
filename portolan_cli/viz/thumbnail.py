@@ -25,16 +25,16 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any, Protocol, TypeVar, runtime_checkable
 
-from portolan_cli.config import load_catalog_config
-from portolan_cli.trace import count
 from portolan_cli.utils import get_dict, redact_credentials
+from portolan_core.config import load_catalog_config
+from portolan_core.trace import count
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     from matplotlib.axes import Axes
 
-    from portolan_cli.config import ConfigSource
+    from portolan_core.config import ConfigSource
 
 logger = logging.getLogger(__name__)
 
@@ -1124,7 +1124,7 @@ def _bbox_from_geo(geo_meta: dict[str, Any]) -> tuple[float, float, float, float
     reduction. The CRS may not be WGS84, and inf/nan values are rejected
     (issue #516).
     """
-    from portolan_cli.bbox import is_finite_bbox, to_2d_bbox
+    from portolan_core.bbox import is_finite_bbox, to_2d_bbox
 
     for col_meta in get_dict(geo_meta, "columns").values():
         bbox = col_meta.get("bbox") if isinstance(col_meta, dict) else None
@@ -1324,7 +1324,7 @@ def _stream_bounds(
             np.nanmax(stacked[:, 2]),
             np.nanmax(stacked[:, 3]),
         )
-    from portolan_cli.bbox import is_finite_bbox
+    from portolan_core.bbox import is_finite_bbox
 
     if not is_finite_bbox(list(bounds)):
         logger.warning("Invalid bounds from GeoParquet data (inf/nan): %s", list(bounds))
@@ -1338,7 +1338,7 @@ def _finite_bounds(gdf: Any) -> tuple[float, float, float, float] | None:
     Invalid bounds (inf/nan) would poison the frame, so the render fails fast
     rather than draw a garbage extent (issue #516).
     """
-    from portolan_cli.bbox import is_finite_bbox
+    from portolan_core.bbox import is_finite_bbox
 
     bounds = gdf.total_bounds
     bbox_list = [bounds[0], bounds[1], bounds[2], bounds[3]]

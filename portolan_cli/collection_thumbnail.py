@@ -30,18 +30,18 @@ import logging
 from pathlib import Path, PurePath
 from typing import TYPE_CHECKING, Any
 
-from portolan_cli import extension_registry as _reg
-from portolan_cli.constants import ROLE_THUMBNAIL
 from portolan_cli.formats import is_geoparquet, run_scope
-from portolan_cli.json_io import write_json_atomic
 from portolan_cli.stac_parquet import sync_file_extension
-from portolan_cli.sync.checksums import compute_checksum, multihash_sha256
-from portolan_cli.trace import span
-from portolan_cli.versions import track_generated_assets
+from portolan_core import extension_registry as _reg
+from portolan_core.checksums import compute_checksum, multihash_sha256
+from portolan_core.constants import ROLE_THUMBNAIL
+from portolan_core.json_io import write_json_atomic
+from portolan_core.trace import span
+from portolan_core.versions import track_generated_assets
 
 if TYPE_CHECKING:
-    from portolan_cli.config import ConfigSource
-    from portolan_cli.run_state import RunState
+    from portolan_core.config import ConfigSource
+    from portolan_core.run_state import RunState
 from portolan_cli.report import emit
 from portolan_cli.viz.thumbnail import (
     generate_vector_thumbnail,

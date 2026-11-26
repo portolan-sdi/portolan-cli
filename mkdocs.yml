@@ -59,8 +59,11 @@ plugins:
   - mkdocstrings:
       handlers:
         python:
-          paths: [.]
+          paths: [., packages/portolan-core/src]
           options:
+            # portolan_cli.api re-exports names from portolan_core (#1133).
+            # griffe resolves an alias only into a loaded package.
+            preload_modules: [portolan_core]
             show_source: false
             show_root_heading: true
             show_root_full_path: false

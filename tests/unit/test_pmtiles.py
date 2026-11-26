@@ -541,7 +541,7 @@ class TestTrackGeneratedAssetsInVersions:
     @pytest.mark.unit
     def test_asset_tracked_with_checksum_size_mtime(self, tmp_path: Path) -> None:
         """A generated thumbnail is added to versions.json as a full asset."""
-        from portolan_cli.versions import read_versions, track_generated_assets
+        from portolan_core.versions import read_versions, track_generated_assets
 
         collection_dir = tmp_path / "demographics"
         collection_dir.mkdir()
@@ -574,7 +574,7 @@ class TestTrackGeneratedAssetsInVersions:
     @pytest.mark.unit
     def test_pmtiles_and_thumbnail_share_one_version(self, tmp_path: Path) -> None:
         """PMTiles + thumbnail tracked together land in a SINGLE version (Issue #519)."""
-        from portolan_cli.versions import read_versions, track_generated_assets
+        from portolan_core.versions import read_versions, track_generated_assets
 
         collection_dir = tmp_path / "demographics"
         collection_dir.mkdir()
@@ -600,7 +600,7 @@ class TestTrackGeneratedAssetsInVersions:
     @pytest.mark.unit
     def test_only_if_missing_skips_already_tracked(self, tmp_path: Path) -> None:
         """only_if_missing creates no version when every asset is already tracked."""
-        from portolan_cli.versions import read_versions, track_generated_assets
+        from portolan_core.versions import read_versions, track_generated_assets
 
         collection_dir = tmp_path / "demographics"
         collection_dir.mkdir()
@@ -621,7 +621,7 @@ class TestTrackGeneratedAssetsInVersions:
     @pytest.mark.unit
     def test_creates_versions_file_when_missing(self, tmp_path: Path) -> None:
         """First-ever version is created at 1.0.0 if versions.json is absent."""
-        from portolan_cli.versions import read_versions, track_generated_assets
+        from portolan_core.versions import read_versions, track_generated_assets
 
         collection_dir = tmp_path / "demographics"
         collection_dir.mkdir()
@@ -640,7 +640,7 @@ class TestTrackGeneratedAssetsInVersions:
     @pytest.mark.unit
     def test_raises_when_asset_missing(self, tmp_path: Path) -> None:
         """A missing asset file is a hard error (no phantom asset)."""
-        from portolan_cli.versions import track_generated_assets
+        from portolan_core.versions import track_generated_assets
 
         collection_dir = tmp_path / "demographics"
         collection_dir.mkdir()
@@ -1109,8 +1109,8 @@ class TestGeneratePMTilesForCollection:
         PMTiles and thumbnail each bump their own version (two snapshots for one
         side-step); they must now share a single version snapshot.
         """
-        from portolan_cli.versions import read_versions
         from portolan_cli.viz.pmtiles import generate_pmtiles_for_collection
+        from portolan_core.versions import read_versions
 
         collection_dir = _data_collection(tmp_path, "demographics")
 
@@ -1207,8 +1207,8 @@ class TestGeneratePMTilesForCollection:
         from versions.json) must be backfilled — without forcing regeneration —
         and in exactly one version bump.
         """
-        from portolan_cli.versions import read_versions
         from portolan_cli.viz.pmtiles import generate_pmtiles_for_collection
+        from portolan_core.versions import read_versions
 
         collection_dir = tmp_path / "demographics"
         collection_dir.mkdir()
@@ -1323,9 +1323,9 @@ class TestGeneratePMTilesForCollection:
         """When thumbnails are disabled, only the PMTiles is tracked (one version)."""
         from unittest.mock import patch as _patch
 
-        from portolan_cli.versions import read_versions
         from portolan_cli.viz.pmtiles import generate_pmtiles_for_collection
         from portolan_cli.viz.thumbnail import ThumbnailConfig
+        from portolan_core.versions import read_versions
 
         collection_dir = self._fresh_collection(tmp_path / "demographics")
         pmtiles_path = collection_dir / "data.pmtiles"
@@ -1355,8 +1355,8 @@ class TestGeneratePMTilesForCollection:
     @pytest.mark.unit
     def test_thumbnail_render_failure_tracks_only_pmtiles(self, tmp_path: Path) -> None:
         """A failed thumbnail render must not block PMTiles tracking (Issue #13)."""
-        from portolan_cli.versions import read_versions
         from portolan_cli.viz.pmtiles import generate_pmtiles_for_collection
+        from portolan_core.versions import read_versions
 
         collection_dir = self._fresh_collection(tmp_path / "demographics")
         pmtiles_path = collection_dir / "data.pmtiles"

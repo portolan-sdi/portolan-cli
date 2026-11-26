@@ -25,7 +25,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-from portolan_cli.json_io import write_json_atomic
+from portolan_core.json_io import write_json_atomic
 
 if TYPE_CHECKING:
     from pathlib import Path

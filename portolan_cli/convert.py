@@ -24,7 +24,6 @@ from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast
 
-from portolan_cli.constants import GEOSPATIAL_EXTENSIONS
 from portolan_cli.conversion_config import (
     GDAL_COMPRESS_NAMES,
     PREDICTOR_COMPRESSIONS,
@@ -36,11 +35,6 @@ from portolan_cli.conversion_config import (
     resolve_cog_settings,
     settings_override,
 )
-from portolan_cli.errors import (
-    ConversionFailedError,
-    InvalidOutputError,
-    OutputExistsError,
-)
 from portolan_cli.formats import (
     CloudNativeStatus,
     current_run,
@@ -51,16 +45,22 @@ from portolan_cli.formats import (
     run_scope,
 )
 from portolan_cli.report import emit
-from portolan_cli.trace import count, current_span, span
 from portolan_cli.viz.thumbnail import (
     thumbnail_path_for,
 )
+from portolan_core.constants import GEOSPATIAL_EXTENSIONS
+from portolan_core.errors import (
+    ConversionFailedError,
+    InvalidOutputError,
+    OutputExistsError,
+)
+from portolan_core.trace import count, current_span, span
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     from portolan_cli.plugins.formats import FormatHandler
-    from portolan_cli.run_state import RunState
+    from portolan_core.run_state import RunState
 
 logger = logging.getLogger(__name__)
 
@@ -599,7 +599,7 @@ def provenance_record(source: Path) -> str:
     if state is not None:
         checksum = state.checksum
     else:
-        from portolan_cli.sync.checksums import compute_checksum, compute_dir_checksum
+        from portolan_core.checksums import compute_checksum, compute_dir_checksum
 
         # A FileGDB source is a directory.
         checksum = compute_dir_checksum if source.is_dir() else compute_checksum
@@ -609,7 +609,7 @@ def provenance_record(source: Path) -> str:
 
 def _provenance_path(source: Path, state: RunState | None = None) -> tuple[str, str]:
     """Name a source unambiguously; catalog-relative identities survive moves."""
-    from portolan_cli.run_state import RunState
+    from portolan_core.run_state import RunState
 
     active = current_run()
     if state is None and isinstance(active, RunState):
@@ -708,7 +708,7 @@ def _produced_by(output: Path, source: Path, state: RunState | None) -> bool | N
         elif memo is not None:
             owned = recorded.get("sha256") == memo.checksum(source)
         else:
-            from portolan_cli.sync.checksums import compute_checksum, compute_dir_checksum
+            from portolan_core.checksums import compute_checksum, compute_dir_checksum
 
             checksum = compute_dir_checksum if source.is_dir() else compute_checksum
             owned = recorded.get("sha256") == checksum(source)
@@ -724,7 +724,7 @@ def _produced_by(output: Path, source: Path, state: RunState | None) -> bool | N
     if memo is not None:
         same = memo.checksum(output) == memo.checksum(source)
     else:
-        from portolan_cli.sync.checksums import compute_checksum
+        from portolan_core.checksums import compute_checksum
 
         same = compute_checksum(output) == compute_checksum(source)
     return True if same else (False if recorded is not None else None)
@@ -1628,7 +1628,7 @@ def validate_cog(path: Path) -> str | None:
         return f"Failed to validate COG: {e}"
 
 
-# Note: GEOSPATIAL_EXTENSIONS imported from portolan_cli.constants
+# Note: GEOSPATIAL_EXTENSIONS imported from portolan_core.constants
 
 
 def convert_directory(
@@ -1776,8 +1776,8 @@ _WORKER_STATE: RunState | None = None
 def _init_worker_state(catalog_path: Path | None, tracing: bool = False) -> None:
     """Give this worker process one run state, so it parses the config once."""
     global _WORKER_STATE
-    from portolan_cli import trace
-    from portolan_cli.run_state import RunState
+    from portolan_core import trace
+    from portolan_core.run_state import RunState
 
     _WORKER_STATE = RunState.open(catalog_path) if catalog_path is not None else None
     if tracing:
@@ -1803,8 +1803,8 @@ def _convert_in_worker(
     parent's report scope does not reach this process, so the messages come
     back with the result (``report.recording``).
     """
-    from portolan_cli import trace
     from portolan_cli.report import recording
+    from portolan_core import trace
 
     before = trace.counters() if trace.is_enabled() else {}
     with recording() as messages:
@@ -1851,7 +1851,7 @@ def _convert_files_parallel(
     from concurrent.futures import ProcessPoolExecutor, as_completed
     from concurrent.futures.process import BrokenProcessPool
 
-    from portolan_cli import trace
+    from portolan_core import trace
 
     # Use a "spawn" context, not fork. GDAL/rasterio run worker threads, and
     # fork()-ing a multi-threaded process can deadlock the child (and aborts on

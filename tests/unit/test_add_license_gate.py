@@ -20,7 +20,7 @@ import yaml
 from click.testing import CliRunner
 
 from portolan_cli.cli import cli
-from portolan_cli.constants import TODO_MARKER
+from portolan_core.constants import TODO_MARKER
 
 pytestmark = pytest.mark.unit
 

@@ -497,8 +497,8 @@ name = "Utilities must not import other portolan modules"
 type = "independence"
 modules = [
     "portolan_cli.output",
-    "portolan_cli.errors",
-    "portolan_cli.constants",
+    "portolan_core.errors",
+    "portolan_core.constants",
     "portolan_cli.json_output",
     # input sanitization. A stdlib-only leaf (re, pathlib, urllib):
     # it hardens agent-supplied arguments, which is not catalog validation, so
@@ -521,23 +521,6 @@ type = "forbidden"
 # styles, PMTiles). It is a leaf: it depends on neither scanning nor sync.
 source_modules = ["portolan_cli.viz"]
 forbidden_modules = ["portolan_cli.scan", "portolan_cli.sync"]
-ignore_imports = [
-    # PORTO-CORE-069 makes `file:size`/`file:checksum` on a style asset a claim
-    # about the style file's bytes, so `viz.style` must stamp them. It reuses
-    # `stac_parquet.stamp_file_fields`/`sync_file_extension` rather than hashing
-    # on its own terms, and those reach `sync.checksums` — a stdlib+rashid leaf,
-    # not the sync orchestration this contract exists to keep out of viz. The
-    # same reasoning is written into the scan contract below.
-    "portolan_cli.viz.style -> portolan_cli.stac_parquet",
-    # Same reasoning for the PMTiles writer, which was the one visual artifact
-    # shipping without file:size/file:checksum until issue #746.
-    "portolan_cli.viz.pmtiles -> portolan_cli.stac_parquet",
-    # versions.json records a checksum for each asset. versions and the run
-    # state hash through sync.checksums, the one hasher (issue #995). The
-    # same leaf reasoning applies.
-    "portolan_cli.versions -> portolan_cli.sync.checksums",
-    "portolan_cli.run_state -> portolan_cli.sync.checksums",
-]
 
 [[tool.importlinter.contracts]]
 id = "scan-below-sync"
@@ -548,7 +531,7 @@ type = "forbidden"
 #
 # Direct-only: `scan.check` is a command-level orchestrator that legitimately
 # fans out through shared root modules (catalog, metadata, convert), which in
-# turn depend on sync.checksums and viz.*. Those transitive chains are the
+# turn depend on viz.*. Those transitive chains are the
 # existing architecture, not a scan->sync/viz coupling. What we lock here is
 # the boundary that actually matters: no scan module may *directly* import the
 # sync or viz packages. (viz-is-a-leaf stays transitive because viz truly is.)
@@ -574,16 +557,16 @@ id = "layer-read"
 name = "Read layer: no click, rasterio, or write modules"
 type = "forbidden"
 source_modules = [
-    "portolan_cli.versions",
-    "portolan_cli.json_io",
-    "portolan_cli.bbox",
-    "portolan_cli.models",
-    "portolan_cli.query",
-    "portolan_cli.status",
-    "portolan_cli.catalog_list",
-    "portolan_cli.agents_md",
+    "portolan_core.versions",
+    "portolan_core.json_io",
+    "portolan_core.bbox",
+    "portolan_core.models",
+    "portolan_core.query",
+    "portolan_core.status",
+    "portolan_core.catalog_list",
+    "portolan_core.agents_md",
     # The run state of one command (issue #995). Every read module may take it.
-    "portolan_cli.run_state",
+    "portolan_core.run_state",
 ]
 forbidden_modules = [
     "click",
@@ -789,9 +772,6 @@ DEP002 = [
     "shapely",
     "pygeohash",
     "boto3",
-    # No portolan_cli module imports portolan_core yet. Delete this line when
-    # the first module moves into packages/portolan-core (#1133).
-    "portolan-core",
 ]
 
 [dependency-groups]

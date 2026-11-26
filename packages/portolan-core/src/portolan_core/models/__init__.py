@@ -6,16 +6,16 @@ Models are dataclasses with JSON serialization support.
 
 from __future__ import annotations
 
-from portolan_cli.models.catalog import CatalogModel, Link
-from portolan_cli.models.collection import (
+from portolan_core.models.catalog import CatalogModel, Link
+from portolan_core.models.collection import (
     CollectionModel,
     ExtentModel,
     Provider,
     SpatialExtent,
     TemporalExtent,
 )
-from portolan_cli.models.item import AssetModel, ItemModel
-from portolan_cli.models.schema import BandSchema, ColumnSchema, SchemaModel
+from portolan_core.models.item import AssetModel, ItemModel
+from portolan_core.models.schema import BandSchema, ColumnSchema, SchemaModel
 
 __all__ = [
     # Catalog

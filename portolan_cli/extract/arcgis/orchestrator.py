@@ -66,8 +66,8 @@ from portolan_cli.extract.common.source import (
     slugify,
 )
 from portolan_cli.extract.common.styles import extract_esri_style
-from portolan_cli.licensing import license_url_from_text
-from portolan_cli.trace import count
+from portolan_core.licensing import license_url_from_text
+from portolan_core.trace import count
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence

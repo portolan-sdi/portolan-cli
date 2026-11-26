@@ -49,10 +49,6 @@ from portolan_cli.collection_id import (
     normalize_collection_id,
     validate_collection_id,
 )
-from portolan_cli.constants import PARQUET_EXTENSION, WINDOWS_RESERVED_NAMES
-
-# Import format detection from formats.py (delegate to upstream)
-from portolan_cli.format_families import RASTER, VECTOR, is_geojson
 from portolan_cli.formats import (
     CloudNativeStatus,
     FormatInfo,
@@ -76,6 +72,10 @@ from portolan_cli.scan.detect import (
     is_filegdb,
     is_hive_partition_dir,
 )
+from portolan_core.constants import PARQUET_EXTENSION, WINDOWS_RESERVED_NAMES
+
+# Import format detection from formats.py (delegate to upstream)
+from portolan_core.format_families import RASTER, VECTOR, is_geojson
 
 # =============================================================================
 # Constants
@@ -98,7 +98,7 @@ RECOGNIZED_RASTER_EXTENSIONS: frozenset[str] = frozenset({".tif", ".tiff", ".jp2
 
 RECOGNIZED_EXTENSIONS: frozenset[str] = RECOGNIZED_VECTOR_EXTENSIONS | RECOGNIZED_RASTER_EXTENSIONS
 
-# Note: PARQUET_EXTENSION imported from portolan_cli.constants
+# Note: PARQUET_EXTENSION imported from portolan_core.constants
 
 # Overview/derivative formats (not primary assets)
 # Note: .pmtiles was removed from here — PMTiles is a primary cloud-native
@@ -117,7 +117,7 @@ LONG_PATH_THRESHOLD: int = 200
 # Matches: spaces, parentheses, brackets, control chars (0x00-0x1F, 0x7F), and non-ASCII
 INVALID_CHAR_PATTERN: re.Pattern[str] = re.compile(r"[\s()\[\]\x00-\x1f\x7f]|[^\x00-\x7f]")
 
-# WINDOWS_RESERVED_NAMES imported from portolan_cli.constants
+# WINDOWS_RESERVED_NAMES imported from portolan_core.constants
 
 
 # =============================================================================

@@ -136,6 +136,7 @@ def files_under(folder: Path) -> set[str]:
 
 def inside() -> None:
     """Run the checks in the environment that holds only the portolan-core wheel."""
+    import importlib
     import importlib.metadata
     import importlib.util
     import runpy
@@ -150,6 +151,16 @@ def inside() -> None:
     importable = [m for m in FORBIDDEN_MODULES if importlib.util.find_spec(m) is not None]
     check(importable == [], f"importable without the distribution: {importable}")
     print(f"installed: {len(installed)} distributions, none of {FORBIDDEN_DISTRIBUTIONS}")
+
+    # Each module imports with only the declared dependencies installed.
+    import pkgutil
+
+    import portolan_core
+
+    modules = [m.name for m in pkgutil.walk_packages(portolan_core.__path__, "portolan_core.")]
+    for name in modules:
+        importlib.import_module(name)
+    print(f"imported {len(modules)} portolan_core modules")
 
     import obstore
     from obstore.store import MemoryStore

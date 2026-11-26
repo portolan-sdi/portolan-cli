@@ -23,7 +23,7 @@ from portolan_cli.scan.detect import is_filegdb
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from portolan_cli.config import ConfigSource
+    from portolan_core.config import ConfigSource
 
 # Pattern for valid collection IDs (supports path syntax):
 # - Start with lowercase letter or number (year-based organization like 2020/)

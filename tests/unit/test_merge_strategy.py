@@ -11,7 +11,6 @@ from __future__ import annotations
 import pystac
 import pytest
 
-from portolan_cli.errors import AssetKeyCollisionError
 from portolan_cli.metadata.geoparquet import GeoParquetMetadata
 from portolan_cli.stac import (
     MergeStrategy,
@@ -19,6 +18,7 @@ from portolan_cli.stac import (
     add_table_extension,
     create_collection,
 )
+from portolan_core.errors import AssetKeyCollisionError
 
 
 class TestMergeStrategyEnum:

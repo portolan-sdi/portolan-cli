@@ -10,12 +10,12 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
-from portolan_cli.models.schema import BandSchema, ColumnSchema
 from portolan_cli.schema.import_ import (
     import_schema_csv,
     import_schema_json,
     import_schema_parquet,
 )
+from portolan_core.models.schema import BandSchema, ColumnSchema
 
 if TYPE_CHECKING:
     from pathlib import Path

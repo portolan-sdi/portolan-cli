@@ -35,8 +35,8 @@ from dataclasses import dataclass
 
 from rashid_core.api import SPDX_LICENSE_IDS, canonical_spdx_id
 
-from portolan_cli.constants import TODO_MARKER
-from portolan_cli.errors import MissingLicenseError
+from portolan_core.constants import TODO_MARKER
+from portolan_core.errors import MissingLicenseError
 
 #: The link relation that satisfies PTL-LIC-002.
 LICENSE_REL = "license"

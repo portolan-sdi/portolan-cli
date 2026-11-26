@@ -17,8 +17,8 @@ import antimeridian
 from pyproj import CRS, Transformer
 from pyproj.exceptions import CRSError
 
-from portolan_cli.errors import CRSMismatchError
-from portolan_cli.trace import count
+from portolan_core.errors import CRSMismatchError
+from portolan_core.trace import count
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -183,7 +183,7 @@ def _snapped(bbox: tuple[float, float, float, float]) -> tuple[float, float, flo
     a bbox union, and the STAC extent this bbox becomes has to stay inside the
     range (issue #882).
     """
-    from portolan_cli.bbox import snap_to_wgs84_range
+    from portolan_core.bbox import snap_to_wgs84_range
 
     west, south, east, north = snap_to_wgs84_range(list(bbox))
     return (west, south, east, north)
@@ -204,7 +204,7 @@ def _reject_non_wgs84_magnitudes(
     The comparison carries a tolerance, because a coordinate that rounds past a
     bound is that bound rather than a projected value (issue #882).
     """
-    from portolan_cli.bbox import WGS84_EDGE_TOLERANCE
+    from portolan_core.bbox import WGS84_EDGE_TOLERANCE
 
     minx, miny, maxx, maxy = bbox
     lon_limit = 180 + WGS84_EDGE_TOLERANCE
@@ -219,7 +219,7 @@ def _reject_non_wgs84_magnitudes(
     # "Effectively infinite" sentinels (issue #516, e.g. WFS-served ±1.79e308)
     # are not projected coordinates; leave them to the existing invalid-bbox
     # filtering so their error message stays about invalid values, not CRS.
-    from portolan_cli.bbox import MAX_SANE_COORD
+    from portolan_core.bbox import MAX_SANE_COORD
 
     if any(abs(c) > MAX_SANE_COORD for c in bbox):
         return

@@ -215,8 +215,8 @@ class TestAssetKeyGeneration:
 def _stage_and_commit(collection_dir: Path, prepared: PreparedItem) -> None:
     """Stage the item as add does, in a run on the catalog above the collection."""
     from portolan_cli.finalization import _stage_items
-    from portolan_cli.run_state import RunState
     from portolan_cli.version_ops import commit_run
+    from portolan_core.run_state import RunState
 
     state = RunState.open(collection_dir.parent)
     _stage_items(state, collection_dir.name, collection_dir, [prepared])

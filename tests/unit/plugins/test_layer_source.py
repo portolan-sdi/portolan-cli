@@ -11,7 +11,6 @@ from typing import TYPE_CHECKING, Any
 import pytest
 from click.testing import CliRunner
 
-from portolan_cli import trace
 from portolan_cli.extract.common.source import (
     Discovery,
     EmptyLayerError,
@@ -25,6 +24,7 @@ from portolan_cli.extract.common.source import (
 )
 from portolan_cli.metadata_extraction import ExtractedMetadata
 from portolan_cli.plugins.extractors import Extractor
+from portolan_core import trace
 
 if TYPE_CHECKING:
     from pathlib import Path

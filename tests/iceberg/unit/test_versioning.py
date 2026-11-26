@@ -14,7 +14,7 @@ from portolan_cli.backends.iceberg.versioning import (
     snapshot_to_version,
     version_to_snapshot_properties,
 )
-from portolan_cli.versions import Asset, SchemaInfo
+from portolan_core.versions import Asset, SchemaInfo
 
 # --- compute_next_version ---
 

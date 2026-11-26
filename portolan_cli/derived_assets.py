@@ -55,10 +55,10 @@ import logging
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from portolan_cli.constants import OPTIONAL_DERIVATIVE_ROLES, ROLE_DEFAULT
 from portolan_cli.stac_parquet import PARQUET_FILENAME
 from portolan_cli.viz.pmtiles_links import PMTILES_SUFFIX
 from portolan_cli.viz.thumbnail import is_generated_thumbnail
+from portolan_core.constants import OPTIONAL_DERIVATIVE_ROLES, ROLE_DEFAULT
 
 logger = logging.getLogger(__name__)
 

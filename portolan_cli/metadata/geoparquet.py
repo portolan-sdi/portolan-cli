@@ -17,8 +17,8 @@ from pyproj import CRS
 from pyproj.exceptions import CRSError
 
 from portolan_cli.formats import parquet_footer, read_geo_metadata
-from portolan_cli.models.schema import ColumnSchema, SchemaModel
-from portolan_cli.trace import count
+from portolan_core.models.schema import ColumnSchema, SchemaModel
+from portolan_core.trace import count
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -471,7 +471,7 @@ def _extract_bbox(column_meta: dict[str, Any]) -> tuple[float, float, float, flo
     """
     import logging
 
-    from portolan_cli.bbox import is_finite_bbox, to_2d_bbox
+    from portolan_core.bbox import is_finite_bbox, to_2d_bbox
 
     logger = logging.getLogger(__name__)
 

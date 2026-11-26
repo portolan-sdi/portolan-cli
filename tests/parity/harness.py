@@ -83,8 +83,8 @@ from typing import Any, Protocol
 import pytest
 
 from portolan_cli import logging_setup
-from portolan_cli.errors import PortolanError
 from portolan_cli.json_output import ErrorDetail
+from portolan_core.errors import PortolanError
 from tests.catalog_invariants import RunCli
 
 

@@ -13,8 +13,8 @@ from pathlib import Path
 
 import pytest
 
-from portolan_cli import extension_registry as _reg
 from portolan_cli.item import _get_media_type, create_item
+from portolan_core import extension_registry as _reg
 
 pytestmark = pytest.mark.unit
 

@@ -13,7 +13,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from portolan_cli.errors import AssetKeyCollisionError
 from portolan_cli.plugins.builtin.formats import COG, FLATGEOBUF, GEOPARQUET, PMTILES
 from portolan_cli.preparation import (
     _add_statistics_to_properties,
@@ -24,6 +23,7 @@ from portolan_cli.preparation import (
     _scan_item_assets,
     _validate_collection_id,
 )
+from portolan_core.errors import AssetKeyCollisionError
 
 pytestmark = pytest.mark.unit
 
@@ -647,7 +647,7 @@ class TestConvertTabularKeepsAForeignFile:
 
         from portolan_cli.convert import PROVENANCE_KEY
         from portolan_cli.preparation import convert_tabular
-        from portolan_cli.sync.checksums import compute_checksum
+        from portolan_core.checksums import compute_checksum
 
         (tmp_path / "t.csv").write_text("id\n1\n")
 
@@ -803,9 +803,9 @@ class TestAssertRewriteKeptEverything:
         """A projected CRS that vanishes relabels every coordinate."""
         from pyproj import CRS
 
-        from portolan_cli.errors import RewriteFidelityError
         from portolan_cli.metadata import RewriteFidelity
         from portolan_cli.preparation import _assert_rewrite_kept_everything
+        from portolan_core.errors import RewriteFidelityError
 
         projected = CRS.from_epsg(3857).to_json_dict()
         before = RewriteFidelity(row_count=10, crs=projected, columns=frozenset({"geometry"}))
@@ -820,9 +820,9 @@ class TestAssertRewriteKeptEverything:
     @pytest.mark.unit
     def test_it_refuses_an_unparsable_lost_crs(self, tmp_path: Path) -> None:
         """A CRS pyproj cannot read is not provably WGS84, so the gate holds."""
-        from portolan_cli.errors import RewriteFidelityError
         from portolan_cli.metadata import RewriteFidelity
         from portolan_cli.preparation import _assert_rewrite_kept_everything
+        from portolan_core.errors import RewriteFidelityError
 
         before = RewriteFidelity(row_count=10, crs={"id": 1}, columns=frozenset({"geometry"}))
         after = RewriteFidelity(row_count=10, crs=None, columns=frozenset({"geometry", "bbox"}))
@@ -858,9 +858,9 @@ class TestAssertRewriteKeptEverything:
     @pytest.mark.unit
     def test_it_refuses_a_changed_row_count(self, tmp_path: Path) -> None:
         """A rewrite that drops rows destroys data."""
-        from portolan_cli.errors import RewriteFidelityError
         from portolan_cli.metadata import RewriteFidelity
         from portolan_cli.preparation import _assert_rewrite_kept_everything
+        from portolan_core.errors import RewriteFidelityError
 
         before = RewriteFidelity(row_count=10, crs=None, columns=frozenset({"geometry"}))
         after = RewriteFidelity(row_count=9, crs=None, columns=frozenset({"geometry"}))
@@ -874,9 +874,9 @@ class TestAssertRewriteKeptEverything:
     @pytest.mark.unit
     def test_it_refuses_a_dropped_column(self, tmp_path: Path) -> None:
         """An attribute column must survive. A new one may appear."""
-        from portolan_cli.errors import RewriteFidelityError
         from portolan_cli.metadata import RewriteFidelity
         from portolan_cli.preparation import _assert_rewrite_kept_everything
+        from portolan_core.errors import RewriteFidelityError
 
         before = RewriteFidelity(row_count=1, crs=None, columns=frozenset({"geometry", "name"}))
         after = RewriteFidelity(row_count=1, crs=None, columns=frozenset({"geometry", "bbox"}))
@@ -890,9 +890,9 @@ class TestAssertRewriteKeptEverything:
     @pytest.mark.unit
     def test_it_refuses_a_dropped_schema_key(self, tmp_path: Path) -> None:
         """A publisher key on the operator's file must survive the rewrite."""
-        from portolan_cli.errors import RewriteFidelityError
         from portolan_cli.metadata import RewriteFidelity
         from portolan_cli.preparation import _assert_rewrite_kept_everything
+        from portolan_core.errors import RewriteFidelityError
 
         columns = frozenset({"geometry"})
         before = RewriteFidelity(1, None, columns, extra_keys=frozenset({b"source"}))
@@ -1000,11 +1000,11 @@ class TestTheRewrittenFooterIsReadOnce:
         from click.testing import CliRunner
         from shapely.geometry import Point
 
-        from portolan_cli import trace
         from portolan_cli.cli import cli
         from portolan_cli.metadata.geoparquet import extract_geoparquet_metadata
         from portolan_cli.preparation import prepare_item
-        from portolan_cli.run_state import RunState
+        from portolan_core import trace
+        from portolan_core.run_state import RunState
 
         init = CliRunner().invoke(cli, ["init", str(tmp_path), "--auto", "--license", "CC-BY-4.0"])
         assert init.exit_code == 0, init.output
@@ -1040,11 +1040,11 @@ class TestRasterAddCountsGdalReads:
     def _opens(catalog: Path, source: Path) -> int:
         from click.testing import CliRunner
 
-        from portolan_cli import trace
         from portolan_cli.cli import cli
         from portolan_cli.metadata.cog import extract_cog_metadata
         from portolan_cli.preparation import prepare_item
-        from portolan_cli.run_state import RunState
+        from portolan_core import trace
+        from portolan_core.run_state import RunState
 
         init = CliRunner().invoke(cli, ["init", str(catalog), "--auto", "--license", "CC-BY-4.0"])
         assert init.exit_code == 0, init.output
@@ -1118,7 +1118,7 @@ class TestRewriteOrKeep:
     @pytest.mark.unit
     def test_a_fidelity_failure_keeps_the_file(self, tmp_path: Path) -> None:
         """The operator reads what the rewrite would have lost."""
-        from portolan_cli.errors import RewriteFidelityError
+        from portolan_core.errors import RewriteFidelityError
 
         error = RewriteFidelityError("roads.parquet", "the CRS it declared")
 

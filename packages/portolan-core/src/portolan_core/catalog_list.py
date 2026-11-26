@@ -17,14 +17,14 @@ from enum import Enum
 from pathlib import Path, PurePath
 from typing import TYPE_CHECKING, Any
 
-from portolan_cli.config import get_ignored_files
-from portolan_cli.constants import MANAGED_FILES
-from portolan_cli.format_families import FORMAT_DISPLAY_NAMES, is_geojson
-from portolan_cli.stac_links import catalog_collections
-from portolan_cli.versions import read_versions
+from portolan_core.config import get_ignored_files
+from portolan_core.constants import MANAGED_FILES
+from portolan_core.format_families import FORMAT_DISPLAY_NAMES, is_geojson
+from portolan_core.stac_links import catalog_collections
+from portolan_core.versions import read_versions
 
 if TYPE_CHECKING:
-    from portolan_cli.config import ConfigSource
+    from portolan_core.config import ConfigSource
 
 logger = logging.getLogger(__name__)
 

@@ -1078,7 +1078,7 @@ class TestPartitionFixer:
 
 class TestSchemaUriFixer:
     def test_schema_uri_is_stamped(self, tmp_path: Path) -> None:
-        from portolan_cli.constants import PORTOLAN_SCHEMA_URI
+        from portolan_core.constants import PORTOLAN_SCHEMA_URI
 
         _tiny_catalog(tmp_path)
 

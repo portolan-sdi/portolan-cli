@@ -950,7 +950,7 @@ class TestCorruptionRecovery:
     @pytest.mark.integration
     def test_truncated_versions_json_rejected_api(self, tmp_path: Path) -> None:
         """Invalid JSON fails cleanly at API level (versions.py:144-146)."""
-        from portolan_cli.versions import read_versions
+        from portolan_core.versions import read_versions
 
         versions_path = tmp_path / "versions.json"
         versions_path.write_text('{"spec_version": "1.0.0", "versions": [')
@@ -961,7 +961,7 @@ class TestCorruptionRecovery:
     @pytest.mark.integration
     def test_missing_versions_field_rejected_api(self, tmp_path: Path) -> None:
         """Schema validation works at API level (versions.py:164-168)."""
-        from portolan_cli.versions import read_versions
+        from portolan_core.versions import read_versions
 
         versions_path = tmp_path / "versions.json"
         versions_path.write_text('{"spec_version": "1.0.0", "current_version": null}')
@@ -972,7 +972,7 @@ class TestCorruptionRecovery:
     @pytest.mark.integration
     def test_missing_asset_fields_rejected_api(self, tmp_path: Path) -> None:
         """Asset validation works at API level (versions.py:173-184)."""
-        from portolan_cli.versions import read_versions
+        from portolan_core.versions import read_versions
 
         versions_path = tmp_path / "versions.json"
         bad_data = {
@@ -1002,7 +1002,7 @@ class TestCorruptionRecovery:
     @pytest.mark.integration
     def test_unknown_fields_ignored_api(self, tmp_path: Path) -> None:
         """Forward compatibility at API level (versions.py:151-213)."""
-        from portolan_cli.versions import read_versions
+        from portolan_core.versions import read_versions
 
         versions_path = tmp_path / "versions.json"
         valid_data = {

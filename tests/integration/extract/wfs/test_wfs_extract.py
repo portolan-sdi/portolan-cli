@@ -33,7 +33,7 @@ from portolan_cli.extract.wfs.orchestrator import (
     WFSLayerSource,
     extract_wfs_catalog,
 )
-from portolan_cli.licensing import ResolvedLicense
+from portolan_core.licensing import ResolvedLicense
 from tests.support.extract import (
     make_layer_result,
     make_report,

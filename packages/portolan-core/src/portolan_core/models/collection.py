@@ -11,8 +11,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
-from portolan_cli.models._stac_version import get_stac_version
-from portolan_cli.models.catalog import Link
+from portolan_core.models._stac_version import get_stac_version
+from portolan_core.models.catalog import Link
 
 # Valid STAC identifier pattern
 ID_PATTERN = re.compile(r"^[a-zA-Z0-9_-]+$")

@@ -58,7 +58,7 @@ def _initial_versions_data() -> dict[str, Any]:
 
 def _data_version(version: str, *, day: int, sha256: str, size_bytes: int) -> Any:
     """Return a Version from January 2024 with one data.parquet asset."""
-    from portolan_cli.versions import Asset, Version
+    from portolan_core.versions import Asset, Version
 
     return Version(
         version=version,
@@ -109,7 +109,7 @@ def _patched_pull_io(
     checksum: str,
 ) -> Iterator[None]:
     """Patch the remote fetch, the asset download, and the checksum with fixed results."""
-    from portolan_cli.versions import _parse_versions_file
+    from portolan_core.versions import _parse_versions_file
 
     with (
         patch("portolan_cli.sync.pull._fetch_remote_versions_async") as mock_fetch,
@@ -601,7 +601,7 @@ class TestVersionDiffing:
     def test_diff_versions_newer_remote(self) -> None:
         """Should identify files changed between local and remote versions."""
         from portolan_cli.sync.pull import diff_versions
-        from portolan_cli.versions import VersionsFile
+        from portolan_core.versions import VersionsFile
 
         local_versions = VersionsFile(
             spec_version="1.0.0",
@@ -629,7 +629,7 @@ class TestVersionDiffing:
     def test_diff_versions_up_to_date(self) -> None:
         """Should indicate no changes when versions match."""
         from portolan_cli.sync.pull import diff_versions
-        from portolan_cli.versions import VersionsFile
+        from portolan_core.versions import VersionsFile
 
         versions = VersionsFile(
             spec_version="1.0.0",
@@ -646,7 +646,7 @@ class TestVersionDiffing:
     def test_diff_versions_no_local_versions(self) -> None:
         """Should download all files when local has no versions."""
         from portolan_cli.sync.pull import diff_versions
-        from portolan_cli.versions import Asset, Version, VersionsFile
+        from portolan_core.versions import Asset, Version, VersionsFile
 
         local_versions = VersionsFile(
             spec_version="1.0.0",
@@ -701,7 +701,7 @@ class TestPullOperation:
         data_file.write_bytes(b"modified content - uncommitted")
 
         with patch("portolan_cli.sync.pull._fetch_remote_versions_async") as mock_fetch:
-            from portolan_cli.versions import _parse_versions_file
+            from portolan_core.versions import _parse_versions_file
 
             mock_fetch.return_value = _parse_versions_file(remote_versions_data)
 
@@ -730,7 +730,7 @@ class TestPullOperation:
             patch("portolan_cli.sync.pull._fetch_remote_versions_async") as mock_fetch,
             patch("portolan_cli.sync.pull._download_assets_async") as mock_download,
         ):
-            from portolan_cli.versions import _parse_versions_file
+            from portolan_core.versions import _parse_versions_file
 
             mock_fetch.return_value = _parse_versions_file(remote_versions_data)
             mock_download.return_value = (1, 0)  # 1 downloaded, 0 failed
@@ -786,7 +786,7 @@ class TestPullOperation:
             patch("portolan_cli.sync.pull._fetch_remote_versions_async") as mock_fetch,
             patch("portolan_cli.sync.pull.compute_checksum") as mock_checksum,
         ):
-            from portolan_cli.versions import _parse_versions_file
+            from portolan_core.versions import _parse_versions_file
 
             mock_fetch.return_value = _parse_versions_file(same_versions_data)
             mock_checksum.return_value = "abc123"
@@ -929,7 +929,7 @@ class TestErrorHandling:
             patch("portolan_cli.sync.pull._fetch_remote_versions_async") as mock_fetch,
             patch("portolan_cli.sync.pull._download_assets_async") as mock_download,
         ):
-            from portolan_cli.versions import VersionsFile
+            from portolan_core.versions import VersionsFile
 
             mock_fetch.return_value = VersionsFile(
                 spec_version="1.0.0",
@@ -1050,7 +1050,7 @@ class TestLocalAheadDetection:
     def test_diff_versions_detects_local_ahead(self) -> None:
         """Should detect when local has versions not in remote."""
         from portolan_cli.sync.pull import diff_versions
-        from portolan_cli.versions import VersionsFile
+        from portolan_core.versions import VersionsFile
 
         # Local has v1.0.0 and v1.1.0
         local_versions = VersionsFile(
@@ -1081,7 +1081,7 @@ class TestLocalAheadDetection:
     def test_diff_versions_detects_diverged(self) -> None:
         """Should detect when local and remote have diverged."""
         from portolan_cli.sync.pull import diff_versions
-        from portolan_cli.versions import VersionsFile
+        from portolan_core.versions import VersionsFile
 
         # Local has v1.0.0 and v1.1.0-local
         local_versions = VersionsFile(
@@ -1517,7 +1517,7 @@ class TestMalformedDataHandling:
         self, remote_versions_data_malformed: dict[str, Any]
     ) -> None:
         """_parse_versions_file should raise ValueError when current_version missing."""
-        from portolan_cli.versions import _parse_versions_file
+        from portolan_core.versions import _parse_versions_file
 
         with pytest.raises(ValueError, match="missing field"):
             _parse_versions_file(remote_versions_data_malformed)
@@ -1527,7 +1527,7 @@ class TestMalformedDataHandling:
         self, remote_versions_data_wrong_asset_types: dict[str, Any]
     ) -> None:
         """_parse_versions_file should raise when assets have wrong types."""
-        from portolan_cli.versions import _parse_versions_file
+        from portolan_core.versions import _parse_versions_file
 
         with pytest.raises((ValueError, TypeError, AttributeError)):
             _parse_versions_file(remote_versions_data_wrong_asset_types)
@@ -1538,7 +1538,7 @@ class TestMalformedDataHandling:
     ) -> None:
         """Pull should handle catalog with malformed local versions.json."""
         from portolan_cli.sync.pull import pull
-        from portolan_cli.versions import VersionsFile
+        from portolan_core.versions import VersionsFile
 
         with patch("portolan_cli.sync.pull._fetch_remote_versions_async") as mock_fetch:
             # Remote is valid
@@ -1569,7 +1569,7 @@ class TestMalformedDataHandling:
     ) -> None:
         """Pull should handle catalog with wrong type for current_version."""
         from portolan_cli.sync.pull import pull
-        from portolan_cli.versions import VersionsFile
+        from portolan_core.versions import VersionsFile
 
         with patch("portolan_cli.sync.pull._fetch_remote_versions_async") as mock_fetch:
             mock_fetch.return_value = VersionsFile(
@@ -1699,7 +1699,7 @@ class TestDryRunNetworkIsolation:
     ) -> None:
         """Non-dry-run pull must still call fetch_remote_versions (sanity check)."""
         from portolan_cli.sync.pull import pull
-        from portolan_cli.versions import _parse_versions_file
+        from portolan_core.versions import _parse_versions_file
 
         with (
             patch("portolan_cli.sync.pull._fetch_remote_versions_async") as mock_fetch,

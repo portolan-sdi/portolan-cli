@@ -19,8 +19,8 @@ from dataclasses import dataclass
 from enum import Enum
 from urllib.parse import urlparse
 
-from portolan_cli.errors import PortolanError
 from portolan_cli.extract.common.urls import redact_credentials
+from portolan_core.errors import PortolanError
 
 
 class ArcGISURLType(Enum):

@@ -37,14 +37,15 @@ import sys
 from datetime import UTC, datetime
 from typing import TextIO
 
-from portolan_cli import trace
 from portolan_cli.utils import redact_credentials
+from portolan_core import trace
 
 LOG_ENV = "PORTOLAN_LOG"
 LOG_FILE_ENV = "PORTOLAN_LOG_FILE"
 GDAL_DEBUG_ENV = "PORTOLAN_GDAL_DEBUG"
 
-PACKAGE_LOGGER = "portolan_cli"
+# portolan_core holds the reader modules, so its records are ours too (#1133).
+PACKAGE_LOGGERS = ("portolan_cli", "portolan_core")
 THIRD_PARTY_LOGGERS = ("urllib3", "httpx", "obstore")
 # Rasterio sends GDAL messages to this logger. A CPL_DEBUG message arrives at DEBUG.
 GDAL_LOGGER = "rasterio._env"
@@ -92,7 +93,7 @@ class _RelativeFormatter(_RedactingFormatter):
 
 
 class _UserFormatter(_RelativeFormatter):
-    """Format a ``portolan_cli`` record as an output line: ``⚠ message``.
+    """Format a ``portolan_cli`` or ``portolan_core`` record as an output line: ``⚠ message``.
 
     At the default level a library warning is a message for the operator, so
     it reads like ``output.warn``. An error reads like ``output.error``. The
@@ -101,7 +102,7 @@ class _UserFormatter(_RelativeFormatter):
     """
 
     def _format(self, record: logging.LogRecord) -> str:
-        if record.name != PACKAGE_LOGGER and not record.name.startswith(f"{PACKAGE_LOGGER}."):
+        if record.name.split(".")[0] not in PACKAGE_LOGGERS:
             return super()._format(record)
         prefix = "✗" if record.levelno >= logging.ERROR else "⚠"
         return f"{prefix} {record.getMessage()}"
@@ -153,7 +154,8 @@ def reset_logging() -> None:
     if _saved_root_level is not None:
         root.setLevel(_saved_root_level)
         _saved_root_level = None
-    logging.getLogger(PACKAGE_LOGGER).setLevel(logging.NOTSET)
+    for name in PACKAGE_LOGGERS:
+        logging.getLogger(name).setLevel(logging.NOTSET)
     for name in (*THIRD_PARTY_LOGGERS, GDAL_LOGGER):
         logging.getLogger(name).setLevel(logging.NOTSET)
     logging.captureWarnings(False)
@@ -195,7 +197,8 @@ def configure_logging(*, verbosity: int = 0, quiet: bool = False) -> None:
     # the root level changes only for --quiet. Other libraries stay at
     # WARNING, as with Python's fallback handler.
     if level != logging.WARNING:
-        logging.getLogger(PACKAGE_LOGGER).setLevel(level)
+        for name in PACKAGE_LOGGERS:
+            logging.getLogger(name).setLevel(level)
     if quiet:
         _saved_root_level = root.level
         root.setLevel(logging.ERROR)

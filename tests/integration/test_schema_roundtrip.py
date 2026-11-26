@@ -14,7 +14,6 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from portolan_cli.models.schema import ColumnSchema, SchemaModel
 from portolan_cli.schema import (
     detect_breaking_changes,
     export_schema_csv,
@@ -25,6 +24,7 @@ from portolan_cli.schema import (
     import_schema_parquet,
     is_breaking,
 )
+from portolan_core.models.schema import ColumnSchema, SchemaModel
 
 if TYPE_CHECKING:
     from pathlib import Path

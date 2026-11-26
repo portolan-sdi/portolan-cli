@@ -27,8 +27,8 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from portolan_cli.add import add_files
-from portolan_cli.constants import TABULAR_EXTENSIONS
-from portolan_cli.errors import NoGeometryError
+from portolan_core.constants import TABULAR_EXTENSIONS
+from portolan_core.errors import NoGeometryError
 from tests.unit.add_stubs import add_mixed_directory_without_raising, write_point_geojson
 
 

@@ -26,8 +26,8 @@ from portolan_cli.add import (
 )
 from portolan_cli.plugins.builtin.formats import COG, GEOPARQUET
 from portolan_cli.preparation import PreparedItem
-from portolan_cli.sync.checksums import compute_checksum, compute_dir_size
-from portolan_cli.versions import read_versions
+from portolan_core.checksums import compute_checksum, compute_dir_size
+from portolan_core.versions import read_versions
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
@@ -820,8 +820,8 @@ def _stage_item_assets(
 ) -> None:
     """Stage the files of one item as add does, and commit the run."""
     from portolan_cli.finalization import _stage_items
-    from portolan_cli.run_state import RunState
     from portolan_cli.version_ops import commit_run
+    from portolan_core.run_state import RunState
 
     prepared = PreparedItem(
         item_id=item_id,

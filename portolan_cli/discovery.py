@@ -5,11 +5,11 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from portolan_cli.constants import (
+from portolan_cli.scan.detect import is_filegdb
+from portolan_core.constants import (
     GEOSPATIAL_EXTENSIONS,
     SIDECAR_PATTERNS,
 )
-from portolan_cli.scan.detect import is_filegdb
 
 if TYPE_CHECKING:
     from collections.abc import Iterator

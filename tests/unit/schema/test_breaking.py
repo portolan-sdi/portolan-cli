@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import pytest
 
-from portolan_cli.models.schema import BandSchema, ColumnSchema, SchemaModel
 from portolan_cli.schema.breaking import (
     BreakingChange,
     detect_breaking_changes,
     is_breaking,
 )
+from portolan_core.models.schema import BandSchema, ColumnSchema, SchemaModel
 
 
 class TestBreakingChangeDataclass:

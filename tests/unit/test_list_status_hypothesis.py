@@ -15,7 +15,7 @@ from hypothesis import HealthCheck, assume, given, settings
 from hypothesis import strategies as st
 
 from portolan_cli.cli import cli
-from portolan_cli.config import DEFAULT_IGNORED_FILES
+from portolan_core.config import DEFAULT_IGNORED_FILES
 
 if TYPE_CHECKING:
     from pathlib import Path

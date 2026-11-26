@@ -23,7 +23,7 @@ class TestFindPortolanFiles:
     @pytest.mark.unit
     def test_returns_empty_list_when_no_portolan_folders(self, tmp_path: Path) -> None:
         """find_portolan_files returns [] when no .portolan/ folders exist."""
-        from portolan_cli.config import find_portolan_files
+        from portolan_core.config import find_portolan_files
 
         # Create catalog structure without any .portolan folders
         catalog_root = tmp_path / "catalog"
@@ -42,7 +42,7 @@ class TestFindPortolanFiles:
     @pytest.mark.unit
     def test_returns_catalog_root_file_only(self, tmp_path: Path) -> None:
         """find_portolan_files returns only catalog root file when that's all that exists."""
-        from portolan_cli.config import find_portolan_files
+        from portolan_core.config import find_portolan_files
 
         # Create catalog with .portolan at root only
         catalog_root = tmp_path / "catalog"
@@ -64,7 +64,7 @@ class TestFindPortolanFiles:
     @pytest.mark.unit
     def test_returns_files_from_root_to_start(self, tmp_path: Path) -> None:
         """find_portolan_files returns files in order: catalog root -> start_path."""
-        from portolan_cli.config import find_portolan_files
+        from portolan_core.config import find_portolan_files
 
         # Create catalog with .portolan at both root and collection
         catalog_root = tmp_path / "catalog"
@@ -92,7 +92,7 @@ class TestFindPortolanFiles:
     @pytest.mark.unit
     def test_includes_intermediate_subcatalog_folders(self, tmp_path: Path) -> None:
         """find_portolan_files includes .portolan from intermediate subcatalogs."""
-        from portolan_cli.config import find_portolan_files
+        from portolan_core.config import find_portolan_files
 
         # Create: catalog/ -> historical/ (subcatalog) -> census-1990/ (collection)
         catalog_root = tmp_path / "catalog"
@@ -125,7 +125,7 @@ class TestFindPortolanFiles:
     @pytest.mark.unit
     def test_skips_levels_without_portolan_folder(self, tmp_path: Path) -> None:
         """find_portolan_files skips levels that don't have .portolan/ folders."""
-        from portolan_cli.config import find_portolan_files
+        from portolan_core.config import find_portolan_files
 
         # Create: catalog/ -> subcatalog/ (no .portolan) -> collection/
         catalog_root = tmp_path / "catalog"
@@ -157,7 +157,7 @@ class TestFindPortolanFiles:
     @pytest.mark.unit
     def test_skips_levels_without_requested_file(self, tmp_path: Path) -> None:
         """find_portolan_files skips .portolan folders that don't have the requested file."""
-        from portolan_cli.config import find_portolan_files
+        from portolan_core.config import find_portolan_files
 
         catalog_root = tmp_path / "catalog"
         catalog_root.mkdir()
@@ -190,7 +190,7 @@ class TestFindPortolanFiles:
     @pytest.mark.unit
     def test_start_path_equals_catalog_root(self, tmp_path: Path) -> None:
         """find_portolan_files works when start_path is the catalog root."""
-        from portolan_cli.config import find_portolan_files
+        from portolan_core.config import find_portolan_files
 
         catalog_root = tmp_path / "catalog"
         catalog_root.mkdir()
@@ -208,7 +208,7 @@ class TestFindPortolanFiles:
     @pytest.mark.unit
     def test_does_not_traverse_above_catalog_root(self, tmp_path: Path) -> None:
         """find_portolan_files stops at catalog_root, doesn't go higher."""
-        from portolan_cli.config import find_portolan_files
+        from portolan_core.config import find_portolan_files
 
         # Create .portolan above catalog root (should be ignored)
         (tmp_path / ".portolan").mkdir()
@@ -239,7 +239,7 @@ class TestLoadMergedYaml:
     @pytest.mark.unit
     def test_returns_empty_dict_when_no_files(self, tmp_path: Path) -> None:
         """load_merged_yaml returns {} when no .portolan/ folders exist."""
-        from portolan_cli.config import load_merged_yaml
+        from portolan_core.config import load_merged_yaml
 
         catalog_root = tmp_path / "catalog"
         catalog_root.mkdir()
@@ -257,7 +257,7 @@ class TestLoadMergedYaml:
     @pytest.mark.unit
     def test_loads_single_file(self, tmp_path: Path) -> None:
         """load_merged_yaml loads a single file correctly."""
-        from portolan_cli.config import load_merged_yaml
+        from portolan_core.config import load_merged_yaml
 
         catalog_root = tmp_path / "catalog"
         catalog_root.mkdir()
@@ -277,7 +277,7 @@ class TestLoadMergedYaml:
     @pytest.mark.unit
     def test_child_overrides_parent_for_scalar_values(self, tmp_path: Path) -> None:
         """load_merged_yaml: child values override parent values for scalars."""
-        from portolan_cli.config import load_merged_yaml
+        from portolan_core.config import load_merged_yaml
 
         catalog_root = tmp_path / "catalog"
         catalog_root.mkdir()
@@ -305,7 +305,7 @@ class TestLoadMergedYaml:
     @pytest.mark.unit
     def test_deep_merge_nested_dicts(self, tmp_path: Path) -> None:
         """load_merged_yaml deep-merges nested dictionaries."""
-        from portolan_cli.config import load_merged_yaml
+        from portolan_core.config import load_merged_yaml
 
         catalog_root = tmp_path / "catalog"
         catalog_root.mkdir()
@@ -340,7 +340,7 @@ class TestLoadMergedYaml:
     @pytest.mark.unit
     def test_three_level_merge(self, tmp_path: Path) -> None:
         """load_merged_yaml correctly merges three levels of hierarchy."""
-        from portolan_cli.config import load_merged_yaml
+        from portolan_core.config import load_merged_yaml
 
         catalog_root = tmp_path / "catalog"
         catalog_root.mkdir()
@@ -380,7 +380,7 @@ class TestLoadMergedConfig:
     @pytest.mark.unit
     def test_backwards_compatible_with_collections_section(self, tmp_path: Path) -> None:
         """load_merged_config supports legacy collections: section in root config."""
-        from portolan_cli.config import load_merged_config
+        from portolan_core.config import load_merged_config
 
         catalog_root = tmp_path / "catalog"
         catalog_root.mkdir()
@@ -407,7 +407,7 @@ class TestLoadMergedConfig:
     @pytest.mark.unit
     def test_collection_folder_overrides_collections_section(self, tmp_path: Path) -> None:
         """Collection .portolan/config.yaml takes precedence over root collections: section."""
-        from portolan_cli.config import load_merged_config
+        from portolan_core.config import load_merged_config
 
         catalog_root = tmp_path / "catalog"
         catalog_root.mkdir()
@@ -443,7 +443,7 @@ class TestLoadMergedConfig:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """PORTOLAN_<KEY> wins over the collection file and the legacy section."""
-        from portolan_cli.config import load_merged_config
+        from portolan_core.config import load_merged_config
 
         catalog_root = tmp_path / "catalog"
         (catalog_root / ".portolan").mkdir(parents=True)
@@ -465,7 +465,7 @@ class TestLoadMergedConfig:
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
         """A catalog-only key in a ``collections:`` entry has no reader, so the load warns."""
-        from portolan_cli.config import load_merged_config
+        from portolan_core.config import load_merged_config
 
         catalog_root = tmp_path / "catalog"
         (catalog_root / ".portolan").mkdir(parents=True)
@@ -476,7 +476,7 @@ class TestLoadMergedConfig:
         )
         (catalog_root / "roads").mkdir()
 
-        with caplog.at_level("WARNING", logger="portolan_cli.config"):
+        with caplog.at_level("WARNING", logger="portolan_core.config"):
             load_merged_config(path=catalog_root / "roads", catalog_root=catalog_root)
             load_merged_config(path=catalog_root / "roads", catalog_root=catalog_root)
 
@@ -493,7 +493,7 @@ class TestLoadMergedMetadata:
     @pytest.mark.unit
     def test_returns_empty_dict_when_no_metadata(self, tmp_path: Path) -> None:
         """load_merged_metadata returns {} when no metadata.yaml exists."""
-        from portolan_cli.config import load_merged_metadata
+        from portolan_core.config import load_merged_metadata
 
         catalog_root = tmp_path / "catalog"
         catalog_root.mkdir()
@@ -510,7 +510,7 @@ class TestLoadMergedMetadata:
     @pytest.mark.unit
     def test_merges_metadata_hierarchy(self, tmp_path: Path) -> None:
         """load_merged_metadata merges metadata.yaml files from hierarchy."""
-        from portolan_cli.config import load_merged_metadata
+        from portolan_core.config import load_merged_metadata
 
         catalog_root = tmp_path / "catalog"
         catalog_root.mkdir()
@@ -550,7 +550,7 @@ class TestGetSettingWithHierarchy:
     @pytest.mark.unit
     def test_collection_folder_config_overrides_catalog(self, tmp_path: Path) -> None:
         """get_setting uses collection .portolan/config.yaml over catalog config."""
-        from portolan_cli.config import get_setting
+        from portolan_core.config import get_setting
 
         catalog_root = tmp_path / "catalog"
         catalog_root.mkdir()
@@ -574,7 +574,7 @@ class TestGetSettingWithHierarchy:
     @pytest.mark.unit
     def test_collection_folder_inherits_from_catalog(self, tmp_path: Path) -> None:
         """get_setting inherits unset keys from catalog when using folder config."""
-        from portolan_cli.config import get_setting
+        from portolan_core.config import get_setting
 
         catalog_root = tmp_path / "catalog"
         catalog_root.mkdir()
@@ -604,7 +604,7 @@ class TestGetSettingWithHierarchy:
         import os
         from unittest import mock
 
-        from portolan_cli.config import get_setting
+        from portolan_core.config import get_setting
 
         catalog_root = tmp_path / "catalog"
         catalog_root.mkdir()
@@ -632,7 +632,7 @@ class TestGetSettingWithHierarchy:
         import os
         from unittest import mock
 
-        from portolan_cli.config import get_setting
+        from portolan_core.config import get_setting
 
         catalog_root = tmp_path / "catalog"
         catalog_root.mkdir()
@@ -658,7 +658,7 @@ class TestGetSettingWithHierarchy:
     @pytest.mark.unit
     def test_subcatalog_folder_config_used(self, tmp_path: Path) -> None:
         """get_setting uses subcatalog .portolan/config.yaml in hierarchy."""
-        from portolan_cli.config import get_setting
+        from portolan_core.config import get_setting
 
         catalog_root = tmp_path / "catalog"
         catalog_root.mkdir()
@@ -686,7 +686,7 @@ class TestGetSettingWithHierarchy:
     @pytest.mark.unit
     def test_backwards_compatible_without_collection_path(self, tmp_path: Path) -> None:
         """get_setting works without collection_path (legacy behavior)."""
-        from portolan_cli.config import get_setting
+        from portolan_core.config import get_setting
 
         catalog_root = tmp_path / "catalog"
         catalog_root.mkdir()

@@ -20,7 +20,7 @@ merges each directory once, and keys both on the stat of the source files
 state can pass its memoized parse.
 
 Usage:
-    from portolan_cli.config import get_setting, set_setting, load_config
+    from portolan_core.config import get_setting, set_setting, load_config
 
     # Get a setting with full precedence resolution
     remote = get_setting("remote", cli_value=cli_remote, catalog_path=catalog_path)
@@ -44,8 +44,8 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 import yaml
 
-from portolan_cli.errors import ConfigError, ConfigInvalidStructureError, ConfigParseError
-from portolan_cli.trace import count
+from portolan_core.errors import ConfigError, ConfigInvalidStructureError, ConfigParseError
+from portolan_core.trace import count
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
@@ -1637,39 +1637,6 @@ def load_own_metadata(path: Path) -> dict[str, Any]:
         empty, or not a mapping. The caller may edit it.
     """
     return copy.deepcopy(own_metadata(path))
-
-
-# =============================================================================
-# .env file support (Issue #356)
-# =============================================================================
-
-
-def load_dotenv_from_catalog(catalog_path: Path | None = None) -> bool:
-    """Load environment variables from .env file in catalog root.
-
-    Searches for .env file in catalog root directory and loads it using
-    python-dotenv. Does NOT override existing environment variables.
-
-    This enables storing sensitive settings (remote, profile, region) in
-    a .env file that won't be pushed to remote storage.
-
-    Args:
-        catalog_path: Path to catalog root. If None, attempts to find it.
-
-    Returns:
-        True if a .env file was found and loaded, False otherwise.
-    """
-    from dotenv import load_dotenv
-
-    if catalog_path is None:
-        return False
-
-    env_file = catalog_path / ".env"
-    if not env_file.is_file():
-        return False
-
-    load_dotenv(env_file, override=False)
-    return True
 
 
 def check_sensitive_settings_in_config(

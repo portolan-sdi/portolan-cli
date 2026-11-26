@@ -11,11 +11,11 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from portolan_cli.errors import UnsupportedFormatError
 from portolan_cli.formats import (
     CloudNativeStatus,
     get_cloud_native_status,
 )
+from portolan_core.errors import UnsupportedFormatError
 
 if TYPE_CHECKING:
     from pathlib import Path

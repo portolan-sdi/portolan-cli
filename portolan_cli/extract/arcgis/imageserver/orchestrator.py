@@ -252,8 +252,8 @@ async def run_imageserver_extraction(
         Tuple of (exit_code, report). Exit code is 0 for success, 1 for failure.
         Report is None when the run raised.
     """
-    from portolan_cli.errors import MissingLicenseError
-    from portolan_cli.licensing import CLI_LICENSE_REMEDIATION
+    from portolan_core.errors import MissingLicenseError
+    from portolan_core.licensing import CLI_LICENSE_REMEDIATION
 
     try:
         return await run_imageserver(url, output_dir, options)

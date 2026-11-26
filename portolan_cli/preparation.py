@@ -27,10 +27,7 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 import pystac
 from pyproj import CRS
 
-from portolan_cli import extension_registry as _reg
 from portolan_cli.collection_id import normalize_collection_id, validate_collection_id
-from portolan_cli.config import get_ignored_files, get_setting, load_merged_metadata
-from portolan_cli.constants import ROLE_VISUAL
 from portolan_cli.conversion_config import (
     VectorSettings,
     get_cog_settings,
@@ -47,8 +44,6 @@ from portolan_cli.convert import (
     with_provenance,
 )
 from portolan_cli.crs import _is_wgs84, measure_wgs84_bbox, transform_bbox_to_wgs84
-from portolan_cli.errors import AssetKeyCollisionError, NoGeometryError, RewriteFidelityError
-from portolan_cli.format_families import RASTER, VECTOR
 from portolan_cli.formats import (
     current_run,
     in_run,
@@ -82,7 +77,6 @@ from portolan_cli.metadata_yaml import (
 from portolan_cli.plugins.formats import FormatContext, extension_of, handler_for
 from portolan_cli.readme import README_FILENAME
 from portolan_cli.report import emit
-from portolan_cli.run_state import RunState
 from portolan_cli.scan.detect import is_filegdb
 from portolan_cli.stac import (
     STEM_RANK_SOURCE,
@@ -92,21 +86,27 @@ from portolan_cli.stac import (
     create_item,
     stem_rank,
 )
-from portolan_cli.stac_links import GDAL_PAM_SUFFIX
 from portolan_cli.stac_parquet import (
     PARQUET_FILENAME,
     declare_extensions_in_use,
 )
-from portolan_cli.sync.checksums import (
+from portolan_cli.viz.pmtiles_links import PMTILES_MEDIA_TYPE, pmtiles_asset_key
+from portolan_cli.viz.style import enrich_cog_assets
+from portolan_core import extension_registry as _reg
+from portolan_core.checksums import (
     compute_checksum,
     compute_dir_checksum,
     compute_dir_size,
     file_fields_from,
 )
-from portolan_cli.trace import count, span
-from portolan_cli.versions import versions_asset_key
-from portolan_cli.viz.pmtiles_links import PMTILES_MEDIA_TYPE, pmtiles_asset_key
-from portolan_cli.viz.style import enrich_cog_assets
+from portolan_core.config import get_ignored_files, get_setting, load_merged_metadata
+from portolan_core.constants import ROLE_VISUAL
+from portolan_core.errors import AssetKeyCollisionError, NoGeometryError, RewriteFidelityError
+from portolan_core.format_families import RASTER, VECTOR
+from portolan_core.run_state import RunState
+from portolan_core.stac_links import GDAL_PAM_SUFFIX
+from portolan_core.trace import count, span
+from portolan_core.versions import versions_asset_key
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -114,8 +114,8 @@ if TYPE_CHECKING:
 
     import pyarrow.parquet as pq
 
-    from portolan_cli.config import ConfigSource
     from portolan_cli.plugins.formats import FormatHandler
+    from portolan_core.config import ConfigSource
 
 logger = logging.getLogger(__name__)
 

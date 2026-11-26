@@ -181,9 +181,9 @@ class TestTheProvenanceHashGoesThroughTheRun:
 
     @pytest.mark.integration
     def test_a_geopackage_of_three_layers_is_hashed_once(self, initialized_catalog: Path) -> None:
-        from portolan_cli import trace
         from portolan_cli.convert import convert_multilayer_file
-        from portolan_cli.run_state import RunState
+        from portolan_core import trace
+        from portolan_core.run_state import RunState
 
         collection_dir = initialized_catalog / "geodata"
         collection_dir.mkdir()

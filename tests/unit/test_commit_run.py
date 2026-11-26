@@ -8,9 +8,9 @@ from typing import TYPE_CHECKING, Any
 import pytest
 
 from portolan_cli.catalog import CollectionSummary, update_catalog_index
-from portolan_cli.run_state import RunState
 from portolan_cli.version_ops import commit_run, owned_run
-from portolan_cli.versions import Asset, read_versions
+from portolan_core.run_state import RunState
+from portolan_core.versions import Asset, read_versions
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -50,8 +50,8 @@ class TestCommitRunFileBackend:
         self, catalog: Path, counters: Callable[[str], int], monkeypatch: pytest.MonkeyPatch
     ) -> None:
         import portolan_cli.catalog as catalog_mod
-        import portolan_cli.versions as versions_mod
-        from portolan_cli.json_io import write_json_atomic
+        import portolan_core.versions as versions_mod
+        from portolan_core.json_io import write_json_atomic
 
         writes: list[str] = []
 
@@ -126,8 +126,8 @@ class TestCommitRunFileBackend:
         self, catalog: Path, monkeypatch: pytest.MonkeyPatch, failure: type[BaseException]
     ) -> None:
         """A failed second write must retain retryable work and index the first write."""
-        import portolan_cli.versions as versions_mod
-        from portolan_cli.versions import VersionsFile
+        import portolan_core.versions as versions_mod
+        from portolan_core.versions import VersionsFile
 
         state = RunState.open(catalog)
         for collection_id in ("a", "b", "c"):
@@ -159,8 +159,8 @@ class TestCommitRunFileBackend:
         self, catalog: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """A stage made during a failed write supersedes the restored older stage."""
-        import portolan_cli.versions as versions_mod
-        from portolan_cli.versions import VersionsFile
+        import portolan_core.versions as versions_mod
+        from portolan_core.versions import VersionsFile
 
         state = RunState.open(catalog)
         state.stage("c", assets={"old.bin": _asset(catalog, "c/old.bin", b"old")})

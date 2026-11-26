@@ -10,7 +10,7 @@ from typing import Any
 
 from rashid_core.api import SHA2_256, encode_multihash
 
-from portolan_cli.trace import count
+from portolan_core.trace import count
 
 logger = logging.getLogger(__name__)
 

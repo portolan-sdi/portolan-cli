@@ -235,7 +235,7 @@ def test_the_scan_finds_an_uncounted_read_and_passes_a_counted_one(tmp_path: Pat
         "import pyarrow.parquet as pq\n"
         "import rasterio\n"
         "from pyogrio import read_info\n"
-        "from portolan_cli.trace import count\n\n"
+        "from portolan_core.trace import count\n\n"
         "def counted(path):\n"
         '    count("parquet.opens")\n'
         "    return pq.ParquetFile(path)\n\n"
@@ -302,8 +302,8 @@ def test_delegated_footer_reads_are_counted(
 
     from portolan_cli.formats import in_run
     from portolan_cli.preparation import convert_vector
-    from portolan_cli.run_state import RunState
-    from portolan_cli.trace import counters, tracing
+    from portolan_core.run_state import RunState
+    from portolan_core.trace import counters, tracing
     from tests.perf.runner import _install_parquet_counter
 
     source = tmp_path / "points.parquet"
