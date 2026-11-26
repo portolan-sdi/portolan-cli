@@ -8,11 +8,13 @@ catalog it writes, and check that each name the guide shows exists.
 from __future__ import annotations
 
 import json
+import posixpath
 import re
 import subprocess
 import sys
 import textwrap
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -57,6 +59,22 @@ def test_the_guide_snippets_run_in_order(
 
     assert (tmp_path / "my-catalog" / "catalog.json").is_file()
     assert capsys.readouterr().out.splitlines()[-1] == "PutOperation catalog.json"
+
+
+def test_the_guide_tells_the_reader_to_supply_each_asset_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The writer writes only metadata, so the guide names each asset file to copy."""
+    monkeypatch.chdir(tmp_path)
+    namespace: dict[str, Any] = {}
+    for name in ("plan", "apply"):
+        exec(_section(name), namespace)  # noqa: S102 - the guide's own example code
+    guide = GUIDE.read_text(encoding="utf-8")
+
+    for key, document in namespace["documents"].items():
+        for asset in document.get("assets", {}).values():
+            path = posixpath.normpath(posixpath.join(posixpath.dirname(key), asset["href"]))
+            assert f"`{namespace['output'].as_posix()}/{path}`" in guide, path
 
 
 def test_the_guide_names_only_public_writer_names() -> None:

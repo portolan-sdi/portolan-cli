@@ -51,6 +51,12 @@ into a folder:
 --8<-- "examples/python-writer/write_catalog.py:apply"
 ```
 
+The writer writes only the catalog JSON and the documentation. Put each asset
+file at its href yourself. For this example, copy your data to
+`my-catalog/parks/parks.parquet` and your preview image to
+`my-catalog/parks/thumbnail.png`. Without them, the asset links do not
+resolve. The `--no-data` check below does not report that.
+
 `ObstoreSink` writes to any [obstore](https://developmentseed.org/obstore/)
 store, such as `S3Store`, `GCSStore`, `AzureStore`, `LocalStore`, or
 `MemoryStore`:
