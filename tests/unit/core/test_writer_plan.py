@@ -5,9 +5,11 @@ from __future__ import annotations
 import copy
 import dataclasses
 import json
+from pathlib import PureWindowsPath
 from typing import Any
 
 import pytest
+from rashid_core import _href as rashid_href
 from rashid_core.api import newest_profile_version, profile_uri
 
 from portolan_core.writer import (
@@ -362,4 +364,70 @@ class TestReviewFixes:
         documents["boundaries/collection.json"][field] = value
 
         with pytest.raises(InvalidDocumentError, match="boundaries/collection.json"):
+            plan_catalog(documents, golden_documentation())
+
+
+@pytest.fixture(params=["posix", "windows"])
+def host(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> str:
+    """Run a test as on POSIX, then as on a case-insensitive Windows host."""
+    if request.param == "windows":
+        # Rashid's own tests patch the host path type the same way.
+        monkeypatch.setattr(rashid_href, "_HOST_PATH", PureWindowsPath)
+    return str(request.param)
+
+
+def _with_catalog(key: str) -> tuple[dict[str, Any], dict[str, str]]:
+    """The golden input plus one more catalog at ``key``, with its documentation."""
+    documents: dict[str, Any] = golden_documents()
+    documents[key] = copy.deepcopy(documents["environment/catalog.json"])
+    documentation = golden_documentation()
+    directory = key.rpartition("/")[0]
+    documentation[f"{directory}/README.md"] = "# Extra\n"
+    documentation[f"{directory}/AGENTS.md"] = "# Extra\n"
+    return documents, documentation
+
+
+class TestRashidKeyRules:
+    """Every key that Rashid's CatalogGraph.from_documents refuses is an InvalidKeyError."""
+
+    @pytest.mark.parametrize(
+        "key",
+        ["a\\b/catalog.json", "/abs/catalog.json", "a/../b/catalog.json", "c//i/catalog.json"],
+    )
+    def test_a_key_that_is_not_a_relative_posix_path_is_refused(self, host: str, key: str) -> None:
+        documents, documentation = _with_catalog("extra/catalog.json")
+        documents[key] = documents.pop("extra/catalog.json")
+
+        with pytest.raises(InvalidKeyError, match="relative POSIX path"):
+            plan_catalog(documents, documentation)
+
+    def test_a_second_spelling_of_one_key_is_refused(self, host: str) -> None:
+        documents = golden_documents()
+        documents["./catalog.json"] = documents["catalog.json"]
+
+        with pytest.raises(InvalidKeyError, match="relative POSIX path"):
+            plan_catalog(documents, golden_documentation())
+
+    def test_a_drive_key_is_refused_only_where_the_host_reads_a_drive(self, host: str) -> None:
+        documents, documentation = _with_catalog("C:/catalog.json")
+
+        if host == "windows":
+            with pytest.raises(InvalidKeyError, match="C:/catalog.json"):
+                plan_catalog(documents, documentation)
+        else:
+            keys = [op.key for op in plan_catalog(documents, documentation).operations]
+            assert "C:/catalog.json" in keys
+
+    def test_directories_that_differ_only_by_case_are_refused(self, host: str) -> None:
+        documents, documentation = _with_catalog("Environment/extra/catalog.json")
+
+        with pytest.raises(InvalidKeyError, match="'Environment' and 'environment'"):
+            plan_catalog(documents, documentation)
+
+    def test_documents_that_differ_only_by_case_are_refused(self, host: str) -> None:
+        documents = golden_documents()
+        item = documents["environment/air-quality/station-north/station-north.json"]
+        documents["environment/air-quality/station-north/Station-North.json"] = item
+
+        with pytest.raises(InvalidKeyError, match="Station-North.json"):
             plan_catalog(documents, golden_documentation())

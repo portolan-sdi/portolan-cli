@@ -58,9 +58,11 @@ longer links to them.
 The same input gives the same operations, byte for byte. The JSON keeps the
 key order of the input documents.
 
-The planner refuses a plan in which two keys differ only by case. A put and a
-delete of such keys would hit the same file on a case-insensitive store, such
-as Windows or the default macOS file system.
+The planner refuses a plan in which two keys, or two directories of its keys,
+differ only by case. On a case-insensitive store, such as Windows or the
+default macOS file system, such keys name the same file or directory. The
+planner applies this rule on every host, so a plan does not depend on where
+it was made.
 
 Every check on the input runs before the planner makes any operation. A
 failure raises a :class:`CatalogWriteError` subclass.
@@ -192,7 +194,8 @@ def plan_catalog(
 
     Raises:
         InvalidKeyError: A key or the prefix is absolute, holds ``..``, a
-            backslash, a hidden directory, or an empty segment. Two keys of
+            backslash, a hidden directory, or an empty segment. On Windows,
+            a key has a drive such as ``C:``. Two keys or two directories of
             the plan differ only by case. A prior key names a file that the
             writer does not manage, a ``versions.json``, or an asset.
         InvalidDocumentError: A document is not the STAC object its file name
@@ -213,9 +216,15 @@ def plan_catalog(
         raise InvalidDocumentError("the tree has no root catalog.json")
     assets = {path for key, doc in copies.items() for path in _asset_paths(key, doc)}
     prior = {_check_prior(key, assets) for key in prior_managed_keys}
+    deleted = prior - copies.keys() - documentation.keys()
+    _check_case(copies.keys() | documentation.keys() | deleted)
 
     sidecars = {key: _strip(key, doc) for key, doc in copies.items()}
-    graph = CatalogGraph.from_documents(Path(), copies)
+    try:
+        graph = CatalogGraph.from_documents(Path(), copies)
+    except ValueError as exc:
+        # Rashid also refuses a key that the host cannot hold, such as C:/x on Windows.
+        raise InvalidKeyError(str(exc)) from exc
     for node in graph.iter("collection"):
         if graph.enclosing_collection_of(node) is not None:
             raise InvalidDocumentError(
@@ -241,14 +250,6 @@ def plan_catalog(
     def full(key: str) -> str:
         return f"{prefix}/{key}" if prefix else key
 
-    deleted = prior - content.keys()
-    seen: dict[str, str] = {}
-    for key in sorted(content.keys() | deleted):
-        if seen.setdefault(key.casefold(), key) != key:
-            raise InvalidKeyError(
-                f"keys {seen[key.casefold()]!r} and {key!r} differ only by case,"
-                " which is unsafe on a case-insensitive store"
-            )
     puts = [PutOperation(full(k), *content[k]) for k in sorted(content, key=_order)]
     deletes = [DeleteOperation(full(k)) for k in sorted(deleted, key=_order)]
     return WritePlan(operations=(*puts, *deletes))
@@ -343,6 +344,20 @@ def _check_key(key: str) -> str:
     ):
         raise InvalidKeyError(f"key must be a relative POSIX path inside the tree: {key!r}")
     return key
+
+
+def _check_case(keys: set[str]) -> None:
+    """Refuse two spellings of a key or a directory that differ only by case."""
+    seen: dict[str, str] = {}
+    for key in sorted(keys):
+        path = PurePosixPath(key)
+        for spelling in (path.as_posix(), *(p.as_posix() for p in path.parents[:-1])):
+            first = seen.setdefault(spelling.casefold(), spelling)
+            if first != spelling:
+                raise InvalidKeyError(
+                    f"{first!r} and {spelling!r} differ only by case,"
+                    " which is unsafe on a case-insensitive store"
+                )
 
 
 def _check_prior(key: str, assets: set[str]) -> str:
