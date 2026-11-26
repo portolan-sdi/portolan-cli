@@ -765,21 +765,25 @@ def _fix_schema_uri(root: Path, dry_run: bool, _state: RunState | None = None) -
 
 
 #: (rel-presence predicate, filename) pairs for the two required sibling docs.
-_Gap = Callable[[Path, dict[str, Any]], bool]
+_Gap = Callable[[Path, Path, dict[str, Any]], bool]
 
 
-def _readme_gap(stac_path: Path, data: dict[str, Any]) -> bool:
+def _readme_gap(root: Path, stac_path: Path, data: dict[str, Any]) -> bool:
     """True when README.md is absent or its rel='describedby' link is unfit."""
     from portolan_cli.readme import README_FILENAME, readme_link_gap
 
-    return not (stac_path.parent / README_FILENAME).exists() or readme_link_gap(stac_path, data)
+    return not (stac_path.parent / README_FILENAME).exists() or readme_link_gap(
+        root, stac_path, data
+    )
 
 
-def _agents_gap(stac_path: Path, data: dict[str, Any]) -> bool:
+def _agents_gap(root: Path, stac_path: Path, data: dict[str, Any]) -> bool:
     """True when AGENTS.md is absent or its rel='agents' link is unfit."""
     from portolan_cli.agents_md import AGENTS_MD_FILENAME, agents_link_gap
 
-    return not (stac_path.parent / AGENTS_MD_FILENAME).exists() or agents_link_gap(stac_path, data)
+    return not (stac_path.parent / AGENTS_MD_FILENAME).exists() or agents_link_gap(
+        root, stac_path, data
+    )
 
 
 def _fix_markdown_requirement(
@@ -792,14 +796,15 @@ def _fix_markdown_requirement(
 ) -> list[FixResult]:
     """Scaffold a required sibling markdown file and its link, and say so honestly.
 
-    ``gap`` mirrors rashid's four-case link check (wrong ``type``, absolute
-    href, unresolvable href, no link at all), which is wider than what the
+    ``gap`` asks rashid's ``sidecar_link_gaps``, which is wider than what the
     scaffolders normalize. When a repair runs and the gap survives it, the
     result is SKIPPED rather than UPDATED: the finding will outlive the
     re-check, and ``--fix`` must not claim work the next check contradicts.
     """
     gapped = [
-        node for node in _graph(root).iter("catalog", "collection") if gap(node.abs_path, node.data)
+        node
+        for node in _graph(root).iter("catalog", "collection")
+        if gap(root, node.abs_path, node.data)
     ]
     if not gapped or dry_run:
         return [_updated(node, message) for node in gapped]
@@ -807,7 +812,7 @@ def _fix_markdown_requirement(
     results = []
     for node in gapped:
         data = _reload(node.abs_path)
-        if data is None or gap(node.abs_path, data):
+        if data is None or gap(root, node.abs_path, data):
             results.append(
                 _skipped(
                     node.abs_path, f"{message}, but the link still does not conform; fix it by hand"

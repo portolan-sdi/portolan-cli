@@ -7,7 +7,7 @@ content is human-authored — Portolan only scaffolds an empty template when the
 file is absent and never overwrites an existing one.
 
 This module is deliberately dependency-light: the stdlib, the shared atomic JSON
-writer, and rashid's href helper, which is itself stdlib-only. It
+writer, and the sidecar-link check from ``rashid_core.api``. It
 is imported by both the generation paths (``catalog.py``, ``add.py``,
 ``metadata/fix.py``) and the ``check --fix`` adapter
 (``validation/fixers.py``). Keeping it free of ``click``/``rich``/``config`` /
@@ -18,10 +18,10 @@ the same reason ``pmtiles_links.py`` exists as a leaf.
 from __future__ import annotations
 
 import json
-from pathlib import Path, PurePath
+from pathlib import Path, PurePath, PurePosixPath
 from typing import Any
 
-from rashid_core.api import is_absolute_href
+from rashid_core.api import CatalogGraph, sidecar_link_gaps
 
 from portolan_cli.json_io import write_json_atomic
 from portolan_cli.stac_links import visible_stac_files
@@ -43,22 +43,17 @@ AGENTS_LINK_TITLE = "Agent/LLM usage guide"
 AGENTS_LINK_HREF = f"./{AGENTS_MD_FILENAME}"
 
 
-def markdown_link_gap(stac_path: Path, data: dict[str, Any], *, rel: str, target: str) -> bool:
+def markdown_link_gap(
+    root: Path, stac_path: Path, data: dict[str, Any], *, rel: str, target: str
+) -> bool:
     """True when ``data`` fails rashid's sibling-markdown-link check for ``rel``.
 
-    Replicates the four cases rashid's ``_check_markdown_link`` (PTL-FIL-002 for
-    ``AGENTS.md``, PTL-FIL-003 for ``README.md``) flags: no link carrying ``rel``;
-    a matching link whose ``type`` is not ``text/markdown``; an href that is
-    missing, empty, or absolute; and an href that does not resolve to the sibling
-    ``target`` (or resolves to a file that is absent). Like rashid, *every*
-    matching link is graded, not just the first.
-
-    Replicated rather than imported because rashid keeps ``_check_markdown_link``
-    private. rashid#57 exported the COG predicate, the structural relations, and
-    the multihash helpers, so those now come from ``rashid_core.api``; this one still
-    has no public counterpart. A change to PTL-FIL-002/-003 must land here too.
+    The answer comes from ``sidecar_link_gaps``, the check behind PTL-FIL-002
+    for ``AGENTS.md`` and PTL-FIL-003 for ``README.md``. The graph holds only
+    ``data`` and the ``target`` file, so the call reads no other file.
 
     Args:
+        root: The catalog root. Rashid resolves hrefs inside it.
         stac_path: Path of the STAC JSON; its parent is the sibling directory.
         data: The parsed STAC object.
         rel: Link relation to grade (``"agents"`` / ``"describedby"``).
@@ -67,35 +62,22 @@ def markdown_link_gap(stac_path: Path, data: dict[str, Any], *, rel: str, target
     Returns:
         True when the object needs repair.
     """
-    links = data.get("links")
-    if not isinstance(links, list):
-        return True
-
-    directory = stac_path.parent
-    expected = (directory / target).resolve()
-    matches = [link for link in links if isinstance(link, dict) and link.get("rel") == rel]
-    if not matches:
-        return True
-
-    for link in matches:
-        if link.get("type") != AGENTS_MEDIA_TYPE:
-            return True
-        href = link.get("href")
-        if not isinstance(href, str) or not href or is_absolute_href(href):
-            return True
-        if (directory / href).resolve() != expected or not expected.is_file():
-            return True
-    return False
+    document = stac_path.relative_to(root).as_posix()
+    sibling = PurePosixPath(document).parent / target
+    files = [str(sibling)] if (root / sibling).is_file() else []
+    graph = CatalogGraph.from_documents(root, {document: data}, files)
+    node = graph.nodes[PurePosixPath(document)]
+    return bool(sidecar_link_gaps(graph, node, rel=rel, target=target))
 
 
-def agents_link_gap(stac_path: Path, data: dict[str, Any]) -> bool:
+def agents_link_gap(root: Path, stac_path: Path, data: dict[str, Any]) -> bool:
     """True when ``data``'s ``AGENTS.md`` link does not satisfy rashid PTL-FIL-002.
 
     The already-parsed counterpart of :func:`agents_md_gap`, for callers that
     hold the STAC dict (``check --fix`` fixers). Every case it reports is
     repaired by :func:`ensure_agents_md`.
     """
-    return markdown_link_gap(stac_path, data, rel=AGENTS_LINK_REL, target=AGENTS_MD_FILENAME)
+    return markdown_link_gap(root, stac_path, data, rel=AGENTS_LINK_REL, target=AGENTS_MD_FILENAME)
 
 
 def find_agents_link(links: list[Any]) -> dict[str, Any] | None:

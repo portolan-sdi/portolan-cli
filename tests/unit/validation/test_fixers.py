@@ -1161,6 +1161,37 @@ class TestMarkdownLinkGapParity:
 
         assert [r.file_path for r in results] == [catalog_json]
 
+    @pytest.mark.parametrize(("fixer", "rel"), [("readme", "describedby"), ("agents", "agents")])
+    def test_one_conforming_link_is_enough(self, tmp_path: Path, fixer: str, rel: str) -> None:
+        """A second link under the rel, such as a data dictionary, is not a gap."""
+        catalog_json = self._scaffolded(tmp_path)
+        data = _read_json(catalog_json)
+        data["links"].append({"rel": rel, "href": "./dictionary.html", "type": "text/html"})
+        _write_json(catalog_json, data)
+        before = _snapshot(tmp_path)
+
+        assert FIXERS[fixer](tmp_path, False) == []
+        assert _snapshot(tmp_path) == before
+
+    @pytest.mark.parametrize(
+        ("fixer", "rel", "href"),
+        [
+            ("readme", "describedby", "./READ%4DE.md"),
+            ("agents", "agents", "./AGENTS.md#usage"),
+            ("readme", "describedby", "../roads/README.md"),
+        ],
+    )
+    def test_an_href_rashid_resolves_to_the_sibling_is_not_a_gap(
+        self, tmp_path: Path, fixer: str, rel: str, href: str
+    ) -> None:
+        """Rashid decodes the href, drops its fragment and resolves it from the catalog root."""
+        self._scaffolded(tmp_path)
+        self._mutate_link(tmp_path / "roads" / "collection.json", rel, href=href)
+        before = _snapshot(tmp_path)
+
+        assert FIXERS[fixer](tmp_path, False) == []
+        assert _snapshot(tmp_path) == before
+
     def test_a_missing_file_is_detected(self, tmp_path: Path) -> None:
         self._scaffolded(tmp_path)
         (tmp_path / "README.md").unlink()

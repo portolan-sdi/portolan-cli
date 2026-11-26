@@ -261,12 +261,12 @@ class TestAgentsLinkGap:
         (tmp_path / AGENTS_MD_FILENAME).write_text("# a\n", encoding="utf-8")
         data = self._data([build_agents_link()])
 
-        assert agents_link_gap(tmp_path / "catalog.json", data) is False
+        assert agents_link_gap(tmp_path, tmp_path / "catalog.json", data) is False
 
     def test_gap_when_link_is_absent(self, tmp_path: Path) -> None:
         (tmp_path / AGENTS_MD_FILENAME).write_text("# a\n", encoding="utf-8")
 
-        assert agents_link_gap(tmp_path / "catalog.json", self._data([])) is True
+        assert agents_link_gap(tmp_path, tmp_path / "catalog.json", self._data([])) is True
 
     def test_gap_when_type_is_wrong(self, tmp_path: Path) -> None:
         (tmp_path / AGENTS_MD_FILENAME).write_text("# a\n", encoding="utf-8")
@@ -274,20 +274,20 @@ class TestAgentsLinkGap:
             [{"rel": AGENTS_LINK_REL, "href": f"./{AGENTS_MD_FILENAME}", "type": "text/plain"}]
         )
 
-        assert agents_link_gap(tmp_path / "catalog.json", data) is True
+        assert agents_link_gap(tmp_path, tmp_path / "catalog.json", data) is True
 
     @pytest.mark.parametrize("href", ["", "/abs/AGENTS.md", "https://example.com/AGENTS.md"])
     def test_gap_when_href_is_missing_empty_or_absolute(self, tmp_path: Path, href: str) -> None:
         (tmp_path / AGENTS_MD_FILENAME).write_text("# a\n", encoding="utf-8")
         data = self._data([{"rel": AGENTS_LINK_REL, "href": href, "type": AGENTS_MEDIA_TYPE}])
 
-        assert agents_link_gap(tmp_path / "catalog.json", data) is True
+        assert agents_link_gap(tmp_path, tmp_path / "catalog.json", data) is True
 
     def test_gap_when_href_key_is_absent(self, tmp_path: Path) -> None:
         (tmp_path / AGENTS_MD_FILENAME).write_text("# a\n", encoding="utf-8")
         data = self._data([{"rel": AGENTS_LINK_REL, "type": AGENTS_MEDIA_TYPE}])
 
-        assert agents_link_gap(tmp_path / "catalog.json", data) is True
+        assert agents_link_gap(tmp_path, tmp_path / "catalog.json", data) is True
 
     def test_gap_when_href_does_not_resolve_to_the_sibling_file(self, tmp_path: Path) -> None:
         (tmp_path / AGENTS_MD_FILENAME).write_text("# a\n", encoding="utf-8")
@@ -301,7 +301,10 @@ class TestAgentsLinkGap:
             ]
         )
 
-        assert agents_link_gap(tmp_path / "catalog.json", data) is True
+        assert agents_link_gap(tmp_path, tmp_path / "catalog.json", data) is True
 
     def test_gap_when_the_agents_file_is_missing(self, tmp_path: Path) -> None:
-        assert agents_link_gap(tmp_path / "catalog.json", self._data([build_agents_link()])) is True
+        assert (
+            agents_link_gap(tmp_path, tmp_path / "catalog.json", self._data([build_agents_link()]))
+            is True
+        )

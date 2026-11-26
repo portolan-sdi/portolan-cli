@@ -1207,22 +1207,15 @@ def _ensure_readme_link(directory: Path, data: dict[str, Any]) -> bool:
     return True
 
 
-def readme_link_gap(stac_path: Path, data: dict[str, Any]) -> bool:
+def readme_link_gap(root: Path, stac_path: Path, data: dict[str, Any]) -> bool:
     """True when ``data``'s README link does not satisfy rashid PTL-FIL-003.
 
-    Replicates the four cases rashid's ``_check_markdown_link`` flags for
-    ``rel="describedby"`` / ``README.md``: no link with the rel; a link whose
-    ``type`` is not ``text/markdown``; an href that is missing, empty, or
-    absolute; and an href that does not resolve to the sibling ``README.md`` (or
-    resolves to one that does not exist). Every case is repaired by
-    :func:`ensure_readmes`, so ``check --fix`` can act on the answer.
-
-    Replicated rather than imported because rashid keeps ``_check_markdown_link``
-    private. rashid#57 exported the COG predicate, the structural relations, and
-    the multihash helpers, so those now come from ``rashid_core.api``; this one still
-    has no public counterpart. A change to PTL-FIL-003 must land here too.
+    Rashid's ``sidecar_link_gaps`` gives the answer for ``rel="describedby"``
+    and ``README.md``. Every gap is repaired by :func:`ensure_readmes`, so
+    ``check --fix`` can act on the answer.
 
     Args:
+        root: The catalog root.
         stac_path: Path of the ``catalog.json``/``collection.json`` (its parent
             directory is where ``README.md`` must sit).
         data: The parsed STAC object.
@@ -1230,7 +1223,7 @@ def readme_link_gap(stac_path: Path, data: dict[str, Any]) -> bool:
     Returns:
         True when the object needs repair.
     """
-    return markdown_link_gap(stac_path, data, rel=README_LINK_REL, target=README_FILENAME)
+    return markdown_link_gap(root, stac_path, data, rel=README_LINK_REL, target=README_FILENAME)
 
 
 def write_readme(readme_path: Path, content: str) -> None:
