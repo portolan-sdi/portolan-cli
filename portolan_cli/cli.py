@@ -1371,28 +1371,33 @@ def check(
             dry_run=dry_run,
         )
 
+    from portolan_cli.extract.common.cli_helpers import print_message
+    from portolan_cli.report import reporting
+
     try:
-        result = run_check_workflow(
-            path,
-            fix=fix,
-            dry_run=dry_run,
-            remove_legacy=remove_legacy,
-            force=force,
-            workers=workers,
-            metadata=metadata,
-            geo_assets=geo_assets,
-            strict=strict,
-            live=live,
-            public_url=public_url,
-            data=not no_data,
-            data_scope=data_scope,
-            structural=not no_structural,
-            schema=schema,
-            # Per-file progress only in verbose human mode.
-            on_progress=show_conversion_progress if verbose and not use_json else None,
-            # Each fix report prints as its pass ends, so a later failure cannot hide it.
-            on_fix_report=None if use_json else show_fix_report,
-        )
+        # The conversion steps report their notices through this scope.
+        with reporting(print_message):
+            result = run_check_workflow(
+                path,
+                fix=fix,
+                dry_run=dry_run,
+                remove_legacy=remove_legacy,
+                force=force,
+                workers=workers,
+                metadata=metadata,
+                geo_assets=geo_assets,
+                strict=strict,
+                live=live,
+                public_url=public_url,
+                data=not no_data,
+                data_scope=data_scope,
+                structural=not no_structural,
+                schema=schema,
+                # Per-file progress only in verbose human mode.
+                on_progress=show_conversion_progress if verbose and not use_json else None,
+                # Each fix report prints as its pass ends, so a later failure cannot hide it.
+                on_fix_report=None if use_json else show_fix_report,
+            )
     except InvalidLiveUrlError as err:
         emit_error("check", type(err).__name__, str(err), use_json=use_json, code=err.code)
         raise SystemExit(2) from err

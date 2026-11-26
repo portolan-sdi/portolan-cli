@@ -61,3 +61,22 @@ def test_geo_asset_fix_prints_nothing(tmp_path: Path, capsys: pytest.CaptureFixt
     assert shp.with_suffix(".cpg").read_text() == "ISO-8859-1"
     printed = capsys.readouterr()
     assert (printed.out, printed.err) == ("", "")
+
+
+def test_check_fix_command_prints_the_sidecar_notice(tmp_path: Path) -> None:
+    """The command prints the encoding sidecar notice that the library reports."""
+    import geopandas as gpd
+    from click.testing import CliRunner
+    from shapely.geometry import Point
+
+    from portolan_cli.cli import cli
+
+    shp = tmp_path / "roads.shp"
+    frame = gpd.GeoDataFrame({"name": ["Zürich"]}, geometry=[Point(8.5, 47.4)], crs="EPSG:4326")
+    frame.to_file(shp, encoding="latin1")
+    shp.with_suffix(".cpg").unlink(missing_ok=True)
+
+    result = CliRunner().invoke(cli, ["check", str(tmp_path), "--fix", "--geo-assets"])
+
+    assert shp.with_suffix(".cpg").read_text() == "ISO-8859-1"
+    assert "Encoding sidecar roads.cpg written: DBF records are not valid UTF-8" in result.output
