@@ -319,51 +319,39 @@ class TestWarnIfSourceNewer:
     """Tests for _warn_if_source_newer helper function."""
 
     @pytest.mark.unit
-    def test_warn_if_source_newer_emits_warning(self) -> None:
-        """Warns when source mtime > output mtime."""
+    @pytest.mark.parametrize(
+        ("source_mtime", "expected"),
+        [
+            (
+                2_000_000,
+                [
+                    (
+                        "warn",
+                        "Source file 'source.shp' is newer than converted output. "
+                        "Use --reconvert to re-convert from source.",
+                    )
+                ],
+            ),
+            (500_000, []),
+        ],
+        ids=["source-newer", "output-newer"],
+    )
+    def test_warn_if_source_newer(
+        self, tmp_path: Path, source_mtime: int, expected: list[tuple[str, str]]
+    ) -> None:
+        """Warns only when the source mtime is later than the output mtime."""
         from portolan_cli.add import _warn_if_source_newer
         from portolan_cli.report import reporting
 
-        with pytest.importorskip("tempfile").TemporaryDirectory() as temp_dir:
-            temp_path = Path(temp_dir)
-            output = temp_path / "output.parquet"
-            source = temp_path / "source.shp"
+        output = tmp_path / "output.parquet"
+        source = tmp_path / "source.shp"
+        output.write_text("old")
+        source.write_text("new")
+        # Pin the mtimes, so the order does not depend on the clock.
+        os.utime(output, (1_000_000, 1_000_000))
+        os.utime(source, (source_mtime, source_mtime))
 
-            output.write_text("old")
-            source.write_text("new")
-            # Pin the mtimes: the source is newer than the output
-            os.utime(output, (1_000_000, 1_000_000))
-            os.utime(source, (2_000_000, 2_000_000))
-
-            lines: list[tuple[str, str]] = []
-            with reporting(lambda level, message: lines.append((level, message))):
-                _warn_if_source_newer(source, output)
-            assert lines == [
-                (
-                    "warn",
-                    "Source file 'source.shp' is newer than converted output. "
-                    "Use --reconvert to re-convert from source.",
-                )
-            ]
-
-    @pytest.mark.unit
-    def test_warn_if_source_newer_silent_when_output_newer(self) -> None:
-        """No warning when output mtime >= source mtime."""
-        from portolan_cli.add import _warn_if_source_newer
-        from portolan_cli.report import reporting
-
-        with pytest.importorskip("tempfile").TemporaryDirectory() as temp_dir:
-            temp_path = Path(temp_dir)
-            source = temp_path / "source.shp"
-            output = temp_path / "output.parquet"
-
-            source.write_text("old")
-            output.write_text("new")
-            # Pin the mtimes: the output is newer than the source
-            os.utime(source, (1_000_000, 1_000_000))
-            os.utime(output, (2_000_000, 2_000_000))
-
-            lines: list[tuple[str, str]] = []
-            with reporting(lambda level, message: lines.append((level, message))):
-                _warn_if_source_newer(source, output)
-            assert lines == []
+        lines: list[tuple[str, str]] = []
+        with reporting(lambda level, message: lines.append((level, message))):
+            _warn_if_source_newer(source, output)
+        assert lines == expected

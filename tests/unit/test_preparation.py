@@ -1097,46 +1097,41 @@ class TestRasterAddCountsGdalReads:
 class TestRewriteOrKeep:
     """A failed rewrite keeps the file. It never fails the whole `add`."""
 
-    @pytest.mark.unit
-    def test_a_fidelity_failure_keeps_the_file(self, tmp_path: Path) -> None:
-        """The operator reads what the rewrite would have lost."""
+    @staticmethod
+    def _kept(tmp_path: Path, error: Exception) -> list[tuple[str, str]]:
+        """Run ``_rewrite_or_keep`` with a rewrite that raises ``error``, and return its lines."""
         from portolan_cli.conversion_config import VectorSettings
-        from portolan_cli.errors import RewriteFidelityError
         from portolan_cli.preparation import _rewrite_or_keep
         from portolan_cli.report import reporting
 
         source = tmp_path / "roads.parquet"
         source.write_bytes(b"PAR1")
-        error = RewriteFidelityError("roads.parquet", "the CRS it declared")
-
         lines: list[tuple[str, str]] = []
         with (
             patch("portolan_cli.preparation._rewrite_parquet_in_place", side_effect=error),
             reporting(lambda level, message: lines.append((level, message))),
         ):
             _rewrite_or_keep(source, VectorSettings(), None)
+        assert source.read_bytes() == b"PAR1"
+        return lines
 
-        assert lines == [("warn", "Kept roads.parquet as it is: it would lose the CRS it declared")]
+    @pytest.mark.unit
+    def test_a_fidelity_failure_keeps_the_file(self, tmp_path: Path) -> None:
+        """The operator reads what the rewrite would have lost."""
+        from portolan_cli.errors import RewriteFidelityError
+
+        error = RewriteFidelityError("roads.parquet", "the CRS it declared")
+
+        assert self._kept(tmp_path, error) == [
+            ("warn", "Kept roads.parquet as it is: it would lose the CRS it declared")
+        ]
 
     @pytest.mark.unit
     def test_any_other_failure_also_keeps_the_file(self, tmp_path: Path) -> None:
         """A malformed geometry must not turn `add` into a failure."""
-        from portolan_cli.conversion_config import VectorSettings
-        from portolan_cli.preparation import _rewrite_or_keep
-        from portolan_cli.report import reporting
-
-        source = tmp_path / "roads.parquet"
-        source.write_bytes(b"PAR1")
         error = RuntimeError("Invalid Input Error: Skipping beyond end of binary data")
 
-        lines: list[tuple[str, str]] = []
-        with (
-            patch("portolan_cli.preparation._rewrite_parquet_in_place", side_effect=error),
-            reporting(lambda level, message: lines.append((level, message))),
-        ):
-            _rewrite_or_keep(source, VectorSettings(), None)
-
-        assert lines == [
+        assert self._kept(tmp_path, error) == [
             (
                 "warn",
                 "Kept roads.parquet as it is: geoparquet-io could not rewrite it "

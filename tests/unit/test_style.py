@@ -863,6 +863,19 @@ class TestWriteDefaultStyle:
 # =============================================================================
 
 
+def _two_unmarked_styles(collection_dir: Path) -> None:
+    """Write a collection with two styles, neither of them marked as the default."""
+    import json
+
+    (collection_dir / "collection.json").write_text(
+        json.dumps({"type": "Collection", "id": "test", "assets": {}})
+    )
+    styles_dir = collection_dir / "styles"
+    styles_dir.mkdir()
+    (styles_dir / "muted.json").write_text('{"version":8,"name":"Muted","layers":[]}')
+    (styles_dir / "vivid.json").write_text('{"version":8,"name":"Vivid","layers":[]}')
+
+
 class TestRegisterStyleAssets:
     """Tests for registering discovered styles as STAC assets."""
 
@@ -973,14 +986,7 @@ class TestRegisterStyleAssets:
 
         from portolan_cli.viz.style import discover_styles, register_style_assets
 
-        (tmp_path / "collection.json").write_text(
-            json.dumps({"type": "Collection", "id": "test", "assets": {}})
-        )
-        styles_dir = tmp_path / "styles"
-        styles_dir.mkdir()
-        (styles_dir / "muted.json").write_text('{"version":8,"name":"Muted","layers":[]}')
-        (styles_dir / "vivid.json").write_text('{"version":8,"name":"Vivid","layers":[]}')
-
+        _two_unmarked_styles(tmp_path)
         register_style_assets(tmp_path, discover_styles(tmp_path))
 
         updated = json.loads((tmp_path / "collection.json").read_text())
@@ -992,20 +998,10 @@ class TestRegisterStyleAssets:
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Portolan names the default it chose and how to change it."""
-        import json
-
+        from portolan_cli.report import reporting
         from portolan_cli.viz.style import discover_styles, register_style_assets
 
-        (tmp_path / "collection.json").write_text(
-            json.dumps({"type": "Collection", "id": "test", "assets": {}})
-        )
-        styles_dir = tmp_path / "styles"
-        styles_dir.mkdir()
-        (styles_dir / "muted.json").write_text('{"version":8,"name":"Muted","layers":[]}')
-        (styles_dir / "vivid.json").write_text('{"version":8,"name":"Vivid","layers":[]}')
-
-        from portolan_cli.report import reporting
-
+        _two_unmarked_styles(tmp_path)
         lines: list[tuple[str, str]] = []
         with reporting(lambda level, message: lines.append((level, message))):
             register_style_assets(tmp_path, discover_styles(tmp_path))
