@@ -107,6 +107,15 @@ class UnmanagedStacCatalogError(CatalogError):
         )
 
 
+class NotACatalogError(CatalogError):
+    """Raised when a command needs a catalog and the path is not in one.
+
+    Error code: PRTLN-CAT004
+    """
+
+    code = "PRTLN-CAT004"
+
+
 # Collection Errors (PRTLN-COL*)
 class CollectionError(PortolanError):
     """Base class for collection-related errors."""

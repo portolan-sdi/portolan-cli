@@ -1075,12 +1075,12 @@ class TestExitCodePerMode:
     )
     def test_refresh_fails_on_a_document_it_cannot_read(self, rule_id: str, failed: bool) -> None:
         """An unreadable document fails the refresh. Other INSTRUCT errors do not."""
-        from portolan_cli.cli import _check_failed
+        from portolan_cli.validation.workflow import check_failed
 
         finding = {"rule_id": rule_id, "severity": "error", "remediation": "instruct"}
         payload = {"error_count": 1, "findings": [finding]}
 
-        assert _check_failed(payload, strict=False, refresh=True) is failed
+        assert check_failed(payload, strict=False, refresh=True) is failed
 
 
 class TestCheckFailedStrict:
@@ -1099,7 +1099,30 @@ class TestCheckFailedStrict:
         ids=["clean", "error", "warning", "workflow", "zero-counts"],
     )
     def test_each_strict_key_alone(self, payload: dict[str, Any], failed: bool) -> None:
-        from portolan_cli.cli import _check_failed
+        from portolan_cli.validation.workflow import check_failed
 
-        assert _check_failed(payload, strict=True) is failed
-        assert _check_failed(payload, strict=True, refresh=True) is failed
+        assert check_failed(payload, strict=True) is failed
+        assert check_failed(payload, strict=True, refresh=True) is failed
+
+
+class TestMetadataFixOutsideACatalog:
+    """`check --metadata --fix` outside a catalog reports NotACatalogError and writes nothing."""
+
+    @pytest.mark.integration
+    def test_envelope_names_the_error_without_a_code(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        result = runner.invoke(cli, ["check", str(tmp_path), "--metadata", "--fix", "--json"])
+
+        assert result.exit_code == 1, result.output
+        envelope = json.loads(result.stdout)
+        assert envelope["success"] is False
+        assert envelope["data"] == {}
+        assert envelope["errors"] == [
+            {
+                "type": "NotACatalogError",
+                "message": f"fatal: not a portolan catalog (or any parent of {tmp_path}): "
+                "no catalog.json found, cannot run metadata fix",
+            }
+        ]
+        assert list(tmp_path.iterdir()) == []

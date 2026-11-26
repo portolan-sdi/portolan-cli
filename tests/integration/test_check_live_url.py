@@ -58,7 +58,7 @@ def test_invalid_live_url_stops_before_fixes(conformant_catalog: Path, dry_run: 
     args = ["check", str(conformant_catalog), "--fix", "--live", "--url", "http://example.org/"]
     if dry_run:
         args.append("--dry-run")
-    with patch("portolan_cli.cli._run_fix_and_repairs") as repair:
+    with patch("portolan_cli.validation.workflow._run_fix_and_repairs") as repair:
         result = CliRunner().invoke(cli, args)
     assert result.exit_code == 2
     repair.assert_not_called()

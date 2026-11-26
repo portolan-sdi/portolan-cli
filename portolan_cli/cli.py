@@ -1509,64 +1509,77 @@ def check(
     if data_scope != "all" and no_data:
         warn("--data-scope has no effect with --no-data")
 
-    # Resolve worker count: auto-detect from CPU count when unset, so a large
-    # --fix run parallelizes by default (issue #530). An explicit value wins.
-    resolved_workers = workers if workers is not None else (os.cpu_count() or 1)
+    from portolan_cli.errors import NotACatalogError
+    from portolan_cli.validation.workflow import run_check_workflow
 
-    # Determine which checks to run based on scope flags
-    run_metadata, run_geo_assets, mode = _determine_check_mode(metadata, geo_assets)
+    def show_conversion_progress(result: ConversionResult) -> None:
+        if result.source:
+            info_output(f"Converting: {result.source.name}")
 
-    # Execute the appropriate check workflow
-    _execute_check_workflow(
-        path=path,
-        run_metadata=run_metadata,
-        run_geo_assets=run_geo_assets,
-        mode=mode,
-        fix=fix,
-        dry_run=dry_run,
-        remove_legacy=remove_legacy,
-        force=force,
-        workers=resolved_workers,
-        use_json=use_json,
-        verbose=verbose,
-        strict=strict,
-        live=live,
-        public_url=public_url,
-        data=not no_data,
-        data_scope=data_scope,
-        structural=not no_structural,
-        schema=schema,
-    )
+    try:
+        result = run_check_workflow(
+            path,
+            fix=fix,
+            dry_run=dry_run,
+            remove_legacy=remove_legacy,
+            force=force,
+            workers=workers,
+            metadata=metadata,
+            geo_assets=geo_assets,
+            strict=strict,
+            live=live,
+            public_url=public_url,
+            data=not no_data,
+            data_scope=data_scope,
+            structural=not no_structural,
+            schema=schema,
+            # Per-file progress only in verbose human mode.
+            on_progress=show_conversion_progress if verbose and not use_json else None,
+        )
+    except InvalidLiveUrlError as err:
+        emit_error("check", type(err).__name__, str(err), use_json=use_json, code=err.code)
+        raise SystemExit(2) from err
+    except NotACatalogError as err:
+        # The envelope keeps its shape from before the error class existed: no code.
+        emit_error("check", "NotACatalogError", err.message, use_json=use_json)
+        raise SystemExit(1) from err
+    _output_check_result(result, use_json=use_json, verbose=verbose, strict=strict, dry_run=dry_run)
 
 
-def _fix_json_section(
-    *,
-    metadata_fix_report: FixReport | None,
-    format_fix_report: Any,
-) -> dict[str, Any]:
-    """Build the ``fix`` section of the check payload.
+def _output_check_result(
+    result: Any, *, use_json: bool, verbose: bool, strict: bool, dry_run: bool
+) -> None:
+    """Render the check result, then exit 1 when it failed.
 
-    Args:
-        metadata_fix_report: Results from metadata fix (if run).
-        format_fix_report: Results from geo-asset fix (if run).
-
-    Returns:
-        The fix results, keyed by which repair produced them.
+    The exit code follows ``passed``: a blocking finding fails the command,
+    whatever ``--fix`` repaired. ``result.failed`` sets the envelope's ``success``.
     """
-    from portolan_cli.metadata.fix import FixReport
+    payload = result.to_dict()
+    fixed = "fix" in payload
+    if use_json:
+        _output_check_json(payload, failed=result.failed)
+    else:
+        if result.fix_outcome is not None:
+            _output_fix_human(
+                metadata_fix_report=result.fix_outcome.metadata_fix_report,
+                format_fix_report=result.fix_outcome.format_fix_report,
+                verbose=verbose,
+                dry_run=dry_run,
+            )
+        if result.fixer_report is not None:
+            _output_fix_human(
+                metadata_fix_report=result.fixer_report,
+                format_fix_report=None,
+                verbose=verbose,
+                dry_run=dry_run,
+            )
+        post_fix = fixed and not dry_run
+        _render_check(result.outcome, payload, verbose=verbose, strict=strict, post_fix=post_fix)
+        if fixed:
+            _print_fix_split(payload, dry_run=dry_run)
 
-    data: dict[str, Any] = {}
-
-    if metadata_fix_report is not None:
-        if not isinstance(metadata_fix_report, FixReport):
-            raise TypeError(f"Expected FixReport, got {type(metadata_fix_report).__name__}")
-        data["metadata_fix"] = metadata_fix_report.to_dict()
-
-    if format_fix_report is not None:
-        # Use "conversion" key for backward compatibility with existing tests
-        data["conversion"] = format_fix_report.to_dict()
-
-    return data
+    if result.failed or not payload["passed"]:
+        raise SystemExit(1)
 
 
 def _output_fix_human(
@@ -1624,175 +1637,6 @@ def _handle_path_not_found(path: Path, use_json: bool) -> None:
     """Handle path not found error and exit."""
     emit_error("check", "PathNotFoundError", f"Path does not exist: {path}", use_json=use_json)
     raise SystemExit(1)
-
-
-def _determine_check_mode(metadata: bool, geo_assets: bool) -> tuple[bool, bool, str]:
-    """Determine which checks to run and the mode string.
-
-    The scope flags (--metadata, --geo-assets) determine WHAT to check/fix:
-    - Neither flag: check/fix both (default)
-    - --metadata: check/fix metadata only
-    - --geo-assets: check/fix geo-assets only
-    - Both flags: check/fix both (explicit)
-
-    The --fix flag separately controls WHETHER to apply fixes (orthogonal).
-
-    Returns:
-        Tuple of (run_metadata, run_geo_assets, mode_string).
-    """
-    explicit_flags = metadata or geo_assets
-
-    if explicit_flags:
-        run_metadata = metadata
-        run_geo_assets = geo_assets
-    else:
-        # No explicit flags: run both
-        run_metadata = True
-        run_geo_assets = True
-
-    # Determine mode string
-    if run_metadata and not run_geo_assets:
-        mode = "metadata"
-    elif run_geo_assets and not run_metadata:
-        mode = "geo-assets"
-    else:
-        mode = "all"
-
-    return run_metadata, run_geo_assets, mode
-
-
-def _execute_check_workflow(
-    *,
-    path: Path,
-    run_metadata: bool,
-    run_geo_assets: bool,
-    mode: str,
-    fix: bool,
-    dry_run: bool,
-    remove_legacy: bool,
-    use_json: bool,
-    verbose: bool,
-    strict: bool = False,
-    force: bool = False,
-    workers: int | None = None,
-    live: bool = False,
-    public_url: str | None = None,
-    data: bool = True,
-    data_scope: str = "all",
-    structural: bool = True,
-    schema: bool = False,
-) -> None:
-    """Execute the check workflow based on flags.
-
-    Without --fix this validates once and renders the result.
-
-    With --fix the run is check → fix → re-check **exactly once**, never a
-    loop. The first check produces the findings; the AUTO ones dispatch the
-    fixer registry; the second check reports what is left. An AUTO finding that
-    survives the re-check is a fixer that did not resolve it, so it is listed
-    under "Action required" and annotated as such — an agent that kept calling
-    `--fix` on it would spin forever otherwise.
-
-    ``--dry-run`` reports what the fixers would change, writes nothing, and
-    skips the re-check: with no writes there is nothing new to find.
-    """
-    from portolan_cli.validation import annotate_survivors, build_check_payload, run_check
-    from portolan_cli.validation.runner import validate_live_base_url
-
-    validate_metadata = _should_validate(path, run_metadata=run_metadata, fix=fix)
-    if live and validate_metadata:
-        try:
-            validate_live_base_url(path, public_url)
-        except InvalidLiveUrlError as err:
-            emit_error("check", type(err).__name__, str(err), use_json=use_json, code=err.code)
-            raise SystemExit(2) from err
-    check_kwargs: dict[str, Any] = {
-        "data": data,
-        "data_scope": data_scope,
-        "structural": structural,
-        "schema": schema,
-        "metadata": validate_metadata,
-        "public_url": public_url,
-        "workers": workers,
-    }
-
-    fix_data: dict[str, Any] | None = None
-    fix_failed = False
-    pre_outcome = None
-    state: RunState | None = None
-    if fix:
-        from portolan_cli.scan.check import resolve_catalog_root_for_check
-        from portolan_cli.version_ops import owned_run
-
-        # One run state for the check, the fix, and the re-check. Each pass
-        # parses the config through it and stages its versions in it. The block
-        # commits once, before the re-check reads the result (issue #995).
-        with owned_run(resolve_catalog_root_for_check(path) or path) as state:
-            with trace.span("check.pre"):
-                pre_outcome = run_check(
-                    path, live=False, geo_assets=False, state=state, **check_kwargs
-                )
-            with trace.span("check.fix", dry_run=dry_run):
-                fix_data, fix_failed = _run_fix_and_repairs(
-                    path=path,
-                    findings=list(pre_outcome.report.findings) if pre_outcome.report else [],
-                    run_metadata=run_metadata,
-                    run_geo_assets=run_geo_assets,
-                    dry_run=dry_run,
-                    remove_legacy=remove_legacy,
-                    use_json=use_json,
-                    verbose=verbose,
-                    force=force,
-                    workers=workers,
-                    state=state,
-                )
-
-    if fix and dry_run and pre_outcome is not None:
-        outcome = pre_outcome
-    else:
-        with trace.span("check.recheck" if fix else "check.run"):
-            outcome = run_check(
-                path,
-                live=live,
-                # --fix already ran the geo-asset conversion; re-scanning would repeat it.
-                geo_assets=run_geo_assets and not fix,
-                state=state,
-                **check_kwargs,
-            )
-    payload = build_check_payload(outcome, mode=mode, fix_failed=fix_failed)
-    if fix_data is not None:
-        if dry_run:
-            # A survivor is only knowable from a re-check, and a dry run wrote
-            # nothing to re-check. Annotating here compares the pre-fix findings
-            # against themselves, so every AUTO defect reads as having outlived
-            # a pass that never ran, and `fixed_count` lands on 0 next to the
-            # fixers the same catalog really does repair. Null reports what a
-            # preview knows: nothing was measured.
-            fix_data["survivors"] = None
-            fix_data["fixed_count"] = None
-        else:
-            annotate_survivors(
-                fix_data,
-                outcome,
-                pre_findings=list(pre_outcome.report.findings)
-                if pre_outcome is not None and pre_outcome.report is not None
-                else [],
-            )
-        payload["fix"] = fix_data
-    failed = fix_failed or _check_failed(payload, strict=strict, refresh=fix and mode == "metadata")
-
-    if use_json:
-        _output_check_json(payload, failed=failed)
-    else:
-        post_fix = fix_data is not None and not dry_run
-        _render_check(outcome, payload, verbose=verbose, strict=strict, post_fix=post_fix)
-        if fix_data is not None:
-            _print_fix_split(payload, dry_run=dry_run)
-
-    # The exit code follows ``passed``: a blocking finding fails the command,
-    # whatever ``--fix`` repaired. ``failed`` sets the envelope's ``success``.
-    if failed or not payload["passed"]:
-        raise SystemExit(1)
 
 
 def _print_fix_skips(skipped: dict[str, list[str]]) -> None:
@@ -1860,62 +1704,6 @@ def _print_fix_split(payload: dict[str, Any], *, dry_run: bool = False) -> None:
         detail(f"  {line}")
 
 
-def _should_validate(path: Path, *, run_metadata: bool, fix: bool) -> bool:
-    """Decide whether to validate, given a path that may not be a catalog at all.
-
-    Mirrors the rule ``check.run_fix_workflow`` already applies to its metadata
-    repair: a mixed-scope ``--fix`` over a directory with no catalog.json still
-    converts the source files and skips metadata, rather than failing on a
-    catalog the user never claimed to have. The re-check has to make the same
-    allowance or ``--fix`` would report PTL-GEN-000 on work that succeeded.
-
-    Without ``--fix``, a missing catalog is reported: `check` on a
-    non-catalog directory has always exited non-zero.
-    """
-    if not run_metadata or not fix:
-        return run_metadata
-
-    from portolan_cli.scan.check import resolve_catalog_root_for_check
-
-    return resolve_catalog_root_for_check(path) is not None
-
-
-def _check_failed(payload: dict[str, Any], *, strict: bool, refresh: bool = False) -> bool:
-    """Decide the envelope's ``success`` from the findings the mode owns.
-
-    A default run fails on any error. Under ``--strict``, where a catalog is
-    asserted to be publishable, it also fails on a warning or on the workflow
-    notice (unregistered or vanished data files). The notice is not a
-    conformance defect, so on its own it never flips a default run.
-
-    ``refresh`` is ``--fix --metadata`` without ``--strict``: the metadata
-    refresh (#853). It fails on an AUTO error that is still in the findings,
-    which is a repair the refresh did not make. It also fails on a document
-    that does not parse or breaks the STAC schema, because the refresh cannot
-    use it. The findings keep the two cases apart by rule id. Any other
-    INSTRUCT or EXTERNAL error is work for a person or a host. The refresh
-    did its job, so ``success`` stays true. The caller still exits 1, because
-    the error leaves ``passed`` false. A fixer that could not write fails the
-    run through ``fix_failed`` in the caller.
-    """
-    if strict:
-        return any(payload.get(key) for key in ("error_count", "warning_count", "workflow"))
-    if refresh:
-        return any(
-            finding["severity"] == "error"
-            and (finding["remediation"] == "auto" or finding["rule_id"] in _UNUSABLE_DOCUMENT_RULES)
-            for finding in payload.get("findings", [])
-        )
-    return bool(payload.get("error_count"))
-
-
-#: rashid rules for a document the refresh cannot use. PTL-GEN-000 and
-#: PTL-GEN-001 report a syntax error: a catalog.json or an object file that
-#: does not parse. PTL-STR-001 reports a schema violation: the file parses but
-#: breaks the STAC schema. Each one fails the refresh.
-_UNUSABLE_DOCUMENT_RULES = frozenset({"PTL-GEN-000", "PTL-GEN-001", "PTL-STR-001"})
-
-
 def _render_check(
     outcome: Any,
     payload: dict[str, Any],
@@ -1949,239 +1737,6 @@ def _render_check(
 
     if outcome.live_hint is not None:
         info_output(outcome.live_hint.message)
-
-
-def _run_fix_and_repairs(
-    *,
-    path: Path,
-    findings: list[Any],
-    run_metadata: bool,
-    run_geo_assets: bool,
-    dry_run: bool,
-    remove_legacy: bool,
-    use_json: bool,
-    verbose: bool,
-    force: bool = False,
-    workers: int | None = None,
-    state: RunState,
-) -> tuple[dict[str, Any], bool]:
-    """Apply the fixer registry, then the metadata/geo-asset fix workflow.
-
-    Two halves that do not overlap. The registry
-    (:func:`portolan_cli.validation.fixers.apply_fixers`) owns everything a
-    rashid finding names — titles, links, schema URI, README/AGENTS.md,
-    checksums, extents. ``check.run_fix_workflow`` owns item freshness, which no
-    rule reports because it compares the catalog against files on disk rather
-    than against the spec. Conversion belongs to both, so the registry's
-    ``convert`` key is skipped whenever the geo-asset pass is in scope.
-
-    Args:
-        path: Directory to check/fix.
-        findings: Findings from the pre-fix check; the AUTO ones pick fixers.
-        run_metadata: Whether to fix metadata issues.
-        run_geo_assets: Whether to fix geo-asset format issues.
-        dry_run: Preview changes without applying them.
-        remove_legacy: Remove source files after successful conversion.
-        use_json: Suppress human rendering; return the data instead.
-        verbose: Show detailed output.
-        force: Re-optimize already-valid COGs (raster-scoped, issue #530).
-        workers: Parallel worker processes for conversion.
-        state: The run state of the command. Every pass stages in it, and the
-            caller commits it once.
-
-    Returns:
-        The JSON ``fix`` section and whether a fix failed.
-    """
-    from portolan_cli.metadata.fix import FixReport
-    from portolan_cli.validation import build_fix_payload
-
-    fixer_report, applied, selected, skip_reasons = _run_fixer_registry(
-        findings=findings,
-        run_metadata=run_metadata,
-        run_geo_assets=run_geo_assets,
-        dry_run=dry_run,
-        state=state,
-    )
-
-    with trace.span("check.fix.freshness"):
-        legacy_data, legacy_failed, written_items = _run_legacy_fix_workflow(
-            path=path,
-            run_metadata=run_metadata,
-            run_geo_assets=run_geo_assets,
-            dry_run=dry_run,
-            remove_legacy=remove_legacy,
-            use_json=use_json,
-            verbose=verbose,
-            force=force,
-            workers=workers,
-            state=state,
-        )
-
-    # The registry above ran against findings from the pre-fix check, so it
-    # never saw an item the freshness pass has only just written. Repair
-    # those now, or `--fix` publishes an item with no links and no checksums
-    # and reports more defects than it started with (#709).
-    if run_metadata and written_items:
-        from portolan_cli.validation.fixers import repair_written_items
-
-        with trace.span("check.fix.repair", items=len(written_items)):
-            repairs = repair_written_items(
-                state.catalog_root, written_items, dry_run=dry_run, state=state
-            )
-        if repairs:
-            fixer_report = FixReport(results=[*fixer_report.results, *repairs])
-
-    if not use_json:
-        _output_fix_human(
-            metadata_fix_report=fixer_report,
-            format_fix_report=None,
-            verbose=verbose,
-            dry_run=dry_run,
-        )
-
-    fix_data = build_fix_payload(
-        legacy=legacy_data,
-        fixer_report=fixer_report,
-        applied=applied,
-        selected=selected,
-        skipped=skip_reasons,
-        pre_findings=findings,
-        dry_run=dry_run,
-    )
-    return fix_data, legacy_failed or fixer_report.failure_count > 0
-
-
-def _run_fixer_registry(
-    *,
-    findings: list[Any],
-    run_metadata: bool,
-    run_geo_assets: bool,
-    dry_run: bool,
-    state: RunState,
-) -> tuple[FixReport, list[str], list[str], dict[str, list[str]]]:
-    """Run the title sweep and the fixers that the AUTO findings call for.
-
-    Returns:
-        The fixer report, the applied and selected fixer keys, and the reasons
-        that the fixers which changed nothing gave.
-    """
-    from portolan_cli.catalog import apply_catalog_human_titles
-    from portolan_cli.metadata.fix import FixAction, FixReport, FixResult
-    from portolan_cli.validation.fixers import apply_fixers
-
-    if not run_metadata:
-        return FixReport(), [], [], {}
-    catalog_root = state.catalog_root
-    # Issue #815: a catalog publishes the title and description a human wrote
-    # in its own metadata.yaml. No rashid rule reports the drift, because
-    # rashid grades catalog.json alone and never reads metadata.yaml. The
-    # sweep therefore runs on its own, like the item-freshness pass, and not
-    # through the finding-driven registry.
-    with trace.span("check.fix.title_sweep"):
-        title_results = [
-            FixResult(
-                file_path=catalog_path,
-                action=FixAction.UPDATED,
-                success=True,
-                message="Applied the metadata.yaml title/description",
-            )
-            for catalog_path in apply_catalog_human_titles(
-                catalog_root, dry_run=dry_run, state=state
-            )
-        ]
-    if not findings:
-        return FixReport(results=title_results), [], [], {}
-    skip = {"convert"} if run_geo_assets else set()
-    with trace.span("check.fix.fixers", findings=len(findings)):
-        run = apply_fixers(catalog_root, findings, dry_run=dry_run, skip=skip, state=state)
-    # The report holds what the fixers did, not what the findings asked for. A
-    # fixer that ran and changed nothing is a skip with a reason.
-    report = FixReport(results=[*title_results, *run.report.results])
-    return report, run.applied, run.selected, run.skip_reasons
-
-
-def _run_legacy_fix_workflow(
-    *,
-    path: Path,
-    run_metadata: bool,
-    run_geo_assets: bool,
-    dry_run: bool,
-    remove_legacy: bool,
-    use_json: bool,
-    verbose: bool,
-    force: bool = False,
-    workers: int | None = None,
-    state: RunState | None = None,
-) -> tuple[dict[str, Any], bool, list[Path]]:
-    """Run item-freshness and geo-asset conversion, and render their results.
-
-    Delegates the orchestration to ``check.run_fix_workflow`` and only wires up
-    the progress callback and output rendering here.
-
-    Returns:
-        The fix reports as JSON data, whether a fix failed, and the data files
-        whose items the freshness pass updated. The caller repairs those items,
-        which the finding-driven registry ran too early to see (#709).
-    """
-    from portolan_cli.metadata.fix import FixAction
-    from portolan_cli.scan.check import run_fix_workflow
-
-    # Progress callback for conversion (skip for JSON mode: per-file only in verbose)
-    def show_conversion_progress(result: ConversionResult) -> None:
-        if not use_json and verbose and result.source:
-            info_output(f"Converting: {result.source.name}")
-
-    outcome = run_fix_workflow(
-        path=path,
-        run_metadata=run_metadata,
-        run_geo_assets=run_geo_assets,
-        dry_run=dry_run,
-        remove_legacy=remove_legacy,
-        force=force,
-        workers=workers,
-        on_progress=show_conversion_progress,
-        state=state,
-    )
-
-    # Metadata-only fix that found no catalog root: surface and exit (issue #384).
-    if outcome.fatal_error is not None:
-        emit_error("check", "NotACatalogError", outcome.fatal_error, use_json=use_json)
-        raise SystemExit(1)
-
-    metadata_fix_report = outcome.metadata_fix_report
-    format_fix_report = outcome.format_fix_report
-
-    conversion_failed = bool(
-        format_fix_report
-        and format_fix_report.conversion_report
-        and format_fix_report.conversion_report.failed > 0
-    )
-    failed = outcome.has_failures or conversion_failed
-
-    if not use_json:
-        _output_fix_human(
-            metadata_fix_report=metadata_fix_report,
-            format_fix_report=format_fix_report,
-            verbose=verbose,
-            dry_run=dry_run,
-        )
-
-    # A created item went through finalize_items and the mirror writer, as after
-    # add, so it needs no repair. A repair would run the catalog-wide sweeps again.
-    written_items = [
-        result.file_path
-        for result in (metadata_fix_report.results if metadata_fix_report else [])
-        if result.success and result.action is FixAction.UPDATED
-    ]
-
-    return (
-        _fix_json_section(
-            metadata_fix_report=metadata_fix_report,
-            format_fix_report=format_fix_report,
-        ),
-        failed,
-        written_items,
-    )
 
 
 def _print_check_fix_preview(report: Any) -> None:
