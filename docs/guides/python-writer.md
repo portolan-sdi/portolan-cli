@@ -28,7 +28,8 @@ On each copy it:
   `./README.md` on each catalog and collection.
 - adds the Portolan profile URI to a catalog or collection that declares
   none.
-- replaces the structural links that you gave, and keeps your other links.
+- replaces the relative structural links that you gave, and keeps your other
+  links, including an absolute link to another host.
 
 It writes no `self` link, because it does not know where you publish the
 catalog. It never reads asset files. Your assets pass through unchanged, so
@@ -90,9 +91,13 @@ plan = plan_catalog(documents, documentation, prior_managed_keys=previous_keys)
 ```
 
 `previous_keys` is the set of document and documentation keys that you passed
-last time, without a prefix. The writer deletes only catalog JSON,
-`README.md`, and `AGENTS.md`. It refuses a prior key that names another kind
-of file, so it never deletes asset data.
+last time, without a prefix. A prior key must be a `.json` file, a
+`README.md`, or an `AGENTS.md`. The writer refuses a `versions.json` and a key
+that an asset of the new catalog points at. It cannot tell an item from a
+data file that nothing links, so list only keys that a previous plan wrote.
+
+The writer also refuses a plan in which two keys differ only by case, because
+such a plan is unsafe on a case-insensitive store.
 
 To write under a prefix, pass `key_prefix="catalogs/city"`. The prefix goes in
 front of every put and every delete key.
