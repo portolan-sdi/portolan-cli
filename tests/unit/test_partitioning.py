@@ -908,6 +908,28 @@ class TestFindLargePartitionCandidates:
         assert decision.large_files == []
 
 
+def _points_geoparquet(path: Path) -> Path:
+    """Write a GeoParquet file of 1000 points to ``path``.
+
+    geoparquet-io refuses partitions under 100 rows, so the 10-row fixture is too small.
+    """
+    import json
+
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+    import shapely
+
+    geo = {
+        "version": "1.0.0",
+        "primary_column": "geometry",
+        "columns": {"geometry": {"encoding": "WKB", "geometry_types": ["Point"]}},
+    }
+    points = [shapely.Point(i % 40, i // 40).wkb for i in range(1000)]
+    table = pa.table({"id": list(range(1000)), "geometry": pa.array(points, pa.binary())})
+    pq.write_table(table.replace_schema_metadata({b"geo": json.dumps(geo).encode()}), path)
+    return path
+
+
 class TestPartitionFile:
     """Tests for partition_file, the library function of `portolan partition`.
 
@@ -983,6 +1005,39 @@ class TestPartitionFile:
         assert "Partitioning failed: Simulated partition failure" in text.output
 
     @pytest.mark.integration
+    def test_partition_envelope_is_the_library_result(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A partition writes the same files on both sides, and the envelope is the result."""
+        import json
+
+        from click.testing import CliRunner
+
+        from portolan_cli.cli import cli
+        from portolan_cli.partitioning import PartitionOutcome, partition_file
+
+        monkeypatch.chdir(tmp_path)
+        _points_geoparquet(Path("points.parquet"))
+        result = CliRunner().invoke(
+            cli, ["--format", "json", "partition", "points.parquet", "cli/out"]
+        )
+        outcome = partition_file(Path("points.parquet"), Path("lib/out"))
+
+        assert result.exit_code == 0, result.output
+        assert isinstance(outcome, PartitionOutcome)
+        data = json.loads(result.stdout)["data"]
+        on_disk = sorted(str(f) for f in Path("lib/out").rglob("*.parquet"))
+        assert len(on_disk) > 1
+        assert outcome.to_dict() == {
+            "input": "points.parquet",
+            "output_dir": "lib/out",
+            "partitions": len(on_disk),
+            "files": on_disk,
+        }
+        assert json.loads(json.dumps(outcome.to_dict()).replace("lib/out", "cli/out")) == data
+        assert sorted(str(f) for f in Path("cli/out").rglob("*.parquet")) == data["files"]
+
+    @pytest.mark.integration
     @pytest.mark.xfail(
         strict=True,
         reason="#1133: geoparquet-io writes partition progress to the terminal",
@@ -995,24 +1050,10 @@ class TestPartitionFile:
         INFO. The ``portolan`` command configures the root logger first, so its
         output does not show the message. A plain library caller does.
         """
-        import json
         import subprocess
         import sys
 
-        import pyarrow as pa
-        import pyarrow.parquet as pq
-        import shapely
-
-        # geoparquet-io refuses partitions under 100 rows, so the 10-row fixture is too small.
-        geo = {
-            "version": "1.0.0",
-            "primary_column": "geometry",
-            "columns": {"geometry": {"encoding": "WKB", "geometry_types": ["Point"]}},
-        }
-        points = [shapely.Point(i % 40, i // 40).wkb for i in range(1000)]
-        table = pa.table({"id": list(range(1000)), "geometry": pa.array(points, pa.binary())})
-        source = tmp_path / "points.parquet"
-        pq.write_table(table.replace_schema_metadata({b"geo": json.dumps(geo).encode()}), source)
+        source = _points_geoparquet(tmp_path / "points.parquet")
         code = (
             "import sys\n"
             "from pathlib import Path\n"
