@@ -178,7 +178,7 @@ Always research before implementing:
 
 1. **Understand the request** — Ask clarifying questions if ambiguous
 2. **Search for patterns** — Check if similar functionality exists
-3. **Check utilities** — Review `portolan_cli/` first
+3. **Check utilities** — Review `portolan_cli/` and `packages/portolan-core/src/` first
 4. **Review existing tests** — Look at tests for the area you're modifying
 5. **Check the rationale** — Read the module docstrings and the relevant
    `.claude/rules/*.md` to understand past decisions
@@ -227,11 +227,12 @@ Always research before implementing:
 
 Each upstream bug and accepted limit is recorded at its workaround, with the
 upstream issue URL where one exists. The record is a dependency pin comment in
-`pyproject.toml`, a comment or docstring at the workaround in `portolan_cli/`, a
+`pyproject.toml`, a comment or docstring at the workaround in `portolan_cli/` or
+`packages/portolan-core/src/`, a
 `skipif` reason, or an `xfail(strict=True)` reason. A strict `xfail` fails CI once
 upstream fixes the bug. List them with:
 
 ```bash
 git grep -nE "xfail\(|skipif\(|upstream" -- \
-  pyproject.toml portolan_cli tests
+  pyproject.toml portolan_cli packages/portolan-core tests
 ```
