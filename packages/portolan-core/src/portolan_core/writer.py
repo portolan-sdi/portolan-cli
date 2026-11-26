@@ -284,7 +284,8 @@ class LocalSink:
         """Write the file atomically, so a reader never sees half of it."""
         path = self._path(key)
         path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_name(f".{path.name}.{os.urandom(6).hex()}.tmp")
+        # A short fixed-length name, so a long key name still fits the limit.
+        tmp = path.with_name(f".tmp-{os.urandom(6).hex()}")
         try:
             old = path.lstat()
         except FileNotFoundError:

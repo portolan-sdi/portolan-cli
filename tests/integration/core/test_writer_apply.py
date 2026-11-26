@@ -123,6 +123,15 @@ def test_local_sink_never_creates_a_temporary_copy_wider_than_a_private_file(
     assert stat.S_IMODE(target.stat().st_mode) == 0o600
 
 
+def test_local_sink_writes_a_file_name_near_the_length_limit(tmp_path: Path) -> None:
+    name = "a" * 245 + ".json"  # 250 bytes, under the 255-byte limit of common file systems
+
+    LocalSink(tmp_path).put(name, b"{}", "application/json")
+
+    assert (tmp_path / name).read_bytes() == b"{}"
+    assert [path.name for path in tmp_path.iterdir()] == [name]
+
+
 def test_local_sink_gives_a_new_file_the_umask_default_mode(tmp_path: Path) -> None:
     umask = os.umask(0o022)
     try:
