@@ -6,7 +6,6 @@ All business logic lives in the library; the CLI handles user interaction.
 
 from __future__ import annotations
 
-import json
 import os
 import sys
 import warnings
