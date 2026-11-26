@@ -1,4 +1,4 @@
-# Air Quality
+# Air quality
 
 PM2.5 rasters from two monitoring stations.
 

@@ -10,7 +10,7 @@ that both of them share.
 The bad input that `tests/unit/core/test_writer_plan.py` builds is the invalid
 variant of this fixture.
 
-## How each expected link follows from the spec
+## Spec source of each expected link
 
 The spec is `portolan-sdi/portolan-spec`, `specs/portolan/core.md`.
 
@@ -20,24 +20,26 @@ The spec is `portolan-sdi/portolan-spec`, `specs/portolan/core.md`.
   has a `root` link to `catalog.json`. The root catalog has a `root` link to
   itself (`./catalog.json`), as in `stac/examples/catalog.json`.
 - **`parent`.** The same clause. The parent is the object one level up in the
-  tree that section "Core Structure" draws. The root catalog has none. The two
-  collections and `environment/catalog.json` point at the catalog above them.
+  tree that section "Core Structure" draws. The root catalog has none.
+  `boundaries/collection.json`, `environment/catalog.json`, and
+  `environment/air-quality/collection.json` point at the catalog above them.
   Each item points at `environment/air-quality/collection.json`.
 - **`collection`.** The same clause. Each item points at the collection that
   holds it.
 - **`child` and `item`.** Section "Links": "a `child` or `item` link for every
   object it contains". The root holds `boundaries/` and `environment/`.
   `environment/` holds `air-quality/`. `air-quality/` holds the two items.
-- **`type`.** Section "Links": "Every structural link MUST carry a `type` of
-  `application/json` (or `application/geo+json` for links to items)".
+- **`type`.** Section "Links" requires a `type` on every structural link. The
+  type is `application/geo+json` on a link to an item and `application/json`
+  on the other links.
 - **Titles.** Section "Human-Readable Titles": "every `child` and `item` link
   MUST include a `title`". A `child` link takes the `title` of its target.
-  `station-north` has `properties.title`, so its link takes that title. The
-  item `Estación Sur` has no title, so its link takes the item ID. That
+  The link to `station-north` takes its `properties.title`. The
+  item `Estación Sur` has no title. The link to it takes the item ID. That
   fallback is a writer choice, because the spec only requires that the title
   exists.
 - **No `self` link.** Section "Links": a catalog served from a fixed URL
-  SHOULD carry an absolute `self` link on its root. STAC requires that a
+  SHOULD include an absolute `self` link on its root. STAC requires that a
   `self` link is absolute. The writer does not know the URL, so it writes no
   `self` link.
 - **Relative hrefs with `./` or `../`.** Section "Links" permits relative
@@ -60,7 +62,7 @@ The spec is `portolan-sdi/portolan-spec`, `specs/portolan/core.md`.
 - **Other links.** The `via` link on `boundaries` is not a link the writer
   makes, so it passes through unchanged after the writer's links.
 
-The link order is a writer choice. The spec does not set one. The structural
+The writer picks the link order because the spec sets none. The structural
 links come first in the order root, parent, collection, then `child` and `item`
 sorted by path. The `agents` and `describedby` links follow, then the other
 links in their input order.

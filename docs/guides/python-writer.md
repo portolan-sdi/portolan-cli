@@ -1,12 +1,13 @@
 # Write a catalog from Python
 
 An application that holds STAC documents in memory can publish a Portolan
-catalog with the `portolan-core` package. It does not need the CLI or the
-geospatial stack. `portolan-cli` depends on `portolan-core`, so an install
-of the CLI includes it.
+catalog with the `portolan-core` package alone. The package installs neither
+the CLI nor the geospatial stack. `portolan-cli` depends on `portolan-core`, so an install of the CLI
+includes it.
 
-The writer makes a plan first and writes second. The plan is plain data, so
-you can inspect it, test it, and write it through your own storage layer.
+The writer makes a plan first and writes second. The plan is plain data. Your
+code can examine it before any write, and your own sink can send it to any
+storage.
 
 ## Make a plan
 
@@ -37,8 +38,8 @@ give `file:size` and `file:checksum` yourself when you have them. For a
 directory asset such as a Zarr store, give `file:size` and leave out
 `file:checksum`.
 
-The writer checks the input before it makes any operation. A key that is
-absolute or holds `..`, a catalog or collection without a `title`, a missing
+The writer checks the input before it makes any operation. An absolute
+key, a key with a `..` part, a catalog or collection without a `title`, a missing
 `README.md` or `AGENTS.md`, or documentation with no catalog or collection
 beside it raises a `CatalogWriteError` subclass.
 
@@ -99,8 +100,9 @@ plan = plan_catalog(documents, documentation, prior_managed_keys=previous_keys)
 `previous_keys` is the set of document and documentation keys that you passed
 last time, without a prefix. A prior key must be a `.json` file, a
 `README.md`, or an `AGENTS.md`. The writer refuses a `versions.json` and a key
-that an asset of the new catalog points at. It cannot tell an item from a
-data file that nothing links, so list only keys that a previous plan wrote.
+that an asset of the new catalog points at. An item and a data file that
+nothing links look the same to the writer. List only keys that a previous plan
+wrote.
 
 The writer also refuses a plan in which two keys differ only by case, because
 such a plan is unsafe on a case-insensitive store.

@@ -197,8 +197,8 @@ To cut a release, open a PR that runs:
 uv run cz bump --changelog
 ```
 
-When that PR merges, the release workflow detects the `bump:` commit, creates the
-git tag, and builds both packages. It publishes `portolan-core` to PyPI first,
+When that PR merges, the release workflow finds the `bump:` commit and creates the
+git tag. Then it builds both packages. It publishes `portolan-core` to PyPI first,
 then `portolan-cli`, which pins `portolan-core` to the same version. Both use
 trusted publishing. Last, it creates a GitHub Release with both sets of files.
 

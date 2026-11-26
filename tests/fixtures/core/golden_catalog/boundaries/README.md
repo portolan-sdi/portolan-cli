@@ -1,4 +1,4 @@
-# Administrative Boundaries
+# Administrative boundaries
 
 Municipal boundaries as one GeoParquet file.
 

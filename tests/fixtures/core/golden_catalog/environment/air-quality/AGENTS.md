@@ -1,3 +1,3 @@
-# Air Quality
+# Air quality
 
-Each item holds one Cloud-Optimized GeoTIFF.
+Each item contains one Cloud-Optimized GeoTIFF.

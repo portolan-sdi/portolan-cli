@@ -1,4 +1,4 @@
-# Example Open Data
+# Example open data
 
 A small catalog that tests the portolan-core writer.
 
