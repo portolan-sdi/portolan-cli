@@ -121,19 +121,25 @@ def published_tree(catalog_root: Path, documents: Iterable[str]) -> set[str]:
 def resolve_href(base_dir: Path, href: str) -> Path:
     """Resolve a STAC link href against the directory holding the linking object.
 
-    A relative href is a URI reference, so its percent-escapes are decoded:
-    rashid links ``été 2024.json`` as ``%C3%A9t%C3%A9%202024.json``. An
-    absolute or a remote href is joined as written.
+    Rashid's ``resolve_local_href`` resolves a relative href that stays below
+    ``base_dir``. It decodes percent escapes and drops the query and the
+    fragment, so rashid's link ``%C3%A9t%C3%A9%202024.json`` names
+    ``été 2024.json``. A ``../`` href leaves ``base_dir`` and resolves on disk.
+    An absolute or a remote href is joined as written.
     """
-    if "://" not in href and not href.startswith("/"):
-        href = unquote(href)
-    if href.startswith("./"):
-        return base_dir / href[2:]
+    from rashid_core.api import resolve_local_href
+
+    # The document name is a placeholder. Only its directory, base_dir, matters.
+    local = resolve_local_href("_", href)
+    if local is not None:
+        return base_dir / local
     if href.startswith("../"):
-        return (base_dir / href).resolve()
+        return (base_dir / unquote(href)).resolve()
     return base_dir / href
 
 
+# The link walkers read only the documents that the links name. They do not
+# use rashid's CatalogGraph.load, because it parses every JSON file in the tree.
 def iter_links(
     data: dict[str, Any],
     base_dir: Path,
