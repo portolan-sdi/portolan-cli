@@ -4360,7 +4360,7 @@ def config_get(ctx: click.Context, json_output: bool, key: str, collection: str 
         portolan config get remote
         portolan config get aws_profile --collection restricted
     """
-    from portolan_cli.config import _get_env_var_name, get_setting, get_setting_source
+    from portolan_cli.config import _get_env_var_name, read_setting
     from portolan_cli.run_state import RunState
 
     use_json = should_output_json(ctx, json_output)
@@ -4371,27 +4371,14 @@ def config_get(ctx: click.Context, json_output: bool, key: str, collection: str 
         # Load .env for credential precedence
         state = RunState.open(catalog_path)
         load_dotenv_and_warn_sensitive(catalog_path, state=state)
-        value = get_setting(key, catalog_path=catalog_path, collection=collection, state=state)
-        source = get_setting_source(key, catalog_path, collection, state=state)
-    except (ConfigError, ValueError) as e:
-        error_type = type(e).__name__ if isinstance(e, ConfigError) else "ConfigError"
-        emit_error("config get", error_type, str(e), use_json=use_json)
+        result = read_setting(key, catalog_path, collection, state=state)
+    except ConfigError as e:
+        emit_error("config get", type(e).__name__, str(e), use_json=use_json, code=e.code)
         raise SystemExit(1) from None
 
-    if use_json:
-        data = {
-            "key": key,
-            "value": value,
-            "source": source,
-        }
-        if collection:
-            data["collection"] = collection
-        envelope = success_envelope("config get", data)
-        output_json_envelope(envelope)
-    else:
-        if value is not None:
-            source_label = f"(from {source})"
-            success(f"{key}={value} {source_label}")
+    if not emit_success("config get", result.to_dict(), use_json=use_json):
+        if result.value is not None:
+            success(f"{key}={result.value} (from {result.source})")
         else:
             info_output(f"{key} is not set")
             detail(f"  Set via: portolan config set {key} <value>")

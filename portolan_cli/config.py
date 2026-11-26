@@ -1151,6 +1151,67 @@ def get_setting_source(
     return "default"
 
 
+@dataclass(frozen=True)
+class SettingValue:
+    """One setting, as ``config get`` and ``config set`` report it.
+
+    Attributes:
+        key: The setting key.
+        value: The resolved or stored value.
+        source: Where the value comes from. None for ``config set``, which
+            reports no source.
+        collection: The collection of the setting, or None for the catalog.
+    """
+
+    key: str
+    value: Any
+    source: str | None = None
+    collection: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize the setting as the envelope data of its command."""
+        data: dict[str, Any] = {"key": self.key, "value": self.value}
+        if self.source is not None:
+            data["source"] = self.source
+        if self.collection:
+            data["collection"] = self.collection
+        return data
+
+
+def read_setting(
+    key: str,
+    catalog_path: Path,
+    collection: str | None = None,
+    *,
+    state: ConfigSource | None = None,
+) -> SettingValue:
+    """Resolve one setting and its source.
+
+    This is the library function of ``portolan config get``. The caller loads
+    ``.env`` first, so an env setting resolves.
+
+    Args:
+        key: Setting key.
+        catalog_path: Root path of the catalog.
+        collection: Optional collection name.
+        state: The run state, which shares file reads across settings.
+
+    Returns:
+        The value and its source.
+
+    Raises:
+        ConfigError: If config.yaml holds a sensitive setting, or does not parse.
+    """
+    try:
+        value = get_setting(key, catalog_path=catalog_path, collection=collection, state=state)
+        source = get_setting_source(key, catalog_path, collection, state=state)
+    except ValueError as e:
+        # A sensitive key in config.yaml. The command reported it as a
+        # ConfigError before, so the type stays.
+        raise ConfigError(str(e)) from e
+    return SettingValue(key, value, source, collection)
+
+
 # =============================================================================
 # Hierarchical .portolan/ support
 # =============================================================================

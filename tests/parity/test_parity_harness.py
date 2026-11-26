@@ -35,7 +35,6 @@ PARITY_PENDING = frozenset(
         "add",
         "add-external",
         "clean",
-        "config get",
         "config list",
         "config set",
         "config unset",

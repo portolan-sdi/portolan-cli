@@ -12,7 +12,11 @@ from typing import TYPE_CHECKING
 import pytest
 
 from portolan_cli.catalog_list import list_catalog_contents
-from portolan_cli.errors import CatalogAlreadyExistsError
+from portolan_cli.config import (
+    read_setting,
+    set_setting,
+)
+from portolan_cli.errors import CatalogAlreadyExistsError, ConfigError
 from portolan_cli.inspect import initialize_catalog
 from portolan_cli.remove import remove_path
 from portolan_cli.status import get_catalog_status
@@ -185,4 +189,60 @@ def test_rm_corrupt_versions(parity: Parity, points_catalog: Callable[[Path], No
         catalog=catalog,
         call=lambda root: remove_path(target, catalog_root=root, keep=True),
         raises=ValueError,
+    )
+
+
+@pytest.fixture
+def configured_catalog(points_catalog: Callable[[Path], None]) -> Callable[[Path], None]:
+    """The points catalog, with one catalog setting and one collection setting."""
+
+    def build(root: Path) -> None:
+        points_catalog(root)
+        set_setting(root, "statistics.enabled", "false")
+        set_setting(root, "pmtiles.enabled", "true", collection="points")
+
+    return build
+
+
+def _with_config_text(text: str) -> Callable[[Callable[[Path], None]], Callable[[Path], None]]:
+    def wrap(build: Callable[[Path], None]) -> Callable[[Path], None]:
+        def catalog(root: Path) -> None:
+            build(root)
+            with (root / ".portolan" / "config.yaml").open("a", encoding="utf-8") as f:
+                f.write(text)
+
+        return catalog
+
+    return wrap
+
+
+@pytest.mark.parametrize(
+    ("key", "collection"),
+    [("statistics.enabled", None), ("backend", None), ("pmtiles.enabled", "points")],
+)
+def test_config_get(
+    parity: Parity,
+    configured_catalog: Callable[[Path], None],
+    key: str,
+    collection: str | None,
+) -> None:
+    """`config get` reports the value and its source."""
+    parity(
+        "config get",
+        [key] if collection is None else [key, "--collection", collection],
+        catalog=configured_catalog,
+        call=lambda root: read_setting(key, root, collection),
+    )
+
+
+def test_config_get_sensitive_in_file(
+    parity: Parity, configured_catalog: Callable[[Path], None]
+) -> None:
+    """`config get` reports a sensitive setting in config.yaml as a ConfigError."""
+    parity.error(
+        "config get",
+        ["remote"],
+        catalog=_with_config_text("remote: s3://bucket/catalog\n")(configured_catalog),
+        call=lambda root: read_setting("remote", root),
+        raises=ConfigError,
     )
