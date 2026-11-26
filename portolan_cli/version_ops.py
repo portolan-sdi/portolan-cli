@@ -8,15 +8,16 @@ bodies) to keep the module lightweight and avoid circular imports.
 from __future__ import annotations
 
 import logging
+import re
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from functools import partial
 from typing import TYPE_CHECKING, Any
 
 from portolan_cli.trace import count
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterator
     from pathlib import Path
 
     from portolan_cli.backends.protocol import SchemaFingerprint
@@ -207,6 +208,130 @@ def publish_version(
     # projection of a staged change never counts as a publish.
     count("versions.published")
     return published
+
+
+_SEMVER = re.compile(r"^\d+\.\d+\.\d+(-[a-zA-Z0-9.-]+)?(\+[a-zA-Z0-9.-]+)?$")
+
+
+@dataclass(frozen=True)
+class VersionBumpResult:
+    """The outcome of ``portolan version bump``.
+
+    ``error`` reports a failure as data: the type and the message that the
+    command reports in its envelope. It is a plain tuple, because this module
+    is on the import path of push and must not load ``json_output``.
+    ``published`` is None when nothing changed, when the confirmation declined,
+    or on an error.
+    """
+
+    collection: str
+    previous_version: str | None = None
+    modified: list[str] = field(default_factory=list)
+    deleted: list[str] = field(default_factory=list)
+    published: Version | None = None
+    error: tuple[str, str] | None = None
+
+    @property
+    def changed(self) -> bool:
+        """True when a file of the collection changed since the current version."""
+        return bool(self.modified or self.deleted)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return the envelope data of ``portolan version bump``."""
+        if self.published is None:
+            return {
+                "collection": self.collection,
+                "message": "No changes detected",
+                "created": False,
+            }
+        return {
+            "collection": self.collection,
+            "version": self.published.version,
+            "previous_version": self.previous_version,
+            "created": self.published.created.isoformat(),
+            "breaking": self.published.breaking,
+            "message": self.published.message,
+            "modified_files": self.modified,
+            "deleted_files": self.deleted,
+        }
+
+
+def bump_collection_version(
+    collection: str,
+    new_version: str,
+    *,
+    catalog_root: Path,
+    notes: str | None = None,
+    breaking: bool = False,
+    confirm: Callable[[VersionBumpResult], bool] | None = None,
+) -> VersionBumpResult:
+    """Publish ``new_version`` of ``collection`` from the files on disk.
+
+    The function compares the files with the checksums of the current version
+    in versions.json. It publishes the modified files and drops the deleted
+    ones. With no change, it publishes nothing.
+
+    Args:
+        collection: Collection identifier, relative to ``catalog_root``.
+        new_version: Explicit semver string, such as ``"1.2.0"``.
+        catalog_root: Root directory of the catalog.
+        notes: Message of the new version.
+        breaking: Whether the new version has breaking changes.
+        confirm: Receives the planned bump before the publish. A False return
+            publishes nothing. The CLI asks the user here.
+
+    Returns:
+        The planned bump, with the published version or the error.
+    """
+    from portolan_cli.status import detect_deleted_files, detect_modified_files
+    from portolan_cli.versions import read_versions
+
+    def failed(error_type: str, message: str) -> VersionBumpResult:
+        return VersionBumpResult(collection, error=(error_type, message))
+
+    if not _SEMVER.match(new_version):
+        return failed(
+            "ValidationError",
+            f"Invalid semver: '{new_version}'. Expected format: MAJOR.MINOR.PATCH (e.g., '1.2.0')",
+        )
+    collection_path = catalog_root / collection
+    versions_path = collection_path / "versions.json"
+    if not versions_path.exists():
+        return failed("NotFoundError", f"No versions.json in {collection}")
+    try:
+        versions_file = read_versions(versions_path)
+    except ValueError as e:
+        return failed("ParseError", f"Invalid versions.json: {e}")
+    if new_version in {v.version for v in versions_file.versions}:
+        return failed("DuplicateVersionError", f"Version '{new_version}' already exists")
+
+    plan = VersionBumpResult(
+        collection,
+        versions_file.current_version,
+        detect_modified_files(collection_path, versions_file),
+        detect_deleted_files(collection_path, versions_file),
+    )
+    if not plan.changed or (confirm is not None and not confirm(plan)):
+        return plan
+    assets = {
+        name: str(collection_path / name)
+        for name in plan.modified
+        if (collection_path / name).exists()
+    }
+    try:
+        published = publish_version(
+            collection,
+            assets=assets,
+            breaking=breaking,
+            message=notes or "",
+            removed=set(plan.deleted) if plan.deleted else None,
+            version=new_version,
+            catalog_root=catalog_root,
+        )
+    # A plugin backend can raise any exception, and the result reports each one.
+    except Exception as e:
+        return replace(plan, error=(type(e).__name__, f"Failed to create version: {e}"))
+    return replace(plan, published=published)
 
 
 def _schema_fingerprint(staged: StagedVersion) -> SchemaFingerprint | None:

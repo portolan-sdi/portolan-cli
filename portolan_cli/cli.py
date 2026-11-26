@@ -5339,14 +5339,6 @@ def _bump_error(use_json: bool, error_type: str, message: str) -> None:
     raise SystemExit(1)
 
 
-def _validate_semver(version: str) -> bool:
-    """Validate semver format (major.minor.patch with optional prerelease/build)."""
-    import re
-
-    semver_pattern = r"^\d+\.\d+\.\d+(-[a-zA-Z0-9.-]+)?(\+[a-zA-Z0-9.-]+)?$"
-    return bool(re.match(semver_pattern, version))
-
-
 @version.command()
 @click.argument("collection")
 @click.argument("new_version")
@@ -5398,99 +5390,39 @@ def bump(
         portolan version bump demographics 2.0.0 --breaking -m "Schema change"
         portolan version bump demographics 1.4.0 -y  # Skip confirmation
     """
-    from portolan_cli.status import detect_deleted_files, detect_modified_files
-    from portolan_cli.version_ops import publish_version
-    from portolan_cli.versions import read_versions
+    from portolan_cli.version_ops import bump_collection_version
 
     use_json = should_output_json(ctx, json_output)
-
-    # Validate semver format
-    if not _validate_semver(new_version):
-        msg = f"Invalid semver: '{new_version}'. Expected format: MAJOR.MINOR.PATCH (e.g., '1.2.0')"
-        _bump_error(use_json, "ValidationError", msg)
 
     if catalog_path is None:
         catalog_path = require_catalog_root(use_json, "version bump")
 
-    collection_path = catalog_path / collection
-    versions_path = collection_path / "versions.json"
+    def confirm(plan: Any) -> bool:
+        return _bump_show_changes(
+            collection, new_version, plan.previous_version, plan.modified, plan.deleted
+        )
 
-    # Read current versions
-    if not versions_path.exists():
-        _bump_error(use_json, "NotFoundError", f"No versions.json in {collection}")
-
-    try:
-        versions_file = read_versions(versions_path)
-    except ValueError as e:
-        _bump_error(use_json, "ParseError", f"Invalid versions.json: {e}")
-
-    current_version = versions_file.current_version
-
-    # Check for duplicate version
-    existing_versions = {v.version for v in versions_file.versions}
-    if new_version in existing_versions:
-        _bump_error(use_json, "DuplicateVersionError", f"Version '{new_version}' already exists")
-
-    # Detect changes
-    modified = detect_modified_files(collection_path, versions_file)
-    deleted = detect_deleted_files(collection_path, versions_file)
-
-    if not modified and not deleted:
-        if not emit_success(
-            "version bump",
-            {"collection": collection, "message": "No changes detected", "created": False},
-            use_json=use_json,
-        ):
-            info_output(f"No changes detected in '{collection}'")
-        return
-
-    # Show what will be versioned and get confirmation
-    if (
-        not use_json
-        and not yes
-        and not _bump_show_changes(collection, new_version, current_version, modified, deleted)
-    ):
+    result = bump_collection_version(
+        collection,
+        new_version,
+        catalog_root=catalog_path,
+        notes=notes,
+        breaking=breaking,
+        confirm=None if use_json or yes else confirm,
+    )
+    if result.error is not None:
+        _bump_error(use_json, *result.error)
+    if result.published is None and result.changed:
         info_output("Aborted")
         return
 
-    # Compute checksums for modified files
-    assets: dict[str, str] = {}
-    for filename in modified:
-        file_path = collection_path / filename
-        if file_path.exists():
-            assets[filename] = str(file_path)
-
-    # Publish the version
-    try:
-        ver = publish_version(
-            collection,
-            assets=assets,
-            breaking=breaking,
-            message=notes or "",
-            removed=set(deleted) if deleted else None,
-            version=new_version,
-            catalog_root=catalog_path,
-        )
-    except Exception as e:
-        _bump_error(use_json, type(e).__name__, f"Failed to create version: {e}")
-
-    if not emit_success(
-        "version bump",
-        {
-            "collection": collection,
-            "version": ver.version,
-            "previous_version": current_version,
-            "created": ver.created.isoformat(),
-            "breaking": ver.breaking,
-            "message": ver.message,
-            "modified_files": modified,
-            "deleted_files": deleted,
-        },
-        use_json=use_json,
-    ):
-        success(f"Created version {ver.version}")
-        if ver.message:
-            detail(f"  {ver.message}")
+    if not emit_success("version bump", result.to_dict(), use_json=use_json):
+        if result.published is None:
+            info_output(f"No changes detected in '{collection}'")
+            return
+        success(f"Created version {result.published.version}")
+        if result.published.message:
+            detail(f"  {result.published.message}")
 
 
 # =============================================================================

@@ -43,7 +43,6 @@ PARITY_PENDING = frozenset(
         "skills show",
         "stac-geoparquet",
         "sync",
-        "version bump",
         "version prune",
         "version rollback",
     }
