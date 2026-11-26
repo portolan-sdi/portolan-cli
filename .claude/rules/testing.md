@@ -93,6 +93,16 @@ per-test decorators) to every new test file, and confirm it is collected:
 - Do not add `# type: ignore` to test helpers, annotate them, `mypy --strict`
   applies to tests too.
 
+## Command parity (issue #1133)
+
+Each CLI command delegates to one library function whose result has
+`to_dict()`, and the command emits exactly that dict as the envelope `data`.
+A parity test in `tests/parity/` proves it with the `parity` fixture. The
+module docstring of `tests/parity/harness.py` gives the convention: how to add
+a test, the conversion rule, the ignore paths, and the failure path. When a
+command gets a parity test, remove it from `PARITY_PENDING` in
+`tests/parity/test_parity_harness.py`. That list only shrinks.
+
 ## Test Fixtures
 
 Store small, representative data files in `tests/fixtures/`. Fixtures should be:
