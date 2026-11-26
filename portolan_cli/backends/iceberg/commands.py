@@ -91,3 +91,38 @@ def rollback_collection(
     """
     backend = require_iceberg_backend(catalog_root, "rollback")
     return RollbackResult(collection, backend.rollback(collection, target_version))
+
+
+@dataclass(frozen=True)
+class PruneResult:
+    """The result of ``portolan version prune``."""
+
+    collection: str
+    pruned: list[Version]
+    keep: int
+    dry_run: bool
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return the envelope data of ``portolan version prune``."""
+        return {
+            "collection": self.collection,
+            "pruned": [
+                {"version": v.version, "created": v.created.isoformat()} for v in self.pruned
+            ],
+            "kept": self.keep,
+            "dry_run": self.dry_run,
+        }
+
+
+def prune_collection(
+    collection: str, *, keep: int = 5, dry_run: bool = False, catalog_root: Path
+) -> PruneResult:
+    """Remove the old versions of ``collection``, keeping the ``keep`` most recent.
+
+    Raises:
+        BackendRequiredError: If the catalog does not use the iceberg backend.
+        BackendUnavailableError: If the iceberg backend cannot start.
+    """
+    backend = require_iceberg_backend(catalog_root, "prune")
+    pruned = backend.prune(collection, keep=keep, dry_run=dry_run)
+    return PruneResult(collection, pruned, keep, dry_run)

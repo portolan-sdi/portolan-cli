@@ -10,7 +10,7 @@ pyiceberg.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, NoReturn
+from typing import NoReturn
 
 import click
 
@@ -18,7 +18,7 @@ from portolan_cli import api
 from portolan_cli.backends.iceberg.commands import (
     BackendRequiredError,
     BackendUnavailableError,
-    require_iceberg_backend,
+    prune_collection,
     rollback_collection,
 )
 
@@ -51,19 +51,6 @@ def _catalog_root(catalog_path: Path | None, command: str, *, use_json: bool) ->
                 use_json=use_json,
             )
     return catalog_path
-
-
-def _iceberg_backend(
-    ctx: click.Context, catalog_path: Path | None, json_flag: bool, name: str
-) -> Any:
-    """Resolve the catalog root and the iceberg backend, or exit with an error."""
-    command = f"version {name}"
-    use_json = _use_json(ctx, json_flag)
-    catalog_path = _catalog_root(catalog_path, command, use_json=use_json)
-    try:
-        return require_iceberg_backend(catalog_path, name)
-    except (BackendRequiredError, BackendUnavailableError) as e:
-        _fail(command, "BackendError", str(e), use_json=use_json)
 
 
 _CATALOG_OPTION = click.option(
@@ -149,22 +136,19 @@ def prune(
         portolan version prune boundaries --dry-run      # Preview without deleting
     """
     use_json = _use_json(ctx, json_output)
-    backend = _iceberg_backend(ctx, catalog_path, json_output, "prune")
+    root = _catalog_root(catalog_path, "version prune", use_json=use_json)
 
     try:
-        pruned = backend.prune(collection, keep=keep, dry_run=dry_run)
+        result = prune_collection(collection, keep=keep, dry_run=dry_run, catalog_root=root)
+    except (BackendRequiredError, BackendUnavailableError) as e:
+        _fail("version prune", "BackendError", str(e), use_json=use_json)
     except Exception as e:  # noqa: BLE001 - any backend failure is reported
         _fail("version prune", type(e).__name__, str(e), use_json=use_json)
 
     if use_json:
-        data = {
-            "collection": collection,
-            "pruned": [{"version": v.version, "created": v.created.isoformat()} for v in pruned],
-            "kept": keep,
-            "dry_run": dry_run,
-        }
-        click.echo(api.success_envelope("version prune", data).to_json())
+        click.echo(api.success_envelope("version prune", result.to_dict()).to_json())
         return
+    pruned = result.pruned
     prefix = "[DRY RUN] " if dry_run else ""
     if not pruned:
         api.info(f"{prefix}Nothing to prune (≤{keep} versions exist)")

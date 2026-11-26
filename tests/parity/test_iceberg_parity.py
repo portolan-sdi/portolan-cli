@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
+    from portolan_cli.backends.iceberg.commands import PruneResult
     from tests.catalog_invariants import RunCli
     from tests.parity.harness import Parity
 
@@ -80,4 +81,32 @@ def test_version_rollback_unknown_version(
         catalog=iceberg_catalog,
         call=lambda root: rollback_collection("points", "9.9.9", catalog_root=root),
         raises=ValueError,
+    )
+
+
+def test_version_prune(
+    parity: Parity,
+    iceberg_catalog: Callable[[Path], None],
+    run_cli: RunCli,
+    valid_polygons_geojson: Path,
+) -> None:
+    """`version prune --dry-run` reports the old version it would remove."""
+    from portolan_cli.backends.iceberg.commands import prune_collection
+
+    def two_versions(root: Path) -> None:
+        iceberg_catalog(root)
+        shutil.copy(valid_polygons_geojson, root / "points" / "polygons.geojson")
+        run_cli("add", "--portolan-dir", str(root), str(root / "points" / "polygons.geojson"))
+
+    def pruned_one(root: Path) -> PruneResult:
+        result = prune_collection("points", keep=1, dry_run=True, catalog_root=root)
+        assert [v.version for v in result.pruned] == ["1.0.0"], result
+        return result
+
+    parity(
+        "version prune",
+        ["points", "--keep", "1", "--dry-run"],
+        catalog=two_versions,
+        call=pruned_one,
+        ignore=["pruned.*.created"],
     )

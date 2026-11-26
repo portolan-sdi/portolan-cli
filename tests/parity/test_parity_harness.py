@@ -40,7 +40,6 @@ PARITY_PENDING = frozenset(
         "partition",
         "push",
         "sync",
-        "version prune",
     }
 )
 
