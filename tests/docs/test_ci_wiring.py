@@ -575,6 +575,16 @@ selftest = _load_selftest()
 CHEAP_FAULTS = ("library-print", "dead-function", "ci-success-wiring", "unknown-marker")
 
 
+def test_the_duplicate_gate_runs_the_prek_jscpd_command() -> None:
+    """The self-test proves the hook that CI runs, so both read portolan-core (#1133)."""
+    prek = (REPO_ROOT / "prek.toml").read_text(encoding="utf-8")
+    (entry,) = re.findall(r'entry = "(uvx jscpd@[^"]+)"', prek)
+    (gate,) = selftest.FAULTS_BY_NAME["duplicate-block"].gates
+
+    assert gate.command == tuple(entry.split())
+    assert selftest.DUPLICATE_MODULE.startswith("packages/portolan-core/src/")
+
+
 def test_the_ci_success_check_fails_without_plugin_test() -> None:
     """The in-process half of the ci-success-wiring fault."""
     jobs = _jobs("ci.yml")

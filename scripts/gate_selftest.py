@@ -213,7 +213,8 @@ def _apply_stale_file_size(root: Path, faulty: bool) -> None:
     raise FaultError("no asset in the catalog carries file:size")
 
 
-DUPLICATE_MODULE = "portolan_cli/_dup_selftest.py"
+# In portolan-core, so the fault proves that jscpd reads packages/ (#1133).
+DUPLICATE_MODULE = "packages/portolan-core/src/portolan_core/_dup_selftest.py"
 # About 70 jscpd tokens, above the 50-token minTokens in .jscpd.json.
 _DUPLICATE_BODY = """
     total = 0
@@ -437,6 +438,7 @@ FAULTS = (
                     "uvx",
                     "jscpd@5.2.1",
                     "portolan_cli",
+                    "packages",
                     "tests",
                     "--baseline",
                     ".jscpd-baseline.json",
