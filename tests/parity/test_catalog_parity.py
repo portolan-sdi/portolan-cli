@@ -21,7 +21,7 @@ from portolan_cli.config import (
 )
 from portolan_cli.errors import CatalogAlreadyExistsError, ConfigError
 from portolan_cli.inspect import initialize_catalog
-from portolan_cli.remove import remove_path
+from portolan_cli.remove import SafetyError, remove_path
 from portolan_cli.status import get_catalog_status
 
 if TYPE_CHECKING:
@@ -30,6 +30,11 @@ if TYPE_CHECKING:
     from tests.parity.harness import Parity
 
 pytestmark = pytest.mark.integration
+
+
+def _tree(root: Path) -> dict[str, bytes]:
+    """Map each file below ``root`` to its bytes."""
+    return {p.relative_to(root).as_posix(): p.read_bytes() for p in root.rglob("*") if p.is_file()}
 
 
 @pytest.fixture
@@ -166,8 +171,38 @@ def test_rm(
         "rm",
         [*args, str(target)],
         catalog=points_catalog,
-        call=lambda root: remove_path(target, catalog_root=root, keep=keep, dry_run=dry_run),
+        call=lambda root: remove_path(
+            target, catalog_root=root, keep=keep, dry_run=dry_run, force=not (keep or dry_run)
+        ),
     )
+
+
+def test_rm_without_force(parity: Parity, points_catalog: Callable[[Path], None]) -> None:
+    """`rm` that would delete a file and has no --force reports a SafetyError."""
+    target = Path("points") / "points.geojson"
+    parity.error(
+        "rm",
+        [str(target)],
+        catalog=points_catalog,
+        call=lambda root: remove_path(target, catalog_root=root),
+        raises=SafetyError,
+    )
+
+
+def test_rm_without_force_changes_nothing(
+    points_catalog: Callable[[Path], None], tmp_path: Path
+) -> None:
+    """`remove_path` without force refuses before it touches the catalog."""
+    root = tmp_path / "catalog"
+    points_catalog(root)
+    before = _tree(root)
+    with pytest.raises(SafetyError) as caught:
+        remove_path(root / "points" / "points.geojson", catalog_root=root)
+    assert str(caught.value) == (
+        "Destructive rm requires --force flag. Use --keep to preserve files, "
+        "or --dry-run to preview."
+    )
+    assert _tree(root) == before
 
 
 def test_rm_corrupt_versions(parity: Parity, points_catalog: Callable[[Path], None]) -> None:

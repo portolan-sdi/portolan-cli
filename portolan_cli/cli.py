@@ -3230,30 +3230,29 @@ def rm_cmd(
         portolan rm -f demographics/census.parquet  # Force delete and untrack
         portolan rm -f vectors/                     # Force remove entire directory
     """
+    from portolan_cli.remove import SafetyError, remove_path, require_force
+
     use_json = should_output_json(ctx, json_output)
 
-    # Require --force for destructive operations (unless --keep or --dry-run)
-    if not keep and not dry_run and not force:
-        emit_error(
-            "rm",
-            "SafetyError",
-            "Destructive rm requires --force flag. Use --keep to preserve files, or --dry-run to preview.",
-            use_json=use_json,
-        )
+    # Refuse a destructive rm before the catalog root lookup, as before.
+    try:
+        require_force(keep=keep, dry_run=dry_run, force=force)
+    except SafetyError as err:
+        emit_error("rm", "SafetyError", str(err), use_json=use_json)
         if not use_json:
             detail("Examples:")
             detail("  portolan rm --keep myfile.parquet  # Untrack but keep file")
             detail("  portolan rm --dry-run myfile.parquet  # Preview removal")
             detail("  portolan rm -f myfile.parquet  # Force delete")
-        raise SystemExit(1)
+        raise SystemExit(1) from err
 
     # Auto-detect catalog root (git-style)
     catalog_root = _resolve_rm_catalog_root(catalog_path, use_json)
 
-    from portolan_cli.remove import remove_path
-
     try:
-        result = remove_path(path, catalog_root=catalog_root, keep=keep, dry_run=dry_run)
+        result = remove_path(
+            path, catalog_root=catalog_root, keep=keep, dry_run=dry_run, force=force
+        )
         if not emit_success("rm", result.to_dict(), use_json=use_json):
             _render_rm_result(path, result.removed, result.skipped, keep, dry_run, verbose)
 
