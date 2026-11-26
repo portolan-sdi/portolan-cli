@@ -11,6 +11,7 @@ from __future__ import annotations
 import contextlib
 import json
 import shutil
+from pathlib import PurePath
 from typing import TYPE_CHECKING, Any, TypeVar
 
 import pytest
@@ -39,9 +40,10 @@ pytestmark = pytest.mark.integration
 T = TypeVar("T")
 
 STALE = "stale\n"
-READMES = ["README.md", "points/README.md"]
-ROOT_METADATA = ".portolan/metadata.yaml"
-POINTS_METADATA = "points/.portolan/metadata.yaml"
+# The results hold str(Path), as the command output did before #1133: backslashes on Windows.
+READMES = ["README.md", str(PurePath("points/README.md"))]
+ROOT_METADATA = str(PurePath(".portolan/metadata.yaml"))
+POINTS_METADATA = str(PurePath("points/.portolan/metadata.yaml"))
 
 
 def _keep(results: list[T], result: T) -> T:
@@ -351,7 +353,7 @@ def test_readme_single(parity: Parity, stale_catalog: Callable[[Path], None]) ->
         catalog=stale_catalog,
         call=lambda root: _keep(results, generate_readmes(root, "points", recursive=False)),
     )
-    assert results[0].to_dict() == {"path": "points/README.md", "generated": True}
+    assert results[0].to_dict() == {"path": READMES[1], "generated": True}
     root = parity.root
     assert (root / "points/README.md").read_text() == generate_readme_for_collection(
         root / "points", root

@@ -76,7 +76,8 @@ def test_scan_fix_with_suggestions(
 
     (outcome,) = outcomes
     suggestions = [s.to_dict() for s in outcome.result.collection_suggestions]
-    flood = ["flood/flood_rp10.geojson", "flood/flood_rp50.geojson"]
+    # The suggestion holds str(Path), as the command output did before #1133.
+    flood = [str(Path("flood") / name) for name in ("flood_rp10.geojson", "flood_rp50.geojson")]
     # The return-period marker and the shared prefix each suggest the group.
     assert [(s["suggested_name"], sorted(s["files"])) for s in suggestions] == [
         ("flood", flood),

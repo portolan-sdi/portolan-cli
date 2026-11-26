@@ -8,7 +8,7 @@ from __future__ import annotations
 import contextlib
 import copy
 import json
-from pathlib import Path
+from pathlib import Path, PurePath
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -617,7 +617,10 @@ def test_clean_effects(
         ["clean"],
         lambda root: clean_metadata(root),
     ):
-        gone = [*data["files_removed"], *data["directories_removed"]]
+        # The result holds str(Path), backslashes on Windows. _tree keys are POSIX.
+        gone = [
+            PurePath(g).as_posix() for g in (*data["files_removed"], *data["directories_removed"])
+        ]
         assert "catalog.json" in gone
         assert ".portolan" in gone
         kept = {

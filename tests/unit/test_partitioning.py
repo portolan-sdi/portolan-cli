@@ -1028,16 +1028,20 @@ class TestPartitionFile:
         assert result.exit_code == 0, result.output
         assert isinstance(outcome, PartitionOutcome)
         data = json.loads(result.stdout)["data"]
-        on_disk = sorted(str(f) for f in Path("lib/out").rglob("*.parquet"))
-        assert len(on_disk) > 1
-        assert outcome.to_dict() == {
-            "input": "points.parquet",
-            "output_dir": "lib/out",
-            "partitions": len(on_disk),
-            "files": on_disk,
-        }
-        assert json.loads(json.dumps(outcome.to_dict()).replace("lib/out", "cli/out")) == data
-        assert sorted(str(f) for f in Path("cli/out").rglob("*.parquet")) == data["files"]
+
+        def expected(output_dir: Path) -> dict[str, object]:
+            # str(Path), as the command output did before #1133: backslashes on Windows.
+            on_disk = sorted(str(f) for f in output_dir.rglob("*.parquet"))
+            return {
+                "input": "points.parquet",
+                "output_dir": str(output_dir),
+                "partitions": len(on_disk),
+                "files": on_disk,
+            }
+
+        assert len(list(Path("lib/out").rglob("*.parquet"))) > 1
+        assert outcome.to_dict() == expected(Path("lib/out"))
+        assert data == expected(Path("cli/out"))
 
     @pytest.mark.integration
     def test_the_library_call_prints_nothing(self, tmp_path: Path) -> None:
