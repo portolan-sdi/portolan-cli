@@ -46,7 +46,7 @@ def remote_catalog(
     memory.put("catalog/points/versions.json", (root / "points" / "versions.json").read_bytes())
     monkeypatch.setenv("PORTOLAN_REMOTE", "s3://bucket/catalog")
     monkeypatch.setattr(
-        "portolan_cli.sync.download._setup_store_and_kwargs", lambda *_: (memory, {})
+        "portolan_cli.sync.download._setup_store_and_kwargs", lambda *_, **__: (memory, {})
     )
     yield root
 
