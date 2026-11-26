@@ -9,6 +9,7 @@ remote is in memory.
 
 from __future__ import annotations
 
+import re
 import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -168,3 +169,25 @@ def test_clone_all(parity: Parity, published: Callable[[], None]) -> None:
         catalog=empty,
         call=lambda root: clone(REMOTE, Path("cloned")),
     )
+
+
+def test_clone_reports_the_catalog_download(tmp_path: Path, published: Callable[[], None]) -> None:
+    """clone sends the download lines of the remote catalog.json to its report."""
+    published()
+    lines: list[tuple[str, str]] = []
+
+    result = clone(
+        REMOTE, tmp_path / "cloned", report=lambda level, msg: lines.append((level, msg))
+    )
+
+    assert result.success
+    downloading = [
+        msg for level, msg in lines if level == "info" and msg.startswith("Downloading tmp")
+    ]
+    assert len(downloading) == 1
+    assert re.fullmatch(
+        r"Downloading tmp\w+\.json \(\d+\.\d\d MB\) <- catalog/catalog\.json", downloading[0]
+    )
+    complete = [msg for level, msg in lines if level == "success" and msg.startswith("Download ")]
+    assert len(complete) == 1
+    assert re.fullmatch(r"Download complete \(\d+\.\d\d MB/s\)", complete[0])

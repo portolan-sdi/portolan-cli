@@ -228,6 +228,7 @@ class TestListRemoteCollections:
     @pytest.mark.unit
     def test_list_collections_propagates_profile(self) -> None:
         """Should pass AWS profile to fetch function."""
+        from portolan_cli.sync.report import silent
         from portolan_cli.sync.transport import list_remote_collections
 
         with patch("portolan_cli.sync.transport._fetch_remote_catalog_json") as mock_fetch:
@@ -235,7 +236,9 @@ class TestListRemoteCollections:
 
             list_remote_collections("s3://bucket/catalog", profile="my-profile")
 
-        mock_fetch.assert_called_once_with("s3://bucket/catalog", profile="my-profile")
+        mock_fetch.assert_called_once_with(
+            "s3://bucket/catalog", profile="my-profile", report=silent
+        )
 
 
 class TestFetchRemoteCatalogJson:

@@ -542,6 +542,7 @@ def _download_assets(
             destination=local_path,
             profile=profile,
             overwrite=True,
+            report=report,
         )
 
         if result.success:

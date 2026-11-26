@@ -58,6 +58,7 @@ import time
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import obstore as obs
 from obstore.store import (
@@ -75,9 +76,22 @@ from portolan_cli.sync.upload import (
 )
 from portolan_cli.trace import submit
 
+if TYPE_CHECKING:
+    from portolan_cli.sync.report import Level, Report
+
 # Transfer progress is a diagnostic. Each caller reports its own outcome from
-# the DownloadResult.
+# the DownloadResult. download_file sends its lines to a report callback when
+# the caller passes one.
 logger = logging.getLogger(__name__)
+
+
+def _tell(report: Report | None, level: Level, message: str) -> None:
+    """Send one line to ``report``, or to the module logger without one."""
+    if report is not None:
+        report(level, message)
+    else:
+        logger.log(logging.WARNING if level in ("warn", "error") else logging.DEBUG, message)
+
 
 # Type alias for all supported object stores (same as upload.py)
 ObjectStore = S3Store | GCSStore | AzureStore | HTTPStore | LocalStore | MemoryStore
@@ -279,6 +293,7 @@ def download_file(
     s3_region: str | None = None,
     s3_use_ssl: bool | None = None,
     chunk_concurrency: int = 4,
+    report: Report | None = None,
 ) -> DownloadResult:
     """Download a single file from S3/GCS/Azure.
 
@@ -292,6 +307,8 @@ def download_file(
         s3_region: S3 region (default: auto-detected)
         s3_use_ssl: Whether to use HTTPS for S3 endpoint (default: True)
         chunk_concurrency: Max concurrent chunks per file (default: 4)
+        report: Receives each line of the download, with its level. Without
+            it, the lines go to the module logger.
 
     Returns:
         DownloadResult with download statistics
@@ -317,7 +334,7 @@ def download_file(
 
     # Overwrite protection
     if not overwrite and local_path.exists():
-        logger.debug("Skipping existing file: %s", local_path)
+        _tell(report, "detail", f"Skipping existing file: {local_path}")
         return DownloadResult(
             success=True,
             files_downloaded=0,
@@ -327,7 +344,7 @@ def download_file(
         )
 
     if dry_run:
-        logger.info("[DRY RUN] Would download: %s -> %s", prefix, local_path)
+        _tell(report, "info", f"[DRY RUN] Would download: {prefix} -> {local_path}")
         return DownloadResult(
             success=True,
             files_downloaded=0,
@@ -351,7 +368,7 @@ def download_file(
         file_size = response.meta.get("size", 0)
         size_mb = file_size / (1024 * 1024) if file_size else 0
 
-        logger.debug("Downloading %s (%.2f MB) <- %s", local_path.name, size_mb, prefix)
+        _tell(report, "info", f"Downloading {local_path.name} ({size_mb:.2f} MB) <- {prefix}")
 
         # Stream download to file with cleanup on failure
         try:
@@ -375,7 +392,7 @@ def download_file(
         elapsed = time.time() - start_time
         speed_mbps = size_mb / elapsed if elapsed > 0 else 0
 
-        logger.debug("Download complete (%.2f MB/s)", speed_mbps)
+        _tell(report, "success", f"Download complete ({speed_mbps:.2f} MB/s)")
 
         return DownloadResult(
             success=True,
@@ -391,7 +408,7 @@ def download_file(
                 local_path.unlink()
         except OSError:
             pass  # Already deleted or permission issue
-        logger.warning("Download failed: %s", e)
+        _tell(report, "error", f"Download failed: {e}")
         return DownloadResult(
             success=False,
             files_downloaded=0,

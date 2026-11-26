@@ -87,12 +87,14 @@ def _fetch_remote_catalog_json(
     remote_url: str,
     *,
     profile: str | None = None,
+    report: Report = silent,
 ) -> dict[str, Any]:
     """Fetch and parse catalog.json from a remote catalog.
 
     Args:
         remote_url: Remote catalog URL (e.g., s3://bucket/catalog).
         profile: AWS profile name (for S3).
+        report: Receives the download lines.
 
     Returns:
         Parsed catalog.json as a dictionary.
@@ -112,6 +114,7 @@ def _fetch_remote_catalog_json(
             source=catalog_url,
             destination=tmp_path,
             profile=profile,
+            report=report,
         )
 
         if not result.success:
@@ -268,7 +271,7 @@ def _list_remote_collections_recursive(
     visited_urls.add(normalized_url)
 
     # Fetch this catalog
-    catalog_data = _fetch_remote_catalog_json(remote_url, profile=profile)
+    catalog_data = _fetch_remote_catalog_json(remote_url, profile=profile, report=report)
 
     collections: list[str] = []
 
