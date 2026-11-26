@@ -32,6 +32,7 @@ from portolan_cli.constants import ROLE_VISUAL
 from portolan_cli.errors import PortolanError
 from portolan_cli.formats import is_geoparquet, run_scope
 from portolan_cli.json_io import write_json_atomic
+from portolan_cli.report import emit
 from portolan_cli.stac_parquet import stamp_file_fields, sync_file_extension
 from portolan_cli.versions import track_generated_assets
 
@@ -53,6 +54,7 @@ from portolan_cli.viz.thumbnail import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
     from portolan_cli.config import ConfigSource
@@ -133,8 +135,6 @@ class PMTilesResult:
         failed: List of (source_path, error_message) for failed generations.
         sources: The GeoParquet of each PMTiles in the plan.
         older: PMTiles that were older than their GeoParquet at the start.
-        style_notice: The notice of ``register_style_assets``, for the caller
-            to show, or None.
     """
 
     generated: list[Path] = field(default_factory=list)
@@ -142,7 +142,6 @@ class PMTilesResult:
     failed: list[tuple[Path, str]] = field(default_factory=list)
     sources: dict[Path, Path] = field(default_factory=dict)
     older: list[Path] = field(default_factory=list)
-    style_notice: str | None = None
 
     @property
     def total(self) -> int:
@@ -267,10 +266,10 @@ def _end_build(pmtiles_path: Path, previous: Path | None, *, succeeded: bool) ->
     # missing_ok=True avoids TOCTOU race condition
     if pmtiles_path.exists():
         pmtiles_path.unlink(missing_ok=True)
-        logger.warning("Cleaned up partial file after failure: %s", pmtiles_path.name)
+        emit("warn", f"Cleaned up partial file after failure: {pmtiles_path.name}")
     if previous is not None:
         previous.replace(pmtiles_path)
-        logger.warning("Kept the previous %s: the rebuild failed.", pmtiles_path.name)
+        emit("warn", f"Kept the previous {pmtiles_path.name}: the rebuild failed.")
 
 
 def _discover_style_for_thumbnail(collection_dir: Path) -> Path | None:
@@ -681,7 +680,7 @@ def _backfill_skipped_assets(
             state=state,
         )
     except Exception as e:
-        logger.warning("Failed to backfill versions.json tracking for %s: %s", pmtiles_path.name, e)
+        emit("warn", f"Failed to backfill versions.json tracking for {pmtiles_path.name}: {e}")
 
 
 def _generate_thumbnail_asset(
@@ -717,7 +716,7 @@ def _generate_thumbnail_asset(
             style_path=style_path,
         )
     except Exception as e:
-        logger.warning("Thumbnail generation failed for %s: %s", pmtiles_path.name, e)
+        emit("warn", f"Thumbnail generation failed for {pmtiles_path.name}: {e}")
         return None
 
 
@@ -745,8 +744,9 @@ def _track_side_step_assets(
             collection_path, generated_assets, catalog_root, message=message, state=state
         )
     except Exception as e:
-        logger.warning(
-            "Failed to track generated assets in versions.json for %s: %s", pmtiles_path.name, e
+        emit(
+            "warn",
+            f"Failed to track generated assets in versions.json for {pmtiles_path.name}: {e}",
         )
 
 
@@ -946,7 +946,7 @@ def generate_pmtiles_for_collection(
         )
 
     styles = discover_styles(collection_path)
-    result.style_notice = register_style_assets(collection_path, styles)
+    register_style_assets(collection_path, styles)
 
     return result
 
@@ -1011,32 +1011,35 @@ class PMTilesOutcome:
     Attributes:
         collection_id: The collection.
         config_enabled: The ``pmtiles.enabled`` setting of the collection.
+        requested: True when ``--pmtiles`` or ``--force-pmtiles`` was passed.
         result: The generation result, or None when a tool is missing.
         missing: The error that says which tool is missing, or None.
+        failure: The message of an explicit request that failed here, or None.
+            The step stops at this collection, and the command must exit 1.
     """
 
     collection_id: str
     config_enabled: bool
+    requested: bool
     result: PMTilesResult | None = None
     missing: PMTilesNotAvailableError | TippecanoeNotFoundError | None = None
+    failure: str | None = None
 
 
 @dataclass
 class PMTilesReport:
     """The outcome of one ``generate_or_suggest_pmtiles`` run.
 
-    The function writes no terminal output. The caller reports this.
-
     Attributes:
-        requested: True when ``--pmtiles`` or ``--force-pmtiles`` was passed.
         outcomes: One entry for each collection that the step processed.
-        failure: The message of an explicit request that failed. The step
-            stops at that collection, and the command must exit non-zero.
     """
 
-    requested: bool
     outcomes: list[PMTilesOutcome] = field(default_factory=list)
-    failure: str | None = None
+
+    @property
+    def failure(self) -> str | None:
+        """The message of the explicit request that failed, or None."""
+        return next((o.failure for o in self.outcomes if o.failure is not None), None)
 
 
 def generate_or_suggest_pmtiles(
@@ -1046,6 +1049,7 @@ def generate_or_suggest_pmtiles(
     generate_pmtiles: bool,
     force: bool,
     state: RunState | None = None,
+    on_outcome: Callable[[PMTilesOutcome], None] | None = None,
 ) -> PMTilesReport:
     """Generate PMTiles for affected collections when requested or configured.
 
@@ -1062,16 +1066,18 @@ def generate_or_suggest_pmtiles(
         generate_pmtiles: Whether ``--pmtiles`` was passed.
         force: Whether to regenerate up-to-date PMTiles.
         state: The run state, which parses the config once per run.
+        on_outcome: Called with each collection's outcome as soon as it is
+            done, so the caller can report it in order.
 
     Returns:
-        The report of each collection, for the caller to print.
+        The report of each collection.
     """
     # --force-pmtiles asks for a rebuild, so it also turns generation on. The
     # default is pmtiles.enabled false, so the flag alone used to exit 0 and
     # leave the old tiles in place (Issue #760). `requested` also drives the
     # report: an explicit request that fails must exit non-zero.
     requested = generate_pmtiles or force
-    report = PMTilesReport(requested=requested)
+    report = PMTilesReport()
 
     for coll_id in affected_collections:
         coll_path = catalog_root / coll_id
@@ -1079,7 +1085,7 @@ def generate_or_suggest_pmtiles(
             continue
 
         settings = get_pmtiles_settings(catalog_root, coll_id, coll_path, state=state)
-        outcome = PMTilesOutcome(coll_id, settings.enabled)
+        outcome = PMTilesOutcome(coll_id, settings.enabled, requested)
         report.outcomes.append(outcome)
         try:
             outcome.result = generate_pmtiles_for_collection(
@@ -1101,8 +1107,11 @@ def generate_or_suggest_pmtiles(
             )
         except (PMTilesNotAvailableError, TippecanoeNotFoundError) as e:
             outcome.missing = e
-        report.failure = _explicit_failure(outcome) if requested else None
-        if report.failure is not None:
+        if requested:
+            outcome.failure = _explicit_failure(outcome)
+        if on_outcome is not None:
+            on_outcome(outcome)
+        if outcome.failure is not None:
             break
     return report
 

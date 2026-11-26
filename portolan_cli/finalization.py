@@ -39,6 +39,7 @@ from portolan_cli.json_io import write_json_atomic
 from portolan_cli.metadata import extract_geoparquet_metadata
 from portolan_cli.metadata.geoparquet import GeoParquetMetadata
 from portolan_cli.query import ItemInfo
+from portolan_cli.report import emit
 from portolan_cli.stac import (
     DEFAULT_LICENSE,
     PROVISIONAL_END_DATETIME,
@@ -1327,9 +1328,10 @@ def _emit_stale_asset_warnings(
     if not stale_warnings:
         return
 
-    logger.warning(
-        "%d asset(s) reference missing files (run `portolan check --fix` to clean up)",
-        len(stale_warnings),
+    emit(
+        "warn",
+        f"{len(stale_warnings)} asset(s) reference missing files "
+        "(run `portolan check --fix` to clean up)",
     )
     for warning_msg in stale_warnings:
         logger.debug(warning_msg)
@@ -1415,7 +1417,7 @@ def _emit_partition_warnings(
         return
 
     for warning_msg in partition_warnings:
-        logger.warning(warning_msg)
+        emit("warn", warning_msg)
 
 
 def _enrich_saved_documents(

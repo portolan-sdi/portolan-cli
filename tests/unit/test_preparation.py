@@ -959,18 +959,19 @@ class TestTheGateSeesWhatTheRewriteDrops:
 
     @pytest.mark.unit
     @pytest.mark.parametrize("case", ["epoch", "orientation", "undefined-crs", "field-metadata"])
-    def test_the_file_is_kept(
-        self, tmp_path: Path, case: str, caplog: pytest.LogCaptureFixture
-    ) -> None:
+    def test_the_file_is_kept(self, tmp_path: Path, case: str) -> None:
         from portolan_cli.preparation import convert_vector
+        from portolan_cli.report import reporting
 
         source = self._geoparquet(tmp_path / "f.parquet", case)
         before = source.read_bytes()
 
-        convert_vector(source, tmp_path)
+        lines: list[tuple[str, str]] = []
+        with reporting(lambda level, message: lines.append((level, message))):
+            convert_vector(source, tmp_path)
 
         assert source.read_bytes() == before
-        assert "Kept f.parquet as it is" in caplog.text
+        assert [level for level, m in lines if m.startswith("Kept f.parquet as it is")] == ["warn"]
 
     @pytest.mark.unit
     def test_a_file_with_nothing_to_lose_is_rewritten(self, tmp_path: Path) -> None:
@@ -1097,40 +1098,51 @@ class TestRewriteOrKeep:
     """A failed rewrite keeps the file. It never fails the whole `add`."""
 
     @pytest.mark.unit
-    def test_a_fidelity_failure_keeps_the_file(
-        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
-    ) -> None:
+    def test_a_fidelity_failure_keeps_the_file(self, tmp_path: Path) -> None:
         """The operator reads what the rewrite would have lost."""
         from portolan_cli.conversion_config import VectorSettings
         from portolan_cli.errors import RewriteFidelityError
         from portolan_cli.preparation import _rewrite_or_keep
+        from portolan_cli.report import reporting
 
         source = tmp_path / "roads.parquet"
         source.write_bytes(b"PAR1")
         error = RewriteFidelityError("roads.parquet", "the CRS it declared")
 
-        with patch("portolan_cli.preparation._rewrite_parquet_in_place", side_effect=error):
+        lines: list[tuple[str, str]] = []
+        with (
+            patch("portolan_cli.preparation._rewrite_parquet_in_place", side_effect=error),
+            reporting(lambda level, message: lines.append((level, message))),
+        ):
             _rewrite_or_keep(source, VectorSettings(), None)
 
-        assert "Kept roads.parquet as it is" in caplog.text
-        assert "the CRS it declared" in caplog.text
+        assert lines == [("warn", "Kept roads.parquet as it is: it would lose the CRS it declared")]
 
     @pytest.mark.unit
-    def test_any_other_failure_also_keeps_the_file(
-        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
-    ) -> None:
+    def test_any_other_failure_also_keeps_the_file(self, tmp_path: Path) -> None:
         """A malformed geometry must not turn `add` into a failure."""
         from portolan_cli.conversion_config import VectorSettings
         from portolan_cli.preparation import _rewrite_or_keep
+        from portolan_cli.report import reporting
 
         source = tmp_path / "roads.parquet"
         source.write_bytes(b"PAR1")
         error = RuntimeError("Invalid Input Error: Skipping beyond end of binary data")
 
-        with patch("portolan_cli.preparation._rewrite_parquet_in_place", side_effect=error):
+        lines: list[tuple[str, str]] = []
+        with (
+            patch("portolan_cli.preparation._rewrite_parquet_in_place", side_effect=error),
+            reporting(lambda level, message: lines.append((level, message))),
+        ):
             _rewrite_or_keep(source, VectorSettings(), None)
 
-        assert "Kept roads.parquet as it is" in caplog.text
+        assert lines == [
+            (
+                "warn",
+                "Kept roads.parquet as it is: geoparquet-io could not rewrite it "
+                "(Invalid Input Error: Skipping beyond end of binary data)",
+            )
+        ]
 
 
 class TestAnAddedCogCarriesItsStatistics:
@@ -1255,8 +1267,9 @@ class TestAnAddedCogCarriesItsStatistics:
         tmp_path: Path,
         fixtures_dir: Path,
         monkeypatch: pytest.MonkeyPatch,
-        caplog: pytest.LogCaptureFixture,
     ) -> None:
+        from portolan_cli.report import reporting
+
         """GDAL re-encodes JPEG and WEBP tiles on every copy, so a rewrite loses quality."""
         from rio_cogeo.cogeo import cog_translate
         from rio_cogeo.profiles import cog_profiles
@@ -1273,12 +1286,20 @@ class TestAnAddedCogCarriesItsStatistics:
         before = cog.read_bytes()
         calls = self._spy_rewrite(monkeypatch)
 
-        convert_raster(cog, tmp_path)
+        lines: list[tuple[str, str]] = []
+        with reporting(lambda level, message: lines.append((level, message))):
+            convert_raster(cog, tmp_path)
 
         assert calls == []
         assert cog.read_bytes() == before
-        assert "PTL-DAT-009" in caplog.text
-        assert "photo.tif" in caplog.text
+        assert lines == [
+            (
+                "warn",
+                "photo.tif has no band statistics in the file (PTL-DAT-009). "
+                "Portolan keeps it as it is, because its tiles use lossy compression "
+                "and a rewrite would re-encode them.",
+            )
+        ]
 
     @pytest.mark.unit
     def test_a_lossy_codec_setting_keeps_the_pixels_of_a_lossless_cog(

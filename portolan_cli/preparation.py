@@ -81,6 +81,7 @@ from portolan_cli.metadata_yaml import (
 )
 from portolan_cli.plugins.formats import FormatContext, extension_of, handler_for
 from portolan_cli.readme import README_FILENAME
+from portolan_cli.report import emit
 from portolan_cli.run_state import RunState
 from portolan_cli.scan.detect import is_filegdb
 from portolan_cli.stac import (
@@ -819,10 +820,10 @@ def _extract_bbox_wgs84(metadata: AllMetadata, data_path: Path | None = None) ->
 def _warn_if_source_newer(source_path: Path, output_path: Path) -> None:
     """Warn if source file is newer than output (suggests --reconvert)."""
     if source_path.stat().st_mtime > output_path.stat().st_mtime:
-        logger.warning(
-            "Source file '%s' is newer than converted output. "
+        emit(
+            "warn",
+            f"Source file '{source_path.name}' is newer than converted output. "
             "Use --reconvert to re-convert from source.",
-            source_path.name,
         )
 
 
@@ -1574,21 +1575,19 @@ def _announce_rewrite(source: Path, reason: str) -> None:
         reason: Why the rewrite runs, in the operator's terms.
     """
     # A rewrite changes the operator's file, so the notice is user-facing and
-    # shows by default. A warning record shows on stderr at the default level
-    # and in JSON mode (#1005). Do not demote it to logging.info.
+    # shows by default. The CLI prints it through the output writer, which sends
+    # it to stderr in JSON mode (#1005). Do not demote it to logging.info.
     from portolan_cli.utils import format_size
 
     size_bytes = source.stat().st_size
     size = format_size(size_bytes)
-    logger.warning("Rewriting %s (%s): %s", source.name, size, reason)
+    emit("info", f"Rewriting {source.name} ({size}): {reason}")
     if size_bytes >= LARGE_REWRITE_WARN_BYTES:
-        logger.warning(
-            "%s is %s. The rewrite reads, sorts, and writes the whole file, and needs "
-            "%s of free space while it runs. Set add_bbox: false in "
-            ".portolan/config.yaml to skip it.",
-            source.name,
-            size,
-            size,
+        emit(
+            "warn",
+            f"{source.name} is {size}. The rewrite reads, sorts, and writes the "
+            f"whole file, and needs {size} of free space while it runs. Set "
+            f"add_bbox: false in .portolan/config.yaml to skip it.",
         )
 
 
@@ -1613,12 +1612,10 @@ def _rewrite_or_keep(
     try:
         _rewrite_parquet_in_place(source, settings, before)
     except RewriteFidelityError as err:
-        logger.warning("Kept %s as it is: it would lose %s", source.name, err.lost)
+        emit("warn", f"Kept {source.name} as it is: it would lose {err.lost}")
     except Exception as err:  # noqa: BLE001 - a copy is better than a failed add
         logger.info("Rewrite of %s failed: %s", source, err, exc_info=True)
-        logger.warning(
-            "Kept %s as it is: geoparquet-io could not rewrite it (%s)", source.name, err
-        )
+        emit("warn", f"Kept {source.name} as it is: geoparquet-io could not rewrite it ({err})")
 
 
 def _rewrite_parquet_in_place(
@@ -1936,11 +1933,11 @@ def convert_raster(
     if scratch is not None and _warn_on_failure(source, lambda: place_cog(scratch, output_path)):
         return output_path
     if embedded == "lossy":
-        logger.warning(
-            "%s has no band statistics in the file (PTL-DAT-009). "
+        emit(
+            "warn",
+            f"{source.name} has no band statistics in the file (PTL-DAT-009). "
             "Portolan keeps it as it is, because its tiles use lossy compression "
             "and a rewrite would re-encode them.",
-            source.name,
         )
     if source.resolve() != output_path.resolve():
         shutil.copy2(source, output_path)
@@ -2020,10 +2017,9 @@ def _warn_on_failure(source: Path, step: Callable[[], Path]) -> Path | None:
         with span("convert.embed_statistics", file=source.name):
             return step()
     except Exception as err:  # noqa: BLE001 - the original file stays usable
-        logger.warning(
-            "%s has no band statistics in the file (PTL-DAT-009), "
-            "and the rewrite that adds them failed: %s",
-            source.name,
-            err,
+        emit(
+            "warn",
+            f"{source.name} has no band statistics in the file (PTL-DAT-009), "
+            f"and the rewrite that adds them failed: {err}",
         )
         return None

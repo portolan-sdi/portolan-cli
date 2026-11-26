@@ -319,9 +319,10 @@ class TestWarnIfSourceNewer:
     """Tests for _warn_if_source_newer helper function."""
 
     @pytest.mark.unit
-    def test_warn_if_source_newer_emits_warning(self, caplog: pytest.LogCaptureFixture) -> None:
+    def test_warn_if_source_newer_emits_warning(self) -> None:
         """Warns when source mtime > output mtime."""
         from portolan_cli.add import _warn_if_source_newer
+        from portolan_cli.report import reporting
 
         with pytest.importorskip("tempfile").TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
@@ -334,17 +335,22 @@ class TestWarnIfSourceNewer:
             os.utime(output, (1_000_000, 1_000_000))
             os.utime(source, (2_000_000, 2_000_000))
 
-            with caplog.at_level("WARNING", logger="portolan_cli.preparation"):
+            lines: list[tuple[str, str]] = []
+            with reporting(lambda level, message: lines.append((level, message))):
                 _warn_if_source_newer(source, output)
-            [record] = caplog.records
-            assert "--reconvert" in record.getMessage()
+            assert lines == [
+                (
+                    "warn",
+                    "Source file 'source.shp' is newer than converted output. "
+                    "Use --reconvert to re-convert from source.",
+                )
+            ]
 
     @pytest.mark.unit
-    def test_warn_if_source_newer_silent_when_output_newer(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
+    def test_warn_if_source_newer_silent_when_output_newer(self) -> None:
         """No warning when output mtime >= source mtime."""
         from portolan_cli.add import _warn_if_source_newer
+        from portolan_cli.report import reporting
 
         with pytest.importorskip("tempfile").TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
@@ -357,6 +363,7 @@ class TestWarnIfSourceNewer:
             os.utime(source, (1_000_000, 1_000_000))
             os.utime(output, (2_000_000, 2_000_000))
 
-            with caplog.at_level("WARNING", logger="portolan_cli.preparation"):
+            lines: list[tuple[str, str]] = []
+            with reporting(lambda level, message: lines.append((level, message))):
                 _warn_if_source_newer(source, output)
-            assert caplog.records == []
+            assert lines == []

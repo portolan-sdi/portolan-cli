@@ -169,6 +169,7 @@ from portolan_cli.preparation import (
 )
 from portolan_cli.query import ItemInfo, get_item_info, is_current, list_items  # noqa: F401
 from portolan_cli.remove import remove_files  # noqa: F401
+from portolan_cli.report import emit
 from portolan_cli.stac import (
     MergeStrategy,
     create_collection,
@@ -186,9 +187,10 @@ if TYPE_CHECKING:
     from contextlib import AbstractContextManager
     from datetime import datetime
 
+    from portolan_cli.report import Report
     from portolan_cli.run_state import RunState
     from portolan_cli.stac_parquet import MirrorReport
-    from portolan_cli.viz.pmtiles import PMTilesReport
+    from portolan_cli.viz.pmtiles import PMTilesOutcome, PMTilesReport
 
 
 logger = logging.getLogger(__name__)
@@ -1435,8 +1437,6 @@ class AddOutcome:
         mirrors: The report of the ``items.parquet`` side-step.
         pmtiles: The report of the PMTiles side-step. When its ``failure``
             is set, the thumbnail step did not run.
-        thumbnails: Each registered thumbnail as
-            ``(collection path, thumbnail, rendered)``.
     """
 
     added: list[ItemInfo]
@@ -1444,7 +1444,6 @@ class AddOutcome:
     failures: list[AddFailure]
     mirrors: MirrorReport
     pmtiles: PMTilesReport
-    thumbnails: list[tuple[Path, Path, bool]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         """Return the envelope ``data`` of ``portolan add``."""
@@ -1466,7 +1465,7 @@ class AddOutcome:
 def _collections_to_refresh(
     added: list[ItemInfo], skips: list[tuple[Path, str]], catalog_root: Path
 ) -> tuple[set[str], set[str]]:
-    """Find the collections that the side-steps of ``add`` refresh.
+    """Warn about each file that stayed out of the catalog, and find the collections to refresh.
 
     The affected set holds the collections of the added files and of the skips
     still in the catalog, so --pmtiles works on already-tracked files. An
@@ -1484,6 +1483,7 @@ def _collections_to_refresh(
     affected = set(versioned)
     for p, reason in skips:
         if reason not in SKIPS_THAT_TRACK:
+            emit("warn", f"Skipping {p.name}: {reason}")
             continue
         # A nested collection id spans several path segments.
         collection_dir = _resolve_collection_dir(p, catalog_root)
@@ -1509,7 +1509,9 @@ def run_add(
     merge_strategy: str = "smart",
     skip_partitioning: bool = False,
     on_progress: Callable[[Path], None] | None = None,
-    progress: AbstractContextManager[object] | None = None,
+    adding: AbstractContextManager[object] | None = None,
+    report: Report | None = None,
+    on_step: Callable[[MirrorReport | PMTilesOutcome], None] | None = None,
     state: RunState | None = None,
 ) -> AddOutcome:
     """Run the whole ``portolan add`` workflow: add the files, then the side-steps.
@@ -1542,7 +1544,14 @@ def run_add(
         skip_partitioning: Add large files as they are, without partitions.
             The caller asks the operator, then passes the answer.
         on_progress: Called before each geospatial file is processed.
-        progress: Held open while the files are added, before the side-steps.
+        adding: Held open while the files are added, before the side-steps.
+            An error from adding the files passes through it, and an error
+            from a side-step does not.
+        report: Gets each line for the user, at the moment it happens. The
+            code below this function reports through it too
+            (``report.reporting``). None logs the lines.
+        on_step: Gets the report of the mirror step, and the outcome of each
+            collection in the PMTiles step, as soon as each is done.
         state: The run state. None opens one. This function commits it.
 
     Returns:
@@ -1550,6 +1559,7 @@ def run_add(
     """
     from portolan_cli import trace
     from portolan_cli.collection_thumbnail import ensure_collection_thumbnails
+    from portolan_cli.report import reporting
     from portolan_cli.run_state import RunState
     from portolan_cli.stac import MergeStrategy
     from portolan_cli.stac_parquet import generate_parquet_mirrors
@@ -1558,57 +1568,60 @@ def run_add(
 
     if state is None:
         state = RunState.open(catalog_root)
-    skip_reasons: dict[Path, str] = {}
-    with progress or contextlib.nullcontext():
-        added, skipped, failures = add_files(
-            paths=paths,
-            catalog_root=catalog_root,
-            collection_id=None,
-            item_id=item_id,
-            item_datetime=item_datetime,
-            on_progress=on_progress,
-            workers=workers,
-            force=force,
-            reconvert=reconvert,
-            skip_partitioning=skip_partitioning,
-            merge_strategy=MergeStrategy(merge_strategy),
-            skip_reasons=skip_reasons,
-            state=state,
-        )
-    # add_files gives every skip a reason. A path without one reads as unchanged.
-    skips = [(p, skip_reasons.get(p, SKIP_UNCHANGED)) for p in skipped]
-    affected, versioned = _collections_to_refresh(added, skips, catalog_root)
+    with reporting(report):
+        skip_reasons: dict[Path, str] = {}
+        with adding or contextlib.nullcontext():
+            added, skipped, failures = add_files(
+                paths=paths,
+                catalog_root=catalog_root,
+                collection_id=None,
+                item_id=item_id,
+                item_datetime=item_datetime,
+                on_progress=on_progress,
+                workers=workers,
+                force=force,
+                reconvert=reconvert,
+                skip_partitioning=skip_partitioning,
+                merge_strategy=MergeStrategy(merge_strategy),
+                skip_reasons=skip_reasons,
+                state=state,
+            )
+        # add_files gives every skip a reason. A path without one reads as unchanged.
+        skips = [(p, skip_reasons.get(p, SKIP_UNCHANGED)) for p in skipped]
+        affected, versioned = _collections_to_refresh(added, skips, catalog_root)
 
-    thumbnails: list[tuple[Path, Path, bool]] = []
-    try:
-        with trace.span("add.mirrors"):
-            mirrors = generate_parquet_mirrors(
-                catalog_root,
-                affected,
-                generate_parquet=generate_parquet,
-                versioned_collections=versioned,
-                state=state,
-            )
-        with trace.span("add.pmtiles"):
-            tiles = pmtiles.generate_or_suggest_pmtiles(
-                catalog_root,
-                affected,
-                generate_pmtiles=generate_pmtiles,
-                force=force_pmtiles,
-                state=state,
-            )
-        if tiles.failure is None:
-            thumbnails = ensure_collection_thumbnails(
-                catalog_root,
-                affected,
-                generate=generate_thumbnails,
-                force=force_thumbnails,
-                versioned_collections=versioned,
-                state=state,
-            )
-    finally:
-        commit_run(state)
-    return AddOutcome(added, skips, failures, mirrors, tiles, thumbnails)
+        try:
+            with trace.span("add.mirrors"):
+                mirrors = generate_parquet_mirrors(
+                    catalog_root,
+                    affected,
+                    generate_parquet=generate_parquet,
+                    versioned_collections=versioned,
+                    state=state,
+                )
+            if on_step is not None:
+                on_step(mirrors)
+            with trace.span("add.pmtiles"):
+                tiles = pmtiles.generate_or_suggest_pmtiles(
+                    catalog_root,
+                    affected,
+                    generate_pmtiles=generate_pmtiles,
+                    force=force_pmtiles,
+                    state=state,
+                    on_outcome=on_step,
+                )
+            if tiles.failure is None:
+                ensure_collection_thumbnails(
+                    catalog_root,
+                    affected,
+                    generate=generate_thumbnails,
+                    force=force_thumbnails,
+                    versioned_collections=versioned,
+                    state=state,
+                )
+        finally:
+            commit_run(state)
+    return AddOutcome(added, skips, failures, mirrors, tiles)
 
 
 def _enrich_deferred_documents(

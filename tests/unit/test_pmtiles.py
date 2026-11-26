@@ -1025,11 +1025,13 @@ class TestGeneratePMTilesForCollection:
         assert pmtiles_path.read_bytes() == b"valid tileset"
 
     @pytest.mark.unit
-    def test_failed_rebuild_says_it_kept_the_old_tiles(
-        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
-    ) -> None:
+    def test_failed_rebuild_says_it_kept_the_old_tiles(self, tmp_path: Path) -> None:
         """A failed rebuild names the tileset it kept (Issue #814)."""
         import os
+
+        from portolan_cli.report import reporting
+
+        lines: list[tuple[str, str]] = []
 
         from portolan_cli.viz.pmtiles import (
             PMTilesGenerationError,
@@ -1048,14 +1050,12 @@ class TestGeneratePMTilesForCollection:
         with (
             patch("portolan_cli.viz.pmtiles.check_pmtiles_available"),
             patch("portolan_cli.viz.pmtiles.generate_pmtiles", mock_generate_refuses),
-            caplog.at_level("WARNING", logger="portolan_cli.viz.pmtiles"),
+            reporting(lambda level, message: lines.append((level, message))),
         ):
             generate_pmtiles_for_collection(collection_dir, tmp_path)
 
         # The command must not claim it cleaned up a partial file.
-        assert [r.getMessage() for r in caplog.records if r.name == "portolan_cli.viz.pmtiles"] == [
-            "Kept the previous data.pmtiles: the rebuild failed."
-        ]
+        assert lines == [("warn", "Kept the previous data.pmtiles: the rebuild failed.")]
 
     @pytest.mark.unit
     @pytest.mark.parametrize(

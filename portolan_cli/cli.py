@@ -2198,8 +2198,12 @@ def _print_next_steps(result: ScanResult) -> None:
 
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from portolan_cli.add import AddOutcome
-    from portolan_cli.viz.pmtiles import PMTilesReport, PMTilesResult
+    from portolan_cli.report import Level, Report
+    from portolan_cli.stac_parquet import MirrorReport
+    from portolan_cli.viz.pmtiles import PMTilesOutcome, PMTilesResult
 
 
 def _output_add_json(outcome: AddOutcome) -> None:
@@ -2377,57 +2381,58 @@ def _output_add_human(
         _print_add_failures_batched(failures)
 
 
-def _report_add_side_steps(outcome: AddOutcome, *, verbose: bool, use_json: bool) -> None:
-    """Print what the add did besides adding files, in the order the steps ran.
+def _add_report(*, verbose: bool) -> Report:
+    """Return the callback that prints each library line of ``add`` as before.
 
-    A warning about a file that stayed out of the catalog goes to stderr in
-    both modes. The PMTiles lines print only in text mode.
+    A detail line is per-file detail, so it shows with --verbose only.
     """
-    from portolan_cli.add import SKIPS_THAT_TRACK
+    printers = {"success": success, "info": info_output, "warn": warn, "error": error}
 
-    for p, reason in outcome.skipped:
-        if reason not in SKIPS_THAT_TRACK:
-            warn(f"Skipping {p.name}: {reason}")
-    if verbose:
-        for coll_id in outcome.mirrors.generated:
-            info_output(f"Generated items.parquet for '{coll_id}'")
-    for coll_id, exc in outcome.mirrors.failed.items():
-        warn(f"Failed to generate parquet for '{coll_id}': {exc}")
-    for tiles in outcome.pmtiles.outcomes:
-        if tiles.result is not None and tiles.result.style_notice is not None:
-            info_output(tiles.result.style_notice)
-    if not use_json:
-        _report_pmtiles(outcome.pmtiles, verbose=verbose)
-    if verbose:
-        for collection_path, thumbnail, rendered in outcome.thumbnails:
-            verb = "Rendered" if rendered else "Registered existing"
-            detail(f"{verb} thumbnail for {collection_path.name}: {thumbnail.name}")
+    def report(level: Level, message: str) -> None:
+        if level == "detail":
+            if verbose:
+                detail(message)
+        else:
+            printers[level](message)
+
+    return report
 
 
-def _report_pmtiles(report: PMTilesReport, *, verbose: bool) -> None:
-    """Print the PMTiles side-step, and the explicit request that failed."""
+def _report_add_step(step: MirrorReport | PMTilesOutcome, *, verbose: bool, use_json: bool) -> None:
+    """Print one finished side step of ``add``: the mirrors, or one collection's PMTiles."""
+    from portolan_cli.stac_parquet import MirrorReport
+
+    if isinstance(step, MirrorReport):
+        if verbose:
+            for coll_id in step.generated:
+                info_output(f"Generated items.parquet for '{coll_id}'")
+        for coll_id, exc in step.failed.items():
+            warn(f"Failed to generate parquet for '{coll_id}': {exc}")
+    elif not use_json:
+        _report_pmtiles(step, verbose=verbose)
+
+
+def _report_pmtiles(outcome: PMTilesOutcome, *, verbose: bool) -> None:
+    """Print the PMTiles of one collection, and the explicit request that failed."""
     from portolan_cli.viz.pmtiles import PMTilesNotAvailableError
 
-    for outcome in report.outcomes:
-        result = outcome.result
-        if result is not None:
-            _report_pmtiles_result(result, verbose=verbose, requested=report.requested)
-        elif report.requested:
-            continue
-        elif not isinstance(outcome.missing, PMTilesNotAvailableError):
-            warn(f"Skipping PMTiles for '{outcome.collection_id}': tippecanoe not installed")
-        elif outcome.config_enabled:
-            warn(
-                f"PMTiles enabled for '{outcome.collection_id}' "
-                "but geoparquet-io has no PMTiles support"
-            )
-        elif verbose:
-            info_output(
-                f"Skipping PMTiles for '{outcome.collection_id}': "
-                "geoparquet-io has no PMTiles support"
-            )
-    if report.failure is not None:
-        error(report.failure)
+    if outcome.result is not None:
+        _report_pmtiles_result(outcome.result, verbose=verbose, requested=outcome.requested)
+    elif outcome.requested:
+        pass
+    elif not isinstance(outcome.missing, PMTilesNotAvailableError):
+        warn(f"Skipping PMTiles for '{outcome.collection_id}': tippecanoe not installed")
+    elif outcome.config_enabled:
+        warn(
+            f"PMTiles enabled for '{outcome.collection_id}' "
+            "but geoparquet-io has no PMTiles support"
+        )
+    elif verbose:
+        info_output(
+            f"Skipping PMTiles for '{outcome.collection_id}': geoparquet-io has no PMTiles support"
+        )
+    if outcome.failure is not None:
+        error(outcome.failure)
 
 
 def _report_pmtiles_result(result: PMTilesResult, *, verbose: bool, requested: bool) -> None:
@@ -2769,6 +2774,8 @@ def add_cmd(
             partitioning.prompt: true/false (default: true)
             partitioning.threshold_gb: size in GB (default: 2.0)
     """
+    import contextlib
+
     from portolan_cli.add import run_add
 
     use_json = should_output_json(ctx, json_output)
@@ -2832,46 +2839,53 @@ def add_cmd(
         _check_partition_prompt(resolved_paths, catalog_root, state) if not use_json else False
     )
 
-    try:
-        outcome = run_add(
-            resolved_paths,
-            catalog_root,
-            item_id=item_id,
-            item_datetime=item_datetime,
-            workers=workers,
-            generate_parquet=generate_parquet,
-            generate_pmtiles=generate_pmtiles,
-            force_pmtiles=force_pmtiles,
-            generate_thumbnails=generate_thumbnails,
-            force_thumbnails=force_thumbnails,
-            force=force,
-            reconvert=reconvert,
-            merge_strategy=merge_strategy,
-            skip_partitioning=skip_partitioning,
-            on_progress=on_file_progress,
-            progress=progress_reporter,
-            state=state,
-        )
-    except MissingLicenseError as err:
-        # Issue #686: a collection with no license fails PTL-LIC-001/002 the moment
-        # check reads it, so add refuses the write and names what to supply.
-        _fail_on_missing_license("add", err, use_json=use_json)
-    except (
-        ValueError,
-        FileNotFoundError,
-        AssetKeyCollisionError,
-        ConfigError,
-        UnknownFormatHandlerError,
-    ) as err:
-        # Issue #933: AssetKeyCollisionError is add refusing to replace one
-        # file's asset with another file. A ConfigError is a config.yaml key
-        # that add reads, such as a malformed ignored_files (#1044). An
-        # UnknownFormatHandlerError is a conversion.handlers pin to a handler
-        # that no plugin provides. Its message names the known handlers.
-        _fail_on_add_error(err, resolved_paths, use_json=use_json)
-    trace.current_span().set(elapsed_seconds=progress_reporter.elapsed_seconds)
+    @contextlib.contextmanager
+    def adding() -> Iterator[None]:
+        # Only an error from adding the files becomes an error report. An error
+        # from a side step propagates, as it always did.
+        try:
+            with progress_reporter:
+                yield
+        except MissingLicenseError as err:
+            # Issue #686: a collection with no license fails PTL-LIC-001/002 the moment
+            # check reads it, so add refuses the write and names what to supply.
+            _fail_on_missing_license("add", err, use_json=use_json)
+        except (
+            ValueError,
+            FileNotFoundError,
+            AssetKeyCollisionError,
+            ConfigError,
+            UnknownFormatHandlerError,
+        ) as err:
+            # Issue #933: AssetKeyCollisionError is add refusing to replace one
+            # file's asset with another file. A ConfigError is a config.yaml key
+            # that add reads, such as a malformed ignored_files (#1044). An
+            # UnknownFormatHandlerError is a conversion.handlers pin to a handler
+            # that no plugin provides. Its message names the known handlers.
+            _fail_on_add_error(err, resolved_paths, use_json=use_json)
+        trace.current_span().set(elapsed_seconds=progress_reporter.elapsed_seconds)
 
-    _report_add_side_steps(outcome, verbose=verbose, use_json=use_json)
+    outcome = run_add(
+        resolved_paths,
+        catalog_root,
+        item_id=item_id,
+        item_datetime=item_datetime,
+        workers=workers,
+        generate_parquet=generate_parquet,
+        generate_pmtiles=generate_pmtiles,
+        force_pmtiles=force_pmtiles,
+        generate_thumbnails=generate_thumbnails,
+        force_thumbnails=force_thumbnails,
+        force=force,
+        reconvert=reconvert,
+        merge_strategy=merge_strategy,
+        skip_partitioning=skip_partitioning,
+        on_progress=on_file_progress,
+        adding=adding(),
+        report=_add_report(verbose=verbose),
+        on_step=lambda step: _report_add_step(step, verbose=verbose, use_json=use_json),
+        state=state,
+    )
     # An explicit PMTiles request that failed exits 1 with no envelope, as before.
     if outcome.pmtiles.failure is not None:
         raise SystemExit(1)

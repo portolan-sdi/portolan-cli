@@ -50,6 +50,7 @@ from portolan_cli.formats import (
     remember,
     run_scope,
 )
+from portolan_cli.report import emit
 from portolan_cli.trace import count, current_span, span
 from portolan_cli.viz.thumbnail import (
     thumbnail_path_for,
@@ -999,7 +1000,8 @@ def repair_shapefile_encoding_sidecar(shp: Path) -> Path | None:
     import struct
 
     # The sidecar write changes the operator's files, so the notice is
-    # user-facing. A warning record shows on stderr by default (#1005).
+    # user-facing. The CLI prints it through the output writer, which sends it
+    # to stderr in JSON mode (#1005).
     dbf, cpg = shp.with_suffix(".dbf"), shp.with_suffix(".cpg")
     if not dbf.exists():
         return None
@@ -1018,12 +1020,12 @@ def repair_shapefile_encoding_sidecar(shp: Path) -> Path | None:
 
     if records_are_utf8 and has_non_ascii and declared not in (None, "UTF-8", "UTF8"):
         cpg.write_text("UTF-8")
-        logger.warning("Corrected %s: declared %s, DBF records are UTF-8", cpg.name, declared)
+        emit("info", f"Corrected {cpg.name}: declared {declared}, DBF records are UTF-8")
         return cpg
     if not records_are_utf8 and (declared is None or "UTF" in (declared or "")):
         cpg.write_text("ISO-8859-1")
         what = f"corrected from {declared}" if declared else "written"
-        logger.warning("Encoding sidecar %s %s: DBF records are not valid UTF-8", cpg.name, what)
+        emit("info", f"Encoding sidecar {cpg.name} {what}: DBF records are not valid UTF-8")
         return cpg
     return None
 

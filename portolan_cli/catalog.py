@@ -23,6 +23,7 @@ from portolan_cli.humanize import humanize_slug
 from portolan_cli.input_hardening import validate_catalog_id
 from portolan_cli.json_io import write_json_atomic, write_text_atomic
 from portolan_cli.models.catalog import CatalogModel
+from portolan_cli.report import emit
 from portolan_cli.stac_links import (
     in_link_order,
     iter_links,
@@ -1211,7 +1212,7 @@ def _read_catalog_index(versions_path: Path) -> dict[str, Any]:
             f"File: {versions_path}. "
             "Fix manually or delete to reinitialize."
         )
-        logger.warning(msg)
+        emit("warn", msg)
         raise CatalogVersionsCorruptedError(msg) from e
 
     if not isinstance(content, dict):
@@ -1220,7 +1221,7 @@ def _read_catalog_index(versions_path: Path) -> dict[str, Any]:
             f"got {type(content).__name__}. File: {versions_path}. "
             "Fix manually or delete to reinitialize."
         )
-        logger.warning(msg)
+        emit("warn", msg)
         raise CatalogVersionsCorruptedError(msg)
 
     collections_value = content.get("collections")
@@ -1230,7 +1231,7 @@ def _read_catalog_index(versions_path: Path) -> dict[str, Any]:
             f"expected dict or null, got {type(collections_value).__name__}. "
             f"File: {versions_path}. Fix manually or delete to reinitialize."
         )
-        logger.warning(msg)
+        emit("warn", msg)
         raise CatalogVersionsCorruptedError(msg)
     return content
 

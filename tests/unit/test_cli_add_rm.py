@@ -922,7 +922,7 @@ class TestAddJsonOutput:
         assert envelope["command"] == "add"
         assert [item["item_id"] for item in envelope["data"]["added"]] == ["open-buildings"]
         assert (
-            "⚠ Rewriting open-buildings.parquet (142.4KB): it carries no bbox covering column\n"
+            "→ Rewriting open-buildings.parquet (142.4KB): it carries no bbox covering column\n"
         ) in result.stderr
 
     @pytest.mark.integration
@@ -1178,18 +1178,14 @@ class TestReportSkipsAndFindCollections:
     """Skips that stay in the catalog keep their collection affected. Others warn."""
 
     @pytest.mark.unit
-    def test_an_ignored_file_before_a_tracked_skip(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_an_ignored_file_before_a_tracked_skip(self, tmp_path: Path) -> None:
         """The warning for the ignored file does not stop the walk over the later skips.
 
         A tracked skip belongs to the nearest collection above it, which can
         sit below a subcatalog.
         """
-        from portolan_cli.add import AddOutcome, _collections_to_refresh
-        from portolan_cli.cli import _report_add_side_steps
-        from portolan_cli.stac_parquet import MirrorReport
-        from portolan_cli.viz.pmtiles import PMTilesReport
+        from portolan_cli.add import _collections_to_refresh
+        from portolan_cli.report import reporting
 
         for collection in ("roads", "parks", "region/trails"):
             (tmp_path / collection).mkdir(parents=True)
@@ -1202,14 +1198,12 @@ class TestReportSkipsAndFindCollections:
             (tmp_path.parent / "elsewhere.parquet", "unchanged since the last add"),
         ]
 
-        affected, versioned = _collections_to_refresh([], skips, tmp_path)
-        outcome = AddOutcome([], skips, [], MirrorReport(), PMTilesReport(requested=False))
-        _report_add_side_steps(outcome, verbose=False, use_json=False)
+        lines: list[tuple[str, str]] = []
+        with reporting(lambda level, message: lines.append((level, message))):
+            affected, versioned = _collections_to_refresh([], skips, tmp_path)
 
         assert (affected, versioned) == ({"roads", "parks", "region/trails"}, set())
-        assert capsys.readouterr().err == (
-            "⚠ Skipping places.geojson: it matches ignored_files pattern '*'\n"
-        )
+        assert lines == [("warn", "Skipping places.geojson: it matches ignored_files pattern '*'")]
 
     @pytest.mark.integration
     def test_a_second_add_restores_the_thumbnail_of_a_nested_collection(
@@ -1355,10 +1349,10 @@ class TestSideStepExitAfterAdd:
         """``--pmtiles`` without tippecanoe exits 1 and keeps the version of the add."""
         import portolan_cli.viz.pmtiles as pmtiles
 
-        def exit_like_missing_tippecanoe(*_args: object, **_kwargs: object) -> None:
-            raise SystemExit(1)
+        def missing_tippecanoe(*_args: object, **_kwargs: object) -> None:
+            raise pmtiles.TippecanoeNotFoundError
 
-        monkeypatch.setattr(pmtiles, "generate_or_suggest_pmtiles", exit_like_missing_tippecanoe)
+        monkeypatch.setattr(pmtiles, "generate_pmtiles_for_collection", missing_tippecanoe)
         root = conformant_catalog
         (root / "roads").mkdir()
         (root / "roads" / "roads.parquet").write_bytes(valid_points_parquet.read_bytes())

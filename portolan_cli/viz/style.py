@@ -36,6 +36,7 @@ from portolan_cli.constants import (
     ROLE_STYLE,
 )
 from portolan_cli.json_io import write_json_atomic
+from portolan_cli.report import emit
 from portolan_cli.stac_parquet import stamp_file_fields, sync_file_extension
 from portolan_cli.utils import get_dict, get_list
 
@@ -651,19 +652,20 @@ def _merge_style_asset(
     return asset
 
 
-def _default_notice(default_key: str, style_count: int) -> str:
+def _announce_default(default_key: str, style_count: int) -> None:
     """Tell the publisher which style Portolan made the default, and how to move it."""
-    return (
+    emit(
+        "info",
         f"Default style: {default_key} (chosen from {style_count} styles). "
         f'To pick another, move the "{DEFAULT_ROLE}" role to that style asset '
-        "in collection.json."
+        "in collection.json.",
     )
 
 
 def register_style_assets(
     collection_path: Path,
     styles: list[StyleInfo],
-) -> str | None:
+) -> None:
     """Register discovered styles as STAC assets on the collection.
 
     Updates collection.json to add or update style assets and to drop stale
@@ -681,14 +683,10 @@ def register_style_assets(
     Args:
         collection_path: Path to the collection directory.
         styles: List of StyleInfo objects from discover_styles().
-
-    Returns:
-        A notice for the publisher when Portolan chose the default among
-        several styles, or None. The caller shows it.
     """
     collection_json_path = collection_path / "collection.json"
     if not collection_json_path.exists():
-        return None
+        return
 
     data = json.loads(collection_json_path.read_text(encoding="utf-8"))
     assets = data.get("assets", {})
@@ -718,8 +716,7 @@ def register_style_assets(
     write_json_atomic(collection_json_path, data)
 
     if default_key is not None and chosen_by_portolan and len(styles) > 1:
-        return _default_notice(default_key, len(styles))
-    return None
+        _announce_default(default_key, len(styles))
 
 
 # =============================================================================

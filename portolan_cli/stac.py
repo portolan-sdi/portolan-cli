@@ -28,6 +28,7 @@ from portolan_cli.extension_registry import EXTENSION_REGISTRY
 from portolan_cli.humanize import humanize_slug
 from portolan_cli.json_io import write_json_atomic
 from portolan_cli.providers import derive_provenance, resolve_providers
+from portolan_cli.report import emit
 from portolan_cli.viz.pmtiles_links import PMTILES_MEDIA_TYPE, pmtiles_asset_key
 
 if TYPE_CHECKING:
@@ -816,11 +817,10 @@ def apply_provenance(
 
     if provenance == "official":
         if source_url is not None:
-            logger.warning(
-                "%s: producer and host are the same organization, so the "
-                "collection is official and carries no via link to %s",
-                collection.id,
-                source_url,
+            emit(
+                "warn",
+                f"{collection.id}: producer and host are the same organization, so the "
+                f"collection is official and carries no via link to {source_url}",
             )
         return
 

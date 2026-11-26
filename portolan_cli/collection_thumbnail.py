@@ -42,6 +42,7 @@ from portolan_cli.versions import track_generated_assets
 if TYPE_CHECKING:
     from portolan_cli.config import ConfigSource
     from portolan_cli.run_state import RunState
+from portolan_cli.report import emit
 from portolan_cli.viz.thumbnail import (
     generate_vector_thumbnail,
     get_thumbnail_config,
@@ -364,7 +365,7 @@ def _resolve_for_collection(
     if rendered is None:
         # A silent failure left partitioned collections without a thumbnail
         # and gave no hint why (issue #1038).
-        logger.warning("No thumbnail for %s: %s did not render", collection_path.name, path.name)
+        emit("warn", f"No thumbnail for {collection_path.name}: {path.name} did not render")
         return None
     return rendered, True
 
@@ -430,31 +431,6 @@ def ensure_collection_thumbnail(
     Returns:
         The registered thumbnail path, or None when nothing was registered.
     """
-    registered = _ensure_thumbnail(
-        collection_path,
-        catalog_root,
-        generate=generate,
-        force=force,
-        amend_latest=amend_latest,
-        state=state,
-    )
-    return None if registered is None else registered[0]
-
-
-def _ensure_thumbnail(
-    collection_path: Path,
-    catalog_root: Path,
-    *,
-    generate: bool | None,
-    force: bool,
-    amend_latest: bool,
-    state: RunState | None,
-) -> tuple[Path, bool] | None:
-    """Do the work of :func:`ensure_collection_thumbnail`.
-
-    Returns:
-        The registered thumbnail and True when this run rendered it, or None.
-    """
     if not _thumbnails_wanted(catalog_root, generate, state):
         return None
     data = _load_collection(collection_path)
@@ -470,7 +446,7 @@ def _ensure_thumbnail(
             collection_path, catalog_root, data, force=force, state=state
         )
     except Exception as exc:
-        logger.warning("Thumbnail generation failed for %s: %s", collection_path.name, exc)
+        emit("warn", f"Thumbnail generation failed for {collection_path.name}: {exc}")
         return None
     if resolved is None:
         return None
@@ -494,8 +470,12 @@ def _ensure_thumbnail(
             state=state,
         )
     except Exception as exc:
-        logger.warning("Failed to track %s in versions.json: %s", thumbnail.name, exc)
-    return thumbnail, was_rendered
+        emit("warn", f"Failed to track {thumbnail.name} in versions.json: {exc}")
+
+    # A detail line. The CLI shows it with --verbose only.
+    verb = "Rendered" if was_rendered else "Registered existing"
+    emit("detail", f"{verb} thumbnail for {collection_path.name}: {thumbnail.name}")
+    return thumbnail
 
 
 def ensure_collection_thumbnails(
@@ -506,7 +486,7 @@ def ensure_collection_thumbnails(
     force: bool = False,
     versioned_collections: set[str] | None = None,
     state: RunState | None = None,
-) -> list[tuple[Path, Path, bool]]:
+) -> None:
     """Ensure every affected collection carries a thumbnail asset.
 
     Runs after the PMTiles side-step, so a higher-fidelity thumbnail rendered
@@ -524,25 +504,22 @@ def ensure_collection_thumbnails(
             so its backfilled thumbnail gets its own version instead of editing
             a snapshot that may already be published.
         state: The run state, which parses the config once per run.
-
-    Returns:
-        One ``(collection path, thumbnail, rendered)`` entry for each
-        registered thumbnail. ``rendered`` is True when this run drew it.
     """
     # Each footer read goes through the run memo.
     with span("add.thumbnails", collections=len(affected_collections)), run_scope(state):
-        registered: list[tuple[Path, Path, bool]] = []
+        if not affected_collections:
+            return
         # Resolve the flag against config once, then hand the answer down, so the
         # config read does not repeat per collection.
-        if not affected_collections or not _thumbnails_wanted(catalog_root, generate, state):
-            return registered
+        if not _thumbnails_wanted(catalog_root, generate, state):
+            return
 
         for collection_id in sorted(affected_collections):
             collection_path = catalog_root / collection_id
             if not (collection_path / "collection.json").exists():
                 continue
             with span("thumbnail.collection", collection=collection_id):
-                done = _ensure_thumbnail(
+                ensure_collection_thumbnail(
                     collection_path,
                     catalog_root,
                     generate=True,
@@ -550,9 +527,6 @@ def ensure_collection_thumbnails(
                     amend_latest=collection_id in (versioned_collections or set()),
                     state=state,
                 )
-            if done is not None:
-                registered.append((collection_path, *done))
-        return registered
 
 
 __all__ = [
