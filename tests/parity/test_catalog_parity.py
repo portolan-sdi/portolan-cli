@@ -14,6 +14,7 @@ import pytest
 from portolan_cli.catalog_list import list_catalog_contents
 from portolan_cli.config import (
     read_setting,
+    read_settings,
     set_setting,
     store_setting,
 )
@@ -280,5 +281,29 @@ def test_config_set_unknown_key(parity: Parity, configured_catalog: Callable[[Pa
         ["no.such.key", "1"],
         catalog=configured_catalog,
         call=lambda root: store_setting(root, "no.such.key", "1"),
+        raises=ConfigError,
+    )
+
+
+@pytest.mark.parametrize("collection", [None, "points"])
+def test_config_list(
+    parity: Parity, configured_catalog: Callable[[Path], None], collection: str | None
+) -> None:
+    """`config list` reports each setting with its source."""
+    parity(
+        "config list",
+        [] if collection is None else ["--collection", collection],
+        catalog=configured_catalog,
+        call=lambda root: read_settings(root, collection),
+    )
+
+
+def test_config_list_bad_yaml(parity: Parity, configured_catalog: Callable[[Path], None]) -> None:
+    """`config list` reports a config.yaml that does not parse."""
+    parity.error(
+        "config list",
+        [],
+        catalog=_with_config_text("  bad: [\n")(configured_catalog),
+        call=lambda root: read_settings(root),
         raises=ConfigError,
     )

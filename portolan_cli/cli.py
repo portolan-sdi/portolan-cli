@@ -4399,7 +4399,7 @@ def config_list(ctx: click.Context, json_output: bool, collection: str | None) -
         portolan config list
         portolan config list --collection demographics
     """
-    from portolan_cli.config import list_settings
+    from portolan_cli.config import read_settings
     from portolan_cli.run_state import RunState
 
     use_json = should_output_json(ctx, json_output)
@@ -4410,18 +4410,13 @@ def config_list(ctx: click.Context, json_output: bool, collection: str | None) -
         # Load .env for credential precedence
         state = RunState.open(catalog_path)
         load_dotenv_and_warn_sensitive(catalog_path, state=state)
-        settings = list_settings(catalog_path, collection=collection, state=state)
+        result = read_settings(catalog_path, collection, state=state)
     except ConfigError as e:
-        emit_error("config list", type(e).__name__, str(e), use_json=use_json)
+        emit_error("config list", type(e).__name__, str(e), use_json=use_json, code=e.code)
         raise SystemExit(1) from None
 
-    if use_json:
-        data: dict[str, Any] = {"settings": settings}
-        if collection:
-            data["collection"] = collection
-        envelope = success_envelope("config list", data)
-        output_json_envelope(envelope)
-    else:
+    settings = result.settings
+    if not emit_success("config list", result.to_dict(), use_json=use_json):
         if not settings:
             info_output("No configuration settings found")
             detail("  Set values with: portolan config set <key> <value>")

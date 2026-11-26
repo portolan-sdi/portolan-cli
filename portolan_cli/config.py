@@ -1234,6 +1234,38 @@ def store_setting(
     return SettingValue(key, set_setting(catalog_path, key, value, collection), None, collection)
 
 
+@dataclass(frozen=True)
+class SettingList:
+    """Each setting that ``config list`` reports, with its value and source."""
+
+    settings: dict[str, dict[str, Any]]
+    collection: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize the settings as the ``config list`` envelope data."""
+        data: dict[str, Any] = {"settings": self.settings}
+        if self.collection:
+            data["collection"] = self.collection
+        return data
+
+
+def read_settings(
+    catalog_path: Path,
+    collection: str | None = None,
+    *,
+    state: ConfigSource | None = None,
+) -> SettingList:
+    """List each setting with its value and source.
+
+    This is the library function of ``portolan config list``. The caller
+    loads ``.env`` first, so env settings appear.
+
+    Raises:
+        ConfigError: If config.yaml does not parse.
+    """
+    return SettingList(list_settings(catalog_path, collection, state=state), collection)
+
+
 # =============================================================================
 # Hierarchical .portolan/ support
 # =============================================================================
