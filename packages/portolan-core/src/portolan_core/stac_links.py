@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 import posixpath
+from pathlib import PureWindowsPath
 from typing import TYPE_CHECKING, Any
 from urllib.parse import unquote
 
@@ -55,6 +56,28 @@ SIDE_FILES = ("README.md", "AGENTS.md")
 GDAL_PAM_SUFFIX = ".aux.xml"
 
 
+def _published_path(base: str, href: object) -> str | None:
+    """Return the catalog-relative path that an href names, or None for no file of the catalog.
+
+    The href decodes before the checks, so a percent escape cannot hide an
+    absolute path, a drive, a backslash or a NUL. The checks are the same on
+    every host. A path that leaves the catalog names no file of it.
+    """
+    if not isinstance(href, str) or not href or "://" in href:
+        return None
+    decoded = unquote(href)
+    if (
+        "://" in decoded
+        or decoded.startswith("/")
+        or "\\" in decoded
+        or "\x00" in decoded
+        or PureWindowsPath(decoded).drive
+    ):
+        return None
+    path = posixpath.normpath(posixpath.join(base, decoded))
+    return None if path == ".." or path.startswith("../") else path
+
+
 def published_files(document: dict[str, Any], document_rel: str) -> tuple[set[str], set[str]]:
     """Return the files that one STAC object publishes, and its item documents.
 
@@ -79,12 +102,8 @@ def published_files(document: dict[str, Any], document_rel: str) -> tuple[set[st
     items = [link.get("href") for link in links if link.get("rel") == "item"]
 
     def resolve(hrefs: list[Any]) -> set[str]:
-        local = [h for h in hrefs if isinstance(h, str) and h and "://" not in h]
-        joined = {
-            posixpath.normpath(posixpath.join(base, unquote(h))) for h in local if h[0] != "/"
-        }
-        # A path that leaves the catalog names no file of the catalog.
-        return {path for path in joined if path != ".." and not path.startswith("../")}
+        paths = (_published_path(base, href) for href in hrefs)
+        return {path for path in paths if path is not None}
 
     files = resolve(named) | {posixpath.join(base, name) for name in SIDE_FILES}
     files |= {f + GDAL_PAM_SUFFIX for f in files if f.lower().endswith((".tif", ".tiff"))}

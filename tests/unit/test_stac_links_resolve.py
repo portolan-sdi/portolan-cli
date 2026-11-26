@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING
+from urllib.parse import quote
 
 import pytest
 
-from portolan_core.stac_links import published_files, resolve_href
+from portolan_core.stac_links import published_files, published_tree, resolve_href
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -37,3 +39,40 @@ def test_an_href_that_leaves_the_catalog_names_no_published_file(href: str) -> N
 
     assert files == {"roads/README.md", "roads/AGENTS.md"}
     assert items == set()
+
+
+@pytest.mark.parametrize(
+    "href",
+    [
+        "%2Ftmp%2Foutside.json",
+        "C%3A/x.json",
+        "C%3Ax.json",
+        "c:/x.json",
+        "a%5C..%5C..%5Cx.json",
+        "..\\..\\x.json",
+        "a%00.json",
+    ],
+)
+def test_an_href_that_decodes_outside_the_tree_names_no_published_file(href: str) -> None:
+    """The rule reads the decoded path, the same on every host."""
+    document = {"assets": {"data": {"href": href}}, "links": [{"rel": "item", "href": href}]}
+
+    files, items = published_files(document, "roads/collection.json")
+
+    assert files == {"roads/README.md", "roads/AGENTS.md"}
+    assert items == set()
+
+
+def test_the_tree_walk_reads_no_document_outside_the_catalog(tmp_path: Path) -> None:
+    outside = tmp_path / "outside.json"
+    outside.write_text(json.dumps({"assets": {"d": {"href": "./secret.parquet"}}}))
+    catalog_root = tmp_path / "catalog"
+    catalog_root.mkdir()
+    href = quote(outside.as_posix(), safe="")
+    (catalog_root / "catalog.json").write_text(
+        json.dumps({"links": [{"rel": "item", "href": href}]})
+    )
+
+    published = published_tree(catalog_root, ["catalog.json"])
+
+    assert published == {"catalog.json", "README.md", "AGENTS.md"}
