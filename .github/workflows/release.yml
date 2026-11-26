@@ -112,19 +112,22 @@ jobs:
           git push origin "$TAG"
 
       # Each distribution builds into its own directory, so each publish step
-      # uploads one distribution.
+      # uploads one distribution. The directories are under dist/, which
+      # .gitignore excludes. Otherwise the portolan-cli sdist holds the
+      # portolan-core files. The build job in ci.yml runs the same commands
+      # and checks the sdists.
       - name: Build packages
         if: steps.release_check.outputs.release_exists == 'false'
         run: |
-          uv build --package portolan-core --out-dir dist-core
-          uv build --package portolan-cli --out-dir dist-cli
+          uv build --package portolan-core --out-dir dist/core
+          uv build --package portolan-cli --out-dir dist/cli
 
       # portolan-cli pins portolan-core exactly, so portolan-core goes first.
       - name: Publish portolan-core to PyPI
         if: steps.release_check.outputs.release_exists == 'false'
         uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
         with:
-          packages-dir: dist-core
+          packages-dir: dist/core
           skip-existing: true
           print-hash: true
 
@@ -132,7 +135,7 @@ jobs:
         if: steps.release_check.outputs.release_exists == 'false'
         uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
         with:
-          packages-dir: dist-cli
+          packages-dir: dist/cli
           skip-existing: true
           print-hash: true
 
@@ -142,7 +145,7 @@ jobs:
           gh release create "$TAG" \
             --title "$TAG" \
             --notes "See [CHANGELOG](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/blob/main/CHANGELOG.md) for details." \
-            dist-core/* dist-cli/*
+            dist/core/* dist/cli/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.version.outputs.tag }}

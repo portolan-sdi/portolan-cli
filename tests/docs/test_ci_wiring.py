@@ -479,6 +479,33 @@ def test_ci_runs_the_wheel_smoke() -> None:
     assert job["steps"][0]["with"]["persist-credentials"] is False
 
 
+def _builds(job: dict[str, Any]) -> list[tuple[str, str]]:
+    return [
+        pair for step in job["steps"] for pair in BUILD_PACKAGE.findall(str(step.get("run", "")))
+    ]
+
+
+def test_release_builds_into_the_ignored_dist_folder() -> None:
+    """The portolan-cli sdist holds every file that .gitignore does not exclude.
+
+    A dist-core/ folder at the root went into the portolan-cli sdist with the
+    portolan-core wheel in it. .gitignore excludes dist/.
+    """
+    out_dirs = [out_dir for _, out_dir in _builds(_jobs("release.yml")["release"])]
+    gitignore = (REPO_ROOT / ".gitignore").read_text(encoding="utf-8").splitlines()
+
+    assert "dist/" in gitignore
+    assert out_dirs == ["dist/core", "dist/cli"]
+
+
+def test_the_build_job_builds_as_the_release_does() -> None:
+    """The build job checks the sdists of the same commands that the release runs."""
+    build = _jobs("ci.yml")["build"]
+
+    assert _builds(build) == _builds(_jobs("release.yml")["release"])
+    assert "dist/*/*.tar.gz" in _run_text(build)
+
+
 # ---------------------------------------------------------------------------
 # Cheap gate faults, run on every pull request
 # ---------------------------------------------------------------------------

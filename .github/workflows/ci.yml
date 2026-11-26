@@ -707,16 +707,24 @@ jobs:
       - name: Set up Python
         run: uv python install 3.11
 
-      - name: Build package
-        # Build portolan-cli and the portolan-core workspace member.
-        run: uv build --all-packages
+      # The same commands as release.yml. tests/docs/test_ci_wiring.py keeps
+      # the two equal.
+      - name: Build packages
+        run: |
+          uv build --package portolan-core --out-dir dist/core
+          uv build --package portolan-cli --out-dir dist/cli
 
-      # List each sdist. The workspace builds two, one per distribution.
+      # List each sdist. An sdist must hold no build output, such as the
+      # portolan-core wheel inside the portolan-cli sdist.
       - name: Check package contents
         run: |
-          for sdist in dist/*.tar.gz; do
+          for sdist in dist/*/*.tar.gz; do
             echo "$sdist"
             tar -tzf "$sdist"
+            if tar -tzf "$sdist" | grep -E '^[^/]+/dist[^/]*/|\.whl$'; then
+              echo "::error::$sdist holds build output"
+              exit 1
+            fi
           done
 
   wheel-smoke:
