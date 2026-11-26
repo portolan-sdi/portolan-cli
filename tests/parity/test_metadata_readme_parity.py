@@ -95,9 +95,10 @@ def points_catalog(
 
     def build(root: Path) -> None:
         build_conformant_catalog(root)
-        (root / "points").mkdir()
-        shutil.copy(valid_points_geojson, root / "points" / "points.geojson")
-        run_cli("add", "--portolan-dir", str(root), str(root / "points" / "points.geojson"))
+        source = root / "points" / "points.geojson"
+        source.parent.mkdir()
+        shutil.copy(valid_points_geojson, source)
+        run_cli("add", str(source), cwd=root)
 
     return build
 
