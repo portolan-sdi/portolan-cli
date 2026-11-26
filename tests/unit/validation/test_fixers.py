@@ -1504,6 +1504,19 @@ class TestPmtilesFixer:
         ]
         assert [r.action for r in results] == [FixAction.UPDATED]
 
+    @pytest.mark.parametrize("href", ["./ROADS.PMTILES", "./roads.pmtiles?v=2"])
+    def test_the_fixer_repairs_every_asset_the_rule_flags(self, tmp_path: Path, href: str) -> None:
+        """PTL-VIZ-003 reads the href path in any case and without its query."""
+        collection = _tiny_catalog(tmp_path)
+        data = _read_json(collection / "collection.json")
+        data["assets"] = {"tiles": {"href": href}}
+        _write_json(collection / "collection.json", data)
+
+        FIXERS["pmtiles"](tmp_path, False)
+
+        fixed = _read_json(collection / "collection.json")
+        assert [link["href"] for link in fixed["links"] if link["rel"] == "pmtiles"] == [href]
+
     def test_a_collection_without_pmtiles_is_untouched(self, tmp_path: Path) -> None:
         _tiny_catalog(tmp_path)
         before = _snapshot(tmp_path)
