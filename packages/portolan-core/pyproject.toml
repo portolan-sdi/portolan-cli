@@ -14,7 +14,8 @@ authors = [
     { name = "Nissim Lebovits", email = "nlebovits@pm.me" },
 ]
 dependencies = [
-    "rashid-core>=0.5.0,<0.6.0", # The validator core without its data extra. 0.5.0 is the first release that ships the rashid_core import name
+    "rashid-core>=0.5.1,<0.6.0", # The validator core without its data extra. 0.5.1 is the floor because it is the first release with CatalogGraph.from_documents, which the writer uses (#1133)
+    "obstore>=0.12.1", # The ObstoreSink of the writer. rashid-core already installs obstore, so an optional extra would make the install no smaller. Same floor as portolan-cli
 ]
 
 [project.urls]
@@ -25,7 +26,3 @@ dependencies = [
 packages = ["src/portolan_core"]
 
 # The root prek.toml runs deptry on this member as the deptry-core hook.
-[tool.deptry.per_rule_ignores]
-# No module here imports rashid_core yet. Delete this line when the first
-# module moves in from portolan_cli (#1133).
-DEP002 = ["rashid-core"]

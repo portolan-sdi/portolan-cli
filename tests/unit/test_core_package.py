@@ -21,6 +21,7 @@ FORBIDDEN = ["click", "rasterio", "pyarrow", "geopandas", "duckdb", "pystac", "p
 _PROBE = f"""
 import json, sys
 import portolan_core
+import portolan_core.writer
 print(json.dumps({{
     "file": portolan_core.__file__,
     "loaded": sorted(m for m in {FORBIDDEN!r} if m in sys.modules),
@@ -29,7 +30,7 @@ print(json.dumps({{
 
 
 def test_core_import_loads_no_cli_or_geospatial_module() -> None:
-    """`import portolan_core` loads the workspace member and none of the forbidden modules."""
+    """`import portolan_core` and its writer load none of the forbidden modules."""
     result = subprocess.run(
         [sys.executable, "-c", _PROBE], capture_output=True, text=True, check=True
     )

@@ -55,7 +55,7 @@ dependencies = [
     "requests>=2.33.0", # CVE-2026-25645 fix (transitive, pinned for security)
     "rich>=13.0.0", # Terminal progress bars (transitive via geoparquet-io, but we import directly)
     "rio-cogeo>=5.0.0", # COG creation/validation (includes rasterio)
-    "rashid>=0.5.0,<0.6.0", # Conformance validator behind `portolan check`; ships its own STAC + Portolan profile schemas, so validation runs offline. A metapackage over rashid-core[data]. 0.5.0 is the floor because it is the first release whose import name is rashid_core, which the CLI imports. It also brings the PTL-LNK-006 IRI href, PTL-DAT-011 overview rounding and binary geometry column fixes. Earlier floors: 0.4.0 exempts a display-ready COG from PTL-VIZ-002, so a raster collection with the overview COG that PORTO-FMT-067 asks for and no style asset passes `check` (issue #1141), and its `validate()` takes a `ValidationOptions`. 0.2.0 added PTL-LIV-006, which `check --live` uses (issue #935). 0.1.5 added the catalog-logo rules PTL-LNK-007/008/009 (PORTO-CORE-074..077) and PTL-AST-006. The conformance gate asserts these rules, so this is a hard floor, not a preference
+    "rashid>=0.5.1,<0.6.0", # Conformance validator behind `portolan check`; ships its own STAC + Portolan profile schemas, so validation runs offline. A metapackage over rashid-core[data]. 0.5.1 is the floor because portolan-core needs rashid-core 0.5.1 and the metapackage pins rashid-core exactly (#1133). 0.5.0 is the first release whose import name is rashid_core, which the CLI imports. It also brings the PTL-LNK-006 IRI href, PTL-DAT-011 overview rounding and binary geometry column fixes. Earlier floors: 0.4.0 exempts a display-ready COG from PTL-VIZ-002, so a raster collection with the overview COG that PORTO-FMT-067 asks for and no style asset passes `check` (issue #1141), and its `validate()` takes a `ValidationOptions`. 0.2.0 added PTL-LIV-006, which `check --live` uses (issue #935). 0.1.5 added the catalog-logo rules PTL-LNK-007/008/009 (PORTO-CORE-074..077) and PTL-AST-006. The conformance gate asserts these rules, so this is a hard floor, not a preference
     # The library half of this repo, a uv workspace member in packages/portolan-core.
     # The pin is exact because the two distributions release together, and cz bump
     # rewrites it (see [tool.commitizen]).
@@ -337,6 +337,8 @@ ignore = [
 "portolan_cli/extract/common/layer_cli.py" = ["TID251"]
 "portolan_cli/api.py" = ["TID251"]
 "portolan_cli/sync/upload.py" = ["TID251"]
+# The writer sink puts small catalog JSON and Markdown with its own Content-Type.
+"packages/portolan-core/src/portolan_core/writer.py" = ["TID251"]
 # TID251, ratchet (#1035). Each module still prints through portolan_cli.output
 # or calls obstore.put. The letter names the #1035 agent that owns the module.
 # Delete a line when its module is clean, and delete the same module from

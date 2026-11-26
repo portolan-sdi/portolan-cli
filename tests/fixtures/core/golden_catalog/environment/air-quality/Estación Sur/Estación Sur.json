@@ -1,0 +1,70 @@
+{
+  "type": "Feature",
+  "stac_version": "1.1.0",
+  "id": "Estación Sur",
+  "geometry": {
+    "type": "Polygon",
+    "coordinates": [
+      [
+        [
+          -5.0,
+          36.0
+        ],
+        [
+          -4.0,
+          36.0
+        ],
+        [
+          -4.0,
+          37.0
+        ],
+        [
+          -5.0,
+          37.0
+        ],
+        [
+          -5.0,
+          36.0
+        ]
+      ]
+    ]
+  },
+  "bbox": [
+    -5.0,
+    36.0,
+    -4.0,
+    37.0
+  ],
+  "properties": {
+    "datetime": "2024-06-01T00:00:00Z"
+  },
+  "assets": {
+    "pm25": {
+      "href": "./pm25.tif",
+      "type": "image/tiff; application=geotiff; profile=cloud-optimized",
+      "roles": [
+        "data"
+      ],
+      "title": "PM2.5 concentration",
+      "description": "Mean PM2.5 concentration in micrograms per cubic metre."
+    }
+  },
+  "links": [
+    {
+      "rel": "root",
+      "href": "../../../catalog.json",
+      "type": "application/json"
+    },
+    {
+      "rel": "parent",
+      "href": "../collection.json",
+      "type": "application/json"
+    },
+    {
+      "rel": "collection",
+      "href": "../collection.json",
+      "type": "application/json"
+    }
+  ],
+  "collection": "environment/air-quality"
+}

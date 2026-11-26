@@ -1,0 +1,39 @@
+{
+  "type": "Catalog",
+  "stac_version": "1.1.0",
+  "stac_extensions": [
+    "https://schemas.portolan-sdi.org/portolan/v0.3.0/schema.json"
+  ],
+  "id": "example-open-data",
+  "title": "Example Open Data",
+  "description": "A small catalog that tests the portolan-core writer.",
+  "links": [
+    {
+      "rel": "root",
+      "href": "./catalog.json",
+      "type": "application/json"
+    },
+    {
+      "rel": "child",
+      "href": "./boundaries/collection.json",
+      "type": "application/json",
+      "title": "Administrative Boundaries"
+    },
+    {
+      "rel": "child",
+      "href": "./environment/catalog.json",
+      "type": "application/json",
+      "title": "Environment"
+    },
+    {
+      "rel": "agents",
+      "href": "./AGENTS.md",
+      "type": "text/markdown"
+    },
+    {
+      "rel": "describedby",
+      "href": "./README.md",
+      "type": "text/markdown"
+    }
+  ]
+}
