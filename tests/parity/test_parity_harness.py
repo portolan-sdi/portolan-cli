@@ -46,7 +46,6 @@ PARITY_PENDING = frozenset(
         "init",
         "list",
         "logo",
-        "metadata init",
         "metadata validate",
         "partition",
         "pull",

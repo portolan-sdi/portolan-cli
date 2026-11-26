@@ -1295,3 +1295,40 @@ def ensure_readmes(catalog_root: Path, *, state: ConfigSource | None = None) -> 
             changed_any = True
 
     return changed_any
+
+
+class PathNotFoundError(FileNotFoundError):
+    """A PATH argument names nothing inside the catalog.
+
+    It is not a ``PortolanError``: the JSON envelope reported this type with no
+    error code before the walk moved out of ``cli.py``, and it still does.
+    """
+
+
+def resolve_catalog_dir(catalog_root: Path, path: str | None, *, must_exist: bool) -> Path:
+    """Resolve the PATH argument of a catalog walk to a directory below the root.
+
+    Args:
+        catalog_root: The catalog root.
+        path: The PATH argument, relative to the root. None selects the root.
+        must_exist: If True, the directory must exist.
+
+    Returns:
+        ``catalog_root / path``, or the root when ``path`` is empty.
+
+    Raises:
+        InputValidationError: When ``path`` escapes the catalog root.
+        PathNotFoundError: When ``must_exist`` is set and nothing is at ``path``.
+        NotADirectoryError: When ``must_exist`` is set and ``path`` is a file.
+    """
+    from portolan_cli.input_hardening import validate_safe_path
+
+    if not path:
+        return catalog_root
+    validate_safe_path(Path(path), catalog_root)
+    target = catalog_root / path
+    if must_exist and not target.exists():
+        raise PathNotFoundError(f"Path '{path}' does not exist in catalog.")
+    if must_exist and not target.is_dir():
+        raise NotADirectoryError(f"Path '{path}' is not a directory.")
+    return target
