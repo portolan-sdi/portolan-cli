@@ -4294,7 +4294,7 @@ def config_set(
 
     try:
         result = store_setting(catalog_path, key, value, collection)
-    except (ConfigError, OSError) as e:
+    except (ConfigError, OSError, ValueError) as e:
         if use_json:
             code = e.code if isinstance(e, ConfigError) else None
             envelope = error_envelope(
@@ -4367,6 +4367,11 @@ def config_get(ctx: click.Context, json_output: bool, key: str, collection: str 
         result = read_setting(key, catalog_path, collection, state=state)
     except ConfigError as e:
         emit_error("config get", type(e).__name__, str(e), use_json=use_json, code=e.code)
+        raise SystemExit(1) from None
+    except ValueError as e:
+        # A sensitive key in config.yaml. The envelope reports it as a
+        # ConfigError with the plain message, as before the move.
+        emit_error("config get", "ConfigError", str(e), use_json=use_json)
         raise SystemExit(1) from None
 
     if not emit_success("config get", result.to_dict(), use_json=use_json):

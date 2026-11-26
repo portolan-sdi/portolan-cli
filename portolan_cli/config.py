@@ -1200,15 +1200,11 @@ def read_setting(
         The value and its source.
 
     Raises:
-        ConfigError: If config.yaml holds a sensitive setting, or does not parse.
+        ConfigError: If config.yaml does not parse.
+        ValueError: If config.yaml holds a sensitive setting.
     """
-    try:
-        value = get_setting(key, catalog_path=catalog_path, collection=collection, state=state)
-        source = get_setting_source(key, catalog_path, collection, state=state)
-    except ValueError as e:
-        # A sensitive key in config.yaml. The command reported it as a
-        # ConfigError before, so the type stays.
-        raise ConfigError(str(e)) from e
+    value = get_setting(key, catalog_path=catalog_path, collection=collection, state=state)
+    source = get_setting_source(key, catalog_path, collection, state=state)
     return SettingValue(key, value, source, collection)
 
 
@@ -1229,6 +1225,8 @@ def store_setting(
 
     Raises:
         ConfigError: See ``set_setting``.
+        ValueError: If the YAML parser cannot read ``value``, such as an
+            integer with too many digits.
         OSError: If config.yaml cannot be written.
     """
     return SettingValue(key, set_setting(catalog_path, key, value, collection), None, collection)

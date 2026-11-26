@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -27,6 +28,7 @@ from portolan_cli.status import get_catalog_status
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from tests.catalog_invariants import RunCli
     from tests.parity.harness import Parity
 
 pytestmark = pytest.mark.integration
@@ -265,15 +267,35 @@ def test_config_get(
     )
 
 
+# The message of commit f7f8214, before the move. It has no code prefix.
+SENSITIVE_REMOTE = (
+    "'remote' found in config.yaml but sensitive settings cannot be read from config "
+    "files. Use environment variable PORTOLAN_REMOTE or .env file."
+)
+
+
 def test_config_get_sensitive_in_file(
-    parity: Parity, configured_catalog: Callable[[Path], None]
+    run_cli: RunCli, configured_catalog: Callable[[Path], None], tmp_path: Path
 ) -> None:
-    """`config get` reports a sensitive setting in config.yaml as a ConfigError."""
+    """`config get` reports a sensitive setting in config.yaml as it did before the move."""
+    root = tmp_path / "catalog"
+    _with_config_text("remote: s3://bucket/catalog\n")(configured_catalog)(root)
+    result = run_cli("config", "get", "remote", "--json", cwd=root, expect=1)
+    assert json.loads(result.stdout)["errors"] == [
+        {"type": "ConfigError", "message": SENSITIVE_REMOTE}
+    ]
+    with pytest.raises(ValueError) as caught:
+        read_setting("remote", root)
+    assert str(caught.value) == SENSITIVE_REMOTE
+
+
+def test_config_get_bad_yaml(parity: Parity, configured_catalog: Callable[[Path], None]) -> None:
+    """`config get` reports a config.yaml that does not parse."""
     parity.error(
         "config get",
-        ["remote"],
-        catalog=_with_config_text("remote: s3://bucket/catalog\n")(configured_catalog),
-        call=lambda root: read_setting("remote", root),
+        ["backend"],
+        catalog=_with_config_text("  bad: [\n")(configured_catalog),
+        call=lambda root: read_setting("backend", root),
         raises=ConfigError,
     )
 
@@ -310,6 +332,26 @@ def test_config_set_unknown_key(parity: Parity, configured_catalog: Callable[[Pa
         catalog=configured_catalog,
         call=lambda root: store_setting(root, "no.such.key", "1"),
         raises=ConfigError,
+    )
+
+
+def test_config_set_unparseable_value(
+    parity: Parity, configured_catalog: Callable[[Path], None]
+) -> None:
+    """`config set` of an integer too long to parse reports the ValueError of the parser."""
+    value = "9" * 5000
+    parity.error(
+        "config set",
+        ["pmtiles.max_zoom", value],
+        catalog=configured_catalog,
+        call=lambda root: store_setting(root, "pmtiles.max_zoom", value),
+        raises=ValueError,
+    )
+    with pytest.raises(ValueError) as caught:
+        store_setting(parity.root, "pmtiles.max_zoom", value)
+    assert str(caught.value) == (
+        "Exceeds the limit (4300 digits) for integer string conversion: value has 5000 "
+        "digits; use sys.set_int_max_str_digits() to increase the limit"
     )
 
 
