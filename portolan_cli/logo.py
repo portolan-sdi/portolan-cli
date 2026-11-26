@@ -99,6 +99,20 @@ class LogoResult:
     changed: bool
     warnings: list[str] = field(default_factory=list)
 
+    def to_dict(self) -> dict[str, Any]:
+        """Return the envelope data of ``portolan logo``.
+
+        The ``path`` value is relative to the catalog root. The data has no
+        ``changed`` field.
+        """
+        return {
+            "href": self.href,
+            "type": self.media_type,
+            "title": self.title,
+            "path": f"{LOGO_ASSETS_DIRNAME}/{self.path.name}",
+            "warnings": self.warnings,
+        }
+
 
 def logo_media_type(source: Path) -> str:
     """Return the media type for ``source``, from its extension.

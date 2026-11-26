@@ -5003,18 +5003,9 @@ def logo_cmd(
         emit_error("logo", "OSError", f"Cannot write catalog logo: {err}", use_json=use_json)
         raise SystemExit(1) from err
 
-    if not emit_success(
-        "logo",
-        {
-            "href": result.href,
-            "type": result.media_type,
-            "title": result.title,
-            "path": result.path.relative_to(catalog_root).as_posix(),
-            "warnings": result.warnings,
-        },
-        use_json=use_json,
-    ):
-        success(f"Logo published at {result.path.relative_to(catalog_root).as_posix()}")
+    data = result.to_dict()
+    if not emit_success("logo", data, use_json=use_json):
+        success(f"Logo published at {data['path']}")
         info_output(f'Linked as rel="icon" ({result.media_type}), titled "{result.title}"')
         for message in result.warnings:
             warn(message)
