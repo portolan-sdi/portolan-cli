@@ -4454,7 +4454,7 @@ def config_unset(ctx: click.Context, json_output: bool, key: str, collection: st
         portolan config unset remote
         portolan config unset aws_profile --collection restricted
     """
-    from portolan_cli.config import unset_setting
+    from portolan_cli.config import clear_setting
 
     use_json = should_output_json(ctx, json_output)
 
@@ -4473,19 +4473,13 @@ def config_unset(ctx: click.Context, json_output: bool, key: str, collection: st
         raise SystemExit(1)
 
     try:
-        removed = unset_setting(catalog_path, key, collection=collection)
+        result = clear_setting(catalog_path, key, collection)
     except ConfigError as e:
-        emit_error("config unset", type(e).__name__, str(e), use_json=use_json)
+        emit_error("config unset", type(e).__name__, str(e), use_json=use_json, code=e.code)
         raise SystemExit(1) from None
 
-    if use_json:
-        data = {"key": key, "removed": removed}
-        if collection:
-            data["collection"] = collection
-        envelope = success_envelope("config unset", data)
-        output_json_envelope(envelope)
-    else:
-        if removed:
+    if not emit_success("config unset", result.to_dict(), use_json=use_json):
+        if result.removed:
             if collection:
                 success(f"Removed {key} from collection '{collection}' config")
             else:

@@ -13,6 +13,7 @@ import pytest
 
 from portolan_cli.catalog_list import list_catalog_contents
 from portolan_cli.config import (
+    clear_setting,
     read_setting,
     read_settings,
     set_setting,
@@ -305,5 +306,40 @@ def test_config_list_bad_yaml(parity: Parity, configured_catalog: Callable[[Path
         [],
         catalog=_with_config_text("  bad: [\n")(configured_catalog),
         call=lambda root: read_settings(root),
+        raises=ConfigError,
+    )
+
+
+@pytest.mark.parametrize(
+    ("args", "key", "collection"),
+    [
+        (["statistics.enabled"], "statistics.enabled", None),
+        (["pmtiles.enabled", "-c", "points"], "pmtiles.enabled", "points"),
+        (["backend"], "backend", None),
+    ],
+)
+def test_config_unset(
+    parity: Parity,
+    configured_catalog: Callable[[Path], None],
+    args: list[str],
+    key: str,
+    collection: str | None,
+) -> None:
+    """`config unset` reports whether the key was set."""
+    parity(
+        "config unset",
+        args,
+        catalog=configured_catalog,
+        call=lambda root: clear_setting(root, key, collection),
+    )
+
+
+def test_config_unset_bad_yaml(parity: Parity, configured_catalog: Callable[[Path], None]) -> None:
+    """`config unset` reports a config.yaml that does not parse."""
+    parity.error(
+        "config unset",
+        ["backend"],
+        catalog=_with_config_text("  bad: [\n")(configured_catalog),
+        call=lambda root: clear_setting(root, "backend"),
         raises=ConfigError,
     )

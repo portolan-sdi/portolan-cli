@@ -1266,6 +1266,38 @@ def read_settings(
     return SettingList(list_settings(catalog_path, collection, state=state), collection)
 
 
+@dataclass(frozen=True)
+class SettingRemoval:
+    """The outcome of ``config unset``: the key, and whether config.yaml held it."""
+
+    key: str
+    removed: bool
+    collection: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize the outcome as the ``config unset`` envelope data."""
+        data: dict[str, Any] = {"key": self.key, "removed": self.removed}
+        if self.collection:
+            data["collection"] = self.collection
+        return data
+
+
+def clear_setting(
+    catalog_path: Path,
+    key: str,
+    collection: str | None = None,
+) -> SettingRemoval:
+    """Remove a configuration value from config.yaml.
+
+    This is the library function of ``portolan config unset``. See
+    ``unset_setting`` for the rules.
+
+    Raises:
+        ConfigError: If config.yaml does not parse.
+    """
+    return SettingRemoval(key, unset_setting(catalog_path, key, collection), collection)
+
+
 # =============================================================================
 # Hierarchical .portolan/ support
 # =============================================================================
