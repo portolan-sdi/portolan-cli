@@ -726,6 +726,19 @@ ignore_imports = [
 # follows transitive imports, and an import inside a function body counts too.
 
 [[tool.importlinter.contracts]]
+id = "sync-transport-no-scan"
+name = "Sync transport modules must not import scan or convert"
+type = "forbidden"
+source_modules = [
+    "portolan_cli.sync.transport",
+    "portolan_cli.sync.push",
+    "portolan_cli.sync.pull",
+    "portolan_cli.sync.upload",
+    "portolan_cli.sync.download",
+]
+forbidden_modules = ["portolan_cli.scan", "portolan_cli.convert"]
+
+[[tool.importlinter.contracts]]
 id = "core-no-cli"
 name = "portolan-core must not import portolan_cli"
 type = "forbidden"
