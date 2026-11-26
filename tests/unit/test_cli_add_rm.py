@@ -922,7 +922,7 @@ class TestAddJsonOutput:
         assert envelope["command"] == "add"
         assert [item["item_id"] for item in envelope["data"]["added"]] == ["open-buildings"]
         assert (
-            "→ Rewriting open-buildings.parquet (142.4KB): it carries no bbox covering column\n"
+            "⚠ Rewriting open-buildings.parquet (142.4KB): it carries no bbox covering column\n"
         ) in result.stderr
 
     @pytest.mark.integration

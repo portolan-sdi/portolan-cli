@@ -319,7 +319,7 @@ class TestWarnIfSourceNewer:
     """Tests for _warn_if_source_newer helper function."""
 
     @pytest.mark.unit
-    def test_warn_if_source_newer_emits_warning(self) -> None:
+    def test_warn_if_source_newer_emits_warning(self, caplog: pytest.LogCaptureFixture) -> None:
         """Warns when source mtime > output mtime."""
         from portolan_cli.add import _warn_if_source_newer
 
@@ -334,13 +334,15 @@ class TestWarnIfSourceNewer:
             os.utime(output, (1_000_000, 1_000_000))
             os.utime(source, (2_000_000, 2_000_000))
 
-            with patch("portolan_cli.output.warn") as mock_warn:
+            with caplog.at_level("WARNING", logger="portolan_cli.preparation"):
                 _warn_if_source_newer(source, output)
-                mock_warn.assert_called_once()
-                assert "--reconvert" in mock_warn.call_args[0][0]
+            [record] = caplog.records
+            assert "--reconvert" in record.getMessage()
 
     @pytest.mark.unit
-    def test_warn_if_source_newer_silent_when_output_newer(self) -> None:
+    def test_warn_if_source_newer_silent_when_output_newer(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
         """No warning when output mtime >= source mtime."""
         from portolan_cli.add import _warn_if_source_newer
 
@@ -355,6 +357,6 @@ class TestWarnIfSourceNewer:
             os.utime(source, (1_000_000, 1_000_000))
             os.utime(output, (2_000_000, 2_000_000))
 
-            with patch("portolan_cli.output.warn") as mock_warn:
+            with caplog.at_level("WARNING", logger="portolan_cli.preparation"):
                 _warn_if_source_newer(source, output)
-                mock_warn.assert_not_called()
+            assert caplog.records == []

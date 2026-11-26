@@ -960,7 +960,7 @@ class TestTheGateSeesWhatTheRewriteDrops:
     @pytest.mark.unit
     @pytest.mark.parametrize("case", ["epoch", "orientation", "undefined-crs", "field-metadata"])
     def test_the_file_is_kept(
-        self, tmp_path: Path, case: str, capsys: pytest.CaptureFixture[str]
+        self, tmp_path: Path, case: str, caplog: pytest.LogCaptureFixture
     ) -> None:
         from portolan_cli.preparation import convert_vector
 
@@ -970,8 +970,7 @@ class TestTheGateSeesWhatTheRewriteDrops:
         convert_vector(source, tmp_path)
 
         assert source.read_bytes() == before
-        captured = capsys.readouterr()
-        assert "Kept f.parquet as it is" in captured.out + captured.err
+        assert "Kept f.parquet as it is" in caplog.text
 
     @pytest.mark.unit
     def test_a_file_with_nothing_to_lose_is_rewritten(self, tmp_path: Path) -> None:
@@ -1098,7 +1097,9 @@ class TestRewriteOrKeep:
     """A failed rewrite keeps the file. It never fails the whole `add`."""
 
     @pytest.mark.unit
-    def test_a_fidelity_failure_keeps_the_file(self, tmp_path: Path, capsys: Any) -> None:
+    def test_a_fidelity_failure_keeps_the_file(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
         """The operator reads what the rewrite would have lost."""
         from portolan_cli.conversion_config import VectorSettings
         from portolan_cli.errors import RewriteFidelityError
@@ -1111,12 +1112,13 @@ class TestRewriteOrKeep:
         with patch("portolan_cli.preparation._rewrite_parquet_in_place", side_effect=error):
             _rewrite_or_keep(source, VectorSettings(), None)
 
-        captured = capsys.readouterr()
-        assert "Kept roads.parquet as it is" in captured.out + captured.err
-        assert "the CRS it declared" in captured.out + captured.err
+        assert "Kept roads.parquet as it is" in caplog.text
+        assert "the CRS it declared" in caplog.text
 
     @pytest.mark.unit
-    def test_any_other_failure_also_keeps_the_file(self, tmp_path: Path, capsys: Any) -> None:
+    def test_any_other_failure_also_keeps_the_file(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
         """A malformed geometry must not turn `add` into a failure."""
         from portolan_cli.conversion_config import VectorSettings
         from portolan_cli.preparation import _rewrite_or_keep
@@ -1128,8 +1130,7 @@ class TestRewriteOrKeep:
         with patch("portolan_cli.preparation._rewrite_parquet_in_place", side_effect=error):
             _rewrite_or_keep(source, VectorSettings(), None)
 
-        captured = capsys.readouterr()
-        assert "Kept roads.parquet as it is" in captured.out + captured.err
+        assert "Kept roads.parquet as it is" in caplog.text
 
 
 class TestAnAddedCogCarriesItsStatistics:
@@ -1254,7 +1255,7 @@ class TestAnAddedCogCarriesItsStatistics:
         tmp_path: Path,
         fixtures_dir: Path,
         monkeypatch: pytest.MonkeyPatch,
-        capsys: pytest.CaptureFixture[str],
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
         """GDAL re-encodes JPEG and WEBP tiles on every copy, so a rewrite loses quality."""
         from rio_cogeo.cogeo import cog_translate
@@ -1276,9 +1277,8 @@ class TestAnAddedCogCarriesItsStatistics:
 
         assert calls == []
         assert cog.read_bytes() == before
-        out = capsys.readouterr()
-        assert "PTL-DAT-009" in out.out + out.err
-        assert "photo.tif" in out.out + out.err
+        assert "PTL-DAT-009" in caplog.text
+        assert "photo.tif" in caplog.text
 
     @pytest.mark.unit
     def test_a_lossy_codec_setting_keeps_the_pixels_of_a_lossless_cog(

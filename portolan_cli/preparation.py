@@ -818,12 +818,11 @@ def _extract_bbox_wgs84(metadata: AllMetadata, data_path: Path | None = None) ->
 
 def _warn_if_source_newer(source_path: Path, output_path: Path) -> None:
     """Warn if source file is newer than output (suggests --reconvert)."""
-    from portolan_cli.output import warn as warn_output
-
     if source_path.stat().st_mtime > output_path.stat().st_mtime:
-        warn_output(
-            f"Source file '{source_path.name}' is newer than converted output. "
-            "Use --reconvert to re-convert from source."
+        logger.warning(
+            "Source file '%s' is newer than converted output. "
+            "Use --reconvert to re-convert from source.",
+            source_path.name,
         )
 
 
@@ -1575,20 +1574,21 @@ def _announce_rewrite(source: Path, reason: str) -> None:
         reason: Why the rewrite runs, in the operator's terms.
     """
     # A rewrite changes the operator's file, so the notice is user-facing and
-    # shows by default. It goes through the output writer, which sends it to
-    # stderr in JSON mode (#1005). Do not demote it to logging.info.
-    from portolan_cli.output import info as info_output
-    from portolan_cli.output import warn
+    # shows by default. A warning record shows on stderr at the default level
+    # and in JSON mode (#1005). Do not demote it to logging.info.
     from portolan_cli.utils import format_size
 
     size_bytes = source.stat().st_size
     size = format_size(size_bytes)
-    info_output(f"Rewriting {source.name} ({size}): {reason}")
+    logger.warning("Rewriting %s (%s): %s", source.name, size, reason)
     if size_bytes >= LARGE_REWRITE_WARN_BYTES:
-        warn(
-            f"{source.name} is {size}. The rewrite reads, sorts, and writes the "
-            f"whole file, and needs {size} of free space while it runs. Set "
-            f"add_bbox: false in .portolan/config.yaml to skip it."
+        logger.warning(
+            "%s is %s. The rewrite reads, sorts, and writes the whole file, and needs "
+            "%s of free space while it runs. Set add_bbox: false in "
+            ".portolan/config.yaml to skip it.",
+            source.name,
+            size,
+            size,
         )
 
 
@@ -1610,15 +1610,15 @@ def _rewrite_or_keep(
         settings: Vector conversion settings to apply.
         before: The fidelity fields of the bytes in ``source``, read before.
     """
-    from portolan_cli.output import warn
-
     try:
         _rewrite_parquet_in_place(source, settings, before)
     except RewriteFidelityError as err:
-        warn(f"Kept {source.name} as it is: it would lose {err.lost}")
+        logger.warning("Kept %s as it is: it would lose %s", source.name, err.lost)
     except Exception as err:  # noqa: BLE001 - a copy is better than a failed add
         logger.info("Rewrite of %s failed: %s", source, err, exc_info=True)
-        warn(f"Kept {source.name} as it is: geoparquet-io could not rewrite it ({err})")
+        logger.warning(
+            "Kept %s as it is: geoparquet-io could not rewrite it (%s)", source.name, err
+        )
 
 
 def _rewrite_parquet_in_place(
@@ -1916,7 +1916,6 @@ def convert_raster(
 
     from portolan_cli.conversion_config import get_cog_settings
     from portolan_cli.convert import place_cog, read_cog, remember_cog, write_cog
-    from portolan_cli.output import warn as warn_output
 
     claim_state = (
         RunState.open(catalog_root) if catalog_root is not None and current_run() is None else None
@@ -1937,10 +1936,11 @@ def convert_raster(
     if scratch is not None and _warn_on_failure(source, lambda: place_cog(scratch, output_path)):
         return output_path
     if embedded == "lossy":
-        warn_output(
-            f"{source.name} has no band statistics in the file (PTL-DAT-009). "
+        logger.warning(
+            "%s has no band statistics in the file (PTL-DAT-009). "
             "Portolan keeps it as it is, because its tiles use lossy compression "
-            "and a rewrite would re-encode them."
+            "and a rewrite would re-encode them.",
+            source.name,
         )
     if source.resolve() != output_path.resolve():
         shutil.copy2(source, output_path)
@@ -2016,14 +2016,14 @@ def _embed_statistics(src: Any, source: Path, output: Path) -> Path | None:
 
 def _warn_on_failure(source: Path, step: Callable[[], Path]) -> Path | None:
     """Run one step of the statistics rewrite. On failure, warn and return None."""
-    from portolan_cli.output import warn as warn_output
-
     try:
         with span("convert.embed_statistics", file=source.name):
             return step()
     except Exception as err:  # noqa: BLE001 - the original file stays usable
-        warn_output(
-            f"{source.name} has no band statistics in the file (PTL-DAT-009), "
-            f"and the rewrite that adds them failed: {err}"
+        logger.warning(
+            "%s has no band statistics in the file (PTL-DAT-009), "
+            "and the rewrite that adds them failed: %s",
+            source.name,
+            err,
         )
         return None
