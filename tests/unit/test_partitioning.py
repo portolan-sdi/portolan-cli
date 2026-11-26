@@ -981,3 +981,51 @@ class TestPartitionFile:
         ]
         assert text.exit_code == 1
         assert "Partitioning failed: Simulated partition failure" in text.output
+
+    @pytest.mark.integration
+    @pytest.mark.xfail(
+        strict=True,
+        reason="#1133: geoparquet-io writes partition progress to the terminal",
+    )
+    def test_the_library_call_prints_nothing(self, tmp_path: Path) -> None:
+        """A fresh process that calls partition_file gets no terminal output.
+
+        geoparquet-io logs progress through the ``geoparquet_io`` logger. When the
+        root logger has no handler, its first call installs a stream handler at
+        INFO. The ``portolan`` command configures the root logger first, so its
+        output does not show the message. A plain library caller does.
+        """
+        import json
+        import subprocess
+        import sys
+
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+        import shapely
+
+        # geoparquet-io refuses partitions under 100 rows, so the 10-row fixture is too small.
+        geo = {
+            "version": "1.0.0",
+            "primary_column": "geometry",
+            "columns": {"geometry": {"encoding": "WKB", "geometry_types": ["Point"]}},
+        }
+        points = [shapely.Point(i % 40, i // 40).wkb for i in range(1000)]
+        table = pa.table({"id": list(range(1000)), "geometry": pa.array(points, pa.binary())})
+        source = tmp_path / "points.parquet"
+        pq.write_table(table.replace_schema_metadata({b"geo": json.dumps(geo).encode()}), source)
+        code = (
+            "import sys\n"
+            "from pathlib import Path\n"
+            "from portolan_cli.partitioning import partition_file\n"
+            "partition_file(Path(sys.argv[1]), Path(sys.argv[2]))\n"
+        )
+
+        result = subprocess.run(
+            [sys.executable, "-c", code, str(source), str(tmp_path / "out")],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+
+        assert list((tmp_path / "out").rglob("*.parquet"))
+        assert (result.stdout, result.stderr) == ("", "")
