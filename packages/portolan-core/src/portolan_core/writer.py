@@ -214,7 +214,7 @@ def plan_catalog(
         _check_documentation(_check_key(key), copies)
     if "catalog.json" not in copies:
         raise InvalidDocumentError("the tree has no root catalog.json")
-    assets = {path for key, doc in copies.items() for path in _asset_paths(key, doc)}
+    assets = {path.casefold() for key, doc in copies.items() for path in _asset_paths(key, doc)}
     prior = {_check_prior(key, assets) for key in prior_managed_keys}
     deleted = prior - copies.keys() - documentation.keys()
     _check_case(copies.keys() | documentation.keys() | deleted)
@@ -367,11 +367,18 @@ def _check_case(keys: set[str]) -> None:
 
 
 def _check_prior(key: str, assets: set[str]) -> str:
+    """Refuse a prior key that is not writer metadata. ``assets`` holds casefolded paths.
+
+    The checks ignore case, because a case-insensitive store reads
+    ``Style.json`` and ``style.json`` as one file.
+    """
     name = PurePosixPath(_check_key(key)).name
     # versions.json is the Portolan version record. The writer never manages it.
-    if name == "versions.json" or (not name.endswith(".json") and name not in _DOCUMENTATION):
+    if name.casefold() == "versions.json" or (
+        not name.endswith(".json") and name not in _DOCUMENTATION
+    ):
         raise InvalidKeyError(f"prior key is not catalog metadata, so it is never deleted: {key!r}")
-    if key in assets:
+    if key.casefold() in assets:
         raise InvalidKeyError(f"prior key is an asset of the new catalog, so it stays: {key!r}")
     return key
 

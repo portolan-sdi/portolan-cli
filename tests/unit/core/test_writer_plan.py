@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import dataclasses
 import json
+import re
 from pathlib import PureWindowsPath
 from typing import Any
 
@@ -285,9 +286,24 @@ class TestReviewFixes:
                 documents, golden_documentation(), prior_managed_keys=["boundaries/style.json"]
             )
 
-    @pytest.mark.parametrize("key", ["versions.json", "boundaries/versions.json"])
+    def test_a_prior_key_that_matches_an_asset_except_for_case_is_refused(self) -> None:
+        documents = golden_documents()
+        documents["boundaries/collection.json"]["assets"]["style"] = {
+            "href": "./style.json",
+            "type": "application/json",
+            "roles": ["style"],
+        }
+
+        with pytest.raises(InvalidKeyError, match="boundaries/Style.json"):
+            plan_catalog(
+                documents, golden_documentation(), prior_managed_keys=["boundaries/Style.json"]
+            )
+
+    @pytest.mark.parametrize(
+        "key", ["versions.json", "boundaries/versions.json", "Versions.json", "a/VERSIONS.json"]
+    )
     def test_a_versions_json_prior_key_is_refused(self, key: str) -> None:
-        with pytest.raises(InvalidKeyError, match="versions.json"):
+        with pytest.raises(InvalidKeyError, match=re.escape(repr(key))):
             _plan(prior_managed_keys=[key])
 
     def test_absolute_structural_links_stay_in_place(self) -> None:
