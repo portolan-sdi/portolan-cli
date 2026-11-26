@@ -11,6 +11,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from portolan_cli.version_ops import (
+    VersionBumpResult,
     _resolve_backend_name,
     get_current_version,
     list_versions,
@@ -210,3 +211,30 @@ class TestJsonFileBackendHooks:
         assert backend.push_blocked_message(None) == (
             "Push is not supported with the 'file' backend."
         )
+
+
+class TestVersionBumpResultToDict:
+    """Only a bump that published or found no change has envelope data."""
+
+    @pytest.mark.unit
+    def test_no_change_reports_no_changes(self) -> None:
+        assert VersionBumpResult("points").to_dict() == {
+            "collection": "points",
+            "message": "No changes detected",
+            "created": False,
+        }
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize(
+        "result",
+        [
+            VersionBumpResult("points", error=("NotFoundError", "No versions.json in points")),
+            VersionBumpResult("points", "1.0.0", modified=["data.parquet"]),
+        ],
+        ids=["error", "declined"],
+    )
+    def test_a_failed_or_declined_bump_has_no_envelope_data(
+        self, result: VersionBumpResult
+    ) -> None:
+        with pytest.raises(ValueError, match="no envelope data"):
+            result.to_dict()

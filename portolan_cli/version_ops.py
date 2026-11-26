@@ -244,7 +244,14 @@ class VersionBumpResult:
         return bool(self.modified or self.deleted)
 
     def to_dict(self) -> dict[str, Any]:
-        """Return the envelope data of ``portolan version bump``."""
+        """Return the envelope data of ``portolan version bump``.
+
+        Raises:
+            ValueError: On an error or a declined confirmation. The command
+                reports those outcomes without success data.
+        """
+        if self.error is not None or (self.published is None and self.changed):
+            raise ValueError(f"A failed or declined bump of {self.collection} has no envelope data")
         if self.published is None:
             return {
                 "collection": self.collection,
