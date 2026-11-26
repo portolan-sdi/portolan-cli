@@ -813,7 +813,7 @@ async def _download_cache_tile(
     if response.status_code == 404:
         return None
     if response.status_code == 429:
-        raise TileCacheRateLimitError(url, _retry_after_seconds(response))
+        raise TileCacheRateLimitError(shown, _retry_after_seconds(response))
     if response.status_code != 200:
         raise TileCacheError(
             f"Cache read failed: HTTP {response.status_code} for {shown}.",
