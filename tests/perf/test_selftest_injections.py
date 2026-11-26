@@ -10,20 +10,29 @@ from unittest.mock import Mock
 import pytest
 
 from scripts import gate_selftest as selftest
+from tests.source_roots import SOURCE_ROOTS
 
 pytestmark = pytest.mark.integration
 REPO = Path(__file__).resolve().parents[2]
+REOPEN_FAULTS = [f.name for f in selftest.FAULTS if f.name.endswith("reopen")]
 
 
-@pytest.mark.parametrize("name", [f.name for f in selftest.FAULTS if f.name.endswith("reopen")])
+def test_a_reopen_fault_targets_portolan_core() -> None:
+    assert "core-yaml-reopen" in REOPEN_FAULTS
+
+
+@pytest.mark.parametrize("name", REOPEN_FAULTS)
 def test_reopen_injections_compile_and_fail_the_open_gate(tmp_path: Path, name: str) -> None:
-    shutil.copytree(REPO / "portolan_cli", tmp_path / "portolan_cli")
+    # The open gate reads both source folders (#1133).
+    roots = [tmp_path / root.relative_to(REPO) for root in SOURCE_ROOTS]
+    for root in SOURCE_ROOTS:
+        shutil.copytree(root, tmp_path / root.relative_to(REPO))
     from tests.perf.test_open_sites import uncounted_sites
 
-    assert uncounted_sites(tmp_path / "portolan_cli") == []
+    assert uncounted_sites(*roots) == []
     fault = selftest.FAULTS_BY_NAME[name]
     fault.apply(tmp_path, True)
-    for path in (tmp_path / "portolan_cli").rglob("*.py"):
+    for path in (p for root in roots for p in root.rglob("*.py")):
         compile(path.read_bytes(), str(path), "exec")
     expected = {
         "thumbnail-parquet-reopen": (
@@ -35,8 +44,11 @@ def test_reopen_injections_compile_and_fail_the_open_gate(tmp_path: Path, name: 
             "raster.opens opened 2, counted 1"
         ),
         "cog-write-reopen": "portolan_cli/convert.py:write_cog: raster.opens opened 2, counted 1",
+        "core-yaml-reopen": (
+            "portolan_core/config.py:safe_load: config.yaml_parses opened 2, counted 1"
+        ),
     }
-    assert uncounted_sites(tmp_path / "portolan_cli") == [expected[name]]
+    assert uncounted_sites(*roots) == [expected[name]]
 
 
 @pytest.mark.parametrize("faulty", [True, False], ids=["fault", "control"])

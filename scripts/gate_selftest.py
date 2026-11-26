@@ -386,6 +386,17 @@ def _apply_cog_write_reopen(root: Path, faulty: bool) -> None:
         )
 
 
+def _apply_core_yaml_reopen(root: Path, faulty: bool) -> None:
+    # The open gate reads portolan_core too. The config parser moved there (#1133).
+    if faulty:
+        _replace_once(
+            root / "packages/portolan-core/src/portolan_core/config.py",
+            "    return yaml.load(text, Loader=loader)  # noqa: S506 (a safe loader, chosen above)\n",
+            "    yaml.load(text, Loader=loader)  # noqa: S506\n"
+            "    return yaml.load(text, Loader=loader)  # noqa: S506 (a safe loader, chosen above)\n",
+        )
+
+
 def _perf_gate(test_id: str) -> Gate:
     return Gate(("uv", "run", "pytest", test_id, "-q", "-p", "no:cacheprovider"))
 
@@ -510,6 +521,11 @@ FAULTS = (
     Fault(
         "cog-write-reopen",
         _apply_cog_write_reopen,
+        (_perf_gate(OPEN_SITES),),
+    ),
+    Fault(
+        "core-yaml-reopen",
+        _apply_core_yaml_reopen,
         (_perf_gate(OPEN_SITES),),
     ),
 )
