@@ -7,7 +7,7 @@ combines STAC extension metadata update and remote STAC metadata upload.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, patch
 
 import pystac
@@ -457,3 +457,26 @@ def test_on_post_add_keeps_the_structural_links(iceberg_backend, parquet_file, c
 
     assert rels.get("parent") == "../catalog.json"
     assert rels.get("root") == "../catalog.json"
+
+
+@pytest.mark.integration
+def test_on_post_add_prints_each_upload_line(
+    iceberg_backend, parquet_file, catalog_with_stac, capsys
+):
+    """The hook passes a report to upload_file, so its upload lines print, as before #1133."""
+    catalog_root, item_dir, collection = catalog_with_stac
+    publish_boundaries(iceberg_backend, parquet_file)
+    context = _make_context(catalog_root, item_dir, collection, remote="s3://bucket/catalog")
+
+    def upload(*, source: Path, destination: str, report: Any) -> MagicMock:
+        report("info", f"Uploading {source.name}")
+        report("success", "Upload complete")
+        return MagicMock(success=True)
+
+    with patch("portolan_cli.sync.upload.upload_file", side_effect=upload):
+        iceberg_backend.on_post_add(context)
+
+    assert capsys.readouterr().out.splitlines()[:2] == [
+        "→ Uploading item1.json",
+        "✓ Upload complete",
+    ]
