@@ -3753,7 +3753,7 @@ requires-dist = [
     { name = "pytest-timeout", marker = "extra == 'dev'", specifier = ">=2.3.1" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "pyyaml", specifier = ">=6.0" },
-    { name = "rashid", specifier = ">=0.5.0,<0.6.0" },
+    { name = "rashid", specifier = ">=0.5.1,<0.6.0" },
     { name = "rasterio", specifier = ">=1.3.0" },
     { name = "requests", specifier = ">=2.33.0" },
     { name = "rich", specifier = ">=13.0.0" },
@@ -3784,11 +3784,15 @@ name = "portolan-core"
 version = "0.9.0"
 source = { editable = "packages/portolan-core" }
 dependencies = [
+    { name = "obstore" },
     { name = "rashid-core" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "rashid-core", specifier = ">=0.5.0,<0.6.0" }]
+requires-dist = [
+    { name = "obstore", specifier = ">=0.12.1" },
+    { name = "rashid-core", specifier = ">=0.5.1,<0.6.0" },
+]
 
 [[package]]
 name = "prompt-toolkit"
@@ -4735,19 +4739,19 @@ wheels = [
 
 [[package]]
 name = "rashid"
-version = "0.5.0"
+version = "0.5.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "rashid-core", extra = ["data"] },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/83/dc/71e377c5719b9a9d610c0f5c47399683284d3b6ff5ebbf2debbd6fdc9db3/rashid-0.5.0.tar.gz", hash = "sha256:260f369207ea164fd3828c5ac6db04a1d95f357cf33fe934a56eda1f15d4a024", size = 4930, upload-time = "2026-11-25T15:14:26.947Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ed/b3/d0ccce1a2ccf5554c47af2ad6c6f546269776ad9e08da3b5ebaf15a24e9a/rashid-0.5.1.tar.gz", hash = "sha256:f3fbd3a23a84dbcecfffce81768b2078c547ffe784d3d672d913c3c409f5325e", size = 4928, upload-time = "2026-11-26T17:35:12.609Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/d1/a8/b404b2153814a2b3a1724e907beed9c9a5d34879fbcd0eb7c95ab2d97e09/rashid-0.5.0-py3-none-any.whl", hash = "sha256:93bb0fe1fd5d830e53c8ca1426cb1587e92d0adf66fdac261f2cbfa86d9a7377", size = 5452, upload-time = "2026-11-25T15:14:25.989Z" },
+    { url = "https://files.pythonhosted.org/packages/65/11/c8cb95d2ba6cf01e92cc735c2eac2344c78e27748dada89ce47c99c5bdf8/rashid-0.5.1-py3-none-any.whl", hash = "sha256:e6daf8510856d25541134fd917feb5e873f2f2979ad101bde79eef3c52b40e2f", size = 5455, upload-time = "2026-11-26T17:35:11.09Z" },
 ]
 
 [[package]]
 name = "rashid-core"
-version = "0.5.0"
+version = "0.5.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "click" },
@@ -4759,9 +4763,9 @@ dependencies = [
     { name = "referencing" },
     { name = "tzdata", marker = "sys_platform == 'win32'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/42/00/3c9b6116d245b488e78d60f36897bf7fdd012fb819fa3f750c466e55b64a/rashid_core-0.5.0.tar.gz", hash = "sha256:86bc23ec460c1c4585e7eb2aa8c6c0f013aebb4ca6e4efb76ed480aa4bc06679", size = 962029, upload-time = "2026-11-25T15:14:16.202Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/54/29/9bd3a94b789365a0fe3781e8cd53b788b7e3ad8836f44e7b0b907de34779/rashid_core-0.5.1.tar.gz", hash = "sha256:eea78fe39e745d954577eb0492c72a9eb3e3c37494a3003457067bb3e30e180f", size = 967508, upload-time = "2026-11-26T17:35:04.89Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a1/75/d390f8123e7d688e3489c7d88b31d25ce78ffef76086084187b9fc0d36d8/rashid_core-0.5.0-py3-none-any.whl", hash = "sha256:2031db8ce343459e969d0027a38874622d4b7ea792e03adf75c1fe11d5eca643", size = 308704, upload-time = "2026-11-25T15:14:14.835Z" },
+    { url = "https://files.pythonhosted.org/packages/60/5c/c6b64d5b5d350d6242e760f91f3f86b68e083447177deb5019f084f47f44/rashid_core-0.5.1-py3-none-any.whl", hash = "sha256:5945cc43c41cc2b50b3ac5d229ee1bb80f3a11807e7be3d4b117c2cd2c842680", size = 311102, upload-time = "2026-11-26T17:35:03.469Z" },
 ]
 
 [package.optional-dependencies]
