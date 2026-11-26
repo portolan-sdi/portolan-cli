@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from portolan_cli.catalog import (
     CatalogState,
@@ -27,11 +27,13 @@ from portolan_cli.scan.check import CheckReport, check_directory
 from portolan_cli.scan.core import ScanResult, scan_directory
 from portolan_cli.sync.pull import PullError, PullResult, pull
 from portolan_cli.sync.push import PushConflictError, PushResult, push_async
-from portolan_cli.sync.report import Report, silent
+from portolan_cli.sync.report import Level, Report, silent
 from portolan_cli.trace import span
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from portolan_cli.extract.common.progress import MessageCallback
 
 # =============================================================================
 # Data Classes
@@ -186,6 +188,15 @@ def _step_scan(catalog_root: Path, report: Report = silent) -> tuple[ScanResult 
         return None, f"Scan failed: {e}"
 
 
+def _message_callback(report: Report) -> MessageCallback:
+    """Return ``report`` as the callback of ``report.reporting``, which takes any level."""
+
+    def on_message(level: str, text: str) -> None:
+        report(cast("Level", level), text)
+
+    return on_message
+
+
 def _step_check(
     catalog_root: Path,
     fix: bool,
@@ -193,11 +204,16 @@ def _step_check(
     report: Report = silent,
 ) -> tuple[CheckReport | None, str | None]:
     """Execute check step. Returns (check_result, error_msg)."""
+    from portolan_cli.report import reporting
+
     report("info", "Checking cloud-native status...")
     try:
-        check_result = check_directory(
-            catalog_root, fix=fix, dry_run=dry_run, catalog_path=catalog_root
-        )
+        # The conversion reports its notices through this scope. A library
+        # caller that passes no report gets them in the log.
+        with reporting(None if report is silent else _message_callback(report)):
+            check_result = check_directory(
+                catalog_root, fix=fix, dry_run=dry_run, catalog_path=catalog_root
+            )
 
         if check_result.convertible_count > 0:
             if fix:

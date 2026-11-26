@@ -3196,10 +3196,15 @@ def rm_cmd(
     # Auto-detect catalog root (git-style)
     catalog_root = _resolve_rm_catalog_root(catalog_path, use_json)
 
+    from portolan_cli.extract.common.cli_helpers import print_message
+    from portolan_cli.report import reporting
+
     try:
-        result = remove_path(
-            path, catalog_root=catalog_root, keep=keep, dry_run=dry_run, force=force
-        )
+        # The catalog index update reports its warnings through this scope.
+        with reporting(print_message):
+            result = remove_path(
+                path, catalog_root=catalog_root, keep=keep, dry_run=dry_run, force=force
+            )
         if not emit_success("rm", result.to_dict(), use_json=use_json):
             _render_rm_result(path, result.removed, result.skipped, keep, dry_run, verbose)
 
@@ -5412,7 +5417,12 @@ def stac_geoparquet(
                 info_output("Run 'portolan init' to create one")
             raise SystemExit(1)
 
-    result = generate_stac_geoparquet(catalog_path, collection, dry_run=dry_run)
+    from portolan_cli.extract.common.cli_helpers import print_message
+    from portolan_cli.report import reporting
+
+    # The catalog index update reports its warnings through this scope.
+    with reporting(print_message):
+        result = generate_stac_geoparquet(catalog_path, collection, dry_run=dry_run)
     if result.error is not None:
         emit_error("stac-geoparquet", *result.error, use_json=use_json)
         raise SystemExit(1)
