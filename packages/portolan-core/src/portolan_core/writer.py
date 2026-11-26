@@ -19,12 +19,15 @@ What the planner does
 - It adds the structural links ``root``, ``parent``, ``collection``,
   ``child``, and ``item`` that rashid's ``expected_links`` gives. Each
   ``child`` and ``item`` link gets the title of its target. An item without
-  ``properties.title`` gives its ``id``. It removes every structural link the
-  input had.
+  ``properties.title`` gives its ``id``. It removes every relative structural
+  link the input had. An absolute structural link, such as a ``child`` link to
+  another host, passes through.
+- It sets the ``collection`` field of each item, as STAC 1.1.0 requires with
+  a ``collection`` link.
 - It adds an ``agents`` link to ``./AGENTS.md`` and a ``describedby`` link to
-  ``./README.md`` on each catalog and collection, and removes an old link of
-  the same rel that points at a different sibling Markdown file. Other links
-  pass through after these.
+  ``./README.md`` on each catalog and collection. An input link with the same
+  rel to the same file gives its other fields, such as ``title`` and
+  ``hreflang``. Every other link passes through after these.
 - It adds the newest Portolan profile URI that rashid bundles to a catalog or
   collection that declares none.
 - It writes no ``self`` link. STAC requires a ``self`` link to be absolute,
@@ -37,8 +40,11 @@ What the planner never does
   directory asset such as a Zarr store keeps the ``file:size`` the caller gave
   and gets no ``file:checksum``.
 - It deletes only keys from ``prior_managed_keys``. Each prior key that is not
-  a new put key becomes a delete. A prior key must name catalog JSON or a
-  documentation file, so a delete never removes asset data.
+  a new put key becomes a delete. A prior key must name a ``.json`` file, a
+  ``README.md``, or an ``AGENTS.md``. It must not be a ``versions.json``, and no
+  asset href of the new documents may resolve to it. The planner cannot know
+  whether another ``.json`` key is an item or a data file that nothing links,
+  so the caller must list only keys that a previous plan put.
 
 Keys are root-relative POSIX paths. ``key_prefix`` goes in front of every put
 key and every delete key. ``prior_managed_keys`` are root-relative and carry no
@@ -48,6 +54,13 @@ Order: the puts come first. A put comes after the puts of every object it
 links down to, so a reader that starts at the root never meets a link to an
 object that is not written yet. The deletes come last, after the new tree no
 longer links to them.
+
+The same input gives the same operations, byte for byte. The JSON keeps the
+key order of the input documents.
+
+The planner refuses a plan in which two keys differ only by case. A put and a
+delete of such keys would hit the same file on a case-insensitive store, such
+as Windows or the default macOS file system.
 
 Every check on the input runs before the planner makes any operation. A
 failure raises a :class:`CatalogWriteError` subclass.
@@ -68,6 +81,7 @@ from rashid_core.api import (
     CatalogGraph,
     Node,
     expected_links,
+    is_absolute_href,
     newest_profile_version,
     profile_uri,
     profile_version,
@@ -171,26 +185,47 @@ def plan_catalog(
         key_prefix: A prefix such as ``catalogs/demo`` for every put and
             delete key.
 
+    A translated root counts as a language root only when the root catalog
+    links it with a relative ``alternate`` link of type ``application/json``.
+    Rashid does not follow an absolute ``alternate`` link, so such a tree gets
+    the containment links of an ordinary subdirectory.
+
     Raises:
         InvalidKeyError: A key or the prefix is absolute, holds ``..``, a
-            hidden directory, or an empty segment, or a prior key names a
-            file that is not catalog metadata.
+            backslash, a hidden directory, or an empty segment. Two keys of
+            the plan differ only by case. A prior key names a file that the
+            writer does not manage, a ``versions.json``, or an asset.
         InvalidDocumentError: A document is not the STAC object its file name
-            says, lacks a title or description, lacks its README.md or
-            AGENTS.md, or is not inside the tree.
+            says, has links or assets of the wrong shape, lacks a title or
+            description, lacks its README.md or AGENTS.md, or is not inside
+            the tree. A collection holds another collection: core.md, "Nested
+            Catalogs, Flat Collections", says "A collection MUST NOT contain a
+            child collection" (PORTO-CORE-004, PORTO-CORE-018).
         MissingOwnerError: A documentation file has no owner.
     """
     documentation = documentation or {}
-    prefix = _check_key(key_prefix.rstrip("/")) if key_prefix.strip("/") else ""
+    # One trailing slash is allowed. Any other empty segment is an error.
+    prefix = _check_key(key_prefix.removesuffix("/")) if key_prefix else ""
     copies = {_check_key(key): _copy(key, doc) for key, doc in documents.items()}
     for key in documentation:
         _check_documentation(_check_key(key), copies)
-    prior = {_check_prior(key) for key in prior_managed_keys}
     if "catalog.json" not in copies:
         raise InvalidDocumentError("the tree has no root catalog.json")
+    assets = {path for key, doc in copies.items() for path in _asset_paths(key, doc)}
+    prior = {_check_prior(key, assets) for key in prior_managed_keys}
 
-    graph = CatalogGraph.from_documents(Path(), {k: _strip(k, d) for k, d in copies.items()})
-    links = {node.path.as_posix(): _links(graph, node, documentation) for node in graph.iter()}
+    sidecars = {key: _strip(key, doc) for key, doc in copies.items()}
+    graph = CatalogGraph.from_documents(Path(), copies)
+    for node in graph.iter("collection"):
+        if graph.enclosing_collection_of(node) is not None:
+            raise InvalidDocumentError(
+                f"{node.path} is inside another collection, and a collection MUST NOT"
+                " contain a child collection (core.md, Nested Catalogs, Flat Collections)"
+            )
+    links = {
+        node.path.as_posix(): _links(graph, node, documentation, sidecars[node.path.as_posix()])
+        for node in graph.iter()
+    }
 
     content: dict[str, tuple[bytes, str]] = {}
     for key, doc in copies.items():
@@ -206,8 +241,16 @@ def plan_catalog(
     def full(key: str) -> str:
         return f"{prefix}/{key}" if prefix else key
 
+    deleted = prior - content.keys()
+    seen: dict[str, str] = {}
+    for key in sorted(content.keys() | deleted):
+        if seen.setdefault(key.casefold(), key) != key:
+            raise InvalidKeyError(
+                f"keys {seen[key.casefold()]!r} and {key!r} differ only by case,"
+                " which is unsafe on a case-insensitive store"
+            )
     puts = [PutOperation(full(k), *content[k]) for k in sorted(content, key=_order)]
-    deletes = [DeleteOperation(full(k)) for k in sorted(prior - content.keys(), key=_order)]
+    deletes = [DeleteOperation(full(k)) for k in sorted(deleted, key=_order)]
     return WritePlan(operations=(*puts, *deletes))
 
 
@@ -302,11 +345,21 @@ def _check_key(key: str) -> str:
     return key
 
 
-def _check_prior(key: str) -> str:
+def _check_prior(key: str, assets: set[str]) -> str:
     name = PurePosixPath(_check_key(key)).name
-    if not name.endswith(".json") and name not in _DOCUMENTATION:
+    # versions.json is the Portolan version record. The writer never manages it.
+    if name == "versions.json" or (not name.endswith(".json") and name not in _DOCUMENTATION):
         raise InvalidKeyError(f"prior key is not catalog metadata, so it is never deleted: {key!r}")
+    if key in assets:
+        raise InvalidKeyError(f"prior key is an asset of the new catalog, so it stays: {key!r}")
     return key
+
+
+def _asset_paths(key: str, doc: dict[str, Any]) -> list[str]:
+    """The root-relative paths that the local asset hrefs of ``doc`` name."""
+    assets = doc.get("assets", {}).values()
+    paths = (resolve_local_href(PurePosixPath(key), asset["href"]) for asset in assets)
+    return [path.as_posix() for path in paths if path is not None]
 
 
 def _kind(key: str) -> str:
@@ -334,10 +387,19 @@ def _copy(key: str, document: object) -> dict[str, Any]:
             raise InvalidDocumentError(f"{key} needs a list in 'stac_extensions'")
         if not any(isinstance(uri, str) and profile_version(uri) for uri in extensions):
             extensions.append(profile_uri(newest_profile_version()))
-    links = doc.get("links", [])
-    doc["links"] = (
-        [link for link in links if isinstance(link, dict)] if isinstance(links, list) else []
-    )
+    links = doc.setdefault("links", [])
+    if not isinstance(links, list) or not all(
+        isinstance(link, dict)
+        and isinstance(link.get("rel"), str)
+        and isinstance(link.get("href"), str)
+        for link in links
+    ):
+        raise InvalidDocumentError(f"{key} needs a list of links, each with a string rel and href")
+    assets = doc.get("assets", {})
+    if not isinstance(assets, dict) or not all(
+        isinstance(asset, dict) and isinstance(asset.get("href"), str) for asset in assets.values()
+    ):
+        raise InvalidDocumentError(f"{key} needs a mapping of assets, each with a string href")
     return doc
 
 
@@ -349,28 +411,35 @@ def _check_documentation(key: str, documents: Mapping[str, dict[str, Any]]) -> N
         raise MissingOwnerError(f"{key} has no catalog.json or collection.json beside it")
 
 
-def _strip(key: str, doc: dict[str, Any]) -> dict[str, Any]:
-    """Drop the links the planner makes. The planner adds them back later."""
-    directory = PurePosixPath(key).parent
-    owned = {rel: directory / name for name, rel in _DOCUMENTATION.items()}
+def _strip(key: str, doc: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Drop the links the planner makes, and return the dropped sidecar links by rel.
 
-    def made_here(link: dict[str, Any]) -> bool:
-        rel, href = link.get("rel"), link.get("href")
-        if rel in STRUCTURAL_RELS:
-            return True
-        if rel not in owned or _kind(key) == "item":
-            return False
-        target = resolve_local_href(PurePosixPath(key), href) if isinstance(href, str) else None
-        # A link to a sibling Markdown file is an old documentation link. A
-        # describedby link to a data dictionary or to a URL stays.
-        return target is not None and target.parent == directory and target.suffix == ".md"
-
-    doc["links"] = [link for link in doc["links"] if not made_here(link)]
-    return doc
+    The planner makes the local structural links and the links to the managed
+    README.md and AGENTS.md. Every other link stays, in its input order.
+    """
+    path = PurePosixPath(key)
+    owned = (
+        {}
+        if _kind(key) == "item"
+        else {rel: path.parent / name for name, rel in _DOCUMENTATION.items()}
+    )
+    sidecars: dict[str, dict[str, Any]] = {}
+    kept = []
+    for link in doc["links"]:
+        rel, href = link["rel"], link["href"]
+        if rel in owned and resolve_local_href(path, href) == owned[rel]:
+            sidecars.setdefault(rel, link)
+        elif rel not in STRUCTURAL_RELS or is_absolute_href(href):
+            kept.append(link)
+    doc["links"] = kept
+    return sidecars
 
 
 def _links(
-    graph: CatalogGraph, node: Node, documentation: Mapping[str, str]
+    graph: CatalogGraph,
+    node: Node,
+    documentation: Mapping[str, str],
+    sidecars: Mapping[str, dict[str, Any]],
 ) -> list[dict[str, Any]]:
     key = node.path.as_posix()
     links: list[dict[str, Any]] = []
@@ -391,7 +460,9 @@ def _links(
         sidecar = (node.path.parent / name).as_posix()
         if sidecar not in documentation:
             raise InvalidDocumentError(f"{sidecar} is missing for {key}")
-        links.append({"rel": rel, "href": f"./{name}", "type": _MARKDOWN})
+        made = {"rel": rel, "href": f"./{name}", "type": _MARKDOWN}
+        # An input link to the same file keeps fields such as title and hreflang.
+        links.append({**sidecars.get(rel, {}), **made})
     return links
 
 

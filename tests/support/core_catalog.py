@@ -6,7 +6,8 @@ expected output, written by hand from the spec. The README in
 ``tests/fixtures/core/`` says how each expected link follows from the spec.
 
 The input carries stale links on purpose: a ``child`` link to a removed
-collection and an old ``describedby`` link. The writer replaces them.
+collection and a ``describedby`` link with the wrong type. The writer replaces
+the first and repairs the second.
 """
 
 from __future__ import annotations
@@ -96,7 +97,12 @@ def golden_documents() -> dict[str, dict[str, Any]]:
                 "thumbnail": _thumbnail(),
             },
             "links": [
-                {"rel": "describedby", "href": "./OLD-README.md", "type": "text/markdown"},
+                {
+                    "rel": "describedby",
+                    "href": "./README.md",
+                    "type": "text/plain",
+                    "title": "Read me",
+                },
                 {
                     "rel": "via",
                     "href": "https://example.org/boundaries",

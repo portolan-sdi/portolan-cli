@@ -256,3 +256,110 @@ class TestCustomSink:
             ("put" if isinstance(op, PutOperation) else "delete", op.key) for op in plan.operations
         ]
         assert calls[-1] == ("delete", "old/collection.json")
+
+
+def _links_of(plan: WritePlan, key: str) -> list[dict[str, Any]]:
+    links: list[dict[str, Any]] = json.loads(_puts(plan)[key].content)["links"]
+    return links
+
+
+class TestReviewFixes:
+    def test_keys_that_differ_only_by_case_are_refused(self) -> None:
+        item = "environment/air-quality/station-north/station-north.json"
+
+        with pytest.raises(InvalidKeyError, match="Station-North.json"):
+            _plan(prior_managed_keys=[item.replace("station-north.json", "Station-North.json")])
+
+    def test_a_prior_key_that_a_new_asset_references_is_refused(self) -> None:
+        documents = golden_documents()
+        documents["boundaries/collection.json"]["assets"]["style"] = {
+            "href": "./style.json",
+            "type": "application/json",
+            "roles": ["style"],
+        }
+
+        with pytest.raises(InvalidKeyError, match="boundaries/style.json"):
+            plan_catalog(
+                documents, golden_documentation(), prior_managed_keys=["boundaries/style.json"]
+            )
+
+    @pytest.mark.parametrize("key", ["versions.json", "boundaries/versions.json"])
+    def test_a_versions_json_prior_key_is_refused(self, key: str) -> None:
+        with pytest.raises(InvalidKeyError, match="versions.json"):
+            _plan(prior_managed_keys=[key])
+
+    def test_absolute_structural_links_stay_in_place(self) -> None:
+        documents = golden_documents()
+        external = {
+            "rel": "child",
+            "href": "https://other.example/collection.json",
+            "type": "application/json",
+            "title": "Elsewhere",
+        }
+        via = documents["boundaries/collection.json"]["links"][1]
+        documents["boundaries/collection.json"]["links"] = [external, via]
+
+        links = _links_of(
+            plan_catalog(documents, golden_documentation()), "boundaries/collection.json"
+        )
+
+        assert links[-2:] == [external, via]
+        assert [link["rel"] for link in links] == [
+            "root",
+            "parent",
+            "agents",
+            "describedby",
+            "child",
+            "via",
+        ]
+
+    def test_a_describedby_link_to_another_markdown_file_stays(self) -> None:
+        documents = golden_documents()
+        dictionary = {"rel": "describedby", "href": "./data-dictionary.md", "type": "text/markdown"}
+        documents["boundaries/collection.json"]["links"].append(dictionary)
+
+        links = _links_of(
+            plan_catalog(documents, golden_documentation()), "boundaries/collection.json"
+        )
+
+        assert links[-1] == dictionary
+        assert [link["href"] for link in links if link["rel"] == "describedby"] == [
+            "./README.md",
+            "./data-dictionary.md",
+        ]
+
+    def test_a_nested_collection_is_refused(self) -> None:
+        documents = golden_documents()
+        documents["boundaries/inner/collection.json"] = copy.deepcopy(
+            documents["boundaries/collection.json"]
+        )
+        documentation = golden_documentation()
+        documentation["boundaries/inner/README.md"] = "# Inner\n"
+        documentation["boundaries/inner/AGENTS.md"] = "# Inner\n"
+
+        with pytest.raises(InvalidDocumentError, match="boundaries/inner/collection.json"):
+            plan_catalog(documents, documentation)
+
+    @pytest.mark.parametrize("prefix", ["/", "///", "a//b", "a\\b", "a/./b"])
+    def test_a_prefix_with_an_empty_or_bad_segment_is_refused(self, prefix: str) -> None:
+        with pytest.raises(InvalidKeyError):
+            _plan(key_prefix=prefix)
+
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [
+            ("links", {"rel": "child"}),
+            ("links", ["not-a-link"]),
+            ("links", [{"rel": [], "href": "x"}]),
+            ("links", [{"rel": "via", "href": 3}]),
+            ("assets", ["not-a-mapping"]),
+            ("assets", {"data": "not-an-asset"}),
+            ("assets", {"data": {"href": None}}),
+        ],
+    )
+    def test_malformed_links_or_assets_are_refused(self, field: str, value: object) -> None:
+        documents = golden_documents()
+        documents["boundaries/collection.json"][field] = value
+
+        with pytest.raises(InvalidDocumentError, match="boundaries/collection.json"):
+            plan_catalog(documents, golden_documentation())

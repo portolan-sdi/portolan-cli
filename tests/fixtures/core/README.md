@@ -51,10 +51,12 @@ The spec is `portolan-sdi/portolan-spec`, `specs/portolan/core.md`.
   `README.md` behind `rel: "describedby"`, both with `type: text/markdown`.
   Section "Core Structure" puts both files in the directory of the catalog or
   collection, so the href is `./AGENTS.md` or `./README.md`.
-- **Stale links.** The input root has a `child` link to a removed collection,
-  and `boundaries` has a `describedby` link to `OLD-README.md`. The writer
-  makes all structural links and the two documentation links, so neither stale
-  link is in the output.
+- **Stale links.** The input root has a `child` link to a removed collection.
+  The writer makes every local structural link, so that link is not in the
+  output. `boundaries` has a `describedby` link to `./README.md` with the type
+  `text/plain` and a title. The writer sets the type that section "README.md"
+  requires and keeps the title, because a caller can put a `title` or an
+  `hreflang` on that link (see best-practices/multilingual-catalogs.md).
 - **Other links.** The `via` link on `boundaries` is not a link the writer
   makes, so it passes through unchanged after the writer's links.
 

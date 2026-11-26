@@ -77,7 +77,8 @@
     {
       "rel": "describedby",
       "href": "./README.md",
-      "type": "text/markdown"
+      "type": "text/markdown",
+      "title": "Read me"
     },
     {
       "rel": "via",
