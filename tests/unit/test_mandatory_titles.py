@@ -189,6 +189,53 @@ class TestEnsureLinkTitlesUnicode:
         assert catalog["links"][0]["title"] == "Áreas Programáticas"
 
 
+def _encoded_catalog(root: Path) -> None:
+    """A catalog whose link hrefs are percent-encoded, as rashid writes them."""
+    _write(
+        root / "catalog.json",
+        {
+            "type": "Catalog",
+            "stac_version": "1.0.0",
+            "id": "demo",
+            "title": "Demo",
+            "description": "d",
+            "links": [{"rel": "child", "href": "./%C3%A9t%C3%A9/collection.json"}],
+        },
+    )
+    _write(
+        root / "été" / "collection.json",
+        {
+            "type": "Collection",
+            "stac_version": "1.0.0",
+            "id": "ete",
+            "title": "Summer",
+            "description": "d",
+            "links": [{"rel": "item", "href": "./tree%20census/tree%20census.json"}],
+        },
+    )
+    _write(
+        root / "été" / "tree census" / "tree census.json",
+        {
+            "type": "Feature",
+            "stac_version": "1.0.0",
+            "id": "tree_census",
+            "properties": {},
+            "links": [],
+        },
+    )
+
+
+@pytest.mark.unit
+class TestPercentEncodedLinks:
+    def test_the_child_link_gets_the_title_of_the_decoded_target(self, tmp_path: Path) -> None:
+        _encoded_catalog(tmp_path)
+
+        ensure_link_titles(tmp_path)
+
+        catalog = json.loads((tmp_path / "catalog.json").read_text(encoding="utf-8"))
+        assert catalog["links"][0]["title"] == "Summer"
+
+
 @pytest.mark.unit
 class TestValidateTitleDescription:
     def test_blank_string_is_accepted_as_absent(self) -> None:

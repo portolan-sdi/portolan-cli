@@ -1018,10 +1018,14 @@ def _link_title_from_target(
     if not isinstance(href, str) or not href:
         return None
 
-    target = (stac_file.parent / href).resolve()
+    from rashid_core.api import resolve_local_href
 
-    # input hardening: ignore ``../`` hrefs that resolve outside the
-    # catalog so a crafted link can't read files elsewhere on disk.
+    # Input hardening: rashid gives None for an href that leaves the catalog,
+    # and the resolved path check stops a symlink that leads out of it.
+    rel = resolve_local_href(stac_file.relative_to(catalog_root).as_posix(), href)
+    if rel is None:
+        return None
+    target = (catalog_root / rel).resolve()
     root = catalog_root.resolve()
     if target != root and root not in target.parents:
         return None
