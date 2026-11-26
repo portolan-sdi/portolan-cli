@@ -1,19 +1,19 @@
 """Write a small Portolan catalog from Python with portolan-core.
 
-Run it with an output folder:
+Run it. It writes the catalog into ./my-catalog in the current folder:
 
-    uv run python examples/python-writer/write_catalog.py ./my-catalog
+    uv run python examples/python-writer/write_catalog.py
 
 tests/docs/test_python_writer_guide.py runs this script and validates the
-catalog it writes. docs/guides/python-writer.md includes its sections.
+catalog it writes. docs/guides/python-writer.md includes its sections, so
+each section runs after the ones before it.
 """
 
 from __future__ import annotations
 
-import sys
+# --8<-- [start:plan]
 from pathlib import Path
 
-# --8<-- [start:plan]
 from portolan_core.writer import LocalSink, apply_plan, plan_catalog
 
 PROFILE = "https://schemas.portolan-sdi.org/portolan/v0.3.0/schema.json"
@@ -80,17 +80,12 @@ documentation = {
 plan = plan_catalog(documents, documentation)
 # --8<-- [end:plan]
 
+# --8<-- [start:apply]
+output = Path("my-catalog")
+apply_plan(plan, LocalSink(output))
+# --8<-- [end:apply]
 
-def main(output: Path) -> None:
-    """Apply the plan to ``output``, then print the operations."""
-    # --8<-- [start:apply]
-    apply_plan(plan, LocalSink(output))
-    # --8<-- [end:apply]
-    # --8<-- [start:loop]
-    for operation in plan.operations:
-        print(type(operation).__name__, operation.key)
-    # --8<-- [end:loop]
-
-
-if __name__ == "__main__":
-    main(Path(sys.argv[1]))
+# --8<-- [start:loop]
+for operation in plan.operations:
+    print(type(operation).__name__, operation.key)
+# --8<-- [end:loop]

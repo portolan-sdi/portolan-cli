@@ -11,6 +11,7 @@ import json
 import re
 import subprocess
 import sys
+import textwrap
 from pathlib import Path
 
 import pytest
@@ -37,6 +38,27 @@ def test_each_snippet_section_exists_once() -> None:
         assert source.count(f"--8<-- [end:{section}]") == 1
 
 
+def _section(name: str) -> str:
+    """The dedented code between the start and end markers of one section."""
+    source = EXAMPLE.read_text(encoding="utf-8")
+    body = source.split(f"--8<-- [start:{name}]\n", 1)[1].split("--8<-- [end:", 1)[0]
+    return textwrap.dedent(body.rpartition("\n")[0])
+
+
+def test_the_guide_snippets_run_in_order(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A reader who runs the shown snippets one after the other gets a catalog."""
+    monkeypatch.chdir(tmp_path)
+    namespace: dict[str, object] = {}
+
+    for name in ("plan", "apply", "loop"):
+        exec(_section(name), namespace)  # noqa: S102 - the guide's own example code
+
+    assert (tmp_path / "my-catalog" / "catalog.json").is_file()
+    assert capsys.readouterr().out.splitlines()[-1] == "PutOperation catalog.json"
+
+
 def test_the_guide_names_only_public_writer_names() -> None:
     """Each writer name in backticks is in portolan_core.writer.__all__."""
     guide = GUIDE.read_text(encoding="utf-8")
@@ -52,7 +74,7 @@ def test_the_example_writes_a_catalog_the_validator_accepts(tmp_path: Path) -> N
     """The example runs, and rashid reports no error on what it writes."""
     out = tmp_path / "my-catalog"
     run = subprocess.run(
-        [sys.executable, str(EXAMPLE), str(out)], capture_output=True, text=True, check=True
+        [sys.executable, str(EXAMPLE)], cwd=tmp_path, capture_output=True, text=True, check=True
     )
     check = subprocess.run(
         [sys.executable, "-m", "rashid_core", "check", "--no-data", "--json", str(out)],
