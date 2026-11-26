@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from portolan_cli.metadata.fix import FixReport
     from portolan_cli.query import ItemInfo
     from portolan_cli.run_state import RunState
+    from portolan_cli.status import CollectionStatus
     from portolan_cli.sync.pull import PullResult
 
 import click
@@ -79,7 +80,6 @@ from portolan_cli.scan.output import (
     render_tree_view,
 )
 from portolan_cli.scan.progress import ScanProgressReporter, count_directories
-from portolan_cli.status import CollectionStatus, get_collection_status
 from portolan_cli.utils import format_size
 
 
@@ -945,34 +945,22 @@ def status_cmd(
     if not offline:
         remote_url = resolve_remote(None, catalog_path, collection)
 
-    # The collections `check` sees and the ones `push` uploads (#944)
-    from portolan_cli.status import status_collections
-
-    collections = [collection] if collection else status_collections(catalog_path)
-
-    if not collections:
-        if not emit_success("status", {"collections": []}, use_json=use_json):
-            info_output("No collections found")
-        return
-
+    from portolan_cli.status import get_catalog_status
     from portolan_cli.sync.pull import fetch_remote_versions
 
-    # Get status for each collection
-    statuses: list[CollectionStatus] = []
-    for coll in collections:
-        status = get_collection_status(
-            catalog_root=catalog_path,
-            collection=coll,
-            offline=offline,
-            remote_url=remote_url,
-            fetch_remote_versions=fetch_remote_versions,
-        )
-        statuses.append(status)
+    result = get_catalog_status(
+        catalog_path,
+        collection,
+        offline=offline,
+        remote_url=remote_url,
+        fetch_remote_versions=fetch_remote_versions,
+    )
 
-    if not emit_success(
-        "status", {"collections": [s.to_dict() for s in statuses]}, use_json=use_json
-    ):
-        _output_status_human(statuses)
+    if not emit_success("status", result.to_dict(), use_json=use_json):
+        if not result.collections:
+            info_output("No collections found")
+        else:
+            _output_status_human(result.collections)
 
 
 def _output_status_human(statuses: list[CollectionStatus]) -> None:

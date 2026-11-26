@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from portolan_cli.catalog_list import list_catalog_contents
+from portolan_cli.status import get_catalog_status
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -69,4 +70,36 @@ def test_list_collection(parity: Parity, points_catalog: Callable[[Path], None])
         ["--collection", "points"],
         catalog=points_catalog,
         call=lambda root: list_catalog_contents(root, collection_id="points"),
+    )
+
+
+@pytest.mark.parametrize(
+    ("args", "collection", "offline"),
+    [([], None, False), (["--offline"], None, True), (["-c", "points"], "points", False)],
+)
+def test_status(
+    parity: Parity,
+    points_catalog: Callable[[Path], None],
+    args: list[str],
+    collection: str | None,
+    offline: bool,
+) -> None:
+    """`status` reports each collection. The catalog has no remote, so none is read."""
+    parity(
+        "status",
+        args,
+        catalog=points_catalog,
+        call=lambda root: get_catalog_status(root, collection, offline=offline),
+    )
+
+
+def test_status_no_collections(
+    parity: Parity, build_conformant_catalog: Callable[..., Path]
+) -> None:
+    """`status` on a catalog with no collection reports an empty list."""
+    parity(
+        "status",
+        [],
+        catalog=build_conformant_catalog,
+        call=lambda root: get_catalog_status(root),
     )

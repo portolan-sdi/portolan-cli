@@ -306,6 +306,56 @@ def get_collection_status(
     )
 
 
+@dataclass(frozen=True)
+class CatalogStatus:
+    """The status of each collection that ``status`` reports."""
+
+    collections: list[CollectionStatus]
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize the result as the ``status`` envelope data."""
+        return {"collections": [s.to_dict() for s in self.collections]}
+
+
+def get_catalog_status(
+    catalog_root: Path,
+    collection: str | None = None,
+    *,
+    offline: bool = False,
+    remote_url: str | None = None,
+    fetch_remote_versions: Callable[[str, str], VersionsFile] | None = None,
+) -> CatalogStatus:
+    """Get the status of one collection, or of each collection in the catalog.
+
+    This is the library function of ``portolan status``.
+
+    Args:
+        catalog_root: Path to catalog root directory.
+        collection: The collection to report. None reports each collection
+            that ``status_collections`` finds.
+        offline: If True, skip remote version check.
+        remote_url: Optional remote URL for fetching remote versions.json.
+        fetch_remote_versions: Reads the remote versions.json. See
+            ``get_collection_status``.
+
+    Returns:
+        The status of each collection.
+    """
+    collections = [collection] if collection else status_collections(catalog_root)
+    return CatalogStatus(
+        [
+            get_collection_status(
+                catalog_root=catalog_root,
+                collection=coll,
+                offline=offline,
+                remote_url=remote_url,
+                fetch_remote_versions=fetch_remote_versions,
+            )
+            for coll in collections
+        ]
+    )
+
+
 def _fetch_remote_version(
     remote_url: str,
     collection: str,
