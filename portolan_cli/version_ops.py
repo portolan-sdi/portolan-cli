@@ -213,6 +213,13 @@ def publish_version(
 _SEMVER = re.compile(r"^\d+\.\d+\.\d+(-[a-zA-Z0-9.-]+)?(\+[a-zA-Z0-9.-]+)?$")
 
 
+def semver_error(version: str) -> str | None:
+    """Return the message that rejects ``version``, or None for a valid semver string."""
+    if _SEMVER.match(version):
+        return None
+    return f"Invalid semver: '{version}'. Expected format: MAJOR.MINOR.PATCH (e.g., '1.2.0')"
+
+
 @dataclass(frozen=True)
 class VersionBumpResult:
     """The outcome of ``portolan version bump``.
@@ -289,11 +296,9 @@ def bump_collection_version(
     def failed(error_type: str, message: str) -> VersionBumpResult:
         return VersionBumpResult(collection, error=(error_type, message))
 
-    if not _SEMVER.match(new_version):
-        return failed(
-            "ValidationError",
-            f"Invalid semver: '{new_version}'. Expected format: MAJOR.MINOR.PATCH (e.g., '1.2.0')",
-        )
+    invalid = semver_error(new_version)
+    if invalid is not None:
+        return failed("ValidationError", invalid)
     collection_path = catalog_root / collection
     versions_path = collection_path / "versions.json"
     if not versions_path.exists():

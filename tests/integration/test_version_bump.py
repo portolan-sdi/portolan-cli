@@ -360,6 +360,23 @@ class TestVersionBumpValidation:
         assert "Invalid semver" in result.output
 
     @pytest.mark.integration
+    def test_bump_rejects_invalid_semver_before_it_looks_for_a_catalog(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Outside a catalog, a bad version string still reports ValidationError."""
+        monkeypatch.chdir(tmp_path)
+
+        result = CliRunner().invoke(cli, ["version", "bump", "points", "bad", "--json"])
+
+        assert result.exit_code == 1
+        assert json.loads(result.stdout)["errors"] == [
+            {
+                "type": "ValidationError",
+                "message": "Invalid semver: 'bad'. Expected format: MAJOR.MINOR.PATCH (e.g., '1.2.0')",
+            }
+        ]
+
+    @pytest.mark.integration
     def test_bump_accepts_prerelease_version(self, catalog_with_tracked_file: Path) -> None:
         """Bump accepts valid semver with prerelease tag."""
         data_file = catalog_with_tracked_file / "demographics" / "data.parquet"

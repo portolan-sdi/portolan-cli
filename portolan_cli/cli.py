@@ -5356,9 +5356,14 @@ def bump(
         portolan version bump demographics 2.0.0 --breaking -m "Schema change"
         portolan version bump demographics 1.4.0 -y  # Skip confirmation
     """
-    from portolan_cli.version_ops import bump_collection_version
+    from portolan_cli.version_ops import bump_collection_version, semver_error
 
     use_json = should_output_json(ctx, json_output)
+
+    # A bad version string fails before the catalog lookup, as it always has.
+    invalid = semver_error(new_version)
+    if invalid is not None:
+        _bump_error(use_json, "ValidationError", invalid)
 
     if catalog_path is None:
         catalog_path = require_catalog_root(use_json, "version bump")
