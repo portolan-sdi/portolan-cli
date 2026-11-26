@@ -501,6 +501,10 @@ def test_rm_effects(
         lambda root: remove_path(target, catalog_root=root, keep=keep, force=not keep),
     ):
         assert "points/points.geojson" in before
+        # add tracks the source and the GeoParquet it converts. rm untracks the source.
+        assert (
+            "points.geojson" in json.loads(before["points/versions.json"])["versions"][-1]["assets"]
+        )
         assert "points.geojson" not in _tracked(root)
         assert (root / target).exists() is keep
 
