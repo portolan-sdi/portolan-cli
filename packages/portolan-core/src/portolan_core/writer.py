@@ -75,7 +75,7 @@ import json
 import os
 import stat
 from dataclasses import dataclass
-from pathlib import Path, PurePosixPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import TYPE_CHECKING, Any, Protocol
 
 from rashid_core.api import (
@@ -194,8 +194,8 @@ def plan_catalog(
 
     Raises:
         InvalidKeyError: A key or the prefix is absolute, holds ``..``, a
-            backslash, a hidden directory, or an empty segment. On Windows,
-            a key has a drive such as ``C:``. Two keys or two directories of
+            backslash, a hidden directory, or an empty segment. A key starts
+            with a drive such as ``C:``, on any host. Two keys or two directories of
             the plan differ only by case. A prior key names a file that the
             writer does not manage, a ``versions.json``, or an asset.
         InvalidDocumentError: A document is not the STAC object its file name
@@ -346,6 +346,9 @@ def _check_key(key: str) -> str:
         or "\\" in key
         or path.as_posix() != key
         or path.is_absolute()
+        # Windows reads C:/x and C:x as drive paths. The writer refuses them on
+        # every host, so a plan does not depend on where it was made.
+        or PureWindowsPath(key).drive
         or any(part in ("..", ".") or part.startswith(".") for part in path.parts)
     ):
         raise InvalidKeyError(f"key must be a relative POSIX path inside the tree: {key!r}")

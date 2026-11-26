@@ -6,7 +6,7 @@ import copy
 import dataclasses
 import json
 import re
-from pathlib import PureWindowsPath
+from pathlib import PurePosixPath, PureWindowsPath
 from typing import Any
 
 import pytest
@@ -393,10 +393,13 @@ class TestReviewFixes:
 
 @pytest.fixture(params=["posix", "windows"])
 def host(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> str:
-    """Run a test as on POSIX, then as on a case-insensitive Windows host."""
-    if request.param == "windows":
-        # Rashid's own tests patch the host path type the same way.
-        monkeypatch.setattr(rashid_href, "_HOST_PATH", PureWindowsPath)
+    """Run a test as on POSIX, then as on a case-insensitive Windows host.
+
+    Each case sets the host path type, so it means the same on every runner.
+    Rashid's own tests patch the host the same way.
+    """
+    host_path = PureWindowsPath if request.param == "windows" else PurePosixPath
+    monkeypatch.setattr(rashid_href, "_HOST_PATH", host_path)
     return str(request.param)
 
 
@@ -432,15 +435,21 @@ class TestRashidKeyRules:
         with pytest.raises(InvalidKeyError, match="relative POSIX path"):
             plan_catalog(documents, golden_documentation())
 
-    def test_a_drive_key_is_refused_only_where_the_host_reads_a_drive(self, host: str) -> None:
-        documents, documentation = _with_catalog("C:/catalog.json")
+    @pytest.mark.parametrize("key", ["C:/catalog.json", "C:x/catalog.json", "a:b/catalog.json"])
+    def test_a_drive_key_is_refused_on_every_host(self, host: str, key: str) -> None:
+        documents, documentation = _with_catalog(key)
 
-        if host == "windows":
-            with pytest.raises(InvalidKeyError, match="C:/catalog.json"):
-                plan_catalog(documents, documentation)
-        else:
-            keys = [op.key for op in plan_catalog(documents, documentation).operations]
-            assert "C:/catalog.json" in keys
+        with pytest.raises(InvalidKeyError, match=re.escape(repr(key))):
+            plan_catalog(documents, documentation)
+
+    def test_a_drive_prior_key_is_refused_on_every_host(self, host: str) -> None:
+        with pytest.raises(InvalidKeyError, match="'C:/old/collection.json'"):
+            _plan(prior_managed_keys=["C:/old/collection.json"])
+
+    @pytest.mark.parametrize("prefix", ["C:/catalogs", "C:"])
+    def test_a_drive_prefix_is_refused_on_every_host(self, host: str, prefix: str) -> None:
+        with pytest.raises(InvalidKeyError):
+            _plan(key_prefix=prefix)
 
     def test_directories_that_differ_only_by_case_are_refused(self, host: str) -> None:
         documents, documentation = _with_catalog("Environment/extra/catalog.json")
