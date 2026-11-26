@@ -2,13 +2,22 @@
 
 Each line a user sees goes to a ``MessageCallback`` with its level, the
 callback type of the extract path (``extract.common.progress``). The CLI prints
-the line through ``portolan_cli.output``.
+the line through ``portolan_cli.output``. Three rules hold:
+
+1. A library entry point that may emit messages takes ``on_message`` and holds
+   it with :func:`reporting` for its whole run. A CLI command passes the
+   callback that prints, or holds one around the call.
+2. A worker process does not see the scope of its parent, because a
+   ContextVar does not cross a process boundary. The worker records its
+   messages with :func:`recording` and returns them with its result. The
+   parent hands each one to :func:`emit`, in the order the results complete.
+   A worker thread needs nothing, because ``trace.submit`` copies the context.
+3. With no scope, :func:`emit` logs the line through ``emit_message``, so a
+   library caller writes nothing to the terminal.
 
 A format handler, a ``viz`` function, and the finalization helpers take no
-callback, so :func:`reporting` holds one for a block, as ``formats.in_run``
-holds the run state. ``trace.submit`` copies the context, so a worker thread
-reports to the same callback. With no callback, :func:`emit` logs the line
-through ``emit_message``, so a library caller writes nothing to the terminal.
+callback. They call :func:`emit`, and the scope of the entry point reaches them,
+as ``formats.in_run`` holds the run state.
 """
 
 from __future__ import annotations
