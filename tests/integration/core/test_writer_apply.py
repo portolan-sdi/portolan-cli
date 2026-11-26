@@ -103,6 +103,26 @@ def test_local_sink_keeps_the_mode_of_a_replaced_file(tmp_path: Path) -> None:
     assert stat.S_IMODE(target.stat().st_mode) == 0o644
 
 
+def test_local_sink_never_creates_a_temporary_copy_wider_than_a_private_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = tmp_path / "catalog.json"
+    target.write_bytes(b"{}")
+    target.chmod(0o600)
+    modes: list[int] = []
+    real_open = os.open
+
+    def spy(path: str | os.PathLike[str], flags: int, mode: int = 0o777) -> int:
+        modes.append(mode)
+        return real_open(path, flags, mode)
+
+    monkeypatch.setattr(os, "open", spy)
+    LocalSink(tmp_path).put("catalog.json", b"{ }", "application/json")
+
+    assert modes == [0o600]
+    assert stat.S_IMODE(target.stat().st_mode) == 0o600
+
+
 def test_local_sink_gives_a_new_file_the_umask_default_mode(tmp_path: Path) -> None:
     umask = os.umask(0o022)
     try:

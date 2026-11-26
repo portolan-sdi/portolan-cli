@@ -285,18 +285,23 @@ class LocalSink:
         path = self._path(key)
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_name(f".{path.name}.{os.urandom(6).hex()}.tmp")
-        # Mode 0o666 lets the umask set the mode of a new file, as open() does.
+        try:
+            old = path.lstat()
+        except FileNotFoundError:
+            old = None
+        keep = old is not None and stat.S_ISREG(old.st_mode)
+        # The temporary file opens with the mode of the file it replaces, so
+        # its content is never readable by more accounts than the final file.
+        # A new file gets 0o666 minus the umask, as open() gives.
+        mode = stat.S_IMODE(old.st_mode) if old is not None and keep else 0o666
         flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0)
-        fd = os.open(tmp, flags, 0o666)
+        fd = os.open(tmp, flags, mode)
         try:
             with os.fdopen(fd, "wb") as handle:
                 handle.write(content)
-            try:
-                old = path.lstat()
-            except FileNotFoundError:
-                old = None
-            if old is not None and stat.S_ISREG(old.st_mode):
-                tmp.chmod(stat.S_IMODE(old.st_mode))
+            if keep:
+                # The umask can clear bits of the old mode. Put them back.
+                tmp.chmod(mode)
             tmp.replace(path)
         except BaseException:
             tmp.unlink(missing_ok=True)
