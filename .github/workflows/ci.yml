@@ -60,6 +60,7 @@ jobs:
               - 'uv.lock'
             python:
               - 'portolan_cli/**/*.py'
+              - 'packages/portolan-core/**/*.py'
 
   quality:
     name: Quality Gates (prek — single rule source)
@@ -237,7 +238,7 @@ jobs:
         run: |
           coverage=()
           if [ "$MATRIX_OS" = "ubuntu-latest" ] && [ "$MATRIX_PYTHON" = "3.11" ]; then
-            coverage=(--cov=portolan_cli --cov-report=xml)
+            coverage=(--cov=portolan_cli --cov=portolan_core --cov-report=xml)
           fi
           marker="not network and not slow and not benchmark"
           if [ "$MATRIX_SUITE" = "unit" ] && [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then

@@ -1,6 +1,7 @@
 ---
 paths:
   - "portolan_cli/**/*.py"
+  - "packages/portolan-core/**/*.py"
 ---
 
 # Architecture mindmap (read this first when navigating the code)
@@ -9,6 +10,15 @@ Portolan is a thin Click shell over a fat library, with a pluggable versioning
 backend underneath (CLI-wraps-API, enforced by import-linter).
 Use this map to find where a behavior lives before you start editing. Line
 numbers drift, treat them as a starting point and confirm in the file.
+
+## Two distributions (#1133)
+
+The repo is a uv workspace. The root is `portolan-cli` (`portolan_cli/`, the
+Click shell and the geospatial stack). `packages/portolan-core` is
+`portolan-core` (`src/portolan_core/`, the library). `portolan-cli` depends on
+`portolan-core` at its exact version. `portolan_core` must not import
+`portolan_cli`, Click, or the geospatial stack. The import-linter contracts
+`core-no-cli` and `core-no-heavy` enforce this.
 
 ## The layers and how a command flows down them
 

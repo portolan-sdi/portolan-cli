@@ -97,10 +97,12 @@ uv run python scripts/affected_tests.py --run -n 4  # Run tests this change can 
 uv run pytest --cov-report=html         # Coverage report
 uv run ruff check .                     # Lint
 uv run ruff format .                    # Format
-uv run mypy portolan_cli                # Type check
+uv run mypy portolan_cli packages/portolan-core/src  # Type check
 uv run deptry .                         # Check dependencies (unused, missing, transitive)
+uv run deptry packages/portolan-core \
+  --config packages/portolan-core/pyproject.toml  # Check portolan-core dependencies
 uv run vulture                          # Dead code
-uvx jscpd@5.2.1 portolan_cli tests \
+uvx jscpd@5.2.1 portolan_cli packages tests \
   --baseline .jscpd-baseline.json \
   --fail-on-new-clones 0            # Duplicate code
 
@@ -123,11 +125,13 @@ uv run pytest tests/docs/test_site_build.py  # Verify the built site
 
 ```
 portolan-cli/
-├── portolan_cli/          # Source code
+├── portolan_cli/          # Source code of the portolan-cli distribution
 │   └── backends/
 │       ├── json_file.py   # MVP file-based backend (always available)
 │       ├── protocol.py    # VersioningBackend protocol definition
 │       └── iceberg/       # Iceberg backend (requires [iceberg] extra)
+├── packages/portolan-core/  # The portolan-core distribution (uv workspace member)
+│   └── src/portolan_core/
 ├── tests/                 # Test suite
 │   ├── fixtures/          # Test data files
 │   ├── specs/             # Human-written test specifications
@@ -140,6 +144,14 @@ portolan-cli/
 ├── docs/                  # PUBLIC documentation (Zensical) - tutorials, user guides
 └── .github/workflows/     # CI/CD pipelines
 ```
+
+The repo is a uv workspace with two distributions. The root `pyproject.toml` is
+`portolan-cli`, the Click shell and the geospatial stack, in `portolan_cli/`.
+`packages/portolan-core` is `portolan-core`, the library, in
+`packages/portolan-core/src/portolan_core/`. `portolan-cli` pins
+`portolan-core==` its own version, and one `cz bump` moves both. `portolan_core`
+must not import `portolan_cli`, Click, or the geospatial stack (import-linter
+contracts `core-no-cli` and `core-no-heavy`).
 
 `docs/` is public (Zensical). Docstrings and comments next to the code record
 the internal rationale. See `.claude/rules/documentation.md` for

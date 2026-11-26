@@ -56,6 +56,10 @@ dependencies = [
     "rich>=13.0.0", # Terminal progress bars (transitive via geoparquet-io, but we import directly)
     "rio-cogeo>=5.0.0", # COG creation/validation (includes rasterio)
     "rashid>=0.5.0,<0.6.0", # Conformance validator behind `portolan check`; ships its own STAC + Portolan profile schemas, so validation runs offline. A metapackage over rashid-core[data]. 0.5.0 is the floor because it is the first release whose import name is rashid_core, which the CLI imports. It also brings the PTL-LNK-006 IRI href, PTL-DAT-011 overview rounding and binary geometry column fixes. Earlier floors: 0.4.0 exempts a display-ready COG from PTL-VIZ-002, so a raster collection with the overview COG that PORTO-FMT-067 asks for and no style asset passes `check` (issue #1141), and its `validate()` takes a `ValidationOptions`. 0.2.0 added PTL-LIV-006, which `check --live` uses (issue #935). 0.1.5 added the catalog-logo rules PTL-LNK-007/008/009 (PORTO-CORE-074..077) and PTL-AST-006. The conformance gate asserts these rules, so this is a hard floor, not a preference
+    # The library half of this repo, a uv workspace member in packages/portolan-core.
+    # The pin is exact because the two distributions release together, and cz bump
+    # rewrites it (see [tool.commitizen]).
+    "portolan-core==0.9.0",
     "lerc>=4.0.1", # Decodes the LERC tiles that hosted tiled imagery layers cache. GDAL 3.12 fails on LERC2 version 6 with "MRF: Error decoding Lerc", so `extract arcgis` cannot read a TilesOnly ImageServer without it (Issue #870). The wheel ships binaries for Windows x64, macOS, and Linux x86-64, so tilecache.py imports it lazily and explains the failure on other platforms
 ]
 
@@ -135,13 +139,33 @@ docs = [
 [tool.hatch.build.targets.wheel]
 packages = ["portolan_cli"]
 
+# ---------- workspace ----------
+# The root is the portolan-cli distribution. packages/portolan-core is the
+# second distribution, the library without Click or the geospatial stack (#1133).
+# portolan-cli depends on it, so a plain `uv sync` installs it in editable mode.
+
+[tool.uv.workspace]
+members = ["packages/portolan-core"]
+
+[tool.uv.sources]
+portolan-core = { workspace = true }
+
 # ---------- commitizen ----------
 
 [tool.commitizen]
 name = "cz_conventional_commits"
 version = "0.9.0"
-version_files = ["pyproject.toml:^version"]
+# One bump moves both distributions and the exact pin between them.
+version_files = [
+    "pyproject.toml:^version",
+    "packages/portolan-core/pyproject.toml:^version",
+    "pyproject.toml:portolan-core==",
+]
 tag_format = "v$version"
+# uv.lock records the version of each workspace member. Relock after
+# version_files writes the new versions and before the bump commit. cz stages
+# what the hook writes.
+pre_bump_hooks = ["uv lock"]
 update_changelog_on_bump = true
 # The project is pre-1.0. A breaking change bumps the minor number, so the
 # major number stays at zero until the interface settles.
@@ -178,7 +202,7 @@ markers = [
 ]
 
 [tool.coverage.run]
-source = ["portolan_cli"]
+source = ["portolan_cli", "portolan_core"]
 branch = true
 # The report names files relative to the checkout so the diff-cover job in
 # ci.yml can read it.
@@ -356,7 +380,7 @@ builtins-ignorelist = ["license", "format"]
 extend-ignore-names = ["ET", "InterruptException"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["portolan_cli"]
+known-first-party = ["portolan_cli", "portolan_core"]
 # Every module defers annotation evaluation. This is what makes the TC rules
 # safe here: moving an import into a TYPE_CHECKING block cannot break a runtime
 # annotation when no annotation is evaluated at runtime.
@@ -429,7 +453,7 @@ ignore-words-list = "nd,bu,ue,adresse,projet,environnement,copie,explicite,conne
 # 60 reports unused variables, attributes, and functions. 80 reports only
 # unused imports and arguments. vulture_whitelist.py holds today's findings.
 min_confidence = 60
-paths = ["portolan_cli", "tests", "vulture_whitelist.py"]
+paths = ["portolan_cli", "packages/portolan-core/src", "tests", "vulture_whitelist.py"]
 exclude = [
     "portolan_cli/backends/protocol.py", # Protocol method params are intentionally unused
     "portolan_cli/backends/json_file.py", # Stub methods raise NotImplementedError
@@ -443,7 +467,7 @@ verbose = false
 # that would need refactoring to support full layered enforcement.
 
 [tool.importlinter]
-root_packages = ["portolan_cli"]
+root_packages = ["portolan_cli", "portolan_core"]
 # The layer contracts forbid click and rasterio.
 # import-linter adds those external packages to the graph only with this flag.
 include_external_packages = true
@@ -702,6 +726,35 @@ ignore_imports = [
     "portolan_cli.sync.pull -> obstore",
 ]
 
+# ---------- portolan-core boundary (#1133) ----------
+# portolan-core is the library half of the workspace. A library caller installs
+# it without the CLI shell and without the geospatial stack. Each contract
+# follows transitive imports, and an import inside a function body counts too.
+
+[[tool.importlinter.contracts]]
+id = "core-no-cli"
+name = "portolan-core must not import portolan_cli"
+type = "forbidden"
+source_modules = ["portolan_core"]
+forbidden_modules = ["portolan_cli"]
+
+[[tool.importlinter.contracts]]
+id = "core-no-heavy"
+name = "portolan-core must not import click or the geospatial stack"
+type = "forbidden"
+source_modules = ["portolan_core"]
+forbidden_modules = [
+    "click",
+    "rasterio",
+    "pyarrow",
+    "geopandas",
+    "duckdb",
+    "pystac",
+    "pyproj",
+    "shapely",
+    "numpy",
+]
+
 # ---------- dependency checking ----------
 # deptry detects unused, missing, and transitive dependencies
 # Rules: DEP001 (missing), DEP002 (unused), DEP003 (transitive), DEP004 (imported as dev)
@@ -713,6 +766,9 @@ optional_dependencies_dev_groups = ["dev", "docs"]
 extend_exclude = [
     "scripts", # Standalone scripts may use external tools
     ".claude", # Claude Code worktrees and temp files
+    # Each workspace member declares its own dependencies, so deptry checks it
+    # against its own pyproject.toml. prek.toml runs that check as deptry-core.
+    "packages",
 ]
 
 # rashid 0.5 is a metapackage with no module of its own. Its import name is
@@ -745,6 +801,9 @@ DEP002 = [
     "shapely",
     "pygeohash",
     "boto3",
+    # No portolan_cli module imports portolan_core yet. Delete this line when
+    # the first module moves into packages/portolan-core (#1133).
+    "portolan-core",
 ]
 
 [dependency-groups]

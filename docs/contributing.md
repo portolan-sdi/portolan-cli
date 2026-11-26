@@ -170,7 +170,7 @@ uv run pytest
 uv run pytest -m unit
 
 # With coverage report
-uv run pytest --cov=portolan_cli --cov-report=html
+uv run pytest --cov=portolan_cli --cov=portolan_core --cov-report=html
 ```
 
 **Test-driven development is required.** Write tests before implementation. Tests must fail before the implementation exists and pass after. This is not optional.

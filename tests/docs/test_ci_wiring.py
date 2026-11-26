@@ -149,7 +149,7 @@ def _pytest_step(job: dict[str, Any], prefix: str) -> dict[str, Any]:
 @pytest.mark.parametrize(
     ("job", "prefix", "flag"),
     [
-        ("test", "Run tests", "--cov=portolan_cli --cov-report=xml"),
+        ("test", "Run tests", "--cov=portolan_cli --cov=portolan_core --cov-report=xml"),
         ("iceberg-test", "Run unit and integration tests", "--cov=portolan_cli/backends/iceberg"),
     ],
 )

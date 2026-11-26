@@ -1,0 +1,40 @@
+"""The portolan-core distribution imports without the CLI or the geospatial stack (#1133).
+
+The check runs in a fresh interpreter, because the test session has already
+imported click and most of the geospatial stack.
+"""
+
+from __future__ import annotations
+
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+
+pytestmark = pytest.mark.unit
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+FORBIDDEN = ["click", "rasterio", "pyarrow", "geopandas", "duckdb", "pystac", "portolan_cli"]
+
+_PROBE = f"""
+import json, sys
+import portolan_core
+print(json.dumps({{
+    "file": portolan_core.__file__,
+    "loaded": sorted(m for m in {FORBIDDEN!r} if m in sys.modules),
+}}))
+"""
+
+
+def test_core_import_loads_no_cli_or_geospatial_module() -> None:
+    """`import portolan_core` loads the workspace member and none of the forbidden modules."""
+    result = subprocess.run(
+        [sys.executable, "-c", _PROBE], capture_output=True, text=True, check=True
+    )
+    probe = json.loads(result.stdout)
+
+    expected = REPO_ROOT / "packages" / "portolan-core" / "src" / "portolan_core" / "__init__.py"
+    assert Path(probe["file"]).resolve() == expected
+    assert probe["loaded"] == []

@@ -144,7 +144,7 @@ hooks = [
     entry = "uv run mypy",
     language = "system",
     types = ["python"],
-    args = ["portolan_cli"],
+    args = ["portolan_cli", "packages/portolan-core/src"],
     pass_filenames = false,
     require_serial = true,
   },
@@ -164,7 +164,7 @@ hooks = [
     name = "architecture rules",
     entry = "uv run lint-imports",
     language = "system",
-    files = { glob = ["pyproject.toml", "portolan_cli/**/*.py"] },
+    files = { glob = ["pyproject.toml", "portolan_cli/**/*.py", "packages/portolan-core/**/*.py"] },
     pass_filenames = false,
   },
   {
@@ -173,6 +173,16 @@ hooks = [
     entry = "uv run deptry .",
     language = "system",
     files = { glob = ["pyproject.toml", "portolan_cli/**/*.py"] },
+    pass_filenames = false,
+  },
+  # The root run excludes packages/. Each workspace member declares its own
+  # dependencies, so deptry reads the member's pyproject.toml.
+  {
+    id = "deptry-core",
+    name = "dependency checker (portolan-core)",
+    entry = "uv run deptry packages/portolan-core --config packages/portolan-core/pyproject.toml",
+    language = "system",
+    files = { glob = ["packages/portolan-core/pyproject.toml", "packages/portolan-core/**/*.py"] },
     pass_filenames = false,
   },
 
@@ -186,7 +196,7 @@ hooks = [
     name = "spell check",
     entry = "uv run codespell",
     language = "system",
-    args = ["portolan_cli", "tests", "docs"],
+    args = ["portolan_cli", "packages", "tests", "docs"],
     pass_filenames = false,
   },
   # Duplication is gated against a committed baseline, not a percentage. The
@@ -206,9 +216,9 @@ hooks = [
   {
     id = "jscpd",
     name = "duplicate code (jscpd, baseline-gated)",
-    entry = "uvx jscpd@5.2.1 portolan_cli tests --baseline .jscpd-baseline.json --fail-on-new-clones 0",
+    entry = "uvx jscpd@5.2.1 portolan_cli packages tests --baseline .jscpd-baseline.json --fail-on-new-clones 0",
     language = "system",
-    files = { glob = ["portolan_cli/**/*.py", "tests/**/*.py", ".jscpd.json", ".jscpd-baseline.json"] },
+    files = { glob = ["portolan_cli/**/*.py", "packages/**/*.py", "tests/**/*.py", ".jscpd.json", ".jscpd-baseline.json"] },
     pass_filenames = false,
   },
 
