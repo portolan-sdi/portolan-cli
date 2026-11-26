@@ -27,7 +27,7 @@ if TYPE_CHECKING:
 
     from portolan_cli.sync.notices import NoticeLevel
     from tests.catalog_invariants import RunCli
-    from tests.parity.harness import Parity
+    from tests.parity.harness import Parity, VerifyingRunCli
 
 pytestmark = pytest.mark.integration
 
@@ -297,7 +297,7 @@ def test_push_dry_run_constructs_no_backend(
 
 
 def _returned_failure(
-    run_cli: RunCli,
+    run_cli: VerifyingRunCli,
     capsys: pytest.CaptureFixture[str],
     build: Callable[[Path], None],
     root: Path,
@@ -308,6 +308,8 @@ def _returned_failure(
     build(root)
     command = run_cli("push", *args, "--json", cwd=root, expect=1)
     envelope: dict[str, Any] = json.loads(command.stdout)
+    # The rebuild deletes this catalog before the run_cli teardown check, so check it now.
+    run_cli.verify()
     shutil.rmtree(root)
     build(root)
     capsys.readouterr()
@@ -321,7 +323,7 @@ def _returned_failure(
 
 
 def test_push_one_collection_returned_failure(
-    run_cli: RunCli,
+    run_cli: VerifyingRunCli,
     capsys: pytest.CaptureFixture[str],
     points_catalog: Callable[[Path], None],
     remotes: Remotes,
@@ -346,7 +348,7 @@ def test_push_one_collection_returned_failure(
 
 
 def test_push_all_collections_returned_failure(
-    run_cli: RunCli,
+    run_cli: VerifyingRunCli,
     capsys: pytest.CaptureFixture[str],
     points_catalog: Callable[[Path], None],
     remotes: Remotes,
