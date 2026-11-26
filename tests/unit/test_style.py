@@ -1004,17 +1004,17 @@ class TestRegisterStyleAssets:
         (styles_dir / "muted.json").write_text('{"version":8,"name":"Muted","layers":[]}')
         (styles_dir / "vivid.json").write_text('{"version":8,"name":"Vivid","layers":[]}')
 
-        register_style_assets(tmp_path, discover_styles(tmp_path))
+        notice = register_style_assets(tmp_path, discover_styles(tmp_path))
 
+        assert notice == (
+            "Default style: styles/muted (chosen from 2 styles). "
+            'To pick another, move the "default" role to that style asset in collection.json.'
+        )
         captured = capsys.readouterr()
-        message = captured.out + captured.err
-        assert "styles/muted" in message
-        assert "default" in message
+        assert (captured.out, captured.err) == ("", "")
 
     @pytest.mark.unit
-    def test_a_publisher_choice_prints_no_notice(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_a_publisher_choice_prints_no_notice(self, tmp_path: Path) -> None:
         """A default the publisher already marked needs no advice."""
         import json
 
@@ -1034,11 +1034,7 @@ class TestRegisterStyleAssets:
         (styles_dir / "muted.json").write_text('{"version":8,"name":"Muted","layers":[]}')
         (styles_dir / "vivid.json").write_text('{"version":8,"name":"Vivid","layers":[]}')
 
-        register_style_assets(tmp_path, discover_styles(tmp_path))
-
-        captured = capsys.readouterr()
-        assert captured.out == ""
-        assert captured.err == ""
+        assert register_style_assets(tmp_path, discover_styles(tmp_path)) is None
 
     @pytest.mark.unit
     def test_merge_preserves_human_authored_fields(self, tmp_path: Path) -> None:

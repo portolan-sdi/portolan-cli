@@ -2393,6 +2393,9 @@ def _report_add_side_steps(outcome: AddOutcome, *, verbose: bool, use_json: bool
             info_output(f"Generated items.parquet for '{coll_id}'")
     for coll_id, exc in outcome.mirrors.failed.items():
         warn(f"Failed to generate parquet for '{coll_id}': {exc}")
+    for tiles in outcome.pmtiles.outcomes:
+        if tiles.result is not None and tiles.result.style_notice is not None:
+            info_output(tiles.result.style_notice)
     if not use_json:
         _report_pmtiles(outcome.pmtiles, verbose=verbose)
     if verbose:

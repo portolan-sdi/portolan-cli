@@ -349,7 +349,6 @@ ignore = [
 "portolan_cli/finalization.py" = ["TID251"] # C
 "portolan_cli/stac.py" = ["TID251"] # C
 "portolan_cli/collection_thumbnail.py" = ["TID251"] # D
-"portolan_cli/viz/style.py" = ["TID251"] # D
 "portolan_cli/sync/push.py" = ["TID251"] # E
 
 [tool.ruff.lint.flake8-tidy-imports.banned-api]
@@ -695,7 +694,6 @@ ignore_imports = [
     "portolan_cli.finalization -> portolan_cli.output", # C
     "portolan_cli.stac -> portolan_cli.output", # C
     "portolan_cli.collection_thumbnail -> portolan_cli.output", # D
-    "portolan_cli.viz.style -> portolan_cli.output", # D
     "portolan_cli.sync.push -> portolan_cli.output", # E
     "portolan_cli.sync.upload -> portolan_cli.output", # E
 ]

@@ -133,6 +133,8 @@ class PMTilesResult:
         failed: List of (source_path, error_message) for failed generations.
         sources: The GeoParquet of each PMTiles in the plan.
         older: PMTiles that were older than their GeoParquet at the start.
+        style_notice: The notice of ``register_style_assets``, for the caller
+            to show, or None.
     """
 
     generated: list[Path] = field(default_factory=list)
@@ -140,6 +142,7 @@ class PMTilesResult:
     failed: list[tuple[Path, str]] = field(default_factory=list)
     sources: dict[Path, Path] = field(default_factory=dict)
     older: list[Path] = field(default_factory=list)
+    style_notice: str | None = None
 
     @property
     def total(self) -> int:
@@ -943,7 +946,7 @@ def generate_pmtiles_for_collection(
         )
 
     styles = discover_styles(collection_path)
-    register_style_assets(collection_path, styles)
+    result.style_notice = register_style_assets(collection_path, styles)
 
     return result
 
