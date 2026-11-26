@@ -965,8 +965,10 @@ def build_catalog(
     from portolan_cli.extract.common.orchestrator_base import (
         add_source_links,
         init_extracted_catalog,
+        print_report,
         register_collection_styles,
     )
+    from portolan_cli.report import reporting
     from portolan_cli.run_state import RunState
     from portolan_cli.version_ops import commit_run
 
@@ -1007,9 +1009,10 @@ def build_catalog(
         # frees aborts the process on Windows.
         files, versioned = added
         collection_ids = {path.parent.relative_to(output_dir).as_posix() for path in files}
-        ensure_collection_thumbnails(
-            output_dir, collection_ids, versioned_collections=versioned, state=state
-        )
+        with reporting(print_report):
+            ensure_collection_thumbnails(
+                output_dir, collection_ids, versioned_collections=versioned, state=state
+            )
     finally:
         commit_run(state)
 

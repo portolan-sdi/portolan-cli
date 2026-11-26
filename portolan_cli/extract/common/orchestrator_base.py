@@ -42,6 +42,7 @@ if TYPE_CHECKING:
     from portolan_cli.licensing import ResolvedLicense
     from portolan_cli.metadata_extraction import ExtractedMetadata
     from portolan_cli.query import ItemInfo
+    from portolan_cli.report import Level
     from portolan_cli.run_state import RunState
     from portolan_cli.viz.style import LegendInfo
 
@@ -189,8 +190,21 @@ def init_extracted_catalog(
         with run_scope(state):
             post_init(output_dir, parquet_files, fresh)
 
-    added = add_extracted_files(parquet_files, output_dir, state=state)
+    from portolan_cli.report import reporting
+
+    with reporting(print_report):
+        added = add_extracted_files(parquet_files, output_dir, state=state)
     return parquet_files, {item.collection_id for item in added}
+
+
+def print_report(level: Level, message: str) -> None:
+    """Print one line that the library reports, as ``add`` does without --verbose."""
+    from portolan_cli import output
+
+    # Each Level names the output function that prints it. A detail line is
+    # per-file detail, which extract never printed.
+    if level != "detail":
+        getattr(output, level)(message)
 
 
 def add_extracted_files(
@@ -237,6 +251,7 @@ def register_collection_styles(
         report: The extraction report.
         include_legends: Also discover and register legend sidecars (WFS/WMS).
     """
+    from portolan_cli.report import reporting
     from portolan_cli.viz.style import (
         discover_legends,
         discover_styles,
@@ -251,7 +266,8 @@ def register_collection_styles(
 
         styles = discover_styles(collection_dir)
         if styles:
-            register_style_assets(collection_dir, styles)
+            with reporting(print_report):
+                register_style_assets(collection_dir, styles)
             logger.debug("Registered %d style(s) for %s", len(styles), result.name)
 
         if include_legends:

@@ -143,6 +143,31 @@ def test_add_extracted_files_logs_what_stays_out(
     assert caplog.messages == ["Skipping b.parquet: no id", "Could not add c.parquet: bad geometry"]
 
 
+def test_the_add_of_extract_prints_what_the_library_reports(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A rewrite notice prints as it did before #1133. A detail line stays hidden."""
+    import portolan_cli.catalog as catalog_mod
+    from portolan_cli.report import emit
+
+    def add(**_: Any) -> tuple[list[Any], ...]:
+        emit("info", "Rewriting a.parquet (1.0KB): it carries no bbox covering column")
+        emit("warn", "Kept b.parquet as it is: it would lose the CRS it declared")
+        emit("detail", "Rendered thumbnail for a: a.thumb.jpg")
+        return [], [], []
+
+    monkeypatch.setattr(catalog_mod, "init_catalog", lambda *_a, **_k: (tmp_path, []))
+    monkeypatch.setattr("portolan_cli.add.add_files", add)
+    report = _report([_layer(0, "a", output_path="a/a.parquet")])
+    init_extracted_catalog(tmp_path, report, title="t", description="d")
+
+    captured = capsys.readouterr()
+    assert captured.out == (
+        "\u2192 Rewriting a.parquet (1.0KB): it carries no bbox covering column\n"
+    )
+    assert captured.err == "\u26a0 Kept b.parquet as it is: it would lose the CRS it declared\n"
+
+
 class TestInitExtractedCatalog:
     def test_returns_none_and_skips_hooks_when_no_assets(self, tmp_path: Path) -> None:
         report = _report([_layer(0, "a", status="failed")])
@@ -382,6 +407,29 @@ class TestRegisterCollectionStyles:
         # With legends
         register_collection_styles(tmp_path, report, include_legends=True)
         assert legend_calls == [tmp_path / "a"]
+
+    def test_prints_the_default_style_notice(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A default that Portolan chose among several styles is announced, as before #1133."""
+        import json
+
+        report = _report([_layer(0, "a", output_path="a/a.parquet")])
+        (tmp_path / "a" / "styles").mkdir(parents=True)
+        (tmp_path / "a" / "collection.json").write_text(
+            json.dumps({"type": "Collection", "id": "a", "assets": {}})
+        )
+        for name in ("muted", "vivid"):
+            (tmp_path / "a" / "styles" / f"{name}.json").write_text(
+                f'{{"version":8,"name":"{name}","layers":[]}}'
+            )
+
+        register_collection_styles(tmp_path, report)
+
+        assert capsys.readouterr().out == (
+            "\u2192 Default style: styles/muted (chosen from 2 styles). To pick another, move "
+            'the "default" role to that style asset in collection.json.\n'
+        )
 
     def test_skips_unsuccessful_layers(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
