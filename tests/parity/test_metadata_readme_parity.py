@@ -6,9 +6,11 @@ import shutil
 from typing import TYPE_CHECKING
 
 import pytest
+import yaml
 
 from portolan_cli.input_hardening import InputValidationError
-from portolan_cli.metadata.yaml_tree import init_metadata_templates
+from portolan_cli.metadata.yaml_tree import init_metadata_templates, validate_metadata_files
+from portolan_cli.readme import PathNotFoundError
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -33,6 +35,20 @@ def points_catalog(
         (root / "points").mkdir()
         shutil.copy(valid_points_geojson, root / "points" / "points.geojson")
         run_cli("add", "--portolan-dir", str(root), str(root / "points" / "points.geojson"))
+
+    return build
+
+
+@pytest.fixture
+def contact_catalog(points_catalog: Callable[[Path], None]) -> Callable[[Path], None]:
+    """Build `points_catalog` with a contact, so its metadata.yaml is valid."""
+
+    def build(root: Path) -> None:
+        points_catalog(root)
+        metadata_file = root / ".portolan" / "metadata.yaml"
+        metadata = yaml.safe_load(metadata_file.read_text(encoding="utf-8"))
+        metadata["contact"] = {"name": "Data Team", "email": "data@example.org"}
+        metadata_file.write_text(yaml.safe_dump(metadata), encoding="utf-8")
 
     return build
 
@@ -65,4 +81,39 @@ def test_metadata_init_traversal(parity: Parity, points_catalog: Callable[[Path]
         catalog=points_catalog,
         call=lambda root: init_metadata_templates(root, "../escape"),
         raises=InputValidationError,
+    )
+
+
+def test_metadata_validate_recursive(
+    parity: Parity, contact_catalog: Callable[[Path], None]
+) -> None:
+    """`metadata validate` reports each metadata.yaml in the tree."""
+    parity(
+        "metadata validate",
+        [],
+        catalog=contact_catalog,
+        call=lambda root: validate_metadata_files(root),
+    )
+
+
+def test_metadata_validate_single(parity: Parity, contact_catalog: Callable[[Path], None]) -> None:
+    """`metadata validate <path> --no-recursive` validates the merged metadata of one level."""
+    parity(
+        "metadata validate",
+        ["points", "--no-recursive"],
+        catalog=contact_catalog,
+        call=lambda root: validate_metadata_files(root, "points", recursive=False),
+    )
+
+
+def test_metadata_validate_missing_path(
+    parity: Parity, points_catalog: Callable[[Path], None]
+) -> None:
+    """A recursive run from a missing PATH fails both sides the same way."""
+    parity.error(
+        "metadata validate",
+        ["missing"],
+        catalog=points_catalog,
+        call=lambda root: validate_metadata_files(root, "missing"),
+        raises=PathNotFoundError,
     )

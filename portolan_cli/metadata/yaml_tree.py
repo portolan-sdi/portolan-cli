@@ -136,3 +136,106 @@ def init_metadata_templates(
             continue
         result.created.append(rel_path)
     return result
+
+
+@dataclass(frozen=True)
+class MetadataValidation:
+    """The validation errors of the merged metadata at one level.
+
+    Attributes:
+        path: The level, relative to the catalog root. "." is the root.
+        errors: The validation errors. Empty when the metadata is valid.
+    """
+
+    path: str
+    errors: list[str]
+
+    @property
+    def valid(self) -> bool:
+        """True when the metadata has no errors."""
+        return not self.errors
+
+
+@dataclass(frozen=True)
+class MetadataValidateResult:
+    """The levels a ``metadata validate`` run checked.
+
+    Attributes:
+        recursive: True when the run walked the tree.
+        validations: One entry for each level that the run checked.
+    """
+
+    recursive: bool
+    validations: list[MetadataValidation]
+
+    @property
+    def valid(self) -> bool:
+        """True when every level is valid."""
+        return all(v.valid for v in self.validations)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return the envelope ``data`` of ``metadata validate``."""
+        if not self.recursive:
+            only = self.validations[0]
+            return {"valid": only.valid, "errors": only.errors, "path": only.path}
+        valid_count = sum(1 for v in self.validations if v.valid)
+        return {
+            "mode": "recursive",
+            "results": [
+                {"path": v.path, "valid": v.valid, "errors": v.errors} for v in self.validations
+            ],
+            "summary": {
+                "total": len(self.validations),
+                "valid": valid_count,
+                "invalid": len(self.validations) - valid_count,
+            },
+        }
+
+
+def validate_metadata_files(
+    catalog_root: Path,
+    path: str | None = None,
+    *,
+    recursive: bool = True,
+) -> MetadataValidateResult:
+    """Validate the merged metadata.yaml at each catalog and collection level.
+
+    A recursive run checks only the levels that hold a metadata.yaml, and it
+    reports invalid YAML as a validation error of that level. A single-path run
+    checks the merged metadata of the start directory.
+
+    Args:
+        catalog_root: The catalog root.
+        path: The start directory, relative to the root. None selects the root.
+        recursive: If False, validate only the start directory.
+
+    Returns:
+        The validation errors of each level.
+
+    Raises:
+        InputValidationError: When ``path`` escapes the catalog root.
+        PathNotFoundError: When a recursive run starts at a missing path.
+        NotADirectoryError: When a recursive run starts at a file.
+        PermissionError: When the recursive walk cannot list a directory.
+        ConfigInvalidStructureError: When a single-path run reads invalid YAML.
+    """
+    from portolan_cli.errors import ConfigInvalidStructureError
+    from portolan_cli.metadata_yaml import load_and_validate_metadata
+
+    base_dir = resolve_catalog_dir(catalog_root, path, must_exist=recursive)
+
+    if not recursive:
+        _metadata, errors = load_and_validate_metadata(base_dir, catalog_root)
+        return MetadataValidateResult(False, [MetadataValidation(str(path or "."), errors)])
+
+    validations: list[MetadataValidation] = []
+    for dirpath in _stac_dirs(catalog_root, base_dir):
+        if not (dirpath / _METADATA_FILE).exists():
+            continue
+        rel_path = str(dirpath.relative_to(catalog_root))
+        try:
+            _metadata, errors = load_and_validate_metadata(dirpath, catalog_root)
+        except ConfigInvalidStructureError as err:
+            errors = [f"Invalid YAML: {err}"]
+        validations.append(MetadataValidation(rel_path, errors))
+    return MetadataValidateResult(True, validations)

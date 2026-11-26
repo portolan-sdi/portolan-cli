@@ -5062,72 +5062,24 @@ def metadata_validate(
         portolan metadata validate demographics --no-recursive  # Only for collection
     """
     from portolan_cli.errors import ConfigInvalidStructureError
-    from portolan_cli.metadata_yaml import load_and_validate_metadata
+    from portolan_cli.metadata.yaml_tree import validate_metadata_files
+    from portolan_cli.readme import PathNotFoundError
 
     use_json = should_output_json(ctx, json_output)
-
-    # Find catalog root
-    catalog_path = find_catalog_root()
-    if catalog_path is None:
-        if use_json:
-            envelope = error_envelope(
-                "metadata validate",
-                [
-                    ErrorDetail(
-                        type="CatalogNotFoundError",
-                        message="Not inside a Portolan catalog. Run 'portolan init' first.",
-                    )
-                ],
-            )
-            output_json_envelope(envelope)
-        else:
-            error("Not inside a Portolan catalog")
-            info_output("Run 'portolan init' to create one")
-        raise SystemExit(1)
-
-    # Handle recursive mode (default) vs single-path mode
-    if not no_recursive:
-        _metadata_validate_recursive(catalog_path, path, use_json)
-        return
-
-    # Single-path validation (--no-recursive)
-    target_dir = _validate_path_within_catalog(catalog_path, path, use_json, "metadata validate")
-
-    # Load and validate
+    catalog_path = _metadata_catalog_root("metadata validate", use_json)
     try:
-        _metadata, errors = load_and_validate_metadata(target_dir, catalog_path)
+        result = validate_metadata_files(catalog_path, path, recursive=not no_recursive)
     except ConfigInvalidStructureError as err:
-        if use_json:
-            envelope = error_envelope(
-                "metadata validate",
-                [ErrorDetail(type="InvalidYAMLError", message=str(err))],
-            )
-            output_json_envelope(envelope)
-        else:
-            error(f"Invalid YAML in metadata.yaml: {err}")
-        raise SystemExit(1) from err
+        _fail_invalid_yaml("metadata validate", err, use_json)
+    except (InputValidationError, PathNotFoundError, NotADirectoryError, PermissionError) as err:
+        _fail_walk("metadata validate", err, use_json)
 
     if use_json:
-        if errors:
-            envelope = error_envelope(
-                "metadata validate",
-                [ErrorDetail(type="ValidationError", message=e) for e in errors],
-                data={"valid": False, "errors": errors, "path": str(path or ".")},
-            )
-            output_json_envelope(envelope)
-            raise SystemExit(1)
-        envelope = success_envelope(
-            "metadata validate",
-            {"valid": True, "errors": [], "path": str(path or ".")},
-        )
-        output_json_envelope(envelope)
+        _emit_metadata_validate(result)
     else:
-        if errors:
-            error(f"Validation failed with {len(errors)} error(s):")
-            for validation_err in errors:
-                detail(f"  - {validation_err}")
-            raise SystemExit(1)
-        success("Metadata is valid")
+        _print_metadata_validate(result)
+    if not result.valid:
+        raise SystemExit(1)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -5324,7 +5276,8 @@ def _should_process_directory(dirpath: Path, catalog_path: Path) -> bool:
 
 
 if TYPE_CHECKING:
-    from portolan_cli.metadata.yaml_tree import MetadataInitResult
+    from portolan_cli.errors import ConfigInvalidStructureError
+    from portolan_cli.metadata.yaml_tree import MetadataInitResult, MetadataValidateResult
 
 
 def _metadata_catalog_root(command: str, use_json: bool) -> Path:
@@ -5352,6 +5305,17 @@ def _metadata_catalog_root(command: str, use_json: bool) -> Path:
 def _fail_walk(command: str, err: Exception, use_json: bool) -> NoReturn:
     """Report an error that stopped a catalog walk, and exit 1."""
     emit_error(command, type(err).__name__, str(err), use_json=use_json)
+    raise SystemExit(1) from err
+
+
+def _fail_invalid_yaml(command: str, err: ConfigInvalidStructureError, use_json: bool) -> NoReturn:
+    """Report a metadata.yaml that does not parse, and exit 1."""
+    if use_json:
+        output_json_envelope(
+            error_envelope(command, [ErrorDetail(type="InvalidYAMLError", message=str(err))])
+        )
+    else:
+        error(f"Invalid YAML in metadata.yaml: {err}")
     raise SystemExit(1) from err
 
 
@@ -5428,116 +5392,44 @@ def _report_readme_recursive(
     success(f"All {len(generated_paths)} README(s) are up-to-date")
 
 
-def _validate_metadata_at_path(dirpath: Path, rel_path: str, catalog_path: Path) -> dict[str, Any]:
-    """Validate metadata at a single directory."""
-    from portolan_cli.errors import ConfigInvalidStructureError
-    from portolan_cli.metadata_yaml import load_and_validate_metadata
-
-    metadata_file = dirpath / ".portolan" / "metadata.yaml"
-    if not metadata_file.exists():
-        return {"path": rel_path, "valid": True, "errors": [], "skipped": True}
-
-    try:
-        _metadata, errors = load_and_validate_metadata(dirpath, catalog_path)
-        return {"path": rel_path, "valid": len(errors) == 0, "errors": errors}
-    except ConfigInvalidStructureError as err:
-        return {"path": rel_path, "valid": False, "errors": [f"Invalid YAML: {err}"]}
+def _emit_metadata_validate(result: MetadataValidateResult) -> None:
+    """Emit the JSON envelope of a metadata validate run."""
+    if result.valid:
+        output_json_envelope(success_envelope("metadata validate", result.to_dict()))
+        return
+    prefix = "{path}: " if result.recursive else ""
+    errors = [
+        ErrorDetail(type="ValidationError", message=prefix.format(path=v.path) + e)
+        for v in result.validations
+        for e in v.errors
+    ]
+    output_json_envelope(error_envelope("metadata validate", errors, data=result.to_dict()))
 
 
-def _output_validate_results_json(
-    results: list[dict[str, Any]], valid_count: int, invalid_count: int
-) -> None:
-    """Output validation results as JSON."""
-    all_valid = invalid_count == 0
-    data = {
-        "mode": "recursive",
-        "results": [
-            {"path": r["path"], "valid": r["valid"], "errors": r["errors"]} for r in results
-        ],
-        "summary": {"total": len(results), "valid": valid_count, "invalid": invalid_count},
-    }
-    if all_valid:
-        envelope = success_envelope("metadata validate", data)
-    else:
-        envelope = error_envelope(
-            "metadata validate",
-            [
-                ErrorDetail(type="ValidationError", message=f"{r['path']}: {e}")
-                for r in results
-                if not r["valid"]
-                for e in r["errors"]
-            ],
-            data=data,
-        )
-    output_json_envelope(envelope)
-    if not all_valid:
-        raise SystemExit(1)
-
-
-def _output_validate_results_text(
-    results: list[dict[str, Any]], valid_count: int, invalid_count: int
-) -> None:
-    """Output validation results as text."""
-    if invalid_count == 0:
-        if len(results) == 0:
+def _print_metadata_validate(result: MetadataValidateResult) -> None:
+    """Print the outcome of a metadata validate run."""
+    if not result.recursive:
+        errors = result.validations[0].errors
+        if errors:
+            error(f"Validation failed with {len(errors)} error(s):")
+            for validation_err in errors:
+                detail(f"  - {validation_err}")
+        else:
+            success("Metadata is valid")
+        return
+    total = len(result.validations)
+    invalid = [v for v in result.validations if not v.valid]
+    if not invalid:
+        if total == 0:
             warn("No metadata.yaml files found to validate")
         else:
-            success(f"Validated {valid_count} metadata.yaml file(s) - all valid")
+            success(f"Validated {total} metadata.yaml file(s) - all valid")
         return
-
-    error(f"Validation failed: {invalid_count}/{len(results)} file(s) invalid")
-    for r in results:
-        if not r["valid"]:
-            detail(f"  {r['path']}:")
-            for e in r["errors"]:
-                detail(f"    - {e}")
-    raise SystemExit(1)
-
-
-def _metadata_validate_recursive(
-    catalog_path: Path,
-    start_path: str | None,
-    use_json: bool,
-) -> None:
-    """Validate metadata.yaml files at all STAC levels recursively."""
-    base_dir = _validate_recursive_start_path(
-        catalog_path, start_path, use_json, "metadata validate"
-    )
-    results: list[dict[str, Any]] = []
-
-    # Process base directory first (if it's a STAC entity or is catalog root)
-    is_catalog_root = base_dir == catalog_path
-    is_stac = (base_dir / "catalog.json").exists() or (base_dir / "collection.json").exists()
-    if is_catalog_root or is_stac:
-        rel_path = "." if is_catalog_root else str(base_dir.relative_to(catalog_path))
-        result = _validate_metadata_at_path(base_dir, rel_path, catalog_path)
-        if not result.get("skipped"):
-            results.append(result)
-
-    # Walk tree for subdirectories
-    try:
-        dir_iterator = sorted(base_dir.rglob("*"))
-    except PermissionError as e:
-        _recursive_init_error(
-            use_json, "metadata validate", "PermissionError", f"Permission denied during scan: {e}"
-        )
-
-    for dirpath in dir_iterator:
-        if not _should_process_directory(dirpath, catalog_path):
-            continue
-        rel_path = str(dirpath.relative_to(catalog_path))
-        result = _validate_metadata_at_path(dirpath, rel_path, catalog_path)
-        if not result.get("skipped"):
-            results.append(result)
-
-    # Calculate summary and output
-    valid_count = sum(1 for r in results if r["valid"])
-    invalid_count = len(results) - valid_count
-
-    if use_json:
-        _output_validate_results_json(results, valid_count, invalid_count)
-    else:
-        _output_validate_results_text(results, valid_count, invalid_count)
+    error(f"Validation failed: {len(invalid)}/{total} file(s) invalid")
+    for v in invalid:
+        detail(f"  {v.path}:")
+        for e in v.errors:
+            detail(f"    - {e}")
 
 
 def _process_readme_entry(
