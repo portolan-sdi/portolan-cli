@@ -56,9 +56,17 @@ PERMANENT_TID251 = frozenset(
         "portolan_cli/extract/common/layer_cli.py",
         "portolan_cli/api.py",
         "portolan_cli/sync/upload.py",
+        # The writer sink puts catalog files with its own Content-Type.
+        "packages/portolan-core/src/portolan_core/writer.py",
     }
 )
-NOT_CLI_LAYER = frozenset({"portolan_cli/api.py", "portolan_cli/sync/upload.py"})
+NOT_CLI_LAYER = frozenset(
+    {
+        "portolan_cli/api.py",
+        "portolan_cli/sync/upload.py",
+        "packages/portolan-core/src/portolan_core/writer.py",
+    }
+)
 
 # Delete only. Each module here still imports portolan_cli.output or calls
 # obstore.put directly. Its owning #1035 agent deletes the line when the
@@ -72,6 +80,7 @@ OUTPUT_RATCHET_ONLY_IN_IMPORT_LINTER: frozenset[str] = frozenset()
 
 OBJECT_STORE_IMPORTERS = frozenset(
     {
+        "portolan_core.writer",
         "portolan_cli.sync.upload",
         "portolan_cli.sync.download",
         "portolan_cli.sync.push",
@@ -100,7 +109,8 @@ def _tid251_ignored_paths() -> set[str]:
     return {
         path
         for path, codes in ignores.items()
-        if path.startswith("portolan_cli/") and "TID251" in codes
+        # portolan-core sits under packages/ and is held to the same bans (#1133).
+        if path.startswith(("portolan_cli/", "packages/")) and "TID251" in codes
     }
 
 
@@ -183,7 +193,12 @@ def test_import_linter_ratchet_matches_tid251_ratchet() -> None:
 def test_object_store_contract_admits_only_the_sync_transport() -> None:
     contract = _contract("object-store-is-sync-transport-only")
     assert contract["type"] == "forbidden"
-    assert contract["source_modules"] == ["portolan_cli", "portolan_cli.**"]
+    assert contract["source_modules"] == [
+        "portolan_cli",
+        "portolan_cli.**",
+        "portolan_core",
+        "portolan_core.**",
+    ]
     assert contract["forbidden_modules"] == ["obstore"]
     assert _ignored_importers(contract, "obstore") == OBJECT_STORE_IMPORTERS
 

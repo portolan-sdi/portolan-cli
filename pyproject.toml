@@ -668,12 +668,14 @@ ignore_imports = [
 
 [[tool.importlinter.contracts]]
 id = "object-store-is-sync-transport-only"
-name = "Only the sync transport modules import obstore"
+name = "Only the sync transport modules and the writer sink import obstore"
 type = "forbidden"
-source_modules = ["portolan_cli", "portolan_cli.**"]
+# portolan-core holds the reader modules, so the ban reads it too (#1133).
+source_modules = ["portolan_cli", "portolan_cli.**", "portolan_core", "portolan_core.**"]
 forbidden_modules = ["obstore"]
 allow_indirect_imports = true
 ignore_imports = [
+    "portolan_core.writer -> obstore",
     "portolan_cli.sync.upload -> obstore",
     "portolan_cli.sync.download -> obstore",
     "portolan_cli.sync.push -> obstore",
