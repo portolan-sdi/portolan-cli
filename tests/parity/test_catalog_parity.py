@@ -15,6 +15,7 @@ from portolan_cli.catalog_list import list_catalog_contents
 from portolan_cli.config import (
     read_setting,
     set_setting,
+    store_setting,
 )
 from portolan_cli.errors import CatalogAlreadyExistsError, ConfigError
 from portolan_cli.inspect import initialize_catalog
@@ -244,5 +245,40 @@ def test_config_get_sensitive_in_file(
         ["remote"],
         catalog=_with_config_text("remote: s3://bucket/catalog\n")(configured_catalog),
         call=lambda root: read_setting("remote", root),
+        raises=ConfigError,
+    )
+
+
+@pytest.mark.parametrize(
+    ("args", "key", "value", "collection"),
+    [
+        (["statistics.enabled", "true"], "statistics.enabled", "true", None),
+        (["pmtiles.enabled", "false", "-c", "points"], "pmtiles.enabled", "false", "points"),
+    ],
+)
+def test_config_set(
+    parity: Parity,
+    configured_catalog: Callable[[Path], None],
+    args: list[str],
+    key: str,
+    value: str,
+    collection: str | None,
+) -> None:
+    """`config set` reports the stored value in the type of its setting."""
+    parity(
+        "config set",
+        args,
+        catalog=configured_catalog,
+        call=lambda root: store_setting(root, key, value, collection),
+    )
+
+
+def test_config_set_unknown_key(parity: Parity, configured_catalog: Callable[[Path], None]) -> None:
+    """`config set` of an unknown key reports a ConfigError."""
+    parity.error(
+        "config set",
+        ["no.such.key", "1"],
+        catalog=configured_catalog,
+        call=lambda root: store_setting(root, "no.such.key", "1"),
         raises=ConfigError,
     )

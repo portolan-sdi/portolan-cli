@@ -1212,6 +1212,28 @@ def read_setting(
     return SettingValue(key, value, source, collection)
 
 
+def store_setting(
+    catalog_path: Path,
+    key: str,
+    value: Any,
+    collection: str | None = None,
+) -> SettingValue:
+    """Set a configuration value and report what the file stores.
+
+    This is the library function of ``portolan config set``. See
+    ``set_setting`` for the rules.
+
+    Returns:
+        The key, the stored value in the type of its setting, and the
+        collection.
+
+    Raises:
+        ConfigError: See ``set_setting``.
+        OSError: If config.yaml cannot be written.
+    """
+    return SettingValue(key, set_setting(catalog_path, key, value, collection), None, collection)
+
+
 # =============================================================================
 # Hierarchical .portolan/ support
 # =============================================================================

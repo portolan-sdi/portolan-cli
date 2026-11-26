@@ -4275,7 +4275,7 @@ def config_set(
         portolan config set conversion.vector.sort none
         portolan config set pmtiles.enabled false --collection demographics
     """
-    from portolan_cli.config import set_setting
+    from portolan_cli.config import store_setting
 
     use_json = should_output_json(ctx, json_output)
 
@@ -4294,30 +4294,24 @@ def config_set(
         raise SystemExit(1)
 
     try:
-        stored = set_setting(catalog_path, key, value, collection=collection)
-
+        result = store_setting(catalog_path, key, value, collection)
+    except (ConfigError, OSError) as e:
         if use_json:
-            data = {"key": key, "value": stored}
-            if collection:
-                data["collection"] = collection
-            envelope = success_envelope("config set", data)
-            output_json_envelope(envelope)
-        else:
-            if collection:
-                success(f"Set {key}={value} for collection '{collection}'")
-            else:
-                success(f"Set {key}={value}")
-
-    except Exception as e:
-        if use_json:
+            code = e.code if isinstance(e, ConfigError) else None
             envelope = error_envelope(
                 "config set",
-                [ErrorDetail(type=type(e).__name__, message=str(e))],
+                [ErrorDetail(type=type(e).__name__, message=str(e), code=code)],
             )
             output_json_envelope(envelope)
         else:
             error(f"Failed to set config: {e}")
         raise SystemExit(1) from e
+
+    if not emit_success("config set", result.to_dict(), use_json=use_json):
+        if collection:
+            success(f"Set {key}={value} for collection '{collection}'")
+        else:
+            success(f"Set {key}={value}")
 
 
 def _config_catalog_root(command: str, *, use_json: bool) -> Path:

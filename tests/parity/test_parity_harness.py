@@ -36,7 +36,6 @@ PARITY_PENDING = frozenset(
         "add-external",
         "clean",
         "config list",
-        "config set",
         "config unset",
         "extract arcgis",
         "extract carto",
