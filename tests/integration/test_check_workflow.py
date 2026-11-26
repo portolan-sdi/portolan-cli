@@ -45,11 +45,6 @@ def test_fix_reports_reach_the_callback_before_a_failed_commit(
     assert [(r.file_path, r.success) for r in fixer_report.results] == [(catalog_file, True)]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="#1133: convert.repair_shapefile_encoding_sidecar, which "
-    "preparation.convert_vector calls, still prints until the output ratchet clears it",
-)
 def test_geo_asset_fix_prints_nothing(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     """A shapefile with Latin-1 records and no .cpg gets a sidecar, and the library stays quiet."""
     import geopandas as gpd
