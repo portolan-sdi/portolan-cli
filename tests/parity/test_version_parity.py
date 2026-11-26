@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from portolan_cli.version_ops import describe_current_version
+from portolan_cli.version_ops import describe_current_version, describe_version_history
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -57,4 +57,15 @@ def test_version_current_missing_collection(
         catalog=points_catalog,
         call=lambda root: describe_current_version("missing", catalog_root=root),
         raises=FileNotFoundError,
+    )
+
+
+def test_version_list(parity: Parity, points_catalog: Callable[[Path], None]) -> None:
+    """`version list` reports each version of the collection."""
+    parity(
+        "version list",
+        ["points"],
+        catalog=points_catalog,
+        call=lambda root: describe_version_history("points", catalog_root=root),
+        ignore=["versions.*.created"],
     )

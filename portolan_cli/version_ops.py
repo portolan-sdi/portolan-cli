@@ -136,6 +136,32 @@ def list_versions(
     return backend.list_versions(collection)
 
 
+@dataclass(frozen=True)
+class VersionHistoryResult:
+    """Each version of a collection, oldest first, the result of ``portolan version list``."""
+
+    collection: str
+    versions: list[Version]
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return the envelope data of ``portolan version list``."""
+        return {
+            "collection": self.collection,
+            "versions": [_version_dict(v) for v in self.versions],
+        }
+
+
+def describe_version_history(
+    collection: str, *, catalog_root: Path | None = None
+) -> VersionHistoryResult:
+    """Return each version of ``collection`` through the active backend.
+
+    Raises:
+        ValueError: If the backend or the versions.json is not valid.
+    """
+    return VersionHistoryResult(collection, list_versions(collection, catalog_root=catalog_root))
+
+
 def publish_version(
     collection: str,
     *,

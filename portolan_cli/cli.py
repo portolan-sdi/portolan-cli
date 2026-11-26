@@ -5276,7 +5276,7 @@ def version_list_cmd(
         portolan version list boundaries
         portolan version list boundaries --json
     """
-    from portolan_cli.version_ops import list_versions
+    from portolan_cli.version_ops import describe_version_history
 
     use_json = should_output_json(ctx, json_output)
 
@@ -5284,29 +5284,14 @@ def version_list_cmd(
         catalog_path = require_catalog_root(use_json, "version list")
 
     try:
-        versions = list_versions(collection, catalog_root=catalog_path)
-    except (FileNotFoundError, Exception) as e:
+        result = describe_version_history(collection, catalog_root=catalog_path)
+    # A plugin backend can raise any exception, and the envelope reports each one.
+    except Exception as e:
         emit_error("version list", type(e).__name__, str(e), use_json=use_json)
         raise SystemExit(1) from None
 
-    if use_json:
-        versions_data = [
-            {
-                "version": v.version,
-                "created": v.created.isoformat(),
-                "breaking": v.breaking,
-                "message": v.message,
-                "assets": len(v.assets),
-                "changes": v.changes,
-            }
-            for v in versions
-        ]
-        envelope = success_envelope(
-            "version list",
-            {"collection": collection, "versions": versions_data},
-        )
-        output_json_envelope(envelope)
-    else:
+    if not emit_success("version list", result.to_dict(), use_json=use_json):
+        versions = result.versions
         if not versions:
             info_output(f"No versions found for collection '{collection}'")
             return
