@@ -8,6 +8,7 @@ Tests the partitioning functionality including:
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -1119,8 +1120,15 @@ _PARTITION_CALL = (
 
 def _python(code: str, *args: str, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
     """Run ``code`` in a fresh interpreter, so no handler of this test process applies."""
+    # A Windows pipe defaults to cp1252, which cannot encode the output marks.
+    env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
     return subprocess.run(
-        [sys.executable, "-c", code, *args], capture_output=True, text=True, check=True, cwd=cwd
+        [sys.executable, "-c", code, *args],
+        capture_output=True,
+        encoding="utf-8",
+        check=True,
+        cwd=cwd,
+        env=env,
     )
 
 
