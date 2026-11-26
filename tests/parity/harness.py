@@ -37,7 +37,10 @@ The harness builds the catalog at ``tmp_path / "parity-catalog"`` and runs
 the catalog, builds it again at the same path, and runs the library call with
 that directory as the working directory. Each side gets its own fresh catalog,
 because commands write to it. Both sides use the same path, so absolute paths in
-the result agree. The library call must not write to stdout or stderr.
+the result agree. Before the rebuild, the harness checks the catalog
+invariants of ``tests/catalog_invariants.py`` on the catalog that the command
+wrote. The ``run_cli`` teardown checks the catalog of the library call. The
+library call and its ``to_dict()`` must not write to stdout or stderr.
 
 The conversion rule
 -------------------
@@ -75,15 +78,19 @@ import json
 import shutil
 from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import Any, Protocol
 
 import pytest
 
 from portolan_cli.errors import PortolanError
 from portolan_cli.json_output import ErrorDetail
+from tests.catalog_invariants import RunCli
 
-if TYPE_CHECKING:
-    from tests.catalog_invariants import RunCli
+
+class VerifyingRunCli(RunCli, Protocol):
+    """The ``run_cli`` fixture, with the catalog invariant check it runs at teardown."""
+
+    def verify(self) -> None: ...
 
 
 class SupportsToDict(Protocol):
@@ -121,7 +128,9 @@ def _drop(node: Any, keys: list[str], path: str) -> None:
 class Parity:
     """Run a command and its library function on identical catalogs and compare them."""
 
-    def __init__(self, run_cli: RunCli, capsys: pytest.CaptureFixture[str], base: Path) -> None:
+    def __init__(
+        self, run_cli: VerifyingRunCli, capsys: pytest.CaptureFixture[str], base: Path
+    ) -> None:
         self._run_cli = run_cli
         self._capsys = capsys
         self.root = base / "parity-catalog"
@@ -138,8 +147,8 @@ class Parity:
         """Assert that the envelope ``data`` equals ``call(root).to_dict()``."""
         envelope = self._command(command, args, catalog, expect=0)
         assert envelope["success"] is True, envelope
-        result = self._library(catalog, call)
-        expected = json.loads(json.dumps(result.to_dict()))
+        # to_dict() is part of the library result, so it runs inside the capture too.
+        expected = json.loads(json.dumps(self._library(catalog, lambda root: call(root).to_dict())))
         actual = envelope["data"]
         for path in ignore:
             drop_path(actual, path)
@@ -176,6 +185,8 @@ class Parity:
         result = self._run_cli(*command.split(), *args, "--json", cwd=self.root, expect=expect)
         if expect is None:
             assert result.exit_code != 0, result.output
+        # The rebuild deletes this catalog before the run_cli teardown check, so check it now.
+        self._run_cli.verify()
         envelope: dict[str, Any] = json.loads(result.stdout)
         return envelope
 

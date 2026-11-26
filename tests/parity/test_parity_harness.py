@@ -9,6 +9,8 @@ the command from this list in the same commit. The list only shrinks.
 from __future__ import annotations
 
 import ast
+import json
+import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -18,7 +20,10 @@ import pytest
 from tests.parity.harness import drop_path
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterator
+
+    from portolan_cli.inspect import CatalogInfo
+    from tests.parity.harness import Parity
 
 pytestmark = pytest.mark.unit
 
@@ -94,19 +99,37 @@ def covered_command_paths() -> set[str]:
     """
     covered: set[str] = set()
     for path in sorted(PARITY_DIR.glob("test_*.py")):
-        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
-            if not (
-                isinstance(node, ast.Call)
-                and isinstance(node.func, ast.Name)
-                and node.func.id == "parity"
-            ):
-                continue
-            first = node.args[0] if node.args else None
-            assert isinstance(first, ast.Constant) and isinstance(first.value, str), (
-                f"{path.name}:{node.lineno}: the first argument of parity() must be a "
-                "string literal, so this test can read the command path"
-            )
-            covered.add(first.value)
+        covered |= parity_calls(path.read_text(encoding="utf-8"), path.name)
+    return covered
+
+
+def parity_calls(source: str, name: str) -> set[str]:
+    """Return the command path of each `parity("...")` call in a test module that runs.
+
+    A call inside a function or class with a skip, skipif, or xfail decorator
+    does not count, because that test does not prove parity.
+    """
+    covered: set[str] = set()
+    nodes: list[ast.AST] = [ast.parse(source)]
+    while nodes:
+        node = nodes.pop()
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef) and any(
+            word in ast.unparse(d) for d in node.decorator_list for word in ("skip", "xfail")
+        ):
+            continue
+        nodes.extend(ast.iter_child_nodes(node))
+        if not (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "parity"
+        ):
+            continue
+        first = node.args[0] if node.args else None
+        assert isinstance(first, ast.Constant) and isinstance(first.value, str), (
+            f"{name}:{node.lineno}: the first argument of parity() must be a "
+            "string literal, so this test can read the command path"
+        )
+        covered.add(first.value)
     return covered
 
 
@@ -176,3 +199,90 @@ def test_drop_path_fails_on_a_missing_key() -> None:
     """An ignore path that is not in the result fails, so a typo cannot hide a field."""
     with pytest.raises(AssertionError, match="nested.missing"):
         drop_path(_sample(), "nested.missing")
+
+
+def test_a_skipped_or_xfailed_parity_call_is_not_coverage() -> None:
+    """A parity test that does not run does not prove parity."""
+    source = """
+import pytest
+
+@pytest.mark.skip(reason="not yet")
+def test_a(parity):
+    parity("logo", [])
+
+@pytest.mark.xfail(reason="not yet", strict=True)
+def test_b(parity):
+    parity("rm", [])
+
+@pytest.mark.skipif(True, reason="not yet")
+class TestC:
+    def test_c(self, parity):
+        parity("scan", [])
+
+def test_d(parity):
+    parity("info", [])
+"""
+    assert parity_calls(source, "test_sample.py") == {"info"}
+
+
+@pytest.mark.integration
+def test_a_command_that_breaks_its_catalog_fails(
+    parity: Parity,
+    build_conformant_catalog: Callable[..., Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The harness checks the catalog invariants on the command side, before the rebuild.
+
+    The stub writes an absolute path into catalog.json on the first call only,
+    which is the command side. The two results stay equal.
+    """
+    from portolan_cli import inspect
+
+    real = inspect.inspect_catalog
+    calls: list[Path] = []
+
+    def breaking(root: Path) -> CatalogInfo:
+        result = real(root)
+        if not calls:
+            catalog = root / "catalog.json"
+            data = json.loads(catalog.read_text(encoding="utf-8"))
+            data["description"] = str(catalog.resolve())
+            catalog.write_text(json.dumps(data), encoding="utf-8")
+        calls.append(root)
+        return result
+
+    monkeypatch.setattr(inspect, "inspect_catalog", breaking)
+    # parity.__call__ and not parity(...): a test of the harness is not coverage of info.
+    with pytest.raises(pytest.fail.Exception, match="P-NO-LOCAL-PATH"):
+        parity.__call__(
+            "info", [], catalog=build_conformant_catalog, call=lambda root: breaking(Path())
+        )
+    assert len(calls) == 1
+    shutil.rmtree(parity.root)
+
+
+class _Loud:
+    """A result whose ``to_dict()`` prints."""
+
+    def __init__(self, inner: CatalogInfo) -> None:
+        self.inner = inner
+
+    def to_dict(self) -> dict[str, Any]:
+        print("loud")  # noqa: T201 - the test needs a to_dict that prints
+        return self.inner.to_dict()
+
+
+@pytest.mark.integration
+def test_a_to_dict_that_prints_fails(
+    parity: Parity, build_conformant_catalog: Callable[..., Path]
+) -> None:
+    """``to_dict()`` is part of the library result, so it must not print either."""
+    from portolan_cli.inspect import inspect_catalog
+
+    with pytest.raises(AssertionError, match="printed output"):
+        parity.__call__(
+            "info",
+            [],
+            catalog=build_conformant_catalog,
+            call=lambda root: _Loud(inspect_catalog(Path())),
+        )

@@ -14,10 +14,10 @@ from tests.parity.harness import Parity  # noqa: E402
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from tests.catalog_invariants import RunCli
+    from tests.parity.harness import VerifyingRunCli
 
 
 @pytest.fixture
-def parity(run_cli: RunCli, capsys: pytest.CaptureFixture[str], tmp_path: Path) -> Parity:
+def parity(run_cli: VerifyingRunCli, capsys: pytest.CaptureFixture[str], tmp_path: Path) -> Parity:
     """Compare a command with its library function. See `tests/parity/harness.py`."""
     return Parity(run_cli, capsys, tmp_path)
