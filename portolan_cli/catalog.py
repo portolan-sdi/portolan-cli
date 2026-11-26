@@ -1202,8 +1202,6 @@ def _read_catalog_index(versions_path: Path) -> dict[str, Any]:
         CatalogVersionsCorruptedError: If the file is not JSON, is not an
             object, or holds a ``collections`` value that is not an object.
     """
-    from portolan_cli.output import warn
-
     try:
         count("versions_json.reads")
         content = json.loads(versions_path.read_text(encoding="utf-8"))
@@ -1213,7 +1211,7 @@ def _read_catalog_index(versions_path: Path) -> dict[str, Any]:
             f"File: {versions_path}. "
             "Fix manually or delete to reinitialize."
         )
-        warn(msg)
+        logger.warning(msg)
         raise CatalogVersionsCorruptedError(msg) from e
 
     if not isinstance(content, dict):
@@ -1222,7 +1220,7 @@ def _read_catalog_index(versions_path: Path) -> dict[str, Any]:
             f"got {type(content).__name__}. File: {versions_path}. "
             "Fix manually or delete to reinitialize."
         )
-        warn(msg)
+        logger.warning(msg)
         raise CatalogVersionsCorruptedError(msg)
 
     collections_value = content.get("collections")
@@ -1232,7 +1230,7 @@ def _read_catalog_index(versions_path: Path) -> dict[str, Any]:
             f"expected dict or null, got {type(collections_value).__name__}. "
             f"File: {versions_path}. Fix manually or delete to reinitialize."
         )
-        warn(msg)
+        logger.warning(msg)
         raise CatalogVersionsCorruptedError(msg)
     return content
 
