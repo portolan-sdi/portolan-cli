@@ -5577,12 +5577,13 @@ def skills() -> None:
 @click.pass_context
 def skills_list_cmd(ctx: click.Context, json_output: bool) -> None:
     """List available skills."""
-    from portolan_cli.skills import SKILLS_REPO, get_install_instructions
+    from portolan_cli.skills import list_skill_entries
 
     use_json = should_output_json(ctx, json_output)
 
-    if not emit_success("skills list", {"skills": [], "url": SKILLS_REPO}, use_json=use_json):
-        click.echo(get_install_instructions())
+    result = list_skill_entries()
+    if not emit_success("skills list", result.to_dict(), use_json=use_json):
+        click.echo(result.instructions)
 
 
 @skills.command("show")
