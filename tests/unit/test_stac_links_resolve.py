@@ -18,3 +18,11 @@ pytestmark = pytest.mark.unit
 def test_the_href_names_the_file_rashid_resolves(tmp_path: Path, href: str) -> None:
     """Rashid drops the query and the fragment and normalizes the path."""
     assert resolve_href(tmp_path, href) == tmp_path / "a.json"
+
+
+@pytest.mark.parametrize("href", ["%2e%2e/item.json", "%2E%2E/item.json"])
+def test_an_encoded_parent_segment_reaches_the_parent(tmp_path: Path, href: str) -> None:
+    """Rashid gives None for an href that leaves base_dir, and the old rule decodes it."""
+    group = tmp_path / "collection" / "group"
+
+    assert resolve_href(group, href) == (tmp_path / "collection" / "item.json").resolve()

@@ -124,8 +124,9 @@ def resolve_href(base_dir: Path, href: str) -> Path:
     Rashid's ``resolve_local_href`` resolves a relative href that stays below
     ``base_dir``. It decodes percent escapes and drops the query and the
     fragment, so rashid's link ``%C3%A9t%C3%A9%202024.json`` names
-    ``été 2024.json``. A ``../`` href leaves ``base_dir`` and resolves on disk.
-    An absolute or a remote href is joined as written.
+    ``été 2024.json``. Rashid gives None for an href that leaves ``base_dir``.
+    That href is decoded and resolves on disk. An absolute or a remote href is
+    joined as written.
     """
     from rashid_core.api import resolve_local_href
 
@@ -133,8 +134,12 @@ def resolve_href(base_dir: Path, href: str) -> Path:
     local = resolve_local_href("_", href)
     if local is not None:
         return base_dir / local
+    if "://" not in href and not href.startswith("/"):
+        href = unquote(href)
+    if href.startswith("./"):
+        return base_dir / href[2:]
     if href.startswith("../"):
-        return (base_dir / unquote(href)).resolve()
+        return (base_dir / href).resolve()
     return base_dir / href
 
 
