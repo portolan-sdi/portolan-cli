@@ -1327,11 +1327,9 @@ def _emit_stale_asset_warnings(
     if not stale_warnings:
         return
 
-    from portolan_cli.output import warn as warn_output
-
-    warn_output(
-        f"{len(stale_warnings)} asset(s) reference missing files "
-        "(run `portolan check --fix` to clean up)"
+    logger.warning(
+        "%d asset(s) reference missing files (run `portolan check --fix` to clean up)",
+        len(stale_warnings),
     )
     for warning_msg in stale_warnings:
         logger.debug(warning_msg)
@@ -1416,10 +1414,8 @@ def _emit_partition_warnings(
     if not partition_warnings:
         return
 
-    from portolan_cli.output import warn as warn_output
-
     for warning_msg in partition_warnings:
-        warn_output(warning_msg)
+        logger.warning(warning_msg)
 
 
 def _enrich_saved_documents(

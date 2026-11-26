@@ -66,7 +66,6 @@ NOT_CLI_LAYER = frozenset({"portolan_cli/api.py", "portolan_cli/sync/upload.py"}
 RATCHET_TID251 = frozenset(
     {
         "portolan_cli/convert.py",
-        "portolan_cli/finalization.py",
         "portolan_cli/preparation.py",
         "portolan_cli/stac.py",
         "portolan_cli/sync/push.py",
