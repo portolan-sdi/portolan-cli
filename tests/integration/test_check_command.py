@@ -712,7 +712,7 @@ class TestCheckMetadataFixFlag:
     Note: These tests verify that --metadata --fix flag is accepted and runs
     without errors. Full end-to-end metadata fixing is tested in
     test_metadata_fix.py (unit tests) since fix_metadata() only operates on
-    files that check_directory_metadata() reports, which typically requires
+    files that scan_catalog_metadata() reports, which typically requires
     versions.json or existing STAC items.
     """
 
