@@ -32,6 +32,7 @@ from portolan_cli.extract.arcgis.imageserver.orchestrator import ImageServerCLIO
 from portolan_cli.extract.carto import orchestrator as carto
 from portolan_cli.extract.common.report import run_extract_command
 from portolan_cli.extract.wfs import orchestrator as wfs
+from tests.known_upstream import GPIO_WFS_OOM
 from tests.replay_server import ReplayServer
 
 if TYPE_CHECKING:
@@ -212,7 +213,16 @@ def _secret_records(caplog: pytest.LogCaptureFixture) -> list[str]:
 
 
 @pytest.mark.parametrize("output", ["json", "text"])
-@pytest.mark.parametrize("name", sorted(CASES))
+@pytest.mark.parametrize(
+    "name",
+    [
+        # A WFS run that parses features hits the upstream out-of-memory bug.
+        pytest.param(name, marks=GPIO_WFS_OOM)
+        if case.family == "wfs" and case.exit_code == 0
+        else name
+        for name, case in sorted(CASES.items())
+    ],
+)
 def test_no_credential_reaches_any_output(
     name: str,
     output: str,

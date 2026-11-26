@@ -30,6 +30,7 @@ from portolan_cli.extract.common.report import run_extract_command
 from portolan_cli.extract.wfs.orchestrator import ExtractionOptions as WFSOptions
 from portolan_cli.extract.wfs.orchestrator import extract_wfs_catalog
 from portolan_cli.input_hardening import InputValidationError
+from tests.known_upstream import GPIO_WFS_OOM
 from tests.replay_server import ReplayServer
 
 if TYPE_CHECKING:
@@ -309,6 +310,7 @@ def test_extract_carto_rejects_bad_id(parity: Parity) -> None:
     )
 
 
+@GPIO_WFS_OOM
 def test_extract_wfs(parity: Parity, replay: Callable[[str | Path], ReplayServer]) -> None:
     """`extract wfs` reports the layers the library extracts."""
     server = replay("wfs/workspace_layer")
