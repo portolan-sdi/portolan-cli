@@ -44,7 +44,6 @@ PARITY_PENDING = frozenset(
         "stac-geoparquet",
         "sync",
         "version bump",
-        "version current",
         "version list",
         "version prune",
         "version rollback",

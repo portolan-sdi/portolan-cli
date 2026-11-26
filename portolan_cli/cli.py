@@ -5226,7 +5226,7 @@ def current(
         portolan version current boundaries
         portolan version current boundaries --json
     """
-    from portolan_cli.version_ops import get_current_version
+    from portolan_cli.version_ops import describe_current_version
 
     use_json = should_output_json(ctx, json_output)
 
@@ -5234,24 +5234,14 @@ def current(
         catalog_path = require_catalog_root(use_json, "version current")
 
     try:
-        ver = get_current_version(collection, catalog_root=catalog_path)
-    except (FileNotFoundError, Exception) as e:
+        result = describe_current_version(collection, catalog_root=catalog_path)
+    # A plugin backend can raise any exception, and the envelope reports each one.
+    except Exception as e:
         emit_error("version current", type(e).__name__, str(e), use_json=use_json)
         raise SystemExit(1) from None
 
-    if not emit_success(
-        "version current",
-        {
-            "collection": collection,
-            "version": ver.version,
-            "created": ver.created.isoformat(),
-            "breaking": ver.breaking,
-            "message": ver.message,
-            "assets": len(ver.assets),
-            "changes": ver.changes,
-        },
-        use_json=use_json,
-    ):
+    if not emit_success("version current", result.to_dict(), use_json=use_json):
+        ver = result.version
         breaking_flag = " [BREAKING]" if ver.breaking else ""
         timestamp = ver.created.strftime("%Y-%m-%d %H:%M:%S")
         msg = f" — {ver.message}" if ver.message else ""

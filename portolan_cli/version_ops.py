@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 from contextlib import contextmanager
+from dataclasses import dataclass
 from functools import partial
 from typing import TYPE_CHECKING, Any
 
@@ -80,6 +81,44 @@ def get_current_version(
     name = _resolve_backend_name(backend_name, catalog_root, state, collection=collection)
     backend = get_backend(name, catalog_root=state.catalog_root if state else catalog_root)
     return backend.get_current_version(collection)
+
+
+def _version_dict(ver: Version) -> dict[str, Any]:
+    """Summarize a version for the JSON envelope: an ISO timestamp and an asset count."""
+    return {
+        "version": ver.version,
+        "created": ver.created.isoformat(),
+        "breaking": ver.breaking,
+        "message": ver.message,
+        "assets": len(ver.assets),
+        "changes": ver.changes,
+    }
+
+
+@dataclass(frozen=True)
+class CurrentVersionResult:
+    """The current version of a collection, the result of ``portolan version current``."""
+
+    collection: str
+    version: Version
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return the envelope data of ``portolan version current``."""
+        return {"collection": self.collection, **_version_dict(self.version)}
+
+
+def describe_current_version(
+    collection: str, *, catalog_root: Path | None = None
+) -> CurrentVersionResult:
+    """Return the current version of ``collection`` through the active backend.
+
+    Raises:
+        FileNotFoundError: If the collection has no versions.
+        ValueError: If the backend or the versions.json is not valid.
+    """
+    return CurrentVersionResult(
+        collection, get_current_version(collection, catalog_root=catalog_root)
+    )
 
 
 def list_versions(
