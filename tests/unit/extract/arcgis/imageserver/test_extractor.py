@@ -2011,3 +2011,23 @@ async def test_tile_retries_only_a_transient_failure(
 
     assert (len(sent), result.success, result.attempts) == (requests, False, requests)
     assert result.error_msg == error
+
+
+_TOKEN_SERVICE = "https://h.example/X/ImageServer?token=SECRET"
+
+
+def test_report_holds_no_token(sample_metadata: ImageServerMetadata, tmp_path: Path) -> None:
+    """The report, its metadata, and the saved file hold no token (Codex re-review of #1133)."""
+    from portolan_cli.extract.arcgis.imageserver.report import (
+        build_imageserver_report,
+        save_imageserver_report,
+    )
+
+    report = build_imageserver_report(_TOKEN_SERVICE, sample_metadata, [], 1.0)
+    path = tmp_path / "extraction-report.json"
+    save_imageserver_report(report, path)
+
+    assert report.source_url == "https://h.example/X/ImageServer"
+    assert report.metadata_extracted.source_url == "https://h.example/X/ImageServer"
+    assert "SECRET" not in repr(report)
+    assert "SECRET" not in path.read_text(encoding="utf-8")

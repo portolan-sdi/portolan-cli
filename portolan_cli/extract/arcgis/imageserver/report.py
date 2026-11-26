@@ -19,6 +19,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from portolan_cli.json_io import write_json_atomic
+from portolan_cli.utils import redact_credentials
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -386,6 +387,8 @@ def build_imageserver_report(
     Returns:
         Complete extraction report.
     """
+    # The report goes to a file and into reprs, so it never holds a credential.
+    url = redact_credentials(url)
     # Get versions
     try:
         from importlib.metadata import version
