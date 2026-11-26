@@ -587,7 +587,10 @@ def _resolve_s3_endpoint_settings(
         return None, use_ssl
 
     # Name the source, so a redirected upload is never silent.
-    tell(report, "detail", f"Endpoint {aws_endpoint} from {source}")
+    # The caller may print this line, so it holds no credential of the URL.
+    from portolan_cli.utils import redact_credentials
+
+    tell(report, "detail", f"Endpoint {redact_credentials(aws_endpoint)} from {source}")
 
     # Both sources write a full URL, so its scheme carries the TLS setting.
     # An explicit argument or PORTOLAN_S3_USE_SSL still wins.
