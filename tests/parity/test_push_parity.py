@@ -265,6 +265,37 @@ def test_push_blocked_backend(
     )
 
 
+def test_push_dry_run_constructs_no_backend(
+    points_catalog: Callable[[Path], None],
+    tmp_path: Path,
+    remotes: Remotes,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A library dry run never opens the backend, because that is catalog I/O.
+
+    An Iceberg backend opens its catalog and creates its namespace when it is
+    built. A dry run reads only the local versions.json. The command still
+    refuses the blocked collection with its own early check.
+    """
+    import portolan_cli.backends as backends
+
+    def get_backend(name: str, **_kwargs: Any) -> Any:
+        raise AssertionError(f"a dry run must not build the {name!r} backend")
+
+    root = tmp_path / "catalog"
+    points_catalog(root)
+    (root / "points" / ".portolan").mkdir()
+    (root / "points" / ".portolan" / "config.yaml").write_text("backend: iceberg\n")
+    monkeypatch.setattr(backends, "get_backend", get_backend)
+    remotes.refuse_network = True
+
+    result = run_push(root, DESTINATION, collection="points", dry_run=True, notify=_quiet)
+
+    assert isinstance(result, PushResult)
+    assert (result.success, result.dry_run, result.would_push_versions) == (True, True, 1)
+    assert (remotes.current.puts, remotes.current.stored()) == ([], set())
+
+
 def _returned_failure(
     run_cli: RunCli,
     capsys: pytest.CaptureFixture[str],

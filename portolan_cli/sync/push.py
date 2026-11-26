@@ -3643,7 +3643,7 @@ def run_push(
 
     Raises:
         NotImplementedError: If the backend of a target collection does not
-            support a file-based push.
+            support a file-based push. A dry run does not check this.
         FileNotFoundError: If the catalog or the versions.json is absent.
         ValueError: If the destination URL is invalid.
         PushConflictError: If the remote diverged and ``force`` is False.
@@ -3652,10 +3652,14 @@ def run_push(
     from portolan_cli.version_ops import check_backend_supports_push
 
     # A collection with another backend has no file manifest to publish, or a
-    # stale one. Refuse before either push path reads it.
-    blocked = check_backend_supports_push(catalog_root, collection)
-    if blocked is not None:
-        raise NotImplementedError(blocked.message)
+    # stale one. Refuse before either push path writes. Only a built backend
+    # answers, and an Iceberg backend opens its catalog when it is built. A
+    # dry run does no I/O and writes nothing, so it skips the check. The
+    # command checks the backend itself first, for a dry run too.
+    if not dry_run:
+        blocked = check_backend_supports_push(catalog_root, collection)
+        if blocked is not None:
+            raise NotImplementedError(blocked.message)
     with notifying(notify):
         file_conc, chunk_conc = effective_push_concurrency(
             concurrency, chunk_concurrency, max_connections
