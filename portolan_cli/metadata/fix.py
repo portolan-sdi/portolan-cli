@@ -31,7 +31,7 @@ from portolan_cli.metadata.update import (
     update_item_metadata,
     update_versions_tracking,
 )
-from portolan_cli.stac_links import visible_stac_files
+from portolan_cli.stac_links import contained_link_target, visible_stac_files
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -580,8 +580,6 @@ def _repair_item_titles(
     dry_run: bool,
 ) -> list[FixResult]:
     """Ensure items referenced by ``item`` links have a human-readable title."""
-    from rashid_core.api import resolve_local_href
-
     from portolan_cli.humanize import derive_title
 
     results: list[FixResult] = []
@@ -595,12 +593,9 @@ def _repair_item_titles(
         href = link.get("href")
         if not isinstance(href, str) or not href:
             continue
-        rel = resolve_local_href(stac_file.relative_to(catalog_root).as_posix(), href)
-        # An href that leaves the catalog gives None, so the repair writes only inside it.
-        if rel is None:
-            continue
-        item_file = catalog_root / rel
-        if not item_file.exists():
+        # The repair writes only inside the catalog, after symlinks resolve.
+        item_file = contained_link_target(catalog_root, stac_file.parent, href)
+        if item_file is None or not item_file.exists():
             continue
         try:
             item_data = json.loads(item_file.read_text(encoding="utf-8"))

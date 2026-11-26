@@ -315,3 +315,48 @@ class TestApplyHumanTitles:
         coll = create_collection(collection_id="publico_arbolado", description="")
         apply_human_titles(coll, {"title": "  ", "description": None})
         assert coll.title == "Publico Arbolado"
+
+
+def _catalog_through_symlink(tmp_path: Path, rel: str, href: str) -> tuple[Path, Path]:
+    """A catalog whose ``alias`` directory is a symlink to a directory outside it."""
+    outside = tmp_path / "outside"
+    _write(
+        outside / "item.json",
+        {"type": "Feature", "id": "x", "title": "Secret", "properties": {}, "links": []},
+    )
+    catalog_root = tmp_path / "catalog"
+    catalog_root.mkdir()
+    (catalog_root / "alias").symlink_to(outside, target_is_directory=True)
+    _write(
+        catalog_root / "catalog.json",
+        {
+            "type": "Catalog",
+            "stac_version": "1.0.0",
+            "id": "demo",
+            "title": "Demo",
+            "description": "d",
+            "links": [{"rel": rel, "href": href}],
+        },
+    )
+    return catalog_root, outside / "item.json"
+
+
+@pytest.mark.unit
+class TestSymlinkOutOfTheCatalog:
+    def test_the_item_title_repair_does_not_write_through_the_symlink(self, tmp_path: Path) -> None:
+        catalog_root, outside = _catalog_through_symlink(tmp_path, "item", "./alias/%69tem.json")
+        before = outside.read_text()
+
+        repair_titles_and_links(catalog_root)
+
+        assert outside.read_text() == before
+
+    def test_the_link_title_backfill_does_not_read_through_the_symlink(
+        self, tmp_path: Path
+    ) -> None:
+        catalog_root, _outside = _catalog_through_symlink(tmp_path, "child", "./alias/item.json")
+
+        ensure_link_titles(catalog_root)
+
+        catalog = json.loads((catalog_root / "catalog.json").read_text())
+        assert "title" not in catalog["links"][0]

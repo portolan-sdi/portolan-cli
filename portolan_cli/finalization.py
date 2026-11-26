@@ -64,7 +64,7 @@ from portolan_cli.stac import (
     update_catalog_provenance,
 )
 from portolan_cli.stac_enrich import enrich_collection_file, enrich_item_file
-from portolan_cli.stac_links import in_link_order, iter_links
+from portolan_cli.stac_links import contained_link_target, in_link_order, iter_links
 from portolan_cli.utils import href_root, relative_href
 from portolan_cli.versions import (
     Asset,
@@ -231,9 +231,10 @@ def _fix_item_links(
         if not collection_json_path.exists():
             return
         collection_data = json.loads(collection_json_path.read_text(encoding="utf-8"))
-    for _link, _href, linked_path in iter_links(collection_data, collection_dir, ("item",)):
-        item_path = linked_path.resolve()
-        if not item_path.exists():
+    for _link, href, _path in iter_links(collection_data, collection_dir, ("item",)):
+        # The repair writes only inside the catalog, after symlinks resolve.
+        item_path = contained_link_target(catalog_root, collection_dir, href)
+        if item_path is None or not item_path.exists():
             continue
 
         item_data = json.loads(item_path.read_text(encoding="utf-8"))

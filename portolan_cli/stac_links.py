@@ -143,6 +143,24 @@ def resolve_href(base_dir: Path, href: str) -> Path:
     return base_dir / href
 
 
+def contained_link_target(catalog_root: Path, base_dir: Path, href: str) -> Path | None:
+    """Return the file that a link href names, or None when it lies outside the catalog.
+
+    ``resolve_href`` gives the path. The check reads the path after symlinks
+    resolve, so neither a ``../`` href nor a symlink leads a read or a write
+    out of the catalog. A remote href names no local file.
+
+    Args:
+        catalog_root: The catalog root directory.
+        base_dir: Directory holding the object that holds the link.
+        href: The link href.
+    """
+    if "://" in href:
+        return None
+    target = resolve_href(base_dir, href).resolve()
+    return target if catalog_root.resolve() in target.parents else None
+
+
 # The link walkers read only the documents that the links name. They do not
 # use rashid's CatalogGraph.load, because it parses every JSON file in the tree.
 def iter_links(

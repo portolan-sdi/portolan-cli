@@ -243,3 +243,23 @@ class TestFixItemLinks:
         _fix_item_links(collection_json, tmp_path, collection_dir)  # must not raise
 
         assert not (collection_dir / "gone").exists()
+
+
+def test_an_item_link_through_a_symlink_out_of_the_catalog_is_not_written(
+    tmp_path: Path,
+) -> None:
+    """The link repair writes only inside the catalog root, after symlinks resolve."""
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    item = outside / "item.json"
+    item.write_text(json.dumps({"type": "Feature", "id": "x", "links": []}), encoding="utf-8")
+    before = item.read_text(encoding="utf-8")
+    catalog_root = tmp_path / "catalog"
+    collection_dir = catalog_root / "roads"
+    collection_json = collection_dir / "collection.json"
+    _write_collection(collection_json, [{"rel": "item", "href": "./alias/%69tem.json"}])
+    (collection_dir / "alias").symlink_to(outside, target_is_directory=True)
+
+    _fix_item_links(collection_json, catalog_root, collection_dir)
+
+    assert item.read_text(encoding="utf-8") == before

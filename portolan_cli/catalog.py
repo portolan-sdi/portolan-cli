@@ -25,6 +25,7 @@ from portolan_cli.json_io import write_json_atomic, write_text_atomic
 from portolan_cli.models.catalog import CatalogModel
 from portolan_cli.report import emit
 from portolan_cli.stac_links import (
+    contained_link_target,
     in_link_order,
     iter_links,
     iter_stac_objects,
@@ -1018,19 +1019,9 @@ def _link_title_from_target(
     if not isinstance(href, str) or not href:
         return None
 
-    from rashid_core.api import resolve_local_href
-
-    # Input hardening: rashid gives None for an href that leaves the catalog,
-    # and the resolved path check stops a symlink that leads out of it.
-    rel = resolve_local_href(stac_file.relative_to(catalog_root).as_posix(), href)
-    if rel is None:
-        return None
-    target = (catalog_root / rel).resolve()
-    root = catalog_root.resolve()
-    if target != root and root not in target.parents:
-        return None
-
-    if not target.exists():
+    # Input hardening: a crafted link cannot read a file outside the catalog.
+    target = contained_link_target(catalog_root, stac_file.parent, href)
+    if target is None or not target.exists():
         return None
 
     try:
