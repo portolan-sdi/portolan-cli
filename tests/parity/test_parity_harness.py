@@ -258,3 +258,23 @@ def test_a_to_dict_that_prints_fails(
             catalog=build_conformant_catalog,
             call=lambda root: _Loud(inspect_catalog(Path())),
         )
+
+
+@pytest.mark.integration
+def test_a_library_log_record_is_not_printed_output(
+    parity: Parity, build_conformant_catalog: Callable[..., Path]
+) -> None:
+    """The command run leaves its stderr log handler. The library side must not inherit it.
+
+    A library function logs a notice when its caller passes no callback. The
+    harness counts only what the library prints, not what the CLI handler writes.
+    """
+    import logging
+
+    from portolan_cli.inspect import inspect_catalog
+
+    def call(root: Path) -> CatalogInfo:
+        logging.getLogger("portolan_cli.parity_probe").warning("library notice")
+        return inspect_catalog(Path())
+
+    parity.__call__("info", [], catalog=build_conformant_catalog, call=call)

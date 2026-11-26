@@ -82,6 +82,7 @@ from typing import Any, Protocol
 
 import pytest
 
+from portolan_cli import logging_setup
 from portolan_cli.errors import PortolanError
 from portolan_cli.json_output import ErrorDetail
 from tests.catalog_invariants import RunCli
@@ -192,6 +193,9 @@ class Parity:
 
     def _library(self, catalog: CatalogFactory, call: Callable[[Path], Any]) -> Any:
         self._fresh_catalog(catalog)
+        # The command run leaves its stderr log handler. A library log record
+        # is not printed output, so remove the handler before the call.
+        logging_setup.reset_logging()
         self._capsys.readouterr()
         try:
             with contextlib.chdir(self.root):

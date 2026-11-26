@@ -14,7 +14,6 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from portolan_cli import logging_setup
 from portolan_cli.extract.arcgis.imageserver.orchestrator import ImageServerCLIOptions
 from portolan_cli.extract.arcgis.orchestrator import ExtractionOptions as ArcGISOptions
 from portolan_cli.extract.arcgis.orchestrator import run_extract_arcgis
@@ -30,7 +29,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
 
     from tests.catalog_invariants import RunCli
-    from tests.parity.harness import Parity, SupportsToDict
+    from tests.parity.harness import Parity
 
 pytestmark = pytest.mark.integration
 
@@ -41,20 +40,6 @@ LICENSE = ("--auto", "--license", "CC-BY-4.0")
 
 def _empty(root: Path) -> None:
     root.mkdir(parents=True)
-
-
-def _as_library(call: Callable[[], SupportsToDict]) -> Callable[[Path], SupportsToDict]:
-    """Run ``call`` the way a library caller does, with no CLI log handler.
-
-    The command run installs a stderr log handler. It stays on the root logger
-    until the next run, so the library run would print the warnings it logs.
-    """
-
-    def run(_root: Path) -> SupportsToDict:
-        logging_setup.reset_logging()
-        return call()
-
-    return run
 
 
 @pytest.fixture
@@ -81,13 +66,11 @@ def test_extract_arcgis_featureserver(parity: Parity, replay: Callable[[str | Pa
         "extract arcgis",
         [url, "out", *LICENSE, "--layers", "2"],
         catalog=_empty,
-        call=_as_library(
-            lambda: run_extract_arcgis(
-                url,
-                Path("out"),
-                layer_filter=["2"],
-                options=ArcGISOptions(license="CC-BY-4.0"),
-            )
+        call=lambda _root: run_extract_arcgis(
+            url,
+            Path("out"),
+            layer_filter=["2"],
+            options=ArcGISOptions(license="CC-BY-4.0"),
         ),
     )
 
@@ -119,10 +102,8 @@ def test_extract_arcgis_imageserver_dry_run(
         "extract arcgis",
         [url, "out", "--dry-run"],
         catalog=_empty,
-        call=_as_library(
-            lambda: run_extract_arcgis(
-                url, Path("out"), imageserver=ImageServerCLIOptions(dry_run=True, timeout=60.0)
-            )
+        call=lambda _root: run_extract_arcgis(
+            url, Path("out"), imageserver=ImageServerCLIOptions(dry_run=True, timeout=60.0)
         ),
     )
 
@@ -164,15 +145,13 @@ def test_extract_carto(parity: Parity, replay: Callable[[str | Path], str]) -> N
         "extract carto",
         [url, "out", *LICENSE, "--tables", "zoning_basedistricts", "--limit", "3"],
         catalog=_empty,
-        call=_as_library(
-            lambda: run_extract_command(
-                extract_carto_catalog,
-                url,
-                Path("out"),
-                None,
-                layer_filter=["zoning_basedistricts"],
-                options=CartoOptions(limit=3, license="CC-BY-4.0"),
-            )
+        call=lambda _root: run_extract_command(
+            extract_carto_catalog,
+            url,
+            Path("out"),
+            None,
+            layer_filter=["zoning_basedistricts"],
+            options=CartoOptions(limit=3, license="CC-BY-4.0"),
         ),
     )
 
@@ -198,15 +177,13 @@ def test_extract_wfs(parity: Parity, replay: Callable[[str | Path], str]) -> Non
         "extract wfs",
         [url, "out", *LICENSE, "--layers", "topp:states"],
         catalog=_empty,
-        call=_as_library(
-            lambda: run_extract_command(
-                extract_wfs_catalog,
-                url,
-                Path("out"),
-                None,
-                layer_filter=["topp:states"],
-                options=WFSOptions(license="CC-BY-4.0"),
-            )
+        call=lambda _root: run_extract_command(
+            extract_wfs_catalog,
+            url,
+            Path("out"),
+            None,
+            layer_filter=["topp:states"],
+            options=WFSOptions(license="CC-BY-4.0"),
         ),
     )
 
