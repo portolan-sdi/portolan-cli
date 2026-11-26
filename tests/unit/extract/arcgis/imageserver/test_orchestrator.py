@@ -12,7 +12,9 @@ import pytest
 
 from portolan_cli.extract.arcgis.imageserver.orchestrator import (
     ImageServerCLIOptions,
+    run_imageserver,
     run_imageserver_extraction,
+    run_imageserver_extraction_sync,
 )
 
 if TYPE_CHECKING:
@@ -171,7 +173,7 @@ class TestRunImageServerExtraction:
             ),
             pytest.raises(ImageServerDiscoveryError, match="Network error"),
         ):
-            await run_imageserver_extraction(
+            await run_imageserver(
                 url="https://example.com/rest/services/Test/ImageServer",
                 output_dir=tmp_path,
                 options=ImageServerCLIOptions(),
@@ -353,7 +355,7 @@ class TestLicenseOptions:
             ),
             pytest.raises(MissingLicenseError),
         ):
-            await run_imageserver_extraction(
+            await run_imageserver(
                 url=SERVICE_URL, output_dir=tmp_path, options=ImageServerCLIOptions()
             )
 
@@ -415,3 +417,62 @@ class TestEmptyTileOutcome:
 
         assert exit_code == 0
         assert "Extraction produced no data" not in caplog.text
+
+
+class TestCompatibilityWrappers:
+    """The public wrappers keep their contract: a failure returns (1, None) (Codex review)."""
+
+    @staticmethod
+    def _network_error() -> AsyncMock:
+        from portolan_cli.extract.arcgis.imageserver.discovery import ImageServerDiscoveryError
+
+        return AsyncMock(side_effect=ImageServerDiscoveryError("Network error"))
+
+    @pytest.mark.asyncio
+    async def test_an_error_returns_exit_code_1(self, tmp_path: Path) -> None:
+        messages: list[tuple[str, str]] = []
+        with patch(
+            "portolan_cli.extract.arcgis.imageserver.orchestrator.extract_imageserver",
+            self._network_error(),
+        ):
+            result = await run_imageserver_extraction(
+                SERVICE_URL,
+                tmp_path,
+                ImageServerCLIOptions(),
+                on_message=lambda level, text: messages.append((level, text)),
+            )
+
+        assert result == (1, None)
+        assert messages == [("error", "ImageServer extraction failed: Network error")]
+
+    @pytest.mark.asyncio
+    async def test_a_missing_license_returns_exit_code_1_and_the_hint(self, tmp_path: Path) -> None:
+        from portolan_cli.errors import MissingLicenseError
+        from portolan_cli.licensing import CLI_LICENSE_REMEDIATION
+
+        error = MissingLicenseError("this extraction", "the source publishes no license URL")
+        messages: list[tuple[str, str]] = []
+        with patch(
+            "portolan_cli.extract.arcgis.imageserver.orchestrator.extract_imageserver",
+            AsyncMock(side_effect=error),
+        ):
+            result = await run_imageserver_extraction(
+                SERVICE_URL,
+                tmp_path,
+                on_message=lambda level, text: messages.append((level, text)),
+            )
+
+        assert result == (1, None)
+        assert messages == [
+            ("error", f"ImageServer extraction failed: {error}"),
+            ("info", CLI_LICENSE_REMEDIATION),
+        ]
+
+    def test_the_sync_wrapper_returns_exit_code_1(self, tmp_path: Path) -> None:
+        with patch(
+            "portolan_cli.extract.arcgis.imageserver.orchestrator.extract_imageserver",
+            self._network_error(),
+        ):
+            result = run_imageserver_extraction_sync(SERVICE_URL, tmp_path)
+
+        assert result == (1, None)

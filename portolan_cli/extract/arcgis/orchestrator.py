@@ -896,7 +896,7 @@ def run_extract_arcgis(
         from portolan_cli.extract.arcgis.imageserver.orchestrator import (
             ImageServerCLIOptions,
             ImageServerRunResult,
-            run_imageserver_extraction,
+            run_imageserver,
         )
         from portolan_cli.input_hardening import validate_catalog_id
 
@@ -904,7 +904,7 @@ def run_extract_arcgis(
         if image.catalog_id is not None:
             validate_catalog_id(image.catalog_id)
         exit_code, image_report = asyncio.run(
-            run_imageserver_extraction(
+            run_imageserver(
                 url, output_dir, image, on_progress=on_tile_progress, on_message=on_message
             )
         )

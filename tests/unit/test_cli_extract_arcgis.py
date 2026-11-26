@@ -345,7 +345,7 @@ def test_extract_arcgis_rejects_bad_id_before_imageserver_extraction(
         calls.append("imageserver")
 
     monkeypatch.setattr(
-        "portolan_cli.extract.arcgis.imageserver.orchestrator.run_imageserver_extraction",
+        "portolan_cli.extract.arcgis.imageserver.orchestrator.run_imageserver",
         _never_called,
     )
     runner = CliRunner()
@@ -382,7 +382,7 @@ def _capture_imageserver_options(
         return 0, None
 
     monkeypatch.setattr(
-        "portolan_cli.extract.arcgis.imageserver.orchestrator.run_imageserver_extraction",
+        "portolan_cli.extract.arcgis.imageserver.orchestrator.run_imageserver",
         _capture,
     )
     runner = CliRunner()
@@ -442,7 +442,7 @@ def test_imageserver_text_names_the_service_without_its_token(
 ) -> None:
     """#981: the prompt and the progress line name the service, not the token in its URL."""
     monkeypatch.setattr(
-        "portolan_cli.extract.arcgis.imageserver.orchestrator.run_imageserver_extraction",
+        "portolan_cli.extract.arcgis.imageserver.orchestrator.run_imageserver",
         _no_tiles,
     )
 
@@ -463,7 +463,7 @@ def test_imageserver_json_names_the_service_without_its_token(
     import json
 
     monkeypatch.setattr(
-        "portolan_cli.extract.arcgis.imageserver.orchestrator.run_imageserver_extraction",
+        "portolan_cli.extract.arcgis.imageserver.orchestrator.run_imageserver",
         _no_tiles,
     )
 

@@ -133,7 +133,7 @@ def _failure_hint(tiles_failed: int) -> str:
     )
 
 
-async def run_imageserver_extraction(
+async def run_imageserver(
     url: str,
     output_dir: Path,
     options: ImageServerCLIOptions | None = None,
@@ -141,7 +141,10 @@ async def run_imageserver_extraction(
     on_progress: Callable[[TileProgress], None] | None = None,
     on_message: Callable[[str, str], None] | None = None,
 ) -> tuple[int, ImageServerExtractionReport | None]:
-    """Run ImageServer extraction and pick the exit code.
+    """Run ImageServer extraction and pick the exit code. Raise on an error.
+
+    ``portolan extract arcgis`` calls this function through
+    ``run_extract_arcgis`` and maps each error to its output.
 
     Args:
         url: ImageServer URL.
@@ -229,12 +232,52 @@ async def run_imageserver_extraction(
     return 0, result.report
 
 
+async def run_imageserver_extraction(
+    url: str,
+    output_dir: Path,
+    options: ImageServerCLIOptions | None = None,
+    *,
+    on_progress: Callable[[TileProgress], None] | None = None,
+    on_message: Callable[[str, str], None] | None = None,
+) -> tuple[int, ImageServerExtractionReport | None]:
+    """Run ``run_imageserver`` and turn an error into exit code 1.
+
+    This wrapper keeps the contract that callers had before #1133. An error
+    returns ``(1, None)`` and goes to ``on_message`` at the ``error`` level.
+    A missing license also sends the flags that set one, at ``info``.
+
+    Args:
+        url: ImageServer URL.
+        output_dir: Directory to write extracted data.
+        options: Options (defaults to ImageServerCLIOptions()).
+        on_progress: Called with the progress of each tile.
+        on_message: Called as ``on_message(level, text)`` with each message.
+
+    Returns:
+        Tuple of (exit_code, report). Exit code is 0 for success, 1 for failure.
+        Report is None when the run raised.
+    """
+    from portolan_cli.errors import MissingLicenseError
+    from portolan_cli.licensing import CLI_LICENSE_REMEDIATION
+
+    try:
+        return await run_imageserver(
+            url, output_dir, options, on_progress=on_progress, on_message=on_message
+        )
+    # The old contract maps every error to exit code 1, so the catch is broad.
+    except Exception as e:  # noqa: BLE001
+        emit_message(on_message, "error", f"ImageServer extraction failed: {e}")
+        if isinstance(e, MissingLicenseError):
+            emit_message(on_message, "info", CLI_LICENSE_REMEDIATION)
+        return 1, None
+
+
 def run_imageserver_extraction_sync(
     url: str,
     output_dir: Path,
     options: ImageServerCLIOptions | None = None,
 ) -> tuple[int, ImageServerExtractionReport | None]:
-    """Run ``run_imageserver_extraction`` from synchronous code, with no callbacks.
+    """Run ``run_imageserver_extraction`` from synchronous code.
 
     Args:
         url: ImageServer URL.
