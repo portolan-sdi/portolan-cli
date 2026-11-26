@@ -102,6 +102,7 @@ nav:
   - Guides:
     - Iceberg: guides/iceberg.md
     - Write a plugin: guides/plugins.md
+    - Write a catalog from Python: guides/python-writer.md
     - Diagnose a run: guides/diagnostics.md
   - Reference:
     - Overview: reference/index.md
