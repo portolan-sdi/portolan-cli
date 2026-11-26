@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 import pytest
 import yaml
 
+from portolan_cli.catalog import init_catalog
 from portolan_cli.catalog_list import list_catalog_contents
 from portolan_cli.clean import clean_metadata
 from portolan_cli.config import (
@@ -25,7 +26,6 @@ from portolan_cli.config import (
     store_setting,
 )
 from portolan_cli.errors import CatalogAlreadyExistsError, ConfigError
-from portolan_cli.inspect import initialize_catalog
 from portolan_cli.remove import SafetyError, remove_path
 from portolan_cli.status import get_catalog_status
 from portolan_cli.versions import read_versions
@@ -160,7 +160,7 @@ def test_init(parity: Parity) -> None:
         "init",
         ["--auto", "--id", "parity", "--license", "CC-BY-4.0", "--logo", "brand.svg"],
         catalog=_empty_directory_with_logo,
-        call=lambda root: initialize_catalog(
+        call=lambda root: init_catalog(
             Path(), catalog_id="parity", license_id="CC-BY-4.0", logo="brand.svg"
         ),
     )
@@ -172,7 +172,7 @@ def test_init_derived_id(parity: Parity) -> None:
         "init",
         ["--auto", "--license", "CC-BY-4.0"],
         catalog=lambda root: root.mkdir(),
-        call=lambda root: initialize_catalog(Path(), license_id="CC-BY-4.0"),
+        call=lambda root: init_catalog(Path(), license_id="CC-BY-4.0"),
     )
 
 
@@ -184,7 +184,7 @@ def test_init_existing_catalog(
         "init",
         ["--auto", "--license", "CC-BY-4.0"],
         catalog=build_conformant_catalog,
-        call=lambda root: initialize_catalog(Path(), license_id="CC-BY-4.0"),
+        call=lambda root: init_catalog(Path(), license_id="CC-BY-4.0"),
         raises=CatalogAlreadyExistsError,
     )
 
@@ -465,7 +465,7 @@ def test_init_effects(run_cli: RunCli, tmp_path: Path) -> None:
         tmp_path,
         _empty_directory_with_logo,
         ["init", "--auto", "--id", "parity", "--license", "CC-BY-4.0", "--logo", "brand.svg"],
-        lambda root: initialize_catalog(
+        lambda root: init_catalog(
             Path(), catalog_id="parity", license_id="CC-BY-4.0", logo="brand.svg"
         ),
     ):

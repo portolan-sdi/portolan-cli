@@ -594,13 +594,12 @@ def init(
         portolan init --backend iceberg --license CC0-1.0
         portolan init --auto --license CC-BY-4.0 --logo brand.png
     """
-    from portolan_cli.catalog import CatalogState, detect_state
+    from portolan_cli.catalog import CatalogState, detect_state, init_catalog
     from portolan_cli.errors import (
         CatalogAlreadyExistsError,
         LogoError,
         UnmanagedStacCatalogError,
     )
-    from portolan_cli.inspect import initialize_catalog
 
     use_json = should_output_json(ctx, json_output)
 
@@ -617,7 +616,7 @@ def init(
         license_id = _validated_cli_license("init", license_id, license_url, use_json=use_json)
 
     try:
-        result = initialize_catalog(
+        result = init_catalog(
             path,
             catalog_id=catalog_id,
             title=title,
@@ -629,11 +628,12 @@ def init(
             logo_title=logo_title,
         )
 
-        if not emit_success("init", result.to_dict(), use_json=use_json):
-            success(f"Initialized Portolan catalog in {result.path}")
-            info_output(f"Catalog ID: {result.catalog_id}")
-            if result.logo:
-                info_output(f"Logo: {result.logo}")
+        data = result.to_dict()
+        if not emit_success("init", data, use_json=use_json):
+            success(f"Initialized Portolan catalog in {data['path']}")
+            info_output(f"Catalog ID: {data['catalog_id']}")
+            if data["logo"]:
+                info_output(f"Logo: {data['logo']}")
             for w in result.warnings:
                 warn(w)
 

@@ -573,6 +573,32 @@ def _write_conformance_files(
         raise CatalogInitError(f"Cannot write catalog logo: {e}") from e
 
 
+class InitResult(NamedTuple):
+    """The catalog that ``init_catalog`` created. It unpacks as ``(catalog_file, warnings)``.
+
+    Attributes:
+        catalog_file: The catalog.json that ``init_catalog`` wrote.
+        warnings: The values that ``init_catalog`` had to guess, for the user.
+    """
+
+    catalog_file: Path
+    warnings: list[str]
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize the result as the ``init`` envelope data, read back from catalog.json."""
+        from portolan_cli.logo import find_logo_link
+
+        data = json.loads(self.catalog_file.read_text(encoding="utf-8"))
+        logo_link = find_logo_link(data.get("links", []))
+        return {
+            "path": str(self.catalog_file.parent),
+            "catalog_file": "catalog.json",
+            "catalog_id": data.get("id", "unknown"),
+            "logo": logo_link["href"] if logo_link else None,
+            "warnings": self.warnings,
+        }
+
+
 def init_catalog(
     path: Path,
     *,
@@ -584,7 +610,7 @@ def init_catalog(
     license_url: str | None = None,
     logo: str | Path | None = None,
     logo_title: str | None = None,
-) -> tuple[Path, list[str]]:
+) -> InitResult:
     """Initialize a new Portolan catalog with the v2 file structure.
 
     Creates (in order for partial failure recovery):
@@ -746,7 +772,7 @@ def init_catalog(
     except OSError as e:
         raise CatalogInitError(f"Cannot write config.yaml: {e}") from e
 
-    return catalog_file, warnings
+    return InitResult(catalog_file, warnings)
 
 
 class Catalog:
