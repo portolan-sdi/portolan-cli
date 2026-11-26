@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+import stat
 import subprocess
 import sys
 from typing import TYPE_CHECKING
@@ -66,6 +68,49 @@ def test_local_sink_deletes_prior_managed_keys(tmp_path: Path) -> None:
 
     assert not stale.exists()
     assert data.read_bytes() == b"PAR1"
+
+
+def test_local_sink_deletes_a_symlink_and_not_its_target(tmp_path: Path) -> None:
+    data = tmp_path / "data.parquet"
+    data.write_bytes(b"PAR1")
+    (tmp_path / "old.json").symlink_to(data)
+
+    LocalSink(tmp_path).delete("old.json")
+
+    assert not (tmp_path / "old.json").is_symlink()
+    assert data.read_bytes() == b"PAR1"
+
+
+def test_local_sink_replaces_a_symlink_and_not_its_target(tmp_path: Path) -> None:
+    data = tmp_path / "data.parquet"
+    data.write_bytes(b"PAR1")
+    (tmp_path / "old.json").symlink_to(data)
+
+    LocalSink(tmp_path).put("old.json", b"{}", "application/json")
+
+    assert not (tmp_path / "old.json").is_symlink()
+    assert (tmp_path / "old.json").read_bytes() == b"{}"
+    assert data.read_bytes() == b"PAR1"
+
+
+def test_local_sink_keeps_the_mode_of_a_replaced_file(tmp_path: Path) -> None:
+    target = tmp_path / "catalog.json"
+    target.write_bytes(b"{}")
+    target.chmod(0o644)
+
+    LocalSink(tmp_path).put("catalog.json", b"{ }", "application/json")
+
+    assert stat.S_IMODE(target.stat().st_mode) == 0o644
+
+
+def test_local_sink_gives_a_new_file_the_umask_default_mode(tmp_path: Path) -> None:
+    umask = os.umask(0o022)
+    try:
+        LocalSink(tmp_path).put("catalog.json", b"{}", "application/json")
+    finally:
+        os.umask(umask)
+
+    assert stat.S_IMODE((tmp_path / "catalog.json").stat().st_mode) == 0o644
 
 
 def test_local_sink_refuses_a_key_outside_its_root(tmp_path: Path) -> None:

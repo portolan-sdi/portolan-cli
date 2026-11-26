@@ -58,7 +58,7 @@ from __future__ import annotations
 import contextlib
 import json
 import os
-import tempfile
+import stat
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any, Protocol
@@ -228,22 +228,34 @@ class LocalSink:
         self.root = root.resolve()
 
     def _path(self, key: str) -> Path:
-        path = (self.root / key).resolve()
-        if not path.is_relative_to(self.root):
+        path = self.root / key
+        parent = path.parent.resolve()
+        if path.name in ("", ".", "..") or not parent.is_relative_to(self.root):
             raise ValueError(f"key leaves the sink root: {key!r}")
-        return path
+        # Only the parent is resolved. Put and delete then act on a symlink at
+        # the key itself, never on the file that the symlink points at.
+        return parent / path.name
 
     def put(self, key: str, content: bytes, media_type: str) -> None:  # noqa: ARG002 - a file has no media type
         """Write the file atomically, so a reader never sees half of it."""
         path = self._path(key)
         path.parent.mkdir(parents=True, exist_ok=True)
-        fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
+        tmp = path.with_name(f".{path.name}.{os.urandom(6).hex()}.tmp")
+        # Mode 0o666 lets the umask set the mode of a new file, as open() does.
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0)
+        fd = os.open(tmp, flags, 0o666)
         try:
             with os.fdopen(fd, "wb") as handle:
                 handle.write(content)
-            Path(tmp).replace(path)
+            try:
+                old = path.lstat()
+            except FileNotFoundError:
+                old = None
+            if old is not None and stat.S_ISREG(old.st_mode):
+                tmp.chmod(stat.S_IMODE(old.st_mode))
+            tmp.replace(path)
         except BaseException:
-            Path(tmp).unlink(missing_ok=True)
+            tmp.unlink(missing_ok=True)
             raise
 
     def delete(self, key: str) -> None:
