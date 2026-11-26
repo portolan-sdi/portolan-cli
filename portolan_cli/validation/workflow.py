@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from portolan_cli.convert import ConversionResult
     from portolan_cli.metadata.fix import FixReport
     from portolan_cli.run_state import RunState
+    from portolan_cli.scan.check import FixWorkflowOutcome
     from portolan_cli.validation.runner import CheckOutcome
 
     #: Receives one fix report and the conversion report that goes with it, or None.
@@ -323,10 +324,10 @@ def _run_fix_and_repairs(
         run_metadata: Whether to fix metadata issues.
         run_geo_assets: Whether to fix geo-asset format issues.
         dry_run: Preview changes without applying them.
-        remove_legacy: Remove source files after successful conversion.
-        force: Re-optimize already-valid COGs (raster-scoped, issue #530).
-        workers: Parallel worker processes for conversion.
-        on_progress: Called after each conversion.
+        remove_legacy: Passed to ``check.run_fix_workflow``.
+        force: Passed to ``check.run_fix_workflow``.
+        workers: Passed to ``check.run_fix_workflow``.
+        on_progress: Passed to ``check.run_fix_workflow``.
         on_fix_report: Called with each fix report as soon as that pass ends.
         state: The run state of the command. Every pass stages in it, and the
             caller commits it once.
@@ -335,6 +336,7 @@ def _run_fix_and_repairs(
         The JSON ``fix`` section and whether a fix failed.
     """
     from portolan_cli.metadata.fix import FixReport
+    from portolan_cli.scan.check import run_fix_workflow
     from portolan_cli.validation import build_fix_payload
 
     fixer_report, applied, selected, skip_reasons = _run_fixer_registry(
@@ -346,7 +348,7 @@ def _run_fix_and_repairs(
     )
 
     with span("check.fix.freshness"):
-        legacy_data, legacy_failed, written_items = _run_legacy_fix_workflow(
+        outcome = run_fix_workflow(
             path=path,
             run_metadata=run_metadata,
             run_geo_assets=run_geo_assets,
@@ -355,9 +357,9 @@ def _run_fix_and_repairs(
             force=force,
             workers=workers,
             on_progress=on_progress,
-            on_fix_report=on_fix_report,
             state=state,
         )
+        legacy_data, legacy_failed, written_items = _legacy_fix_result(outcome, on_fix_report)
 
     # The registry above ran against findings from the pre-fix check, so it
     # never saw an item the freshness pass has only just written. Repair
@@ -437,20 +439,11 @@ def _run_fixer_registry(
     return report, run.applied, run.selected, run.skip_reasons
 
 
-def _run_legacy_fix_workflow(
-    *,
-    path: Path,
-    run_metadata: bool,
-    run_geo_assets: bool,
-    dry_run: bool,
-    remove_legacy: bool,
-    force: bool = False,
-    workers: int | None = None,
-    on_progress: Callable[[ConversionResult], None] | None = None,
-    on_fix_report: FixReportCallback | None = None,
-    state: RunState | None = None,
+def _legacy_fix_result(
+    outcome: FixWorkflowOutcome,
+    on_fix_report: FixReportCallback | None,
 ) -> tuple[dict[str, Any], bool, list[Path]]:
-    """Run item-freshness and geo-asset conversion through ``check.run_fix_workflow``.
+    """Turn the outcome of ``check.run_fix_workflow`` into the JSON data of the fix.
 
     Returns:
         The fix reports as JSON data, whether a fix failed, and the data files
@@ -461,19 +454,6 @@ def _run_legacy_fix_workflow(
         NotACatalogError: A metadata-only fix found no catalog root (issue #384).
     """
     from portolan_cli.metadata.fix import FixAction
-    from portolan_cli.scan.check import run_fix_workflow
-
-    outcome = run_fix_workflow(
-        path=path,
-        run_metadata=run_metadata,
-        run_geo_assets=run_geo_assets,
-        dry_run=dry_run,
-        remove_legacy=remove_legacy,
-        force=force,
-        workers=workers,
-        on_progress=on_progress,
-        state=state,
-    )
 
     if outcome.fatal_error is not None:
         raise NotACatalogError(outcome.fatal_error)
