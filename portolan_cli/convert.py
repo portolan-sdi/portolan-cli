@@ -1793,22 +1793,28 @@ def _init_worker_state(catalog_path: Path | None, tracing: bool = False) -> None
             getattr(importlib.import_module(module), name)()
 
 
-def _convert_in_worker(source: Path, **kwargs: Any) -> tuple[ConversionResult, dict[str, int]]:
-    """Return a conversion and its counters to the parent process.
+def _convert_in_worker(
+    source: Path, **kwargs: Any
+) -> tuple[ConversionResult, dict[str, int], list[tuple[str, str]]]:
+    """Return a conversion, its counters, and its messages to the parent process.
 
     Only this task's increments cross the boundary. Returning cumulative
-    counters would count the earlier tasks of a reused worker again.
+    counters would count the earlier tasks of a reused worker again. The
+    parent's report scope does not reach this process, so the messages come
+    back with the result (``report.recording``).
     """
     from portolan_cli import trace
+    from portolan_cli.report import recording
 
     before = trace.counters() if trace.is_enabled() else {}
-    result = convert_file(source, state=_WORKER_STATE, **kwargs)
+    with recording() as messages:
+        result = convert_file(source, state=_WORKER_STATE, **kwargs)
     increments = (
         {name: value - before.get(name, 0) for name, value in trace.counters().items()}
         if trace.is_enabled()
         else {}
     )
-    return result, increments
+    return result, increments, messages
 
 
 def _convert_files_parallel(
@@ -1883,10 +1889,13 @@ def _convert_files_parallel(
             for future in as_completed(future_to_file):
                 file_path = future_to_file[future]
                 try:
-                    result, increments = future.result()
+                    result, increments, messages = future.result()
                     for name, value in increments.items():
                         if value:
                             count(name, value)
+                    # Each message prints before the progress line of its file.
+                    for level, text in messages:
+                        emit(level, text)
                 except BrokenProcessPool:
                     # The pool itself died; let the outer handler fall back to
                     # serial rather than marking this file FAILED.

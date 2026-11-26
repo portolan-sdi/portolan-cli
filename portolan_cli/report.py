@@ -38,6 +38,14 @@ def reporting(on_message: MessageCallback | None) -> Iterator[None]:
         _REPORT.reset(token)
 
 
+@contextlib.contextmanager
+def recording() -> Iterator[list[tuple[str, str]]]:
+    """Collect each :func:`emit` in the block as ``(level, text)``, for a worker process."""
+    lines: list[tuple[str, str]] = []
+    with reporting(lambda level, text: lines.append((level, text))):
+        yield lines
+
+
 def emit(level: str, text: str) -> None:
     """Hand one line for the user to the current callback, or log it without one.
 
