@@ -16,6 +16,9 @@
 # 2. Trigger manually: gh workflow run release.yml --ref main
 # Each publish step skips the files that PyPI already holds. A re-run after a
 # release that published portolan-core and then failed publishes portolan-cli.
+# A re-run builds the tagged commit, not the branch head. Delete the tag only
+# when PyPI holds no file of the release. The digest check fails the run when
+# PyPI holds a file with other bytes than the new build.
 name: Release
 on:
   push:
@@ -111,6 +114,17 @@ jobs:
           git tag -a "$TAG" -m "Release $TAG"
           git push origin "$TAG"
 
+      # main can move on after a partial release. A recovery run must build
+      # the commit that the first run published from. The digest script
+      # comes from this workflow revision, because an old tag can lack it.
+      - name: Check out the release tag
+        if: steps.release_check.outputs.release_exists == 'false'
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          cp scripts/check_pypi_digests.py "$RUNNER_TEMP/"
+          git checkout --quiet "$TAG"
+
       # Each distribution builds into its own directory, so each publish step
       # uploads one distribution. The directories are under dist/, which
       # .gitignore excludes. Otherwise the portolan-cli sdist holds the
@@ -121,6 +135,20 @@ jobs:
         run: |
           uv build --package portolan-core --out-dir dist/core
           uv build --package portolan-cli --out-dir dist/cli
+
+      # skip-existing keeps a file that PyPI holds. This step fails when PyPI
+      # holds a file of this version with other bytes than the local build.
+      # hatchling gives the same bytes for the same commit and the same
+      # hatchling version. The build backend is not pinned, so a hatchling
+      # release between the first run and a recovery run also fails here.
+      # Then compare the files by hand, or yank the release and bump.
+      - name: Compare the built files with PyPI
+        if: steps.release_check.outputs.release_exists == 'false'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          uv run --no-project python "$RUNNER_TEMP/check_pypi_digests.py" portolan-core "$VERSION" dist/core
+          uv run --no-project python "$RUNNER_TEMP/check_pypi_digests.py" portolan-cli "$VERSION" dist/cli
 
       # portolan-cli pins portolan-core exactly, so portolan-core goes first.
       - name: Publish portolan-core to PyPI

@@ -506,6 +506,67 @@ def test_the_build_job_builds_as_the_release_does() -> None:
     assert "dist/*/*.tar.gz" in _run_text(build)
 
 
+def _step_index(steps: list[dict[str, Any]], text: str) -> int:
+    (index,) = [i for i, step in enumerate(steps) if text in str(step.get("run", ""))]
+    return index
+
+
+def test_a_recovery_run_builds_the_tagged_commit() -> None:
+    """main can move on after a partial release, so the build checks out the tag first."""
+    steps = _jobs("release.yml")["release"]["steps"]
+    tag = _step_index(steps, 'git tag -a "$TAG"')
+    checkout = _step_index(steps, 'git checkout --quiet "$TAG"')
+    build = _step_index(steps, "uv build --package portolan-core")
+
+    assert tag < checkout < build
+    assert steps[checkout]["if"] == steps[build]["if"]
+
+
+def test_the_release_compares_the_build_with_pypi_before_it_publishes() -> None:
+    """skip-existing keeps a file that PyPI holds, so a different local build must fail first."""
+    steps = _jobs("release.yml")["release"]["steps"]
+    build = _step_index(steps, "uv build --package portolan-core")
+    compare = _step_index(steps, 'check_pypi_digests.py" portolan-core')
+    first_publish = next(
+        i
+        for i, step in enumerate(steps)
+        if str(step.get("uses", "")).startswith("pypa/gh-action-pypi-publish@")
+    )
+    run = str(steps[compare]["run"])
+
+    assert build < compare < first_publish
+    assert 'portolan-core "$VERSION" dist/core' in run
+    assert 'portolan-cli "$VERSION" dist/cli' in run
+
+
+def _load_digests() -> ModuleType:
+    spec = importlib.util.spec_from_file_location(
+        "check_pypi_digests", REPO_ROOT / "scripts" / "check_pypi_digests.py"
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.mark.parametrize(
+    ("published", "expected"),
+    [
+        ({}, []),  # nothing of the release is on PyPI yet
+        ({"a.whl": "1", "a.tar.gz": "2"}, []),
+        ({"a.whl": "1"}, []),  # the sdist is not on PyPI yet
+        ({"a.whl": "1", "a.tar.gz": "9"}, ["a.tar.gz"]),
+        ({"a.whl": "9", "a.tar.gz": "9", "b.whl": "3"}, ["a.tar.gz", "a.whl"]),
+    ],
+)
+def test_the_digest_check_names_each_file_with_other_bytes(
+    published: dict[str, str], expected: list[str]
+) -> None:
+    local = {"a.whl": "1", "a.tar.gz": "2"}
+
+    assert _load_digests().mismatches(local, published) == expected
+
+
 # ---------------------------------------------------------------------------
 # Cheap gate faults, run on every pull request
 # ---------------------------------------------------------------------------
