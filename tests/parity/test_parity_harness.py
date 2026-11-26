@@ -41,7 +41,6 @@ PARITY_PENDING = frozenset(
         "push",
         "sync",
         "version prune",
-        "version rollback",
     }
 )
 
