@@ -26,6 +26,7 @@ from __future__ import annotations
 import json
 import posixpath
 from typing import TYPE_CHECKING, Any
+from urllib.parse import unquote
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator
@@ -78,7 +79,7 @@ def published_files(document: dict[str, Any], document_rel: str) -> tuple[set[st
 
     def resolve(hrefs: list[Any]) -> set[str]:
         local = [h for h in hrefs if isinstance(h, str) and h and "://" not in h]
-        return {posixpath.normpath(posixpath.join(base, h)) for h in local if h[0] != "/"}
+        return {posixpath.normpath(posixpath.join(base, unquote(h))) for h in local if h[0] != "/"}
 
     files = resolve(named) | {posixpath.join(base, name) for name in SIDE_FILES}
     files |= {f + GDAL_PAM_SUFFIX for f in files if f.lower().endswith((".tif", ".tiff"))}
@@ -118,7 +119,14 @@ def published_tree(catalog_root: Path, documents: Iterable[str]) -> set[str]:
 
 
 def resolve_href(base_dir: Path, href: str) -> Path:
-    """Resolve a STAC link href against the directory holding the linking object."""
+    """Resolve a STAC link href against the directory holding the linking object.
+
+    A relative href is a URI reference, so its percent-escapes are decoded:
+    rashid links ``été 2024.json`` as ``%C3%A9t%C3%A9%202024.json``. An
+    absolute or a remote href is joined as written.
+    """
+    if "://" not in href and not href.startswith("/"):
+        href = unquote(href)
     if href.startswith("./"):
         return base_dir / href[2:]
     if href.startswith("../"):
