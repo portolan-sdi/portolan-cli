@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 from click.testing import CliRunner
-from rashid_core.catalog import CatalogGraph
+from rashid_core.api import CatalogGraph
 
 from portolan_cli.cli import cli
 from portolan_cli.stac_links import (

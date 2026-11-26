@@ -22,7 +22,7 @@ from __future__ import annotations
 import warnings
 from typing import TYPE_CHECKING, Any
 
-from rashid_core.config import RulesConfig
+from rashid_core.api import RulesConfig
 
 if TYPE_CHECKING:
     from pathlib import Path

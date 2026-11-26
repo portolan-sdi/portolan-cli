@@ -130,7 +130,8 @@ class TestRasterBandsPlacement:
         self, raster_catalog: Path, float32_raster: Path
     ) -> None:
         """Relocating bands onto the asset must keep the item schema-valid (STAC 1.1.0)."""
-        from rashid_core import ValidationOptions, validate
+        from rashid_core import validate
+        from rashid_core.api import ValidationOptions
         from rashid_core.structural import STR_INVALID
 
         _add_raster(raster_catalog, float32_raster)

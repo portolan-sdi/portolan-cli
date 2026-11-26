@@ -38,8 +38,8 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 import yaml
-from rashid_core import RulesConfig, Severity, ValidationOptions, validate
-from rashid_core.data.reader import LocalOnlyReader
+from rashid_core import validate
+from rashid_core.api import LocalOnlyReader, RulesConfig, Severity, ValidationOptions
 
 from tests.catalog_invariants import check_catalog_invariants
 from tests.known_upstream import GPIO_WFS_OOM

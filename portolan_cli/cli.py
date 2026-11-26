@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     from portolan_cli.sync.pull import PullResult
 
 import click
-from rashid_core.model import Severity as RashidSeverity
+from rashid_core.api import Severity as RashidSeverity
 
 from portolan_cli import trace
 from portolan_cli.add_progress import AddProgressReporter, count_files

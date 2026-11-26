@@ -41,8 +41,8 @@ from pathlib import Path, PurePath
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
-from rashid_core import ValidationOptions, validate
-from rashid_core.data.reader import LocalOnlyReader
+from rashid_core import validate
+from rashid_core.api import LocalOnlyReader, ValidationOptions
 
 from portolan_cli.errors import InvalidLiveUrlError
 from portolan_cli.trace import span
@@ -50,7 +50,7 @@ from portolan_cli.validation.config import load_public_url, load_rules_config
 from portolan_cli.validation.legacy import detect_legacy_notes
 
 if TYPE_CHECKING:
-    from rashid_core import Report
+    from rashid_core.api import Report
 
     from portolan_cli.config import ConfigSource
     from portolan_cli.run_state import RunState

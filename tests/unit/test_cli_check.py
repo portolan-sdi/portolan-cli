@@ -335,7 +335,7 @@ class TestCheckDataScope:
 
 def _empty_outcome() -> Any:
     """A CheckOutcome with a clean report and nothing else set."""
-    from rashid_core import Report
+    from rashid_core.api import Report
 
     from portolan_cli.validation.runner import CheckOutcome
 

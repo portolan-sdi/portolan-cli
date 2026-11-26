@@ -15,7 +15,8 @@ import shutil
 from typing import TYPE_CHECKING
 
 import pytest
-from rashid_core import ValidationOptions, validate
+from rashid_core import validate
+from rashid_core.api import ValidationOptions
 
 from portolan_cli.add import add
 
