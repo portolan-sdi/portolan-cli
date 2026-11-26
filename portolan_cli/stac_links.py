@@ -61,7 +61,8 @@ def published_files(document: dict[str, Any], document_rel: str) -> tuple[set[st
     The files are the targets of its asset hrefs and of its relative links
     outside the tree, the README.md and AGENTS.md beside it, and the GDAL PAM
     sidecar of each GeoTIFF it names. An absolute or a remote href names no
-    file. Push uploads these files, and clone downloads them.
+    file, and nor does an href that leaves the catalog. Push uploads these
+    files, and clone downloads them.
 
     Args:
         document: A parsed STAC object.
@@ -79,7 +80,11 @@ def published_files(document: dict[str, Any], document_rel: str) -> tuple[set[st
 
     def resolve(hrefs: list[Any]) -> set[str]:
         local = [h for h in hrefs if isinstance(h, str) and h and "://" not in h]
-        return {posixpath.normpath(posixpath.join(base, unquote(h))) for h in local if h[0] != "/"}
+        joined = {
+            posixpath.normpath(posixpath.join(base, unquote(h))) for h in local if h[0] != "/"
+        }
+        # A path that leaves the catalog names no file of the catalog.
+        return {path for path in joined if path != ".." and not path.startswith("../")}
 
     files = resolve(named) | {posixpath.join(base, name) for name in SIDE_FILES}
     files |= {f + GDAL_PAM_SUFFIX for f in files if f.lower().endswith((".tif", ".tiff"))}

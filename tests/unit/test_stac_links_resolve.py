@@ -1,4 +1,4 @@
-"""``resolve_href`` resolves a relative href with rashid's ``resolve_local_href`` rule."""
+"""Link href resolution in ``stac_links``: ``resolve_href`` and ``published_files``."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from portolan_cli.stac_links import resolve_href
+from portolan_cli.stac_links import published_files, resolve_href
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -26,3 +26,14 @@ def test_an_encoded_parent_segment_reaches_the_parent(tmp_path: Path, href: str)
     group = tmp_path / "collection" / "group"
 
     assert resolve_href(group, href) == (tmp_path / "collection" / "item.json").resolve()
+
+
+@pytest.mark.parametrize("href", ["../../outside.parquet", "./%2e%2e/%2e%2e/outside.parquet"])
+def test_an_href_that_leaves_the_catalog_names_no_published_file(href: str) -> None:
+    """Push and clone transfer files of the catalog only."""
+    document = {"assets": {"data": {"href": href}}, "links": [{"rel": "item", "href": href}]}
+
+    files, items = published_files(document, "roads/collection.json")
+
+    assert files == {"roads/README.md", "roads/AGENTS.md"}
+    assert items == set()
