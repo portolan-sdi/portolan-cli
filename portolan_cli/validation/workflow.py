@@ -22,8 +22,10 @@ if TYPE_CHECKING:
     from portolan_cli.convert import ConversionResult
     from portolan_cli.metadata.fix import FixReport
     from portolan_cli.run_state import RunState
-    from portolan_cli.scan.check import FixWorkflowOutcome
     from portolan_cli.validation.runner import CheckOutcome
+
+    #: Receives one fix report and the conversion report that goes with it, or None.
+    FixReportCallback = Callable[[FixReport | None, Any], None]
 
 
 @dataclass(frozen=True)
@@ -36,17 +38,11 @@ class CheckWorkflowResult:
         payload: The envelope ``data``, with the ``fix`` section under ``--fix``.
         failed: The envelope ``success`` is false. The exit code is 1 when this
             is true or when ``payload["passed"]`` is false.
-        fix_outcome: The item-freshness and conversion reports, or None without
-            ``--fix``.
-        fixer_report: What the fixer registry and the item repairs did, or None
-            without ``--fix``.
     """
 
     outcome: CheckOutcome
     payload: dict[str, Any]
     failed: bool
-    fix_outcome: FixWorkflowOutcome | None = None
-    fixer_report: FixReport | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Return the envelope ``data`` of `portolan check --json`."""
@@ -71,6 +67,7 @@ def run_check_workflow(
     structural: bool = True,
     schema: bool = False,
     on_progress: Callable[[ConversionResult], None] | None = None,
+    on_fix_report: FixReportCallback | None = None,
 ) -> CheckWorkflowResult:
     """Validate the catalog at ``path``, and with ``fix`` repair it and re-check it.
 
@@ -103,6 +100,10 @@ def run_check_workflow(
         structural: Run the STAC 1.1.0 structural pass.
         schema: Run the Portolan profile schema pass.
         on_progress: Called after each conversion that ``fix`` runs.
+        on_fix_report: Called with each fix report as soon as that pass ends.
+            First the freshness pass with its conversion report, then the fixer
+            registry with None. A later failure, for example in the commit,
+            does not hide what the fix already wrote.
 
     Returns:
         A :class:`CheckWorkflowResult`.
@@ -135,8 +136,6 @@ def run_check_workflow(
 
     fix_data: dict[str, Any] | None = None
     fix_failed = False
-    fix_outcome: FixWorkflowOutcome | None = None
-    fixer_report: FixReport | None = None
     pre_outcome = None
     state: RunState | None = None
     if fix:
@@ -153,7 +152,7 @@ def run_check_workflow(
                     path, live=False, geo_assets=False, state=state, **check_kwargs
                 )
             with span("check.fix", dry_run=dry_run):
-                fix_data, fix_failed, fix_outcome, fixer_report = _run_fix_and_repairs(
+                fix_data, fix_failed = _run_fix_and_repairs(
                     path=path,
                     findings=list(pre_outcome.report.findings) if pre_outcome.report else [],
                     run_metadata=run_metadata,
@@ -163,6 +162,7 @@ def run_check_workflow(
                     force=force,
                     workers=workers,
                     on_progress=on_progress,
+                    on_fix_report=on_fix_report,
                     state=state,
                 )
 
@@ -199,13 +199,7 @@ def run_check_workflow(
             )
         payload["fix"] = fix_data
     failed = fix_failed or check_failed(payload, strict=strict, refresh=fix and mode == "metadata")
-    return CheckWorkflowResult(
-        outcome=outcome,
-        payload=payload,
-        failed=failed,
-        fix_outcome=fix_outcome,
-        fixer_report=fixer_report,
-    )
+    return CheckWorkflowResult(outcome=outcome, payload=payload, failed=failed)
 
 
 def _determine_check_mode(metadata: bool, geo_assets: bool) -> tuple[bool, bool, str]:
@@ -310,8 +304,9 @@ def _run_fix_and_repairs(
     force: bool = False,
     workers: int | None = None,
     on_progress: Callable[[ConversionResult], None] | None = None,
+    on_fix_report: FixReportCallback | None = None,
     state: RunState,
-) -> tuple[dict[str, Any], bool, FixWorkflowOutcome, FixReport]:
+) -> tuple[dict[str, Any], bool]:
     """Apply the fixer registry, then the metadata/geo-asset fix workflow.
 
     Two halves that do not overlap. The registry
@@ -332,12 +327,12 @@ def _run_fix_and_repairs(
         force: Re-optimize already-valid COGs (raster-scoped, issue #530).
         workers: Parallel worker processes for conversion.
         on_progress: Called after each conversion.
+        on_fix_report: Called with each fix report as soon as that pass ends.
         state: The run state of the command. Every pass stages in it, and the
             caller commits it once.
 
     Returns:
-        The JSON ``fix`` section, whether a fix failed, the freshness and
-        conversion reports, and the report of the registry and the repairs.
+        The JSON ``fix`` section and whether a fix failed.
     """
     from portolan_cli.metadata.fix import FixReport
     from portolan_cli.validation import build_fix_payload
@@ -351,7 +346,7 @@ def _run_fix_and_repairs(
     )
 
     with span("check.fix.freshness"):
-        legacy_data, legacy_failed, written_items, fix_outcome = _run_legacy_fix_workflow(
+        legacy_data, legacy_failed, written_items = _run_legacy_fix_workflow(
             path=path,
             run_metadata=run_metadata,
             run_geo_assets=run_geo_assets,
@@ -360,6 +355,7 @@ def _run_fix_and_repairs(
             force=force,
             workers=workers,
             on_progress=on_progress,
+            on_fix_report=on_fix_report,
             state=state,
         )
 
@@ -377,6 +373,9 @@ def _run_fix_and_repairs(
         if repairs:
             fixer_report = FixReport(results=[*fixer_report.results, *repairs])
 
+    if on_fix_report is not None:
+        on_fix_report(fixer_report, None)
+
     fix_data = build_fix_payload(
         legacy=legacy_data,
         fixer_report=fixer_report,
@@ -386,8 +385,7 @@ def _run_fix_and_repairs(
         pre_findings=findings,
         dry_run=dry_run,
     )
-    failed = legacy_failed or fixer_report.failure_count > 0
-    return fix_data, failed, fix_outcome, fixer_report
+    return fix_data, legacy_failed or fixer_report.failure_count > 0
 
 
 def _run_fixer_registry(
@@ -449,15 +447,15 @@ def _run_legacy_fix_workflow(
     force: bool = False,
     workers: int | None = None,
     on_progress: Callable[[ConversionResult], None] | None = None,
+    on_fix_report: FixReportCallback | None = None,
     state: RunState | None = None,
-) -> tuple[dict[str, Any], bool, list[Path], FixWorkflowOutcome]:
+) -> tuple[dict[str, Any], bool, list[Path]]:
     """Run item-freshness and geo-asset conversion through ``check.run_fix_workflow``.
 
     Returns:
-        The fix reports as JSON data, whether a fix failed, the data files
-        whose items the freshness pass updated, and the outcome itself. The
-        caller repairs those items, which the finding-driven registry ran too
-        early to see (#709).
+        The fix reports as JSON data, whether a fix failed, and the data files
+        whose items the freshness pass updated. The caller repairs those items,
+        which the finding-driven registry ran too early to see (#709).
 
     Raises:
         NotACatalogError: A metadata-only fix found no catalog root (issue #384).
@@ -490,6 +488,9 @@ def _run_legacy_fix_workflow(
     )
     failed = outcome.has_failures or conversion_failed
 
+    if on_fix_report is not None:
+        on_fix_report(metadata_fix_report, format_fix_report)
+
     # A created item went through finalize_items and the mirror writer, as after
     # add, so it needs no repair. A repair would run the catalog-wide sweeps again.
     written_items = [
@@ -505,7 +506,6 @@ def _run_legacy_fix_workflow(
         ),
         failed,
         written_items,
-        outcome,
     )
 
 

@@ -1516,6 +1516,14 @@ def check(
         if result.source:
             info_output(f"Converting: {result.source.name}")
 
+    def show_fix_report(report: FixReport | None, conversion: Any) -> None:
+        _output_fix_human(
+            metadata_fix_report=report,
+            format_fix_report=conversion,
+            verbose=verbose,
+            dry_run=dry_run,
+        )
+
     try:
         result = run_check_workflow(
             path,
@@ -1535,6 +1543,8 @@ def check(
             schema=schema,
             # Per-file progress only in verbose human mode.
             on_progress=show_conversion_progress if verbose and not use_json else None,
+            # Each fix report prints as its pass ends, so a later failure cannot hide it.
+            on_fix_report=None if use_json else show_fix_report,
         )
     except InvalidLiveUrlError as err:
         emit_error("check", type(err).__name__, str(err), use_json=use_json, code=err.code)
@@ -1559,20 +1569,6 @@ def _output_check_result(
     if use_json:
         _output_check_json(payload, failed=result.failed)
     else:
-        if result.fix_outcome is not None:
-            _output_fix_human(
-                metadata_fix_report=result.fix_outcome.metadata_fix_report,
-                format_fix_report=result.fix_outcome.format_fix_report,
-                verbose=verbose,
-                dry_run=dry_run,
-            )
-        if result.fixer_report is not None:
-            _output_fix_human(
-                metadata_fix_report=result.fixer_report,
-                format_fix_report=None,
-                verbose=verbose,
-                dry_run=dry_run,
-            )
         post_fix = fixed and not dry_run
         _render_check(result.outcome, payload, verbose=verbose, strict=strict, post_fix=post_fix)
         if fixed:
