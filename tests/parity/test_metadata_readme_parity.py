@@ -10,7 +10,7 @@ import yaml
 
 from portolan_cli.input_hardening import InputValidationError
 from portolan_cli.metadata.yaml_tree import init_metadata_templates, validate_metadata_files
-from portolan_cli.readme import PathNotFoundError
+from portolan_cli.readme import PathNotFoundError, UnsupportedOptionError, generate_readmes
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -49,6 +49,19 @@ def contact_catalog(points_catalog: Callable[[Path], None]) -> Callable[[Path], 
         metadata = yaml.safe_load(metadata_file.read_text(encoding="utf-8"))
         metadata["contact"] = {"name": "Data Team", "email": "data@example.org"}
         metadata_file.write_text(yaml.safe_dump(metadata), encoding="utf-8")
+
+    return build
+
+
+@pytest.fixture
+def readme_catalog(
+    points_catalog: Callable[[Path], None], run_cli: RunCli
+) -> Callable[[Path], None]:
+    """Build `points_catalog` with fresh READMEs, so `readme --check` exits 0."""
+
+    def build(root: Path) -> None:
+        points_catalog(root)
+        run_cli("readme", cwd=root)
 
     return build
 
@@ -116,4 +129,50 @@ def test_metadata_validate_missing_path(
         catalog=points_catalog,
         call=lambda root: validate_metadata_files(root, "missing"),
         raises=PathNotFoundError,
+    )
+
+
+def test_readme_recursive(parity: Parity, points_catalog: Callable[[Path], None]) -> None:
+    """`readme` writes a README for the catalog and each collection."""
+    parity("readme", [], catalog=points_catalog, call=lambda root: generate_readmes(root))
+
+
+def test_readme_recursive_check(parity: Parity, readme_catalog: Callable[[Path], None]) -> None:
+    """`readme --check` reports the fresh and the stale READMEs."""
+    parity(
+        "readme",
+        ["--check"],
+        catalog=readme_catalog,
+        call=lambda root: generate_readmes(root, check=True),
+    )
+
+
+def test_readme_single(parity: Parity, points_catalog: Callable[[Path], None]) -> None:
+    """`readme <path> --no-recursive` writes one README."""
+    parity(
+        "readme",
+        ["points", "--no-recursive"],
+        catalog=points_catalog,
+        call=lambda root: generate_readmes(root, "points", recursive=False),
+    )
+
+
+def test_readme_single_check(parity: Parity, readme_catalog: Callable[[Path], None]) -> None:
+    """`readme --no-recursive --check` reports whether the root README is fresh."""
+    parity(
+        "readme",
+        ["--no-recursive", "--check"],
+        catalog=readme_catalog,
+        call=lambda root: generate_readmes(root, check=True, recursive=False),
+    )
+
+
+def test_readme_recursive_stdout(parity: Parity, points_catalog: Callable[[Path], None]) -> None:
+    """`--stdout` without `--no-recursive` fails both sides the same way."""
+    parity.error(
+        "readme",
+        ["--stdout"],
+        catalog=points_catalog,
+        call=lambda root: generate_readmes(root, stdout=True),
+        raises=UnsupportedOptionError,
     )

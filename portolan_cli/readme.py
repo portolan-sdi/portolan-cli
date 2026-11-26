@@ -33,6 +33,7 @@ from __future__ import annotations
 import contextlib
 import json
 import re
+from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
 from urllib.parse import quote
@@ -45,6 +46,8 @@ from portolan_cli.stac_links import owned_item_hrefs
 from portolan_cli.stac_links import visible_stac_files as _visible_stac_files
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from portolan_cli.config import ConfigSource
 
 # Keyword-badge rendering limits (#515). A junk-dominated list is a machine dump
@@ -1332,3 +1335,149 @@ def resolve_catalog_dir(catalog_root: Path, path: str | None, *, must_exist: boo
     if must_exist and not target.is_dir():
         raise NotADirectoryError(f"Path '{path}' is not a directory.")
     return target
+
+
+class UnsupportedOptionError(ValueError):
+    """An option does not apply to the mode the run is in.
+
+    It is not a ``PortolanError`` for the reason that :class:`PathNotFoundError` gives.
+    """
+
+
+@dataclass(frozen=True)
+class ReadmeRunResult:
+    """The READMEs a ``readme`` run wrote or checked, as catalog-relative paths.
+
+    Attributes:
+        recursive: True when the run walked the tree.
+        check: True when the run only compared the READMEs with fresh output.
+        fresh: Paths the run wrote, or found up to date in check mode.
+        stale: Paths whose README is missing or out of date, in check mode.
+        content: The README text of a single-path ``stdout`` run, which writes nothing.
+    """
+
+    recursive: bool
+    check: bool
+    fresh: list[str] = field(default_factory=list)
+    stale: list[str] = field(default_factory=list)
+    content: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return the envelope ``data`` of ``readme``."""
+        if self.recursive and self.check:
+            return {
+                "fresh": not self.stale,
+                "checked": self.fresh + self.stale,
+                "stale": self.stale,
+            }
+        if self.recursive:
+            return {"generated": self.fresh, "count": len(self.fresh)}
+        path = (self.fresh + self.stale)[0]
+        if self.check:
+            return {"fresh": not self.stale, "path": path}
+        return {"path": path, "generated": self.content is None}
+
+
+def _readme_for_dir(directory: Path, catalog_root: Path, say: Callable[[str], None]) -> str:
+    """Generate the README text of one catalog or collection directory."""
+    rel = "" if directory == catalog_root else f"{directory.relative_to(catalog_root)}/"
+    is_collection = (directory / "collection.json").exists()
+    is_catalog = not is_collection and (directory / "catalog.json").exists()
+    if is_collection or is_catalog:
+        stac_file = "collection.json" if is_collection else "catalog.json"
+        say(f"Reading {stac_file} from {rel or 'catalog root'}")
+    if (directory / ".portolan" / "metadata.yaml").exists():
+        say(f"Reading metadata.yaml from {rel}.portolan/")
+    if is_catalog:
+        return generate_catalog_readme(directory)
+    return generate_readme_for_collection(directory, catalog_root)
+
+
+def _settle_readme(readme_path: Path, content: str, *, check: bool) -> bool:
+    """Write the README, or in check mode compare it. True when it is fresh."""
+    if check:
+        return readme_path.exists() and readme_path.read_text(encoding="utf-8") == content
+    write_readme(readme_path, content)
+    return True
+
+
+def _readme_walk(
+    catalog_root: Path, base_dir: Path, *, check: bool, say: Callable[[str], None]
+) -> ReadmeRunResult:
+    """Write or check the README of each catalog and collection at and below ``base_dir``."""
+    result = ReadmeRunResult(recursive=True, check=check)
+    candidates = [base_dir] + sorted(base_dir.rglob("*"))
+    for directory in candidates:
+        if not directory.is_dir():
+            continue
+        rel_dir = directory.relative_to(catalog_root)
+        if directory != base_dir and any(part.startswith(".") for part in rel_dir.parts):
+            continue
+        if (directory / "collection.json").exists():
+            say(f"Processing collection: {rel_dir}/")
+        elif (directory / "catalog.json").exists():
+            say(
+                "Processing catalog root"
+                if directory == catalog_root
+                else f"Processing subcatalog: {rel_dir}/"
+            )
+        else:
+            continue
+        readme_path = directory / README_FILENAME
+        content = _readme_for_dir(directory, catalog_root, say)
+        fresh = _settle_readme(readme_path, content, check=check)
+        (result.fresh if fresh else result.stale).append(str(readme_path.relative_to(catalog_root)))
+    # The root README comes first.
+    for paths in (result.fresh, result.stale):
+        if README_FILENAME in paths:
+            paths.remove(README_FILENAME)
+            paths.insert(0, README_FILENAME)
+    return result
+
+
+def generate_readmes(
+    catalog_root: Path,
+    path: str | None = None,
+    *,
+    check: bool = False,
+    stdout: bool = False,
+    recursive: bool = True,
+    on_progress: Callable[[str], None] | None = None,
+) -> ReadmeRunResult:
+    """Generate the README of each catalog and collection from STAC and metadata.yaml.
+
+    Args:
+        catalog_root: The catalog root.
+        path: The start directory, relative to the root. None selects the root.
+        check: If True, compare each README with fresh output and write nothing.
+        stdout: If True, return the README text of the start directory and
+            write nothing. Only a single-path run accepts it.
+        recursive: If False, act only on the start directory.
+        on_progress: Receives a message for each file the run reads.
+
+    Returns:
+        The READMEs the run wrote, found fresh, or found stale.
+
+    Raises:
+        UnsupportedOptionError: When ``stdout`` is set on a recursive run.
+        InputValidationError: When ``path`` escapes the catalog root.
+        PathNotFoundError: When a recursive run starts at a missing path.
+        NotADirectoryError: When a recursive run starts at a file.
+        ConfigInvalidStructureError: When a metadata.yaml does not parse.
+    """
+    say = on_progress or (lambda _message: None)
+    if recursive and stdout:
+        raise UnsupportedOptionError("--stdout is not supported in recursive mode")
+    base_dir = resolve_catalog_dir(catalog_root, path, must_exist=recursive)
+    if recursive:
+        return _readme_walk(catalog_root, base_dir, check=check, say=say)
+
+    content = _readme_for_dir(base_dir, catalog_root, say)
+    say("Generating README.md")
+    readme_path = base_dir / README_FILENAME
+    rel_path = [str(readme_path.relative_to(catalog_root))]
+    if not check and stdout:
+        return ReadmeRunResult(recursive=False, check=False, fresh=rel_path, content=content)
+    if _settle_readme(readme_path, content, check=check):
+        return ReadmeRunResult(recursive=False, check=check, fresh=rel_path)
+    return ReadmeRunResult(recursive=False, check=check, stale=rel_path)

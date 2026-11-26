@@ -49,7 +49,6 @@ PARITY_PENDING = frozenset(
         "partition",
         "pull",
         "push",
-        "readme",
         "rm",
         "skills list",
         "skills show",
