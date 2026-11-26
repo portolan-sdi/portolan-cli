@@ -378,7 +378,9 @@ def _check_prior(key: str, assets: set[str]) -> str:
         not name.endswith(".json") and name not in _DOCUMENTATION
     ):
         raise InvalidKeyError(f"prior key is not catalog metadata, so it is never deleted: {key!r}")
-    if key.casefold() in assets:
+    folded = PurePosixPath(key.casefold())
+    # A directory asset, such as a Zarr store, also protects every key inside it.
+    if any(path.as_posix() in assets for path in (folded, *folded.parents[:-1])):
         raise InvalidKeyError(f"prior key is an asset of the new catalog, so it stays: {key!r}")
     return key
 

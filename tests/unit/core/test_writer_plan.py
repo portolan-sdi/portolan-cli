@@ -299,6 +299,14 @@ class TestReviewFixes:
                 documents, golden_documentation(), prior_managed_keys=["boundaries/Style.json"]
             )
 
+    @pytest.mark.parametrize("prior", [f"{SOUTH}/pm25.zarr/zarr.json", f"{SOUTH}/PM25.zarr/x.json"])
+    def test_a_prior_key_inside_a_directory_asset_is_refused(self, prior: str) -> None:
+        documents = golden_documents()
+        documents[f"{SOUTH}/Estación Sur.json"]["assets"]["pm25"]["href"] = "./pm25.zarr/"
+
+        with pytest.raises(InvalidKeyError, match=re.escape(repr(prior))):
+            plan_catalog(documents, golden_documentation(), prior_managed_keys=[prior])
+
     @pytest.mark.parametrize(
         "key", ["versions.json", "boundaries/versions.json", "Versions.json", "a/VERSIONS.json"]
     )
