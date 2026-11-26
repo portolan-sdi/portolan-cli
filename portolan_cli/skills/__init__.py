@@ -52,3 +52,27 @@ class SkillListing:
 def list_skill_entries() -> SkillListing:
     """Return the skills and the install instructions."""
     return SkillListing(list_skills(), get_install_instructions())
+
+
+@dataclass(frozen=True)
+class SkillView:
+    """The result of ``portolan skills show``.
+
+    Attributes:
+        name: The requested skill name.
+        content: The skill text. The skills live in an external repo, so it is None.
+        instructions: The install instructions that the CLI prints.
+    """
+
+    name: str
+    content: str | None
+    instructions: str = field(repr=False)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return the envelope data of ``portolan skills show``."""
+        return {"name": self.name, "content": self.content, "url": SKILLS_REPO}
+
+
+def show_skill(name: str) -> SkillView:
+    """Return the skill ``name`` and the install instructions."""
+    return SkillView(name, get_skill(name), get_install_instructions())

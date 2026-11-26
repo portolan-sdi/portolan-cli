@@ -39,7 +39,6 @@ PARITY_PENDING = frozenset(
         "extract wfs",
         "partition",
         "push",
-        "skills show",
         "sync",
         "version prune",
         "version rollback",
