@@ -1,6 +1,7 @@
 """Write a small Portolan catalog from Python with portolan-core.
 
-Run it. It writes the catalog into ./my-catalog in the current folder:
+Run it. It writes the catalog into ./city-catalog in the current folder, then
+removes the parks collection again with a second plan:
 
     uv run python examples/python-writer/write_catalog.py
 
@@ -14,7 +15,9 @@ from __future__ import annotations
 # --8<-- [start:plan]
 from pathlib import Path
 
-from portolan_core.writer import LocalSink, apply_plan, plan_catalog
+from obstore.store import MemoryStore
+
+from portolan_core.writer import LocalSink, ObstoreSink, PutOperation, apply_plan, plan_catalog
 
 PROFILE = "https://schemas.portolan-sdi.org/portolan/v0.3.0/schema.json"
 
@@ -80,12 +83,28 @@ documentation = {
 plan = plan_catalog(documents, documentation)
 # --8<-- [end:plan]
 
-# --8<-- [start:apply]
-output = Path("my-catalog")
-apply_plan(plan, LocalSink(output))
-# --8<-- [end:apply]
-
-# --8<-- [start:loop]
+# --8<-- [start:inspect]
 for operation in plan.operations:
-    print(type(operation).__name__, operation.key)
-# --8<-- [end:loop]
+    if isinstance(operation, PutOperation):
+        print("put", operation.key)
+# --8<-- [end:inspect]
+
+# --8<-- [start:local]
+output = Path("city-catalog")
+apply_plan(plan, LocalSink(output))
+# --8<-- [end:local]
+
+# --8<-- [start:store]
+store = MemoryStore()  # or S3Store("my-bucket", prefix="catalogs/city")
+apply_plan(plan, ObstoreSink(store))
+# --8<-- [end:store]
+
+# --8<-- [start:update]
+previous_keys = [operation.key for operation in plan.operations]
+smaller = plan_catalog(
+    {key: doc for key, doc in documents.items() if not key.startswith("parks/")},
+    {key: text for key, text in documentation.items() if not key.startswith("parks/")},
+    prior_managed_keys=previous_keys,
+)
+apply_plan(smaller, LocalSink(output))
+# --8<-- [end:update]

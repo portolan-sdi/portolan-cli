@@ -1,120 +1,69 @@
 # Write a catalog from Python
 
-An application that holds STAC documents in memory can publish a Portolan
-catalog with the `portolan-core` package alone. The package installs neither
-the CLI nor the geospatial stack. `portolan-cli` depends on `portolan-core`, so an install of the CLI
-includes it.
+The `portolan-core` package publishes a Portolan catalog from your own Python
+code. Install it with `pip install portolan-core`, which leaves out the CLI and
+the geospatial stack. The writer saves the STAC documents and Markdown files
+that you supply. To convert data or extract metadata, use `portolan add`
+instead.
 
-The writer makes a plan first and writes second. The plan is plain data. Your
-code can examine it before any write, and your own sink can send it to any
-storage.
+For each name and parameter, see the
+[catalog writer reference](../reference/python.md#catalog-writer).
 
-## Make a plan
+## Plan the catalog
 
-Give `plan_catalog` your STAC documents and the text of each `README.md` and
-`AGENTS.md`. Key each one by its path from the catalog root.
+Pass `plan_catalog` your STAC documents and the text of each `README.md` and
+`AGENTS.md`, keyed by path from the catalog root:
 
 ```python
 --8<-- "examples/python-writer/write_catalog.py:plan"
 ```
 
-`plan_catalog` copies the documents and does not change your dictionaries.
-On each copy it:
+The planner copies your documents and adds the links, titles, and profile URI
+that the spec requires. The writes come later, when you call `apply_plan`.
 
-- adds the links that make the tree navigable: `root`, `parent`,
-  `collection`, `child`, and `item`. Each `child` and `item` link gets the
-  title of its target. An item without `properties.title` gives its `id`.
-- sets the `collection` field of each item.
-- adds an `agents` link to `./AGENTS.md` and a `describedby` link to
-  `./README.md` on each catalog and collection.
-- adds the Portolan profile URI to a catalog or collection that declares
-  none.
-- replaces the relative structural links that you gave, and keeps your other
-  links, including an absolute link to another host.
+## Inspect the plan
 
-It writes no `self` link, because it does not know where you publish the
-catalog. It never reads asset files. Your assets pass through unchanged, so
-give `file:size` and `file:checksum` yourself when you have them. For a
-directory asset such as a Zarr store, give `file:size` and leave out
-`file:checksum`.
-
-The writer checks the input before it makes any operation. An absolute
-key, a key with a `..` part, a catalog or collection without a `title`, a missing
-`README.md` or `AGENTS.md`, or documentation with no catalog or collection
-beside it raises a `CatalogWriteError` subclass.
-
-## Write the plan
-
-`apply_plan` sends each operation to a sink in plan order. `LocalSink` writes
-into a folder:
+A plan is plain data, a list of put and delete operations. You can print it
+before a write or assert on it in a test:
 
 ```python
---8<-- "examples/python-writer/write_catalog.py:apply"
+--8<-- "examples/python-writer/write_catalog.py:inspect"
 ```
 
-The writer writes only the catalog JSON and the documentation. Put each asset
-file at its href yourself. For this example, copy your data to
-`my-catalog/parks/parks.parquet` and your preview image to
-`my-catalog/parks/thumbnail.png`. Without them, the asset links do not
-resolve. The `--no-data` check below does not report that.
+## Write to a folder
 
-`ObstoreSink` writes to any [obstore](https://developmentseed.org/obstore/)
-store, such as `S3Store`, `GCSStore`, `AzureStore`, `LocalStore`, or
-`MemoryStore`:
+`LocalSink` writes the plan into a folder:
 
 ```python
-from obstore.store import S3Store
-from portolan_core.writer import ObstoreSink
-
-apply_plan(plan, ObstoreSink(S3Store("my-bucket", prefix="catalogs/city")))
+--8<-- "examples/python-writer/write_catalog.py:local"
 ```
 
-A sink is any object with these two methods:
+The writer saves only the catalog files. Copy each asset to its `href`
+yourself, which for this example means `city-catalog/parks/parks.parquet` and
+`city-catalog/parks/thumbnail.png`.
+
+## Write to an object store
+
+`ObstoreSink` accepts any [obstore](https://developmentseed.org/obstore/)
+store, such as `S3Store`, `GCSStore`, or `AzureStore`. This example uses an
+in-memory store:
 
 ```python
-def put(self, key: str, content: bytes, media_type: str) -> None: ...
-def delete(self, key: str) -> None: ...
+--8<-- "examples/python-writer/write_catalog.py:store"
 ```
 
-You can also loop over the plan yourself. Each operation is a `PutOperation`
-(`key`, `content`, `media_type`) or a `DeleteOperation` (`key`):
+For other storage, write a class with the `put` and `delete` methods of the
+`Sink` protocol.
+
+## Remove files from an earlier publish
+
+The writer never lists your storage. To delete the files that a catalog no
+longer needs, pass the keys of your last plan as `prior_managed_keys`. In this
+example, the second plan drops the parks collection:
 
 ```python
---8<-- "examples/python-writer/write_catalog.py:loop"
+--8<-- "examples/python-writer/write_catalog.py:update"
 ```
 
-Keep the plan order. Each object is written after the objects it links to, so
-a reader that starts at the root never meets a missing file. The deletes come
-last.
-
-## Update a catalog
-
-The writer never lists your storage. To remove files that a collection no
-longer needs, pass the keys you wrote last time as `prior_managed_keys`. Each
-prior key that the new plan does not write becomes a delete:
-
-```python
-plan = plan_catalog(documents, documentation, prior_managed_keys=previous_keys)
-```
-
-`previous_keys` is the set of document and documentation keys that you passed
-last time, without a prefix. A prior key must be a `.json` file, a
-`README.md`, or an `AGENTS.md`. The writer refuses a `versions.json` and a key
-that an asset of the new catalog points at. An item and a data file that
-nothing links look the same to the writer. List only keys that a previous plan
-wrote.
-
-The writer also refuses a plan in which two keys differ only by case, because
-such a plan is unsafe on a case-insensitive store.
-
-To write under a prefix, pass `key_prefix="catalogs/city"`. The prefix goes in
-front of every put and every delete key.
-
-## Check the result
-
-`portolan-core` installs the validator core, `rashid-core`. Run it on the
-folder:
-
-```bash
-python -m rashid_core check --no-data ./my-catalog
-```
+Each prior key that the new plan leaves out becomes a delete. Asset files stay
+in place, so remove those yourself.
