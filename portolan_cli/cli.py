@@ -4543,7 +4543,7 @@ def clean(ctx: click.Context, json_output: bool, dry_run: bool) -> None:
         portolan clean           # Remove all metadata
         portolan clean --dry-run # Preview what would be removed
     """
-    from portolan_cli.clean import clean_catalog
+    from portolan_cli.clean import clean_metadata
 
     use_json = should_output_json(ctx, json_output)
 
@@ -4567,44 +4567,7 @@ def clean(ctx: click.Context, json_output: bool, dry_run: bool) -> None:
         raise SystemExit(1)
 
     try:
-        if dry_run:
-            # Preview mode - use clean_catalog with dry_run=True
-            files_to_remove, dirs_to_remove, data_files = clean_catalog(catalog_path, dry_run=True)
-
-            if use_json:
-                data: dict[str, Any] = {
-                    "would_remove_files": [
-                        str(f.relative_to(catalog_path)) for f in files_to_remove
-                    ],
-                    "would_remove_directories": [
-                        str(d.relative_to(catalog_path)) for d in dirs_to_remove
-                    ],
-                    "data_files_preserved": data_files,
-                    "dry_run": True,
-                }
-                envelope = success_envelope("clean", data)
-                output_json_envelope(envelope)
-            else:
-                _print_clean_preview(catalog_path, files_to_remove, dirs_to_remove, data_files)
-        else:
-            # Actually clean
-            files_removed, dirs_removed, data_files = clean_catalog(catalog_path)
-
-            if use_json:
-                data = {
-                    "files_removed": [str(f.relative_to(catalog_path)) for f in files_removed],
-                    "directories_removed": [str(d.relative_to(catalog_path)) for d in dirs_removed],
-                    "data_files_preserved": data_files,
-                }
-                envelope = success_envelope("clean", data)
-                output_json_envelope(envelope)
-            else:
-                if files_removed or dirs_removed:
-                    success(f"Removed {len(files_removed)} files, {len(dirs_removed)} directories")
-                    detail(f"  Data files preserved: {data_files}")
-                else:
-                    info_output("Nothing to clean - no metadata files found")
-
+        result = clean_metadata(catalog_path, dry_run=dry_run)
     except OSError as e:
         if use_json:
             envelope = error_envelope(
@@ -4615,6 +4578,18 @@ def clean(ctx: click.Context, json_output: bool, dry_run: bool) -> None:
         else:
             error(f"Failed to clean catalog: {e}")
         raise SystemExit(1) from e
+
+    if emit_success("clean", result.to_dict(), use_json=use_json):
+        return
+    if dry_run:
+        _print_clean_preview(
+            catalog_path, result.files, result.directories, result.data_files_preserved
+        )
+    elif result.files or result.directories:
+        success(f"Removed {len(result.files)} files, {len(result.directories)} directories")
+        detail(f"  Data files preserved: {result.data_files_preserved}")
+    else:
+        info_output("Nothing to clean - no metadata files found")
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -34,7 +34,6 @@ PARITY_PENDING = frozenset(
     {
         "add",
         "add-external",
-        "clean",
         "extract arcgis",
         "extract carto",
         "extract wfs",

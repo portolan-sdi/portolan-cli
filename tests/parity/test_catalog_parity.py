@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from portolan_cli.catalog_list import list_catalog_contents
+from portolan_cli.clean import clean_metadata
 from portolan_cli.config import (
     clear_setting,
     read_setting,
@@ -342,4 +343,15 @@ def test_config_unset_bad_yaml(parity: Parity, configured_catalog: Callable[[Pat
         catalog=_with_config_text("  bad: [\n")(configured_catalog),
         call=lambda root: clear_setting(root, "backend"),
         raises=ConfigError,
+    )
+
+
+@pytest.mark.parametrize("dry_run", [True, False])
+def test_clean(parity: Parity, points_catalog: Callable[[Path], None], dry_run: bool) -> None:
+    """`clean` removes the metadata, or lists it with --dry-run, and keeps the data."""
+    parity(
+        "clean",
+        ["--dry-run"] if dry_run else [],
+        catalog=points_catalog,
+        call=lambda root: clean_metadata(root, dry_run=dry_run),
     )
