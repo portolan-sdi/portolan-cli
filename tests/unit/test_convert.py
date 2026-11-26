@@ -1203,7 +1203,7 @@ class TestConvertDirectoryPoolFallback:
                 self._source = source
                 self._ok = ok
 
-            def result(self) -> tuple[ConversionResult, dict[str, int]]:
+            def result(self) -> tuple[ConversionResult, dict[str, int], list[tuple[str, str]]]:
                 if not self._ok:
                     raise BrokenProcessPool("pool died after first file")
                 # A sentinel status the serial path never produces, so we can
@@ -1217,7 +1217,7 @@ class TestConvertDirectoryPoolFallback:
                     error=None,
                     duration_ms=0,
                 )
-                return result, {}
+                return result, {}, []
 
         class _PartialPool:
             """First submitted file succeeds; the pool then dies."""
