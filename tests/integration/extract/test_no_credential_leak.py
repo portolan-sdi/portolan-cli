@@ -202,11 +202,12 @@ def _secret_files(root: Path) -> list[str]:
 
 
 def _secret_records(caplog: pytest.LogCaptureFixture) -> list[str]:
-    """Return each ``portolan_cli`` log record that holds the credential."""
+    """Return each ``portolan_cli`` or ``portolan_core`` log record that holds the credential."""
     return [
         f"{record.name}: {record.getMessage()}"
         for record in caplog.records
-        if record.name.startswith("portolan_cli") and "SECRET" in record.getMessage()
+        if record.name.split(".")[0] in logging_setup.PACKAGE_LOGGERS
+        and "SECRET" in record.getMessage()
     ]
 
 
@@ -239,7 +240,8 @@ def test_no_credential_reaches_any_output(
 
         logging_setup.reset_logging()
         caplog.clear()
-        caplog.set_level(logging.DEBUG, logger="portolan_cli")
+        for package in logging_setup.PACKAGE_LOGGERS:
+            caplog.set_level(logging.DEBUG, logger=package)
         library_out = tmp_path / "library"
         try:
             library_result = case.library(url, library_out)
