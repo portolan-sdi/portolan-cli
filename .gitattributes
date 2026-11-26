@@ -10,3 +10,5 @@ tests/fixtures/multilayer/multilayer.gdb/* binary
 # Also catch the gdb file (not just by extension)
 tests/fixtures/multilayer/*.gdb/gdb binary
 tests/fixtures/multilayer/*.gdb/timestamps binary
+# The portolan-core writer tests compare these files byte for byte with LF output
+tests/fixtures/core/** text eol=lf

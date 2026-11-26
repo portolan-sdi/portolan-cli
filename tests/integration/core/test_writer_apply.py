@@ -22,7 +22,12 @@ from portolan_core.writer import (
     apply_plan,
     plan_catalog,
 )
-from tests.support.core_catalog import golden_documentation, golden_documents, golden_files
+from tests.support.core_catalog import (
+    GOLDEN_DIR,
+    golden_documentation,
+    golden_documents,
+    golden_files,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -46,6 +51,22 @@ def _tree(root: Path) -> dict[str, bytes]:
         for path in sorted(root.rglob("*"))
         if path.is_file()
     }
+
+
+def test_git_checks_out_the_golden_files_with_lf_line_endings() -> None:
+    """The writer writes LF. A CRLF checkout on Windows would break each byte comparison."""
+    files = sorted(str(path) for path in GOLDEN_DIR.rglob("*") if path.is_file())
+    result = subprocess.run(
+        ["git", "check-attr", "eol", "--", *files],
+        cwd=GOLDEN_DIR,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+    eol = {line.rpartition(": ")[2] for line in result.stdout.splitlines()}
+    assert len(result.stdout.splitlines()) == len(files)
+    assert eol == {"lf"}
 
 
 def test_local_sink_writes_the_golden_catalog(tmp_path: Path) -> None:
