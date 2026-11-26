@@ -114,6 +114,12 @@ def test_local_sink_replaces_a_symlink_and_not_its_target(tmp_path: Path) -> Non
     assert data.read_bytes() == b"PAR1"
 
 
+posix_modes = pytest.mark.skipif(
+    sys.platform == "win32", reason="Windows keeps a read-only flag, not POSIX permission bits"
+)
+
+
+@posix_modes
 def test_local_sink_keeps_the_mode_of_a_replaced_file(tmp_path: Path) -> None:
     target = tmp_path / "catalog.json"
     target.write_bytes(b"{}")
@@ -124,6 +130,7 @@ def test_local_sink_keeps_the_mode_of_a_replaced_file(tmp_path: Path) -> None:
     assert stat.S_IMODE(target.stat().st_mode) == 0o644
 
 
+@posix_modes
 def test_local_sink_never_creates_a_temporary_copy_wider_than_a_private_file(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -153,6 +160,7 @@ def test_local_sink_writes_a_file_name_near_the_length_limit(tmp_path: Path) -> 
     assert [path.name for path in tmp_path.iterdir()] == [name]
 
 
+@posix_modes
 def test_local_sink_gives_a_new_file_the_umask_default_mode(tmp_path: Path) -> None:
     umask = os.umask(0o022)
     try:
