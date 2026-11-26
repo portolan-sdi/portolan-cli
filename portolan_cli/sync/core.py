@@ -95,6 +95,7 @@ def _step_pull(
     dry_run: bool,
     profile: str | None,
     report: Report = silent,
+    show_progress: bool = False,
 ) -> tuple[PullResult | None, str | None]:
     """Execute pull step. Returns (pull_result, error_msg)."""
     report("info", f"Pulling from {destination}...")
@@ -107,6 +108,7 @@ def _step_pull(
             dry_run=dry_run,
             profile=profile,
             report=report,
+            show_progress=show_progress,
         )
 
         if not pull_result.success:
@@ -286,6 +288,7 @@ def sync(
     profile: str | None = None,
     region: str | None = None,
     report: Report = silent,
+    show_progress: bool = False,
 ) -> SyncResult:
     """Sync local catalog with remote storage.
 
@@ -306,6 +309,9 @@ def sync(
         profile: AWS profile name (for S3 destinations).
         region: AWS region (for S3 destinations). Overrides profile/env config.
         report: Receives each progress line of the five steps.
+        show_progress: If True, the pull step draws a progress bar on a
+            terminal. The library draws the bar only when the caller asks.
+            Moving the renderer to the CLI is a follow-up.
 
     Returns:
         SyncResult with aggregated results from all steps.
@@ -327,7 +333,7 @@ def sync(
     # Step 1: Pull
     with span("sync.pull"):
         pull_result, pull_error = _step_pull(
-            destination, catalog_root, collection, force, dry_run, profile, report
+            destination, catalog_root, collection, force, dry_run, profile, report, show_progress
         )
     if pull_error:
         report("error", pull_error)

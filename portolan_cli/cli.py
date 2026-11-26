@@ -4084,6 +4084,7 @@ def pull_command(
             workers=workers,
             concurrency=concurrency,
             report=_report,
+            show_progress=not use_json,
         )
     except caught as err:
         error_type = type(err).__name__
@@ -4218,6 +4219,7 @@ def sync(
             profile=resolved_profile,
             region=resolved_region,
             report=_report,
+            show_progress=not use_json,
         )
     except ProfileCredentialsError as err:
         emit_error("sync", type(err).__name__, str(err), use_json=use_json, code=err.code)
@@ -4341,6 +4343,7 @@ def clone(
         collection=collection,
         profile=resolved_profile,
         report=_report,
+        show_progress=not use_json,
     )
 
     if use_json:

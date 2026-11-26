@@ -469,6 +469,7 @@ def clone(
     *,
     profile: str | None = None,
     report: Report = silent,
+    show_progress: bool = False,
 ) -> CloneResult:
     """Clone a remote catalog to a local directory.
 
@@ -485,6 +486,9 @@ def clone(
         collection: Collection name to clone, or None to clone all collections.
         profile: AWS profile name (for S3).
         report: Receives each progress line.
+        show_progress: If True, draw a progress bar on a terminal. The library
+            draws the bar only when the caller asks. Moving the renderer to
+            the CLI is a follow-up.
 
     Returns:
         CloneResult with operation details.
@@ -586,6 +590,7 @@ def clone(
                 profile=profile,
                 stac_tree=True,
                 report=report,
+                show_progress=show_progress,
             )
 
             if not pull_result.success:

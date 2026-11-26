@@ -789,10 +789,11 @@ async def _download_assets_async(
     concurrency: int = DEFAULT_CONCURRENCY,
     *,
     report: Report = silent,
+    # The library draws the bar only when the caller asks. Moving the renderer
+    # to the CLI is a follow-up.
+    show_progress: bool = False,
 ) -> tuple[int, int]:
     """Download assets concurrently using asyncio.
-
-    A caller that passes ``report`` gets a progress bar on a terminal.
 
     Args:
         store: Object store instance (pre-configured connection).
@@ -802,6 +803,9 @@ async def _download_assets_async(
         remote_assets: Dict mapping filename to asset metadata.
         concurrency: Maximum concurrent downloads.
         report: Receives each failure line.
+        show_progress: If True, draw a progress bar on a terminal. The library
+            draws the bar only when the caller asks. Moving the renderer to
+            the CLI is a follow-up.
 
     Returns:
         Tuple of (files_downloaded, files_failed).
@@ -825,7 +829,7 @@ async def _download_assets_async(
     async with AsyncProgressReporter(
         total_files=total,
         total_bytes=total_bytes,
-        json_mode=report is silent,
+        json_mode=not show_progress,
         description="Downloading",
     ) as progress:
 
@@ -1061,6 +1065,7 @@ async def pull_async(
     concurrency: int = DEFAULT_CONCURRENCY,
     store: ObjectStore | None = None,
     report: Report = silent,
+    show_progress: bool = False,
 ) -> PullResult:
     """Pull updates from a remote catalog asynchronously.
 
@@ -1087,8 +1092,10 @@ async def pull_async(
         concurrency: Maximum concurrent downloads (default: 50).
         store: Optional pre-configured object store. If provided, reuses
             this connection instead of creating a new one (for connection pooling).
-        report: Receives each progress line. A caller that passes it also
-            gets a progress bar on a terminal.
+        report: Receives each progress line.
+        show_progress: If True, draw a progress bar on a terminal. The library
+            draws the bar only when the caller asks. Moving the renderer to
+            the CLI is a follow-up.
 
     Returns:
         PullResult with operation results.
@@ -1198,6 +1205,7 @@ async def pull_async(
             remote_assets=diff.remote_assets,
             concurrency=concurrency,
             report=report,
+            show_progress=show_progress,
         )
         stage.set(downloaded=downloaded, failed=failed)
 
@@ -1256,6 +1264,7 @@ def pull(
     concurrency: int = DEFAULT_CONCURRENCY,
     stac_tree: bool = False,
     report: Report = silent,
+    show_progress: bool = False,
 ) -> PullResult:
     """Pull updates from a remote catalog (sync wrapper).
 
@@ -1284,6 +1293,9 @@ def pull(
             and the catalogs above it, and the objects that they name. clone
             sets it, because versions.json names only the assets (#1042).
         report: Receives each progress line.
+        show_progress: If True, draw a progress bar on a terminal. The library
+            draws the bar only when the caller asks. Moving the renderer to
+            the CLI is a follow-up.
 
     Returns:
         PullResult with operation results.
@@ -1306,6 +1318,7 @@ def pull(
                 profile=profile,
                 concurrency=concurrency,
                 report=report,
+                show_progress=show_progress,
             )
         )
         if not stac_tree or not result.success:
@@ -1507,6 +1520,7 @@ async def pull_all_collections_async(
     concurrency: int | None = None,
     file_concurrency: int | None = None,
     report: Report = silent,
+    show_progress: bool = False,
 ) -> PullAllResult:
     """Pull all collections in a catalog from cloud storage asynchronously.
 
@@ -1526,6 +1540,9 @@ async def pull_all_collections_async(
         file_concurrency: Maximum concurrent file downloads within each collection.
             None = use pull_async default. (Maps to --concurrency CLI flag.)
         report: Receives each progress line.
+        show_progress: If True, draw a progress bar on a terminal. The library
+            draws the bar only when the caller asks. Moving the renderer to
+            the CLI is a follow-up.
 
     Returns:
         PullAllResult with aggregate statistics and per-collection errors.
@@ -1617,6 +1634,7 @@ async def pull_all_collections_async(
                     "profile": profile,
                     "store": shared_store,  # Reuse connection across collections
                     "report": report,
+                    "show_progress": show_progress,
                 }
                 if file_concurrency is not None:
                     pull_kwargs["concurrency"] = file_concurrency
@@ -1668,6 +1686,7 @@ def pull_all_collections(
     workers: int | None = None,
     file_concurrency: int | None = None,
     report: Report = silent,
+    show_progress: bool = False,
 ) -> PullAllResult:
     """Pull all collections in a catalog from cloud storage (sync wrapper).
 
@@ -1688,6 +1707,9 @@ def pull_all_collections(
         file_concurrency: Maximum concurrent file downloads within each collection.
             None = use pull_async default. (Maps to --concurrency CLI flag.)
         report: Receives each progress line.
+        show_progress: If True, draw a progress bar on a terminal. The library
+            draws the bar only when the caller asks. Moving the renderer to
+            the CLI is a follow-up.
 
     Returns:
         PullAllResult with aggregate statistics and per-collection errors.
@@ -1706,6 +1728,7 @@ def pull_all_collections(
             concurrency=workers,
             file_concurrency=file_concurrency,
             report=report,
+            show_progress=show_progress,
         )
     )
 
@@ -1735,6 +1758,7 @@ def pull_catalog(
     workers: int | None = None,
     concurrency: int = DEFAULT_CONCURRENCY,
     report: Report = silent,
+    show_progress: bool = False,
 ) -> PullResult | PullAllResult | BackendPull:
     """Run ``portolan pull``: pull one collection, or each collection of the catalog.
 
@@ -1754,6 +1778,9 @@ def pull_catalog(
             None picks a count. A single-collection pull ignores it.
         concurrency: Maximum concurrent file downloads within a collection.
         report: Receives each progress line.
+        show_progress: If True, draw a progress bar on a terminal. The library
+            draws the bar only when the caller asks. Moving the renderer to
+            the CLI is a follow-up.
 
     Returns:
         A PullResult for one collection, a PullAllResult for the catalog, or a
@@ -1773,6 +1800,7 @@ def pull_catalog(
             workers=workers,
             file_concurrency=concurrency,
             report=report,
+            show_progress=show_progress,
         )
 
     from portolan_cli.version_ops import try_backend_pull
@@ -1790,4 +1818,5 @@ def pull_catalog(
         profile=profile,
         concurrency=concurrency,
         report=report,
+        show_progress=show_progress,
     )

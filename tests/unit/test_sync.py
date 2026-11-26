@@ -797,6 +797,7 @@ class TestCloneFunction:
             profile="my-profile",
             stac_tree=True,
             report=silent,
+            show_progress=False,
         )
 
     @pytest.mark.unit
