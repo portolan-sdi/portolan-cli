@@ -63,10 +63,7 @@ NOT_CLI_LAYER = frozenset({"portolan_cli/api.py", "portolan_cli/sync/upload.py"}
 # Delete only. Each module here still imports portolan_cli.output or calls
 # obstore.put directly. Its owning #1035 agent deletes the line when the
 # module is clean.
-RATCHET_TID251 = frozenset(
-    {
-    }
-)
+RATCHET_TID251: frozenset[str] = frozenset()
 
 # Ruff lifts TID251 per file, not per banned name. sync/upload.py keeps its
 # obstore.put calls, so ruff exempts it for good. import-linter still sees its
