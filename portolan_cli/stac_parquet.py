@@ -30,7 +30,8 @@ import hashlib
 import json
 import os
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeGuard
+from urllib.parse import unquote
 
 from rashid_core.api import is_absolute_href
 
@@ -275,6 +276,20 @@ def _strip_file_fields(asset: dict[str, Any]) -> bool:
     return bool(present)
 
 
+def _is_relative_href(href: object) -> TypeGuard[str]:
+    """Whether an href is a relative path before and after it decodes.
+
+    ``resolve_href`` decodes the href, so ``%2Fdata%2Fx.parquet`` names an
+    absolute path. The check reads both spellings for that reason.
+    """
+    return (
+        isinstance(href, str)
+        and bool(href)
+        and not is_absolute_href(href)
+        and not is_absolute_href(unquote(href))
+    )
+
+
 def stamp_file_fields(
     asset: dict[str, Any], base_dir: Path, *, state: RunState | None = None
 ) -> bool:
@@ -312,7 +327,7 @@ def stamp_file_fields(
         there is something to write.
     """
     href = asset.get("href")
-    if not isinstance(href, str) or not href or is_absolute_href(href):
+    if not _is_relative_href(href):
         return False
 
     path = resolve_href(base_dir, href)
@@ -466,7 +481,7 @@ def _is_selected(asset: dict[str, Any], base_dir: Path, only: AbstractSet[Path] 
     if only is None:
         return True
     href = asset.get("href")
-    if not isinstance(href, str) or not href or is_absolute_href(href):
+    if not _is_relative_href(href):
         return False
     return resolve_href(base_dir, href).resolve() in only
 
