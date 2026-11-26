@@ -62,7 +62,7 @@ from portolan_cli.output import detail, error, set_writer, stdout_to_stderr, suc
 from portolan_cli.output import info as info_output
 from portolan_cli.plugins.commands import ExtractGroup, PluginGroup
 from portolan_cli.plugins.manager import PluginWarning
-from portolan_cli.remove import _resolve_collection_dir, remove_files
+from portolan_cli.remove import _resolve_collection_dir
 from portolan_cli.scan.core import (
     IssueType,
     ScanIssue,
@@ -3250,27 +3250,12 @@ def rm_cmd(
     # Auto-detect catalog root (git-style)
     catalog_root = _resolve_rm_catalog_root(catalog_path, use_json)
 
+    from portolan_cli.remove import remove_path
+
     try:
-        target_path = path.resolve()
-
-        removed, skipped = remove_files(
-            paths=[target_path],
-            catalog_root=catalog_root,
-            keep=keep,
-            dry_run=dry_run,
-        )
-
-        if use_json:
-            data = {
-                "removed": [str(p) for p in removed],
-                "skipped": [str(p) for p in skipped],
-                "kept_on_disk": keep,
-                "dry_run": dry_run,
-            }
-            envelope = success_envelope("rm", data)
-            output_json_envelope(envelope)
-        else:
-            _render_rm_result(path, removed, skipped, keep, dry_run, verbose)
+        result = remove_path(path, catalog_root=catalog_root, keep=keep, dry_run=dry_run)
+        if not emit_success("rm", result.to_dict(), use_json=use_json):
+            _render_rm_result(path, result.removed, result.skipped, keep, dry_run, verbose)
 
     except ValueError as err:
         emit_error("rm", "ValueError", str(err), use_json=use_json)

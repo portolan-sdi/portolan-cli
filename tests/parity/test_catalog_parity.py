@@ -14,6 +14,7 @@ import pytest
 from portolan_cli.catalog_list import list_catalog_contents
 from portolan_cli.errors import CatalogAlreadyExistsError
 from portolan_cli.inspect import initialize_catalog
+from portolan_cli.remove import remove_path
 from portolan_cli.status import get_catalog_status
 
 if TYPE_CHECKING:
@@ -148,3 +149,40 @@ def test_init_existing_catalog(
         raises=CatalogAlreadyExistsError,
     )
 
+
+@pytest.mark.parametrize(
+    ("args", "keep", "dry_run"),
+    [(["--keep"], True, False), (["--dry-run"], False, True), (["--force"], False, False)],
+)
+def test_rm(
+    parity: Parity,
+    points_catalog: Callable[[Path], None],
+    args: list[str],
+    keep: bool,
+    dry_run: bool,
+) -> None:
+    """`rm` untracks the file, and deletes it unless --keep or --dry-run is given."""
+    target = Path("points") / "points.geojson"
+    parity(
+        "rm",
+        [*args, str(target)],
+        catalog=points_catalog,
+        call=lambda root: remove_path(target, catalog_root=root, keep=keep, dry_run=dry_run),
+    )
+
+
+def test_rm_corrupt_versions(parity: Parity, points_catalog: Callable[[Path], None]) -> None:
+    """`rm` reports the ValueError of a versions.json that is not JSON."""
+
+    def catalog(root: Path) -> None:
+        points_catalog(root)
+        (root / "points" / "versions.json").write_text("{", encoding="utf-8")
+
+    target = Path("points") / "points.geojson"
+    parity.error(
+        "rm",
+        ["--keep", str(target)],
+        catalog=catalog,
+        call=lambda root: remove_path(target, catalog_root=root, keep=True),
+        raises=ValueError,
+    )

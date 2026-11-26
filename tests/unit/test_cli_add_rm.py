@@ -640,7 +640,7 @@ class TestRm:
             test_file = collection_dir / "to_remove.parquet"
             test_file.write_bytes(b"parquet data")
 
-            with patch("portolan_cli.cli.remove_files") as mock_rm:
+            with patch("portolan_cli.remove.remove_files") as mock_rm:
                 mock_rm.return_value = ([test_file], [])  # (removed, skipped)
 
                 result = runner.invoke(
@@ -667,7 +667,7 @@ class TestRm:
             test_file = collection_dir / "file.parquet"
             test_file.write_bytes(b"data")
 
-            with patch("portolan_cli.cli.remove_files") as mock_rm:
+            with patch("portolan_cli.remove.remove_files") as mock_rm:
                 mock_rm.return_value = ([test_file], [])
 
                 # No --force needed with --keep
@@ -692,7 +692,7 @@ class TestRm:
             test_file = collection_dir / "keep_me.parquet"
             test_file.write_bytes(b"data")
 
-            with patch("portolan_cli.cli.remove_files") as mock_rm:
+            with patch("portolan_cli.remove.remove_files") as mock_rm:
                 mock_rm.return_value = ([test_file], [])
 
                 result = runner.invoke(
@@ -718,7 +718,7 @@ class TestRm:
             test_file = collection_dir / "file.parquet"
             test_file.write_bytes(b"data")
 
-            with patch("portolan_cli.cli.remove_files") as mock_rm:
+            with patch("portolan_cli.remove.remove_files") as mock_rm:
                 mock_rm.return_value = ([test_file], [])
 
                 result = runner.invoke(
@@ -774,7 +774,7 @@ class TestRm:
             (collection_dir / "file1.parquet").write_bytes(b"data1")
             (collection_dir / "file2.parquet").write_bytes(b"data2")
 
-            with patch("portolan_cli.cli.remove_files") as mock_rm:
+            with patch("portolan_cli.remove.remove_files") as mock_rm:
                 mock_rm.return_value = ([], [])
 
                 result = runner.invoke(
@@ -799,7 +799,7 @@ class TestRm:
             test_file.write_bytes(b"data")
             skipped_file = collection_dir / "outside.parquet"
 
-            with patch("portolan_cli.cli.remove_files") as mock_rm:
+            with patch("portolan_cli.remove.remove_files") as mock_rm:
                 mock_rm.return_value = ([test_file], [skipped_file])
 
                 result = runner.invoke(
@@ -1610,7 +1610,7 @@ class TestRmJsonOutput:
             test_file = collection_dir / "test.parquet"
             test_file.write_bytes(b"data")
 
-            with patch("portolan_cli.cli.remove_files") as mock_rm:
+            with patch("portolan_cli.remove.remove_files") as mock_rm:
                 mock_rm.return_value = ([test_file], [])  # (removed, skipped)
 
                 result = runner.invoke(
@@ -1637,7 +1637,7 @@ class TestRmJsonOutput:
             test_file = collection_dir / "test.parquet"
             test_file.write_bytes(b"data")
 
-            with patch("portolan_cli.cli.remove_files") as mock_rm:
+            with patch("portolan_cli.remove.remove_files") as mock_rm:
                 mock_rm.return_value = ([test_file], [])
 
                 result = runner.invoke(
