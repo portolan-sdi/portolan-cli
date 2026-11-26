@@ -5127,7 +5127,8 @@ def partition(
         )
     except PartitionError as e:
         if use_json:
-            emit_error("partition", "PartitionError", e.message, use_json=True, code=e.code)
+            # The envelope has never carried a code for this error, so it stays without one.
+            emit_error("partition", "PartitionError", e.message, use_json=True)
         else:
             error(f"Partitioning failed: {e.message}")
         raise SystemExit(1) from None

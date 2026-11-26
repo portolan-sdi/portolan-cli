@@ -970,14 +970,14 @@ class TestPartitionFile:
             result = CliRunner().invoke(
                 cli, ["--format", "json", "partition", "input.parquet", "out2"]
             )
+            text = CliRunner().invoke(cli, ["partition", "input.parquet", "out3"])
 
         assert caught.value.message == "Simulated partition failure"
         assert Path("out").is_dir()
         assert result.exit_code == 1
+        # The envelope keeps the shape of the command before PartitionError: no code.
         assert json.loads(result.stdout)["errors"] == [
-            {
-                "type": "PartitionError",
-                "message": "Simulated partition failure",
-                "code": "PRTLN-CNV011",
-            }
+            {"type": "PartitionError", "message": "Simulated partition failure"}
         ]
+        assert text.exit_code == 1
+        assert "Partitioning failed: Simulated partition failure" in text.output
