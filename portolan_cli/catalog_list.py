@@ -15,7 +15,7 @@ import logging
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path, PurePath
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from portolan_cli.config import get_ignored_files
 from portolan_cli.constants import MANAGED_FILES
@@ -47,6 +47,15 @@ class AssetInfo:
     size_bytes: int | None = None
     format_name: str | None = None  # Human-readable format (e.g., "GeoParquet")
 
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize the asset for the ``list`` envelope."""
+        return {
+            "path": self.path,
+            "status": self.status.value,
+            "format": self.format_name,
+            "size": self.size_bytes,
+        }
+
 
 @dataclass
 class ItemInfo:
@@ -76,6 +85,17 @@ class ItemInfo:
         """Count of deleted assets."""
         return sum(1 for a in self.assets if a.status == AssetStatus.DELETED)
 
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize the item for the ``list`` envelope."""
+        return {
+            "id": self.item_id,
+            "tracked": self.tracked_count,
+            "untracked": self.untracked_count,
+            "modified": self.modified_count,
+            "deleted": self.deleted_count,
+            "assets": [a.to_dict() for a in self.assets],
+        }
+
 
 @dataclass
 class CollectionInfo:
@@ -93,6 +113,15 @@ class CollectionInfo:
     def _count(self, status: AssetStatus) -> int:
         item_total = sum(1 for item in self.items for a in item.assets if a.status == status)
         return item_total + sum(1 for a in self.assets if a.status == status)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize the collection for the ``list`` envelope."""
+        return {
+            "id": self.collection_id,
+            "is_initialized": self.is_initialized,
+            "assets": [a.to_dict() for a in self.assets],
+            "items": [item.to_dict() for item in self.items],
+        }
 
 
 @dataclass
@@ -124,6 +153,27 @@ class CatalogListResult:
     def is_empty(self) -> bool:
         """Return True if there are no collections, items, or collection files."""
         return all(not col.items and not col.assets for col in self.collections)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize the result as the ``list`` envelope data."""
+        return {
+            "collections": [col.to_dict() for col in self.collections],
+            "summary": {
+                "total_tracked": self.total_tracked,
+                "total_untracked": self.total_untracked,
+                "total_modified": self.total_modified,
+                "total_deleted": self.total_deleted,
+            },
+        }
+
+    def keep_only(self, keep: AssetStatus) -> None:
+        """Keep only the assets with status ``keep``, then drop empty items and collections."""
+        for col in self.collections:
+            for item in col.items:
+                item.assets = [a for a in item.assets if a.status == keep]
+            col.assets = [a for a in col.assets if a.status == keep]
+            col.items = [item for item in col.items if item.assets]
+        self.collections = [col for col in self.collections if col.items or col.assets]
 
 
 # Files that are always excluded regardless of config
@@ -398,9 +448,13 @@ def list_catalog_contents(
     catalog_root: Path,
     collection_id: str | None = None,
     *,
+    tracked_only: bool = False,
+    untracked_only: bool = False,
     state: ConfigSource | None = None,
 ) -> CatalogListResult:
     """List all contents of a catalog with tracking status.
+
+    This is the library function of ``portolan list``.
 
     The collections come from ``catalog_collections``, the walk ``check`` also
     applies, so a nested or unlinked collection appears (issue #944). A
@@ -410,6 +464,8 @@ def list_catalog_contents(
     Args:
         catalog_root: Root directory of the catalog.
         collection_id: Optional collection to filter by.
+        tracked_only: Keep only tracked assets. It wins over ``untracked_only``.
+        untracked_only: Keep only untracked assets.
         state: The run state, which parses the config once per run.
 
     Returns:
@@ -443,4 +499,7 @@ def list_catalog_contents(
         if col_info.items or col_info.is_initialized:
             collections.append(col_info)
 
-    return CatalogListResult(collections=collections)
+    result = CatalogListResult(collections=collections)
+    if tracked_only or untracked_only:
+        result.keep_only(AssetStatus.TRACKED if tracked_only else AssetStatus.UNTRACKED)
+    return result

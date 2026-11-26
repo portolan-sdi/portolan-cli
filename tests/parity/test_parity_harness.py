@@ -43,7 +43,6 @@ PARITY_PENDING = frozenset(
         "extract carto",
         "extract wfs",
         "init",
-        "list",
         "logo",
         "partition",
         "push",

@@ -712,42 +712,6 @@ def _get_format_display_name(format_type: str | None) -> str:
     return format_type or "Unknown"
 
 
-def _apply_list_status_filter(
-    result: CatalogListResult,
-    tracked_only: bool,
-    untracked_only: bool,
-) -> None:
-    """Apply status filters to catalog list result in-place.
-
-    Args:
-        result: CatalogListResult to filter (modified in-place).
-        tracked_only: If True, keep only tracked assets.
-        untracked_only: If True, keep only untracked assets.
-    """
-    if not (tracked_only or untracked_only):
-        return
-
-    keep = AssetStatus.TRACKED if tracked_only else AssetStatus.UNTRACKED
-    for col in result.collections:
-        for item in col.items:
-            item.assets = [a for a in item.assets if a.status == keep]
-        col.assets = [a for a in col.assets if a.status == keep]
-        # Remove empty items after filtering
-        col.items = [item for item in col.items if item.assets]
-    # Remove empty collections after filtering
-    result.collections = [col for col in result.collections if col.items or col.assets]
-
-
-def _list_asset_json(asset: AssetInfo) -> dict[str, Any]:
-    """Serialize one ``list`` asset for the JSON envelope."""
-    return {
-        "path": asset.path,
-        "status": asset.status.value,
-        "format": asset.format_name,
-        "size": asset.size_bytes,
-    }
-
-
 def _list_tree_output_with_status(result: CatalogListResult) -> None:
     """Output items in hierarchical tree view with status indicators.
 
@@ -899,52 +863,14 @@ def list_cmd(
     if catalog_path is None:
         catalog_path = require_catalog_root(use_json, "list")
 
-    # Get all catalog contents with status
-    result = list_catalog_contents(catalog_path, collection_id=collection)
+    result = list_catalog_contents(
+        catalog_path,
+        collection_id=collection,
+        tracked_only=tracked_only,
+        untracked_only=untracked_only,
+    )
 
-    # Apply status filters (modifies result in-place)
-    _apply_list_status_filter(result, tracked_only, untracked_only)
-
-    if use_json:
-        # Build JSON output with status information
-        collections_data = []
-        for col in result.collections:
-            items_data = []
-            for item in col.items:
-                assets_data = [_list_asset_json(a) for a in item.assets]
-                items_data.append(
-                    {
-                        "id": item.item_id,
-                        "tracked": item.tracked_count,
-                        "untracked": item.untracked_count,
-                        "modified": item.modified_count,
-                        "deleted": item.deleted_count,
-                        "assets": assets_data,
-                    }
-                )
-            collections_data.append(
-                {
-                    "id": col.collection_id,
-                    "is_initialized": col.is_initialized,
-                    "assets": [_list_asset_json(a) for a in col.assets],
-                    "items": items_data,
-                }
-            )
-
-        envelope = success_envelope(
-            "list",
-            {
-                "collections": collections_data,
-                "summary": {
-                    "total_tracked": result.total_tracked,
-                    "total_untracked": result.total_untracked,
-                    "total_modified": result.total_modified,
-                    "total_deleted": result.total_deleted,
-                },
-            },
-        )
-        output_json_envelope(envelope)
-    else:
+    if not emit_success("list", result.to_dict(), use_json=use_json):
         if result.is_empty():
             info_output("No tracked items")
             info_output("")
