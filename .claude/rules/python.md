@@ -1,6 +1,7 @@
 ---
 paths:
   - "portolan_cli/**/*.py"
+  - "packages/portolan-core/**/*.py"
 ---
 
 # Python source rules
