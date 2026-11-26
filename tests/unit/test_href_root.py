@@ -17,8 +17,12 @@ from pathlib import Path
 import pytest
 
 from portolan_cli.utils import href_root
+from tests.source_roots import CORE_ROOT, REPO_ROOT, SOURCE_ROOTS
 
-SOURCE_ROOT = Path(__file__).resolve().parents[2] / "portolan_cli"
+
+def _sources() -> list[Path]:
+    """The Python files of both source folders (#1133)."""
+    return sorted(path for root in SOURCE_ROOTS for path in root.rglob("*.py"))
 
 
 class TestHrefRoot:
@@ -71,12 +75,12 @@ class TestEveryCallSiteUsesTheHelper:
     def test_no_normalize_hrefs_call_bypasses_href_root(self) -> None:
         offenders: list[str] = []
 
-        for source in SOURCE_ROOT.rglob("*.py"):
+        for source in _sources():
             for lineno, line in enumerate(source.read_text(encoding="utf-8").splitlines(), start=1):
                 if not re.search(r"\.normalize_hrefs\(", line):
                     continue
                 if "href_root(" not in line:
-                    rel = source.relative_to(SOURCE_ROOT.parent)
+                    rel = source.relative_to(REPO_ROOT)
                     offenders.append(f"{rel}:{lineno}: {line.strip()}")
 
         assert offenders == [], (
@@ -88,10 +92,15 @@ class TestEveryCallSiteUsesTheHelper:
     def test_the_guard_sees_the_known_call_sites(self) -> None:
         """Guard against the scan silently matching nothing (issues #401, #731)."""
         call_sites = [
-            f"{source.relative_to(SOURCE_ROOT.parent)}:{lineno}"
-            for source in SOURCE_ROOT.rglob("*.py")
+            f"{source.relative_to(REPO_ROOT)}:{lineno}"
+            for source in _sources()
             for lineno, line in enumerate(source.read_text(encoding="utf-8").splitlines(), start=1)
             if re.search(r"\.normalize_hrefs\(", line)
         ]
 
         assert len(call_sites) == 2, f"expected 2 normalize_hrefs call sites, found {call_sites}"
+
+    @pytest.mark.unit
+    def test_the_scan_reads_both_packages(self) -> None:
+        """stac_links moved into portolan-core (#1133). The scan must read that folder too."""
+        assert CORE_ROOT / "stac_links.py" in _sources()
