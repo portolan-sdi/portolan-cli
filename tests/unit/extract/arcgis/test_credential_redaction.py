@@ -98,6 +98,7 @@ async def test_compatibility_wrapper_message_holds_no_token(
 def test_options_repr_holds_no_credential() -> None:
     assert "SECRET" not in repr(ArcGISOptions(token="SECRET"))
     assert "SECRET" not in repr(CartoOptions(api_key="SECRET"))
+    assert "SECRET" not in repr(ArcGISOptions(token="SECRET").client())
 
 
 def test_missing_field_error_holds_no_token() -> None:

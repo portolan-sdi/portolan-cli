@@ -143,7 +143,8 @@ class ArcGISClient:
     """
 
     timeout: float = 60.0
-    token: str | None = None
+    # repr=False: a client repr reaches tracebacks and logs.
+    token: str | None = field(default=None, repr=False)
     retries: int = 3
     retry_delay: float = 1.0
     transport: httpx.BaseTransport | None = None
