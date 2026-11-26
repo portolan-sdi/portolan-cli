@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import fnmatch
 import importlib.util
+import os
 import re
 import sys
 import tomllib
@@ -573,6 +574,13 @@ def test_the_digest_check_names_each_file_with_other_bytes(
 
 selftest = _load_selftest()
 CHEAP_FAULTS = ("library-print", "dead-function", "ci-success-wiring", "unknown-marker")
+
+
+def test_the_gate_env_puts_both_copied_packages_first(tmp_path: Path) -> None:
+    """Without the core folder a gate imports portolan_core from the editable install (#1133)."""
+    path = selftest.gate_env(tmp_path)["PYTHONPATH"].split(os.pathsep)
+
+    assert path == [str(tmp_path), str(tmp_path / "packages" / "portolan-core" / "src")]
 
 
 def test_the_duplicate_gate_runs_the_prek_jscpd_command() -> None:

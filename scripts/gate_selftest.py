@@ -18,8 +18,8 @@ For each fault the script:
 
 The gates run in the copy with the caller's virtual environment.
 ``UV_PROJECT_ENVIRONMENT`` points ``uv run`` at it, ``UV_NO_SYNC`` keeps uv
-from installing the copy into it, and ``PYTHONPATH`` puts the copy ahead of
-the editable install. A symlinked ``.venv`` would work on Linux, but Windows
+from installing the copy into it, and ``PYTHONPATH`` puts the copy of each
+package ahead of the editable install. A symlinked ``.venv`` would work on Linux, but Windows
 needs extra privileges to create one, and the tools would walk into it.
 
 Usage::
@@ -98,7 +98,8 @@ def gate_env(root: Path) -> dict[str, str]:
         UV_NO_SYNC="1",
         UV_PROJECT_ENVIRONMENT=sys.prefix,
         VIRTUAL_ENV=sys.prefix,
-        PYTHONPATH=str(root),
+        # portolan_core sits under packages/, so the copy needs its own entry (#1133).
+        PYTHONPATH=os.pathsep.join((str(root), str(root / "packages" / "portolan-core" / "src"))),
     )
     return env
 
