@@ -141,3 +141,11 @@ class TestRedactCredentials:
 
     def test_local_path_without_query_is_unchanged(self) -> None:
         assert redact_credentials("/home/user/catalog/.portolan") == "/home/user/catalog/.portolan"
+
+    def test_malformed_url_does_not_raise_and_loses_its_credential(self) -> None:
+        """An error message can quote a URL that urlparse rejects (roborev 724)."""
+        text = "Server said: http://user:pw@[bad/x?token=SECRET failed"
+
+        redacted = redact_credentials(text)
+
+        assert redacted == "Server said: http://[bad/x?token=*** failed"
