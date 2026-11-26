@@ -3635,11 +3635,20 @@ def run_push(
         collection. A failed push returns ``success=False``.
 
     Raises:
+        NotImplementedError: If the backend of a target collection does not
+            support a file-based push.
         FileNotFoundError: If the catalog or the versions.json is absent.
         ValueError: If the destination URL is invalid.
         PushConflictError: If the remote diverged and ``force`` is False.
         PushVerifyError: If a ``verify`` HEAD fails.
     """
+    from portolan_cli.version_ops import check_backend_supports_push
+
+    # A collection with another backend has no file manifest to publish, or a
+    # stale one. Refuse before either push path reads it.
+    blocked = check_backend_supports_push(catalog_root, collection)
+    if blocked is not None:
+        raise NotImplementedError(blocked.message)
     with notifying(notify):
         file_conc, chunk_conc = effective_push_concurrency(
             concurrency, chunk_concurrency, max_connections

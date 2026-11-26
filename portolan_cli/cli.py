@@ -3330,7 +3330,7 @@ def _report_push_error(err: Exception, *, collection: str | None, use_json: bool
             error(f"Push conflict: {err}")
             info_output("Use --force to overwrite, or pull remote changes first")
         return True
-    known = (ProfileCredentialsError, PushVerifyError, FileNotFoundError)
+    known = (ProfileCredentialsError, PushVerifyError, FileNotFoundError, NotImplementedError)
     if collection is not None and not isinstance(err, known):
         if not isinstance(err, ValueError):
             return False

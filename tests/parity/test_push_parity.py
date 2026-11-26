@@ -221,3 +221,42 @@ def test_push_missing_collection(parity: Parity, points_catalog: Callable[[Path]
         call=lambda root: run_push(root, DESTINATION, collection="missing", notify=_quiet),
         raises=FileNotFoundError,
     )
+
+
+class _BlockedBackend:
+    """A backend that refuses a file-based push, as the Iceberg backend does."""
+
+    def supports_push(self) -> bool:
+        return False
+
+    def push_blocked_message(self, _remote: str | None) -> str:
+        return "push is blocked for this backend"
+
+
+def test_push_blocked_backend(
+    parity: Parity,
+    points_catalog: Callable[[Path], None],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A collection whose backend refuses push fails the same way in both."""
+    import portolan_cli.backends as backends
+
+    real_get_backend = backends.get_backend
+
+    def get_backend(name: str, **kwargs: Any) -> Any:
+        return _BlockedBackend() if name == "iceberg" else real_get_backend(name, **kwargs)
+
+    monkeypatch.setattr(backends, "get_backend", get_backend)
+
+    def blocked_catalog(root: Path) -> None:
+        points_catalog(root)
+        (root / "points" / ".portolan").mkdir()
+        (root / "points" / ".portolan" / "config.yaml").write_text("backend: iceberg\n")
+
+    parity.error(
+        "push",
+        [DESTINATION, "--collection", "points"],
+        catalog=blocked_catalog,
+        call=lambda root: run_push(root, DESTINATION, collection="points", notify=_quiet),
+        raises=NotImplementedError,
+    )
