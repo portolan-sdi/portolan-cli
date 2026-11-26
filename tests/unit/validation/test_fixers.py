@@ -13,7 +13,9 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from rashid_core.model import Finding, Severity
+from rashid_core import validate
+from rashid_core.api import Severity, ValidationOptions
+from rashid_core.model import Finding
 
 from portolan_cli.metadata.fix import FixAction, FixResult
 from portolan_cli.validation import fixers as fixers_module
@@ -641,6 +643,77 @@ class TestLinksFixer:
 
         assert _snapshot(tmp_path) == before
         assert [r.file_path.name for r in results] == ["catalog.json", "collection.json"]
+
+
+def _add_translation(root: Path, tag: str = "ro") -> None:
+    """Make ``root/<tag>`` an alternate-language tree of the catalog at ``root``.
+
+    core.md, Alternate-Language Trees: the translation has its own root and joins
+    the source tree only by ``alternate`` links, never by ``child`` links.
+    """
+    _tiny_catalog(root / tag)
+    for path, href in (
+        (root / "catalog.json", f"./{tag}/catalog.json"),
+        (root / tag / "catalog.json", "../catalog.json"),
+    ):
+        data = _read_json(path)
+        data["links"] = [{"rel": "alternate", "href": href, "type": "application/json"}]
+        _write_json(path, data)
+
+
+def _link_and_file_findings_after_fix(root: Path) -> list[str]:
+    """Run ``check --fix``'s fixers, then list the PTL-LNK and PTL-FIL findings left.
+
+    Each collection gets a README that names its license and source first, so
+    PTL-FIL-005 (README prose, an INSTRUCT rule) does not fire.
+    """
+    for collection_json in root.rglob("collection.json"):
+        (collection_json.parent / "README.md").write_text(
+            "# Roads\n\nLicense: CC-BY-4.0. Source: a test.\n", encoding="utf-8"
+        )
+    options = ValidationOptions(structural=False, extensions=False, data=False)
+    apply_fixers(root, validate(root, options=options).findings, dry_run=False)
+    return sorted(
+        f"{finding.rule_id} {finding.path}"
+        for finding in validate(root, options=options).findings
+        if finding.rule_id.startswith(("PTL-LNK", "PTL-FIL"))
+    )
+
+
+class TestLinksFixerAgreesWithRashid:
+    """The links fixer writes the links rashid expects, so a re-check finds none.
+
+    The fixer used to compute its own link block. It linked every tree to the
+    catalog root, wrote hrefs without percent-encoding, and linked children that
+    are not STAC. ``rashid_core.api.expected_links`` is the rule's own answer.
+    """
+
+    def test_translated_catalog_has_no_link_findings(self, tmp_path: Path) -> None:
+        """Each language tree links to its own root, and no child crosses languages."""
+        _tiny_catalog(tmp_path)
+        _add_translation(tmp_path)
+
+        assert _link_and_file_findings_after_fix(tmp_path) == []
+
+    def test_non_ascii_name_with_a_space_has_no_link_findings(self, tmp_path: Path) -> None:
+        """A directory named ``été 2024`` gets the href ``./%C3%A9t%C3%A9%202024/...``."""
+        _tiny_catalog(tmp_path, collection="été 2024")
+
+        assert _link_and_file_findings_after_fix(tmp_path) == []
+        child = next(
+            link
+            for link in _read_json(tmp_path / "catalog.json")["links"]
+            if link["rel"] == "child"
+        )
+        assert child["href"] == "./%C3%A9t%C3%A9%202024/collection.json"
+
+    def test_unparseable_child_gets_no_child_link(self, tmp_path: Path) -> None:
+        """A ``catalog.json`` that is not JSON is not a child to link."""
+        _tiny_catalog(tmp_path)
+        (tmp_path / "misc").mkdir()
+        (tmp_path / "misc" / "catalog.json").write_text("invalid JSON", encoding="utf-8")
+
+        assert _link_and_file_findings_after_fix(tmp_path) == []
 
 
 class TestBboxFixer:

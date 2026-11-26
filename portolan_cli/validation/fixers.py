@@ -43,14 +43,22 @@ from __future__ import annotations
 
 import importlib
 import json
-import posixpath
-from collections.abc import Callable, Iterable, Iterator, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from rashid_core.api import STRUCTURAL_RELS, has_cog, is_absolute_href, links_of, roles_of
-from rashid_core.catalog import CatalogGraph, Node
+from rashid_core.api import (
+    STRUCTURAL_RELS,
+    CatalogGraph,
+    ExpectedLink,
+    Node,
+    expected_links,
+    has_cog,
+    is_absolute_href,
+    links_of,
+    roles_of,
+)
 
 from portolan_cli.metadata.fix import FixAction, FixReport, FixResult
 from portolan_cli.validation.remediation import Bucket, remediation_of
@@ -89,8 +97,6 @@ class FixerRun:
     skip_reasons: dict[str, list[str]] = field(default_factory=dict)
 
 
-_JSON_TYPE = "application/json"
-_GEOJSON_TYPE = "application/geo+json"
 _STYLE_MEDIA_TYPE = "application/vnd.mapbox.style+json"
 _PARQUET_MEDIA_TYPE = "application/vnd.apache.parquet"
 _MIRROR_ROLE = "collection-mirror"
@@ -157,63 +163,8 @@ def _local_asset_path(node: Node, asset: dict[str, Any]) -> Path | None:
 # --------------------------------------------------------------------------
 
 
-def _relative_href(from_node: Node, to_path: PurePosixPath) -> str:
-    """Href for ``to_path`` written relative to ``from_node``'s own directory."""
-    rel = posixpath.relpath(str(to_path), str(from_node.path.parent))
-    return rel if rel.startswith("../") else f"./{rel}"
-
-
-def _owned_items(node: Node, graph: CatalogGraph) -> Iterator[Node]:
-    """Every item ``node`` owns, descending through organizing catalogs.
-
-    A catalog may group a collection's items (core.md:168-170), so ownership does
-    not stop one level down. Descent halts at a nested collection, whose items
-    are its own to mirror.
-    """
-    for child in graph.children_of(node):
-        if child.kind == "item":
-            yield child
-        elif child.kind == "catalog":
-            yield from _owned_items(child, graph)
-
-
-def _enclosing_collection(node: Node, graph: CatalogGraph) -> Node | None:
-    """The nearest collection above ``node``, which need not be its parent.
-
-    A catalog may sit below a collection to organize its items (core.md:168-170,
-    for example a raster collection grouping items by year). An item there has
-    that catalog as its parent while its ``collection`` link points past it to
-    the enclosing collection, and both are correct.
-    """
-    current = graph.parent_of(node)
-    while current is not None:
-        if current.kind == "collection":
-            return current
-        current = graph.parent_of(current)
-    return None
-
-
-def _expected_structural_links(node: Node, graph: CatalogGraph) -> list[tuple[str, Node]]:
-    """The (rel, target) pairs the spec requires on ``node``, in link order."""
-    expected: list[tuple[str, Node]] = []
-    root = graph.root
-    parent = graph.parent_of(node)
-    if root is not None:
-        expected.append(("root", root))
-    if parent is not None:
-        expected.append(("parent", parent))
-    if node.kind == "item":
-        enclosing = _enclosing_collection(node, graph)
-        if enclosing is not None:
-            expected.append(("collection", enclosing))
-    expected.extend(
-        ("item" if child.kind == "item" else "child", child) for child in graph.children_of(node)
-    )
-    return expected
-
-
 def _reuse_link(
-    existing: list[dict[str, Any]], node: Node, graph: CatalogGraph, rel: str, target: Node
+    existing: list[dict[str, Any]], node: Node, graph: CatalogGraph, expected: ExpectedLink
 ) -> dict[str, Any] | None:
     """An existing link to carry forward, so titles and extras survive the repair.
 
@@ -222,14 +173,14 @@ def _reuse_link(
     outlive the repair. A ``child``/``item`` link that resolves nowhere has no
     counterpart to carry forward and is simply replaced.
     """
-    same_rel = [link for link in existing if link.get("rel") == rel]
+    same_rel = [link for link in existing if link.get("rel") == expected.rel]
     if not same_rel:
         return None
-    if rel not in ("child", "item"):
+    if expected.rel not in ("child", "item"):
         return same_rel[0]
     for link in same_rel:
         href = link.get("href")
-        if isinstance(href, str) and graph.resolve_link(node, href) is target:
+        if isinstance(href, str) and graph.resolve_link(node, href) is expected.target:
             return link
     return None
 
@@ -244,15 +195,20 @@ def _rebuilt_rels() -> frozenset[str]:
 
 
 def _rebuild_links(node: Node, graph: CatalogGraph) -> list[dict[str, Any]]:
-    """The link block ``node`` should carry: structural first, everything else after."""
+    """The link block ``node`` should carry: structural first, everything else after.
+
+    rashid's ``expected_links`` gives each structural rel, target, href, and type,
+    as its link rules check them. This side keeps only what rashid has no use for:
+    the title and extras of an existing link, and a title for a new one.
+    """
     existing = links_of(node)
     rebuilt: list[dict[str, Any]] = []
-    for rel, target in _expected_structural_links(node, graph):
-        href = _relative_href(node, target.path)
-        link = dict(_reuse_link(existing, node, graph, rel, target) or {})
+    for expected in expected_links(graph, node):
+        rel, target = expected.rel, expected.target
+        link = dict(_reuse_link(existing, node, graph, expected) or {})
         link["rel"] = rel
-        link["href"] = href
-        link["type"] = _GEOJSON_TYPE if rel == "item" else _JSON_TYPE
+        link["href"] = expected.href
+        link["type"] = expected.type
         if rel in ("child", "item") and not link.get("title"):
             # An item holds its title under properties, a catalog at the top.
             properties = target.data.get("properties")
@@ -675,7 +631,7 @@ def _has_cog_items(node: Node, graph: CatalogGraph) -> bool:
     rashid now exports the predicate it applies (rashid#57), so this reads the
     answer from ``has_cog`` instead of replicating the rule.
     """
-    return any(has_cog(item) for item in _owned_items(node, graph))
+    return any(has_cog(item) for item in graph.items_of(node))
 
 
 def _write_mirror(collection_dir: Path, root: Path, state: RunState | None) -> None:
