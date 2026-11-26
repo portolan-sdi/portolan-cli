@@ -1,18 +1,22 @@
 """Command parity for `push`: each push path against `run_push`.
 
 Push writes to an in-memory store. The catalog factory replaces the store, so
-the command and the library call each start from an empty remote.
+the command and the library call each start from an empty remote. Each store
+records the keys of its puts in order, so a test can assert what each run
+published and that the manifest went last.
 """
 
 from __future__ import annotations
 
 import shutil
-from typing import TYPE_CHECKING
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any
 
+import obstore
 import pytest
 from obstore.store import MemoryStore
 
-from portolan_cli.sync.push import run_push
+from portolan_cli.sync.push import PushAllResult, PushResult, run_push
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -25,10 +29,85 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.integration
 
 DESTINATION = "s3://parity-bucket/catalog"
+PREFIX = "catalog"
+
+COLLECTION_FILES = {
+    "catalog/points/points.geojson",
+    "catalog/points/points.parquet",
+    "catalog/points/points.thumb.jpg",
+    "catalog/points/collection.json",
+    "catalog/points/AGENTS.md",
+    "catalog/points/README.md",
+    "catalog/points/versions.json",
+}
+ROOT_FILES = {"catalog/catalog.json", "catalog/AGENTS.md", "catalog/README.md"}
+# The bytes of each collection file are in place before its manifest names them.
+BEFORE_MANIFEST = {
+    "catalog/points/points.geojson",
+    "catalog/points/points.parquet",
+    "catalog/points/points.thumb.jpg",
+    "catalog/points/collection.json",
+}
 
 
 def _quiet(_level: NoticeLevel, _message: str) -> None:
     """Drop each notice. The CLI prints them, and the library call must not."""
+
+
+@dataclass
+class Remote:
+    """The in-memory store of one run, with the keys of its puts in order."""
+
+    store: MemoryStore = field(default_factory=MemoryStore)
+    puts: list[str] = field(default_factory=list)
+
+    def stored(self) -> set[str]:
+        return {str(meta["path"]) for page in obstore.list(self.store) for meta in page}
+
+
+@dataclass
+class Remotes:
+    """One Remote for each catalog that the factory builds, and the put faults."""
+
+    runs: list[Remote] = field(default_factory=list)
+    fail_key: str | None = None
+    refuse_network: bool = False
+
+    @property
+    def current(self) -> Remote:
+        return self.runs[-1]
+
+
+@pytest.fixture
+def remotes(monkeypatch: pytest.MonkeyPatch) -> Remotes:
+    """Send every push store call to the Remote of the current run."""
+    remotes = Remotes()
+    real_put, real_put_async = obstore.put, obstore.put_async
+
+    def setup_store(*_args: Any, **_kwargs: Any) -> tuple[MemoryStore, str]:
+        if remotes.refuse_network:
+            raise AssertionError("a dry run must not set up a store")
+        return remotes.current.store, PREFIX
+
+    def record(key: str) -> None:
+        if remotes.refuse_network:
+            raise AssertionError(f"a dry run must not write {key}")
+        remotes.current.puts.append(key)
+        if key == remotes.fail_key:
+            raise ConnectionError(f"injected failure for {key}")
+
+    def put(store: Any, key: str, *args: Any, **kwargs: Any) -> Any:
+        record(key)
+        return real_put(store, key, *args, **kwargs)
+
+    async def put_async(store: Any, key: str, *args: Any, **kwargs: Any) -> Any:
+        record(key)
+        return await real_put_async(store, key, *args, **kwargs)
+
+    monkeypatch.setattr("portolan_cli.sync.push.setup_store", setup_store)
+    monkeypatch.setattr(obstore, "put", put)
+    monkeypatch.setattr(obstore, "put_async", put_async)
+    return remotes
 
 
 @pytest.fixture
@@ -36,16 +115,12 @@ def points_catalog(
     build_conformant_catalog: Callable[..., Path],
     run_cli: RunCli,
     valid_points_geojson: Path,
-    monkeypatch: pytest.MonkeyPatch,
+    remotes: Remotes,
 ) -> Callable[[Path], None]:
     """Build a catalog with one collection, `points`, and an empty remote for it."""
-    remote: dict[str, MemoryStore] = {}
-    monkeypatch.setattr(
-        "portolan_cli.sync.push.setup_store", lambda *_a, **_k: (remote["store"], "catalog")
-    )
 
     def build(root: Path) -> None:
-        remote["store"] = MemoryStore()
+        remotes.runs.append(Remote())
         build_conformant_catalog(root)
         (root / "points").mkdir()
         shutil.copy(valid_points_geojson, root / "points" / "points.geojson")
@@ -54,28 +129,76 @@ def points_catalog(
     return build
 
 
-def test_push_all_collections(parity: Parity, points_catalog: Callable[[Path], None]) -> None:
-    """`push` with no `--collection` pushes every collection."""
+def _assert_manifest_after_data(remote: Remote) -> None:
+    manifest = remote.puts.index("catalog/points/versions.json")
+    assert all(remote.puts.index(key) < manifest for key in BEFORE_MANIFEST), remote.puts
+
+
+def test_push_all_collections(
+    parity: Parity, points_catalog: Callable[[Path], None], remotes: Remotes
+) -> None:
+    """`push` with no `--collection` pushes every collection, root manifest last."""
     parity(
         "push",
         [DESTINATION],
         catalog=points_catalog,
         call=lambda root: run_push(root, DESTINATION, notify=_quiet),
     )
+    assert len(remotes.runs) == 2
+    for remote in remotes.runs:
+        assert remote.stored() == COLLECTION_FILES | ROOT_FILES | {"catalog/versions.json"}
+        assert remote.puts[-1] == "catalog/versions.json"
+        assert remote.puts.index("catalog/catalog.json") > max(
+            remote.puts.index(key) for key in COLLECTION_FILES
+        )
+        _assert_manifest_after_data(remote)
 
 
-def test_push_one_collection(parity: Parity, points_catalog: Callable[[Path], None]) -> None:
-    """`push --collection` pushes that collection only."""
+def test_push_all_collections_counts(
+    points_catalog: Callable[[Path], None], tmp_path: Path, remotes: Remotes
+) -> None:
+    """The catalog-wide result counts the one collection and its version."""
+    points_catalog(tmp_path / "catalog")
+    result = run_push(tmp_path / "catalog", DESTINATION, notify=_quiet)
+    assert isinstance(result, PushAllResult)
+    assert (result.total_collections, result.successful_collections) == (1, 1)
+    assert (result.total_versions_pushed, result.total_files_uploaded) == (1, 10)
+
+
+def test_push_one_collection(
+    parity: Parity, points_catalog: Callable[[Path], None], remotes: Remotes
+) -> None:
+    """`push --collection` pushes that collection, and its manifest after its data."""
     parity(
         "push",
         [DESTINATION, "--collection", "points"],
         catalog=points_catalog,
         call=lambda root: run_push(root, DESTINATION, collection="points", notify=_quiet),
     )
+    assert len(remotes.runs) == 2
+    for remote in remotes.runs:
+        assert remote.stored() == COLLECTION_FILES | ROOT_FILES
+        _assert_manifest_after_data(remote)
+        assert remote.puts.index("catalog/catalog.json") < remote.puts.index(
+            "catalog/points/versions.json"
+        )
 
 
-def test_push_dry_run(parity: Parity, points_catalog: Callable[[Path], None]) -> None:
-    """`push --dry-run` reports the upper bound and writes nothing."""
+def test_push_one_collection_counts(
+    points_catalog: Callable[[Path], None], tmp_path: Path, remotes: Remotes
+) -> None:
+    """The result counts the version and the uploaded files, not the manifest."""
+    points_catalog(tmp_path / "catalog")
+    result = run_push(tmp_path / "catalog", DESTINATION, collection="points", notify=_quiet)
+    assert isinstance(result, PushResult)
+    assert (result.success, result.versions_pushed, result.files_uploaded) == (True, 1, 9)
+
+
+def test_push_dry_run(
+    parity: Parity, points_catalog: Callable[[Path], None], remotes: Remotes
+) -> None:
+    """`push --dry-run` reports the upper bound, with no store call at all."""
+    remotes.refuse_network = True
     parity(
         "push",
         [DESTINATION, "--dry-run", "--collection", "points"],
@@ -84,6 +207,9 @@ def test_push_dry_run(parity: Parity, points_catalog: Callable[[Path], None]) ->
             root, DESTINATION, collection="points", dry_run=True, notify=_quiet
         ),
     )
+    assert len(remotes.runs) == 2
+    for remote in remotes.runs:
+        assert (remote.puts, remote.stored()) == ([], set())
 
 
 def test_push_missing_collection(parity: Parity, points_catalog: Callable[[Path], None]) -> None:

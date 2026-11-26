@@ -3604,6 +3604,8 @@ def run_push(
     adaptive: bool = True,
     verify: bool = False,
     notify: Notify | None = None,
+    # The library draws the bar only when the caller asks. Moving the
+    # renderer to the CLI is a follow-up.
     show_progress: bool = False,
 ) -> PushResult | PushAllResult:
     """Run ``portolan push``: push one collection, or every collection.
