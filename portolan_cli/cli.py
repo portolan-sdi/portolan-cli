@@ -10,7 +10,6 @@ import json
 import os
 import sys
 import warnings
-from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NoReturn, TextIO
 
@@ -5430,140 +5429,30 @@ def bump(
 # =============================================================================
 
 
-def _discover_collections_with_items(catalog_root: Path) -> list[str]:
-    """Find all collections that own STAC items.
-
-    Ownership includes the items an organizing catalog groups beneath a
-    collection (core.md:168-170).
-
-    Args:
-        catalog_root: Path to the catalog root directory.
-
-    Returns:
-        Sorted list of collection IDs relative to catalog_root.
-    """
-    from portolan_cli.stac_links import catalog_collections
-    from portolan_cli.stac_parquet import count_items
-
-    collections: list[str] = []
-    for collection_id in catalog_collections(catalog_root):
-        try:
-            if count_items(catalog_root / collection_id) > 0:
-                collections.append(collection_id)
-        except (json.JSONDecodeError, OSError):
-            continue
-
-    return collections
+def _report_parquet_collection(outcome: Any) -> None:
+    """Print the outcome of one collection of stac-geoparquet."""
+    if outcome.error is not None:
+        error(outcome.error_summary)
+        return
+    if outcome.dry_run:
+        info_output(f"[DRY RUN] Would generate items.parquet for '{outcome.collection}'")
+    else:
+        success(f"Generated items.parquet for '{outcome.collection}'")
+    detail(f"    Items: {outcome.item_count}")
+    detail(f"    Output: {outcome.parquet_path}")
 
 
-@dataclass
-class _ParquetResult:
-    """Result of processing one collection for stac-geoparquet."""
-
-    collection: str
-    item_count: int
-    parquet_path: str
-    dry_run: bool = False
-    error: ErrorDetail | None = None
-
-
-def _process_collection_for_parquet(
-    coll_id: str,
-    catalog_path: Path,
-    dry_run: bool,
-    is_bulk: bool,
-    use_json: bool,
-) -> _ParquetResult | None:
-    """Process a single collection for stac-geoparquet generation.
-
-    Args:
-        coll_id: Collection ID to process.
-        catalog_path: Path to catalog root.
-        dry_run: If True, don't actually generate files.
-        is_bulk: If True, suppress per-collection output.
-        use_json: If True, suppress non-JSON output.
-
-    Returns:
-        _ParquetResult on success/dry-run, None on skip (empty collection in bulk mode),
-        or _ParquetResult with error field set on failure.
-    """
-    from portolan_cli.stac_parquet import (
-        count_items,
-        generate_items_parquet,
-        register_mirror_asset,
-        track_parquet_in_versions,
-    )
-    from portolan_cli.version_ops import owned_run
-
-    collection_path = catalog_path / coll_id
-
-    if not (collection_path / "collection.json").exists():
-        err = ErrorDetail(
-            type="CollectionNotFoundError",
-            message=f"Collection '{coll_id}' not found at {collection_path}",
-        )
-        if not use_json and not is_bulk:
-            error(f"Collection '{coll_id}' not found")
-        return _ParquetResult(coll_id, 0, "", error=err)
-
-    # Count items
-    try:
-        item_count = count_items(collection_path)
-    except Exception as e:
-        err = ErrorDetail(type=type(e).__name__, message=f"{coll_id}: {e}")
-        if not use_json and not is_bulk:
-            error(f"Failed to count items in '{coll_id}': {e}")
-        return _ParquetResult(coll_id, 0, "", error=err)
-
-    if item_count == 0:
-        # For bulk processing, skip silently; for explicit, return error
-        if is_bulk:
-            return None
-        err = ErrorDetail(
-            type="EmptyCollectionError",
-            message=f"No items found in collection '{coll_id}'",
-        )
-        if not use_json:
-            error(f"No items found in collection '{coll_id}'")
-        return _ParquetResult(coll_id, 0, "", error=err)
-
-    parquet_path = collection_path / "items.parquet"
-
-    if dry_run:
-        if not use_json and not is_bulk:
-            info_output(f"[DRY RUN] Would generate items.parquet for '{coll_id}'")
-            detail(f"    Items: {item_count}")
-            detail(f"    Output: {parquet_path}")
-        return _ParquetResult(coll_id, item_count, str(parquet_path), dry_run=True)
-
-    # Generate parquet
-    try:
-        with owned_run(catalog_path) as run:
-            parquet_path = generate_items_parquet(collection_path, state=run)
-            register_mirror_asset(collection_path, state=run)
-            track_parquet_in_versions(collection_path, catalog_path, state=run)
-        if not use_json and not is_bulk:
-            success(f"Generated items.parquet for '{coll_id}'")
-            detail(f"    Items: {item_count}")
-            detail(f"    Output: {parquet_path}")
-        return _ParquetResult(coll_id, item_count, str(parquet_path))
-    except Exception as e:
-        err = ErrorDetail(type=type(e).__name__, message=f"{coll_id}: {e}")
-        if not use_json and not is_bulk:
-            error(f"Failed to generate parquet for '{coll_id}': {e}")
-        return _ParquetResult(coll_id, 0, "", error=err)
-
-
-def _output_parquet_results(
-    results: list[dict[str, Any]],
-    errors_list: list[ErrorDetail],
-    total_items: int,
-    is_bulk: bool,
-    dry_run: bool,
-    use_json: bool,
-) -> None:
+def _output_parquet_results(result: Any, is_bulk: bool, dry_run: bool, use_json: bool) -> None:
     """Output results of stac-geoparquet command."""
+    results = result.results
+    errors_list = result.errors
     had_errors = bool(errors_list)
+    total_items = sum(r.item_count for r in results)
+
+    # Per-collection output for a single collection
+    if not use_json and not is_bulk:
+        for outcome in result.outcomes:
+            _report_parquet_collection(outcome)
 
     # Summary output for bulk operations
     if not use_json and is_bulk and results:
@@ -5583,17 +5472,10 @@ def _output_parquet_results(
     # JSON output
     if use_json:
         if had_errors and not results:
-            envelope = error_envelope("stac-geoparquet", errors_list)
+            details = [ErrorDetail(type=t, message=m) for t, m in errors_list]
+            output_json_envelope(error_envelope("stac-geoparquet", details))
         else:
-            envelope = success_envelope(
-                "stac-geoparquet",
-                {
-                    "collections_processed": len(results),
-                    "results": results,
-                    "errors": [{"type": e.type, "message": e.message} for e in errors_list],
-                },
-            )
-        output_json_envelope(envelope)
+            emit_success("stac-geoparquet", result.to_dict(), use_json=True)
 
     if had_errors:
         raise SystemExit(1)
@@ -5645,6 +5527,8 @@ def stac_geoparquet(
         portolan stac-geoparquet -c imagery --dry-run  # Preview without creating
         portolan stac-geoparquet --json             # JSON output for all collections
     """
+    from portolan_cli.stac_parquet import generate_stac_geoparquet
+
     use_json = should_output_json(ctx, json_output)
 
     # Find catalog root
@@ -5667,45 +5551,12 @@ def stac_geoparquet(
                 info_output("Run 'portolan init' to create one")
             raise SystemExit(1)
 
-    # Determine which collections to process
-    if collection is not None:
-        collections_to_process = [collection]
-    else:
-        # Discover all collections with items
-        collections_to_process = _discover_collections_with_items(catalog_path)
-        if not collections_to_process:
-            emit_error(
-                "stac-geoparquet",
-                "NoCollectionsError",
-                "No collections with items found in catalog",
-                use_json=use_json,
-            )
-            raise SystemExit(1)
+    result = generate_stac_geoparquet(catalog_path, collection, dry_run=dry_run)
+    if result.error is not None:
+        emit_error("stac-geoparquet", *result.error, use_json=use_json)
+        raise SystemExit(1)
 
-    # Process each collection
-    results: list[dict[str, Any]] = []
-    errors_list: list[ErrorDetail] = []
-    total_items = 0
-    is_bulk = collection is None  # Catalog-level operation
-
-    for coll_id in collections_to_process:
-        result = _process_collection_for_parquet(coll_id, catalog_path, dry_run, is_bulk, use_json)
-        if result is None:
-            continue  # Skipped (empty collection in bulk mode)
-        if result.error:
-            errors_list.append(result.error)
-        else:
-            results.append(
-                {
-                    "collection": result.collection,
-                    "item_count": result.item_count,
-                    "parquet_path": result.parquet_path,
-                    **({"dry_run": True} if result.dry_run else {}),
-                }
-            )
-            total_items += result.item_count
-
-    _output_parquet_results(results, errors_list, total_items, is_bulk, dry_run, use_json)
+    _output_parquet_results(result, collection is None, dry_run, use_json)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
