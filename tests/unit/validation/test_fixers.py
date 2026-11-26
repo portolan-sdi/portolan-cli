@@ -1192,6 +1192,18 @@ class TestMarkdownLinkGapParity:
         assert FIXERS[fixer](tmp_path, False) == []
         assert _snapshot(tmp_path) == before
 
+    @pytest.mark.parametrize(("fixer", "rel"), [("readme", "describedby"), ("agents", "agents")])
+    def test_a_relative_catalog_root_works(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fixer: str, rel: str
+    ) -> None:
+        catalog_json = self._scaffolded(tmp_path / "catalog")
+        self._mutate_link(catalog_json, rel, type="text/html")
+        monkeypatch.chdir(tmp_path)
+
+        results = FIXERS[fixer](Path("catalog"), True)
+
+        assert [r.file_path.name for r in results] == ["catalog.json"]
+
     def test_a_missing_file_is_detected(self, tmp_path: Path) -> None:
         self._scaffolded(tmp_path)
         (tmp_path / "README.md").unlink()

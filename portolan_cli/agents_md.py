@@ -62,7 +62,9 @@ def markdown_link_gap(
     Returns:
         True when the object needs repair.
     """
-    document = stac_path.relative_to(root).as_posix()
+    # The graph gives absolute node paths, so both sides resolve before the compare.
+    root = root.resolve()
+    document = (stac_path.parent.resolve() / stac_path.name).relative_to(root).as_posix()
     sibling = PurePosixPath(document).parent / target
     files = [str(sibling)] if (root / sibling).is_file() else []
     graph = CatalogGraph.from_documents(root, {document: data}, files)
