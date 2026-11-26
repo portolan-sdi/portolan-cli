@@ -198,8 +198,9 @@ uv run cz bump --changelog
 ```
 
 When that PR merges, the release workflow detects the `bump:` commit, creates the
-git tag, builds the package, publishes to PyPI (trusted publishing), and creates a
-GitHub Release.
+git tag, and builds both packages. It publishes `portolan-core` to PyPI first,
+then `portolan-cli`, which pins `portolan-core` to the same version. Both use
+trusted publishing. Last, it creates a GitHub Release with both sets of files.
 
 ### Versioning Policy
 

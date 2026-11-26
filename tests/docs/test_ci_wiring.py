@@ -433,10 +433,6 @@ def test_codspeed_measures_the_benchmarks() -> None:
 BUILD_PACKAGE = re.compile(r"uv build --package (\S+) --out-dir (\S+)")
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="#1133: phase 4 adds the portolan-core build and publish to release.yml",
-)
 def test_release_publishes_portolan_core_before_portolan_cli() -> None:
     """portolan-cli pins portolan-core exactly, so PyPI must hold portolan-core first.
 
@@ -460,6 +456,20 @@ def test_release_publishes_portolan_core_before_portolan_cli() -> None:
     assert out_dirs["portolan-core"] in published
     assert out_dirs["portolan-cli"] in published
     assert published.index(out_dirs["portolan-core"]) < published.index(out_dirs["portolan-cli"])
+
+
+def test_release_checks_the_versions_before_the_tag() -> None:
+    """A version mismatch must stop the release before it pushes a tag or publishes."""
+    steps = _jobs("release.yml")["release"]["steps"]
+    runs = [str(step.get("run", "")) for step in steps]
+    guard = next(
+        i for i, run in enumerate(runs) if "test_core_package.py::test_the_versions_agree" in run
+    )
+    tag = next(i for i, run in enumerate(runs) if 'git tag -a "$TAG"' in run)
+
+    assert guard < tag
+    assert "if" not in steps[guard]
+
 
 
 # ---------------------------------------------------------------------------

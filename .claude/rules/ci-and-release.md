@@ -66,10 +66,12 @@ commit pushed to `main` and creates the tag itself, it is not tag-triggered. See
 3. Release workflow detects the bump commit and creates tag + publishes
 
 **What happens automatically:**
-1. Version extracted from `pyproject.toml`
+1. Version extracted from `pyproject.toml`, and a check that the
+   `portolan-core` version and the `portolan-core==` pin agree with it
 2. Git tag created (e.g., `v0.3.0`)
-3. Package built and published to PyPI
-4. GitHub Release created
+3. Both packages built, then `portolan-core` published to PyPI before
+   `portolan-cli`, each with `skip-existing`
+4. GitHub Release created with both sets of files
 
 **Versioning policy:** the project is pre-1.0. `major_version_zero = true` in
 `[tool.commitizen]` holds the major number at zero, so a `BREAKING CHANGE:`

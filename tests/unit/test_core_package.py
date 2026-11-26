@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -39,3 +40,21 @@ def test_core_import_loads_no_cli_or_geospatial_module() -> None:
     expected = REPO_ROOT / "packages" / "portolan-core" / "src" / "portolan_core" / "__init__.py"
     assert Path(probe["file"]).resolve() == expected
     assert probe["loaded"] == []
+
+
+def test_the_versions_agree() -> None:
+    """portolan-cli pins portolan-core to its own version, so the three fields move together.
+
+    The release workflow runs this test before it pushes the tag.
+    """
+    root = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    core = tomllib.loads(
+        (REPO_ROOT / "packages" / "portolan-core" / "pyproject.toml").read_text(encoding="utf-8")
+    )
+    pins = [
+        dep.removeprefix("portolan-core==")
+        for dep in root["project"]["dependencies"]
+        if dep.startswith("portolan-core")
+    ]
+
+    assert [core["project"]["version"], *pins] == [root["project"]["version"]] * 2

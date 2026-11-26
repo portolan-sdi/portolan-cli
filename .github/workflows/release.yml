@@ -3,6 +3,7 @@
 # This workflow:
 # 1. Detects if the merged commit is a version bump (from `cz bump` in PR)
 # 2. If yes: extracts version, creates git tag, builds, publishes to PyPI
+#    portolan-core first, then portolan-cli, which pins portolan-core exactly
 # 3. If no: exits successfully (normal PR merge)
 #
 # Developer workflow:
@@ -13,6 +14,8 @@
 # Recovery workflow (when release fails after bump merge):
 # 1. Delete orphan tag if exists: git push origin :refs/tags/vX.Y.Z
 # 2. Trigger manually: gh workflow run release.yml --ref main
+# Each publish step skips the files that PyPI already holds. A re-run after a
+# release that published portolan-core and then failed publishes portolan-cli.
 name: Release
 on:
   push:
@@ -59,10 +62,18 @@ jobs:
           # Use head -1 because pyproject.toml has two version lines:
           # 1. [project].version (the package version - what we want)
           # 2. [tool.commitizen].version (kept in sync by cz bump)
+          # The workspace and sources tables hold no line that starts with
+          # "version = ". The next step checks this value against the others.
           VERSION=$(grep '^version = ' pyproject.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "tag=v$VERSION" >> $GITHUB_OUTPUT
           echo "Detected version: $VERSION (tag: v$VERSION)"
+
+      # The portolan-cli version, the portolan-core version and the
+      # portolan-core== pin of portolan-cli must agree. A mismatch stops the
+      # release before it pushes the tag.
+      - name: Check the package versions agree
+        run: uv run pytest -q "tests/unit/test_core_package.py::test_the_versions_agree"
 
       - name: Check release status
         id: release_check
@@ -100,14 +111,29 @@ jobs:
           git tag -a "$TAG" -m "Release $TAG"
           git push origin "$TAG"
 
-      - name: Build package
+      # Each distribution builds into its own directory, so each publish step
+      # uploads one distribution.
+      - name: Build packages
         if: steps.release_check.outputs.release_exists == 'false'
-        run: uv build
+        run: |
+          uv build --package portolan-core --out-dir dist-core
+          uv build --package portolan-cli --out-dir dist-cli
 
-      - name: Publish to PyPI
+      # portolan-cli pins portolan-core exactly, so portolan-core goes first.
+      - name: Publish portolan-core to PyPI
         if: steps.release_check.outputs.release_exists == 'false'
         uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
         with:
+          packages-dir: dist-core
+          skip-existing: true
+          print-hash: true
+
+      - name: Publish portolan-cli to PyPI
+        if: steps.release_check.outputs.release_exists == 'false'
+        uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
+        with:
+          packages-dir: dist-cli
+          skip-existing: true
           print-hash: true
 
       - name: Create GitHub Release
@@ -116,7 +142,7 @@ jobs:
           gh release create "$TAG" \
             --title "$TAG" \
             --notes "See [CHANGELOG](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/blob/main/CHANGELOG.md) for details." \
-            dist/*
+            dist-core/* dist-cli/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.version.outputs.tag }}
