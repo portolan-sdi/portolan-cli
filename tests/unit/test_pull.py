@@ -1118,7 +1118,7 @@ class TestProgressReporting:
     """Tests for progress reporting during downloads."""
 
     @pytest.mark.unit
-    def test_download_assets_shows_progress(self, tmp_path: Path, capsys) -> None:
+    def test_download_assets_shows_progress(self, tmp_path: Path) -> None:
         """_download_assets should show (1/N) style progress."""
         from portolan_cli.sync.pull import _download_assets
 
@@ -1143,19 +1143,22 @@ class TestProgressReporting:
             mock_result.success = True
             mock_download.return_value = mock_result
 
+            lines: list[tuple[str, str]] = []
             _download_assets(
                 remote_url="s3://bucket/catalog",
                 local_root=local_root,
                 files_to_download=["file1.parquet", "file2.parquet"],
                 remote_assets=remote_assets,
+                report=lambda level, message: lines.append((level, message)),
             )
 
-        captured = capsys.readouterr()
-        assert "(1/2)" in captured.out
-        assert "(2/2)" in captured.out
+        assert lines == [
+            ("info", "Downloading (1/2): file1.parquet"),
+            ("info", "Downloading (2/2): file2.parquet"),
+        ]
 
     @pytest.mark.unit
-    def test_download_assets_dry_run_shows_progress(self, tmp_path: Path, capsys) -> None:
+    def test_download_assets_dry_run_shows_progress(self, tmp_path: Path) -> None:
         """Dry-run should also show progress indicators."""
         from portolan_cli.sync.pull import _download_assets
 
@@ -1170,17 +1173,17 @@ class TestProgressReporting:
             },
         }
 
+        lines: list[tuple[str, str]] = []
         _download_assets(
             remote_url="s3://bucket/catalog",
             local_root=local_root,
             files_to_download=["data.parquet"],
             remote_assets=remote_assets,
             dry_run=True,
+            report=lambda level, message: lines.append((level, message)),
         )
 
-        captured = capsys.readouterr()
-        assert "(1/1)" in captured.out
-        assert "DRY RUN" in captured.out
+        assert lines == [("info", "[DRY RUN] Would download (1/1): data.parquet")]
 
 
 # =============================================================================

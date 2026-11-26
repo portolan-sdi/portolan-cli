@@ -43,7 +43,6 @@ from portolan_cli.async_utils import (
 )
 from portolan_cli.catalog import intermediate_catalog_ids
 from portolan_cli.json_io import write_json_atomic
-from portolan_cli.output import detail, error, info, output_section, success, warn
 from portolan_cli.run_state import stat_matches
 from portolan_cli.stac_links import SIDE_FILES, published_files
 from portolan_cli.sync.checksums import compute_checksum
@@ -51,6 +50,7 @@ from portolan_cli.sync.download import (
     download_file,
     get_remote_file_size_async,
 )
+from portolan_cli.sync.report import Report, silent
 from portolan_cli.sync.upload import _setup_store_and_kwargs, parse_object_store_url
 from portolan_cli.trace import count, span
 from portolan_cli.versions import (
@@ -73,6 +73,8 @@ if TYPE_CHECKING:
     )
 
     ObjectStore = S3Store | GCSStore | AzureStore | HTTPStore | LocalStore | MemoryStore
+
+    from portolan_cli.version_ops import BackendPullResult
 
 
 # Default concurrency for async downloads (imported from async_utils)
@@ -118,6 +120,34 @@ class PullResult:
     up_to_date: bool = False
     dry_run: bool = False
     files_restored: int = 0
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return the envelope ``data`` of ``portolan pull --collection``."""
+        return {
+            "files_downloaded": self.files_downloaded,
+            "files_skipped": self.files_skipped,
+            "files_restored": self.files_restored,
+            "local_version": self.local_version,
+            "remote_version": self.remote_version,
+            "up_to_date": self.up_to_date,
+        }
+
+
+@dataclass(frozen=True)
+class BackendPull:
+    """A pull of one collection that a non-file versioning backend ran.
+
+    A backend reports no restored files, so the envelope ``data`` has no
+    ``files_restored`` field.
+    """
+
+    result: PullResult
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return the envelope ``data`` of the backend pull."""
+        data = self.result.to_dict()
+        del data["files_restored"]
+        return data
 
 
 @dataclass
@@ -166,6 +196,16 @@ class PullAllResult:
     failed_collections: int
     total_files_downloaded: int
     collection_errors: dict[str, list[str]] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return the envelope ``data`` of ``portolan pull`` for the whole catalog."""
+        return {
+            "total_collections": self.total_collections,
+            "successful_collections": self.successful_collections,
+            "failed_collections": self.failed_collections,
+            "total_files_downloaded": self.total_files_downloaded,
+            "collection_errors": self.collection_errors,
+        }
 
 
 # =============================================================================
@@ -451,6 +491,7 @@ def _download_assets(
     remote_assets: dict[str, dict[str, str | int]],
     profile: str | None = None,
     dry_run: bool = False,
+    report: Report = silent,
 ) -> tuple[int, int]:
     """Download assets from remote.
 
@@ -461,6 +502,7 @@ def _download_assets(
         remote_assets: Dict mapping filename to asset metadata.
         profile: AWS profile name (for S3).
         dry_run: If True, don't actually download.
+        report: Receives each progress line.
 
     Returns:
         Tuple of (files_downloaded, files_failed).
@@ -486,11 +528,11 @@ def _download_assets(
         remote_asset_url = f"{remote_url.rstrip('/')}/{href}"
 
         if dry_run:
-            info(f"[DRY RUN] Would download ({i}/{total}): {filename}")
+            report("info", f"[DRY RUN] Would download ({i}/{total}): {filename}")
             continue
 
         # Progress reporting for large downloads
-        info(f"Downloading ({i}/{total}): {filename}")
+        report("info", f"Downloading ({i}/{total}): {filename}")
 
         # Ensure parent directory exists
         local_path.parent.mkdir(parents=True, exist_ok=True)
@@ -518,12 +560,14 @@ def _download_assets(
 def _check_sync_state_conflicts(
     diff: VersionDiff,
     force: bool,
+    report: Report = silent,
 ) -> PullResult | None:
     """Check for local-ahead or diverged states that would cause data loss.
 
     Args:
         diff: Version diff between local and remote.
         force: If True, skip conflict checks.
+        report: Receives each line of the conflict message.
 
     Returns:
         PullResult with failure if conflicts found, None if OK to proceed.
@@ -532,10 +576,10 @@ def _check_sync_state_conflicts(
         return None
 
     if diff.is_local_ahead:
-        warn("Local has unpushed versions that would be lost:")
+        report("warn", "Local has unpushed versions that would be lost:")
         for v in diff.local_only_versions:
-            detail(f" {v}")
-        warn("Push your changes first, or use --force to discard them")
+            report("detail", f" {v}")
+        report("warn", "Push your changes first, or use --force to discard them")
         return PullResult(
             success=False,
             files_downloaded=0,
@@ -546,10 +590,10 @@ def _check_sync_state_conflicts(
         )
 
     if diff.is_diverged:
-        warn("Local and remote have diverged:")
-        warn(f" Local-only versions: {diff.local_only_versions}")
-        warn(f" Remote-only versions: {diff.remote_only_versions}")
-        warn("Resolve by pushing --force or pulling --force (will lose data)")
+        report("warn", "Local and remote have diverged:")
+        report("warn", f" Local-only versions: {diff.local_only_versions}")
+        report("warn", f" Remote-only versions: {diff.remote_only_versions}")
+        report("warn", "Resolve by pushing --force or pulling --force (will lose data)")
         return PullResult(
             success=False,
             files_downloaded=0,
@@ -567,6 +611,7 @@ def _check_uncommitted_conflicts(
     collection: str,
     diff: VersionDiff,
     force: bool,
+    report: Report = silent,
 ) -> PullResult | None:
     """Check for uncommitted local changes that would be overwritten.
 
@@ -575,6 +620,7 @@ def _check_uncommitted_conflicts(
         collection: Collection name.
         diff: Version diff with files to download.
         force: If True, skip conflict checks.
+        report: Receives each line of the conflict message.
 
     Returns:
         PullResult with failure if conflicts found, None if OK to proceed.
@@ -586,10 +632,10 @@ def _check_uncommitted_conflicts(
     conflicts = [f for f in uncommitted if f in diff.files_to_download]
 
     if conflicts:
-        warn("Uncommitted local changes would be overwritten:")
+        report("warn", "Uncommitted local changes would be overwritten:")
         for filename in conflicts:
-            detail(f" {filename}")
-        warn("Use --force to discard local changes")
+            report("detail", f" {filename}")
+        report("warn", "Use --force to discard local changes")
 
         return PullResult(
             success=False,
@@ -608,6 +654,7 @@ def _report_pull_plan(
     update_files: list[str],
     restore_files: list[str],
     concurrency: int,
+    report: Report = silent,
 ) -> None:
     """Report what will be downloaded during a pull operation.
 
@@ -618,23 +665,24 @@ def _report_pull_plan(
         update_files: Files to download due to version changes.
         restore_files: Files to restore (missing locally).
         concurrency: Concurrency setting for display.
+        report: Receives each line of the plan.
     """
     update_count = len(update_files)
     restore_count = len(restore_files)
     all_files = update_files + restore_files
 
     if restore_count > 0 and update_count > 0:
-        info(f"Pulling {update_count} updated file(s) + {restore_count} missing file(s)")
+        report("info", f"Pulling {update_count} updated file(s) + {restore_count} missing file(s)")
     elif restore_count > 0:
-        info(f"Restoring {restore_count} missing file(s) from {remote_url}")
+        report("info", f"Restoring {restore_count} missing file(s) from {remote_url}")
     else:
-        info(f"Pulling {update_count} file(s) from {remote_url}")
+        report("info", f"Pulling {update_count} file(s) from {remote_url}")
 
-    info(f"Using concurrency: {concurrency}")
+    report("info", f"Using concurrency: {concurrency}")
     for filename in all_files[:5]:
-        detail(f" {filename}")
+        report("detail", f" {filename}")
     if len(all_files) > 5:
-        detail(f" ... and {len(all_files) - 5} more")
+        report("detail", f" ... and {len(all_files) - 5} more")
 
 
 # =============================================================================
@@ -740,13 +788,11 @@ async def _download_assets_async(
     remote_assets: dict[str, dict[str, str | int]],
     concurrency: int = DEFAULT_CONCURRENCY,
     *,
-    verbose: bool = False,
-    json_mode: bool = False,
+    report: Report = silent,
 ) -> tuple[int, int]:
     """Download assets concurrently using asyncio.
 
-    Uses progress bar for batch downloads. Per-file output
-    only shown in verbose mode.
+    A caller that passes ``report`` gets a progress bar on a terminal.
 
     Args:
         store: Object store instance (pre-configured connection).
@@ -755,8 +801,7 @@ async def _download_assets_async(
         files_to_download: List of filenames to download.
         remote_assets: Dict mapping filename to asset metadata.
         concurrency: Maximum concurrent downloads.
-        verbose: If True, show per-file download messages.
-        json_mode: If True, suppress progress output (for agent/batch usage).
+        report: Receives each failure line.
 
     Returns:
         Tuple of (files_downloaded, files_failed).
@@ -780,7 +825,7 @@ async def _download_assets_async(
     async with AsyncProgressReporter(
         total_files=total,
         total_bytes=total_bytes,
-        json_mode=json_mode,
+        json_mode=report is silent,
         description="Downloading",
     ) as progress:
 
@@ -818,9 +863,7 @@ async def _download_assets_async(
                     try:
                         await _download_file_async(store, remote_key, local_path)
                         circuit_breaker.record_success()
-                        # Per-file output only in verbose mode
-                        if verbose:
-                            info(f"Downloaded: {filename}")
+                        logger.debug("Downloaded: %s", filename)
                         return filename, True, None, file_size
                     except Exception as e:
                         error_str = str(e)
@@ -843,7 +886,7 @@ async def _download_assets_async(
         for result in results:
             if isinstance(result, BaseException):
                 failed += 1
-                error(f"Download error: {result}")
+                report("error", f"Download error: {result}")
                 progress.advance(0)
             elif isinstance(result, tuple):
                 filename, success_flag, err_msg, bytes_downloaded = result
@@ -854,7 +897,7 @@ async def _download_assets_async(
                     failed += 1
                     progress.advance(0)
                     if err_msg:
-                        error(f"Failed {filename}: {err_msg}")
+                        report("error", f"Failed {filename}: {err_msg}")
 
     return downloaded, failed
 
@@ -892,8 +935,6 @@ async def _populate_missing_file_sizes(
     local_root: Path,
     collection: str,
     remote_url: str,
-    *,
-    verbose: bool = False,
 ) -> int:
     """Populate missing file:size values in STAC assets via HTTP HEAD.
 
@@ -906,7 +947,6 @@ async def _populate_missing_file_sizes(
         local_root: Local catalog root directory.
         collection: Collection name.
         remote_url: Remote catalog URL for constructing asset URLs.
-        verbose: If True, log each file size fetch.
 
     Returns:
         Number of file sizes populated.
@@ -921,7 +961,7 @@ async def _populate_missing_file_sizes(
     base_url = f"{remote_url}/{collection}"
 
     # Process collection.json assets
-    populated += await _process_stac_file_sizes(collection_json, base_url, "", verbose)
+    populated += await _process_stac_file_sizes(collection_json, base_url, "")
 
     # Process item.json files
     for item_json in collection_dir.rglob("*.json"):
@@ -930,7 +970,7 @@ async def _populate_missing_file_sizes(
         rel_path = item_json.parent.relative_to(local_root).as_posix()
         item_base = f"{remote_url}/{rel_path}"
         # item_base already includes rel_path, so pass "" to avoid URL duplication
-        populated += await _process_stac_file_sizes(item_json, item_base, "", verbose)
+        populated += await _process_stac_file_sizes(item_json, item_base, "")
 
     return populated
 
@@ -939,8 +979,6 @@ async def _enrich_file_sizes_safe(
     local_root: Path,
     collection: str,
     remote_url: str,
-    *,
-    verbose: bool = False,
 ) -> None:
     """Safely enrich STAC assets with file:size metadata.
 
@@ -951,17 +989,14 @@ async def _enrich_file_sizes_safe(
         local_root: Local catalog root directory.
         collection: Collection name.
         remote_url: Remote catalog URL.
-        verbose: If True, log each file size fetch.
     """
     try:
         sizes_populated = await _populate_missing_file_sizes(
             local_root=local_root,
             collection=collection,
             remote_url=remote_url,
-            verbose=verbose,
         )
-        if sizes_populated > 0 and verbose:
-            detail(f"Populated file:size for {sizes_populated} asset(s)")
+        logger.debug("Populated file:size for %d asset(s)", sizes_populated)
     except Exception:
         # File sizes are optional. Record why the enrichment stopped.
         logger.debug("Could not populate file:size for %s", collection, exc_info=True)
@@ -971,7 +1006,6 @@ async def _process_stac_file_sizes(
     stac_file: Path,
     base_url: str,
     rel_path: str,
-    verbose: bool,
 ) -> int:
     """Process a single STAC file and populate missing file:size values."""
     import json
@@ -1002,8 +1036,7 @@ async def _process_stac_file_sizes(
         if await _fetch_and_set_file_size(asset, asset_url):
             modified = True
             populated += 1
-            if verbose:
-                detail(f"Fetched file:size for {stac_file.name}:{asset_key}")
+            logger.debug("Fetched file:size for %s:%s", stac_file.name, asset_key)
 
     if modified:
         write_json_atomic(stac_file, data)
@@ -1027,8 +1060,7 @@ async def pull_async(
     profile: str | None = None,
     concurrency: int = DEFAULT_CONCURRENCY,
     store: ObjectStore | None = None,
-    verbose: bool = False,
-    json_mode: bool = False,
+    report: Report = silent,
 ) -> PullResult:
     """Pull updates from a remote catalog asynchronously.
 
@@ -1055,8 +1087,8 @@ async def pull_async(
         concurrency: Maximum concurrent downloads (default: 50).
         store: Optional pre-configured object store. If provided, reuses
             this connection instead of creating a new one (for connection pooling).
-        verbose: If True, show per-file download messages.
-        json_mode: If True, suppress progress output (for agent/batch usage).
+        report: Receives each progress line. A caller that passes it also
+            gets a progress bar on a terminal.
 
     Returns:
         PullResult with operation results.
@@ -1089,9 +1121,9 @@ async def pull_async(
 
     # Bug #137: dry-run must not make any network calls.
     if dry_run:
-        info(f"[DRY RUN] Would pull from {remote_url}/{collection}")
-        info(f"[DRY RUN] Local version: {local_versions.current_version or '(none)'}")
-        warn("[DRY RUN] Remote conflict detection skipped (requires network)")
+        report("info", f"[DRY RUN] Would pull from {remote_url}/{collection}")
+        report("info", f"[DRY RUN] Local version: {local_versions.current_version or '(none)'}")
+        report("warn", "[DRY RUN] Remote conflict detection skipped (requires network)")
         return PullResult(
             success=True,
             files_downloaded=0,
@@ -1106,7 +1138,7 @@ async def pull_async(
         with span("pull.fetch_remote", collection=collection):
             remote_versions = await _fetch_remote_versions_async(remote_url, collection, profile)
     except PullError as e:
-        error(f"Failed to fetch remote: {e}")
+        report("error", f"Failed to fetch remote: {e}")
         return PullResult(
             success=False,
             files_downloaded=0,
@@ -1128,7 +1160,7 @@ async def pull_async(
     # Check if up to date (considering restore mode)
     versions_match = not diff.is_behind and not diff.is_local_ahead and not diff.is_diverged
     if versions_match and not files_to_restore:
-        info("Already up to date")
+        report("info", "Already up to date")
         return PullResult(
             success=True,
             files_downloaded=0,
@@ -1142,17 +1174,17 @@ async def pull_async(
     all_files_to_download = diff.files_to_download + files_to_restore
 
     # Data loss prevention checks
-    sync_conflict = _check_sync_state_conflicts(diff, force)
+    sync_conflict = _check_sync_state_conflicts(diff, force, report)
     if sync_conflict is not None:
         return sync_conflict
 
-    uncommitted_conflict = _check_uncommitted_conflicts(local_root, collection, diff, force)
+    uncommitted_conflict = _check_uncommitted_conflicts(local_root, collection, diff, force, report)
     if uncommitted_conflict is not None:
         return uncommitted_conflict
 
     # Report what will be downloaded
     restore_count = len(files_to_restore)
-    _report_pull_plan(remote_url, diff.files_to_download, files_to_restore, concurrency)
+    _report_pull_plan(remote_url, diff.files_to_download, files_to_restore, concurrency, report)
 
     # Download assets concurrently (reuses store connection)
     with span(
@@ -1165,14 +1197,13 @@ async def pull_async(
             files_to_download=all_files_to_download,
             remote_assets=diff.remote_assets,
             concurrency=concurrency,
-            verbose=verbose,
-            json_mode=json_mode,
+            report=report,
         )
         stage.set(downloaded=downloaded, failed=failed)
 
     # Handle failures
     if failed > 0:
-        error(f"Failed to download {failed} file(s)")
+        report("error", f"Failed to download {failed} file(s)")
         return PullResult(
             success=False,
             files_downloaded=downloaded,
@@ -1188,16 +1219,15 @@ async def pull_async(
             local_root=local_root,
             collection=collection,
             remote_url=remote_url,
-            verbose=verbose,
         )
 
     # Update local versions.json (only if version actually changed)
     versions_path.parent.mkdir(parents=True, exist_ok=True)
     if diff.remote_version != diff.local_version:
         write_versions(versions_path, remote_versions)
-        success(f"Updated to version {diff.remote_version}")
+        report("success", f"Updated to version {diff.remote_version}")
     elif restore_count > 0:
-        success(f"Restored {restore_count} missing file(s)")
+        report("success", f"Restored {restore_count} missing file(s)")
 
     return PullResult(
         success=True,
@@ -1224,9 +1254,8 @@ def pull(
     restore: bool = False,
     profile: str | None = None,
     concurrency: int = DEFAULT_CONCURRENCY,
-    verbose: bool = False,
-    json_mode: bool = False,
     stac_tree: bool = False,
+    report: Report = silent,
 ) -> PullResult:
     """Pull updates from a remote catalog (sync wrapper).
 
@@ -1251,11 +1280,10 @@ def pull(
             See issue #325.
         profile: AWS profile name (for S3).
         concurrency: Maximum concurrent downloads (default: 50).
-        verbose: If True, show per-file download messages.
-        json_mode: If True, suppress progress output (for agent/batch usage).
         stac_tree: If True, also download the STAC documents of the collection
             and the catalogs above it, and the objects that they name. clone
             sets it, because versions.json names only the assets (#1042).
+        report: Receives each progress line.
 
     Returns:
         PullResult with operation results.
@@ -1277,8 +1305,7 @@ def pull(
                 restore=restore,
                 profile=profile,
                 concurrency=concurrency,
-                verbose=verbose,
-                json_mode=json_mode,
+                report=report,
             )
         )
         if not stac_tree or not result.success:
@@ -1291,22 +1318,27 @@ def pull(
                 profile,
                 concurrency,
                 expected_version=result.remote_version,
+                report=report,
             )
         )
         if not changed:
             break
-        warn(
+        report(
+            "warn",
             f"The remote published a new version of '{collection}' during the clone. "
-            f"Downloading it ({attempt}/{_CLONE_ATTEMPTS})."
+            f"Downloading it ({attempt}/{_CLONE_ATTEMPTS}).",
         )
     else:
         result.success = False
-        error(f"The remote of '{collection}' changed during each of {_CLONE_ATTEMPTS} attempts")
+        report(
+            "error",
+            f"The remote of '{collection}' changed during each of {_CLONE_ATTEMPTS} attempts",
+        )
         return result
     result.files_downloaded += written
     if failed:
         result.success = False
-        error(f"Failed to download {failed} file(s) of '{collection}'")
+        report("error", f"Failed to download {failed} file(s) of '{collection}'")
     return result
 
 
@@ -1322,6 +1354,7 @@ async def _download_stac_tree(
     concurrency: int,
     *,
     expected_version: str | None = None,
+    report: Report = silent,
 ) -> tuple[int, int, bool]:
     """Download the STAC tree of ``collection`` and the objects it names (#1042).
 
@@ -1359,7 +1392,7 @@ async def _download_stac_tree(
             except (NotFoundError, FileNotFoundError):
                 return False
             except Exception as e:
-                error(f"Failed to download {rel}: {e}")
+                report("error", f"Failed to download {rel}: {e}")
                 counts["failed"] += 1
                 return False
         counts["written"] += 1
@@ -1408,6 +1441,7 @@ def _report_one_pull_result(
     index: int,
     total: int,
     collection_errors: dict[str, list[str]],
+    report: Report = silent,
 ) -> int | None:
     """Print the outcome of one collection pull and record any errors.
 
@@ -1418,6 +1452,7 @@ def _report_one_pull_result(
         index: Zero-based position of the entry.
         total: Number of collections in the run.
         collection_errors: Error map. The function adds a key on a failure.
+        report: Receives the outcome line.
 
     Returns:
         The number of files downloaded, or None when the pull failed.
@@ -1425,38 +1460,38 @@ def _report_one_pull_result(
     prefix = f"[{index + 1}/{total}]"
 
     if isinstance(result, BaseException):
-        error(f"{prefix} Failed {coll}: {result}")
+        report("error", f"{prefix} Failed {coll}: {result}")
         collection_errors[coll] = [str(result)]
         return None
 
     if not isinstance(result, tuple):
-        error(f"{prefix} Failed {coll}: Unknown error")
+        report("error", f"{prefix} Failed {coll}: Unknown error")
         collection_errors[coll] = ["Unknown error"]
         return None
 
     coll, pull_result, err_msg = result
     if err_msg:
-        error(f"{prefix} Failed {coll}: {err_msg}")
+        report("error", f"{prefix} Failed {coll}: {err_msg}")
         collection_errors[coll] = [err_msg]
         return None
 
     if pull_result is None:
-        error(f"{prefix} Failed {coll}: Unknown error")
+        report("error", f"{prefix} Failed {coll}: Unknown error")
         collection_errors[coll] = ["Unknown error"]
         return None
 
     if pull_result.success:
         if pull_result.up_to_date:
-            success(f"{prefix} {coll}: Already up to date")
+            report("success", f"{prefix} {coll}: Already up to date")
         else:
-            success(f"{prefix} Pulled {coll}: {pull_result.files_downloaded} file(s)")
+            report("success", f"{prefix} Pulled {coll}: {pull_result.files_downloaded} file(s)")
         return int(pull_result.files_downloaded)
 
     if pull_result.uncommitted_changes:
         errors_list = [f"Uncommitted changes: {', '.join(pull_result.uncommitted_changes)}"]
     else:
         errors_list = ["Pull failed"]
-    error(f"{prefix} Failed {coll}: {', '.join(errors_list)}")
+    report("error", f"{prefix} Failed {coll}: {', '.join(errors_list)}")
     collection_errors[coll] = errors_list
     return None
 
@@ -1471,8 +1506,7 @@ async def pull_all_collections_async(
     profile: str | None = None,
     concurrency: int | None = None,
     file_concurrency: int | None = None,
-    verbose: bool = False,
-    json_mode: bool = False,
+    report: Report = silent,
 ) -> PullAllResult:
     """Pull all collections in a catalog from cloud storage asynchronously.
 
@@ -1491,8 +1525,7 @@ async def pull_all_collections_async(
         concurrency: Maximum concurrent collection pulls. None = auto-detect.
         file_concurrency: Maximum concurrent file downloads within each collection.
             None = use pull_async default. (Maps to --concurrency CLI flag.)
-        verbose: If True, show per-file download messages.
-        json_mode: If True, suppress progress output (for agent/batch usage).
+        report: Receives each progress line.
 
     Returns:
         PullAllResult with aggregate statistics and per-collection errors.
@@ -1530,8 +1563,8 @@ async def pull_all_collections_async(
     total = len(collections)
 
     if total == 0:
-        warn("No initialized collections found in catalog")
-        warn("Collections need a versions.json file to be pullable")
+        report("warn", "No initialized collections found in catalog")
+        report("warn", "Collections need a versions.json file to be pullable")
         return PullAllResult(
             success=True,  # Empty catalog is not a failure, just nothing to do
             total_collections=0,
@@ -1540,7 +1573,7 @@ async def pull_all_collections_async(
             total_files_downloaded=0,
         )
 
-    info(f"Found {total} collection(s) to pull")
+    report("info", f"Found {total} collection(s) to pull")
 
     # Track aggregate stats
     successful = 0
@@ -1552,7 +1585,7 @@ async def pull_all_collections_async(
     max_concurrent = concurrency if concurrency is not None else min(total, DEFAULT_CONCURRENCY)
     max_concurrent = min(max_concurrent, total)  # Don't exceed collection count
 
-    info(f"Using concurrency: {max_concurrent}")
+    report("info", f"Using concurrency: {max_concurrent}")
 
     # Semaphore for collection-level concurrency control
     semaphore = asyncio.Semaphore(max_concurrent)
@@ -1568,19 +1601,7 @@ async def pull_all_collections_async(
                     try_backend_pull, local_root, remote_url, collection, dry_run, state=state
                 )
                 if backend_result.handled:
-                    return (
-                        collection,
-                        PullResult(
-                            success=backend_result.success,
-                            files_downloaded=backend_result.files_downloaded,
-                            files_skipped=backend_result.files_skipped,
-                            local_version=backend_result.local_version,
-                            remote_version=backend_result.remote_version,
-                            up_to_date=backend_result.up_to_date,
-                            dry_run=dry_run,
-                        ),
-                        None,
-                    )
+                    return collection, _from_backend(backend_result, dry_run), None
                 if shared_store is None and not dry_run:
                     shared_store, _kwargs = _setup_store_and_kwargs(
                         bucket_url, profile, chunk_concurrency=4
@@ -1595,8 +1616,7 @@ async def pull_all_collections_async(
                     "restore": restore,
                     "profile": profile,
                     "store": shared_store,  # Reuse connection across collections
-                    "verbose": verbose,
-                    "json_mode": json_mode,
+                    "report": report,
                 }
                 if file_concurrency is not None:
                     pull_kwargs["concurrency"] = file_concurrency
@@ -1611,7 +1631,7 @@ async def pull_all_collections_async(
     results = await asyncio.gather(*tasks, return_exceptions=True)
 
     for i, result in enumerate(results):
-        files = _report_one_pull_result(result, collections[i], i, total, collection_errors)
+        files = _report_one_pull_result(result, collections[i], i, total, collection_errors, report)
         if files is None:
             failed += 1
         else:
@@ -1619,15 +1639,13 @@ async def pull_all_collections_async(
             total_files += files
 
     # Summary report
-    with output_section():
-        info(f"\n{'=' * 60}")
-        if failed == 0:
-            msg = f"Pulled {successful} collection(s), {total_files} file(s) total"
-            success(msg)
-        else:
-            warn(f"Completed with errors: {successful} succeeded, {failed} failed")
-            for collection, errors in collection_errors.items():
-                warn(f" {collection}: {', '.join(errors)}")
+    report("info", f"\n{'=' * 60}")
+    if failed == 0:
+        report("success", f"Pulled {successful} collection(s), {total_files} file(s) total")
+    else:
+        report("warn", f"Completed with errors: {successful} succeeded, {failed} failed")
+        for collection, errors in collection_errors.items():
+            report("warn", f" {collection}: {', '.join(errors)}")
 
     return PullAllResult(
         success=(failed == 0),
@@ -1649,8 +1667,7 @@ def pull_all_collections(
     profile: str | None = None,
     workers: int | None = None,
     file_concurrency: int | None = None,
-    verbose: bool = False,
-    json_mode: bool = False,
+    report: Report = silent,
 ) -> PullAllResult:
     """Pull all collections in a catalog from cloud storage (sync wrapper).
 
@@ -1670,8 +1687,7 @@ def pull_all_collections(
             (Maps to 'concurrency' in async implementation.)
         file_concurrency: Maximum concurrent file downloads within each collection.
             None = use pull_async default. (Maps to --concurrency CLI flag.)
-        verbose: If True, show per-file download messages.
-        json_mode: If True, suppress progress output (for agent/batch usage).
+        report: Receives each progress line.
 
     Returns:
         PullAllResult with aggregate statistics and per-collection errors.
@@ -1689,7 +1705,89 @@ def pull_all_collections(
             profile=profile,
             concurrency=workers,
             file_concurrency=file_concurrency,
-            verbose=verbose,
-            json_mode=json_mode,
+            report=report,
         )
+    )
+
+
+def _from_backend(backend_result: BackendPullResult, dry_run: bool) -> PullResult:
+    """Return the PullResult of a pull that a non-file backend ran."""
+    return PullResult(
+        success=backend_result.success,
+        files_downloaded=backend_result.files_downloaded,
+        files_skipped=backend_result.files_skipped,
+        local_version=backend_result.local_version,
+        remote_version=backend_result.remote_version,
+        up_to_date=backend_result.up_to_date,
+        dry_run=dry_run,
+    )
+
+
+def pull_catalog(
+    remote_url: str,
+    local_root: Path,
+    collection: str | None = None,
+    *,
+    force: bool = False,
+    dry_run: bool = False,
+    restore: bool = False,
+    profile: str | None = None,
+    workers: int | None = None,
+    concurrency: int = DEFAULT_CONCURRENCY,
+    report: Report = silent,
+) -> PullResult | PullAllResult | BackendPull:
+    """Run ``portolan pull``: pull one collection, or each collection of the catalog.
+
+    A collection whose versioning backend is not ``file`` goes to that backend
+    first. Without ``collection``, ``pull_all_collections`` routes each
+    collection to its own backend.
+
+    Args:
+        remote_url: Remote catalog URL (e.g., s3://bucket/catalog).
+        local_root: Local catalog root directory.
+        collection: Collection to pull. None pulls each collection.
+        force: If True, overwrite uncommitted local changes.
+        dry_run: If True, show what would happen without downloading.
+        restore: If True, re-download files that are missing locally.
+        profile: AWS profile name (for S3).
+        workers: Parallel collection pulls for a catalog-wide pull.
+            None picks a count. A single-collection pull ignores it.
+        concurrency: Maximum concurrent file downloads within a collection.
+        report: Receives each progress line.
+
+    Returns:
+        A PullResult for one collection, a PullAllResult for the catalog, or a
+        BackendPull for a collection that a non-file backend pulled.
+
+    Raises:
+        ValueError: If remote_url is invalid or the catalog is not valid.
+    """
+    if collection is None:
+        return pull_all_collections(
+            remote_url=remote_url,
+            local_root=local_root,
+            force=force,
+            dry_run=dry_run,
+            restore=restore,
+            profile=profile,
+            workers=workers,
+            file_concurrency=concurrency,
+            report=report,
+        )
+
+    from portolan_cli.version_ops import try_backend_pull
+
+    backend_result = try_backend_pull(local_root, remote_url, collection, dry_run)
+    if backend_result.handled:
+        return BackendPull(_from_backend(backend_result, dry_run))
+    return pull(
+        remote_url=remote_url,
+        local_root=local_root,
+        collection=collection,
+        force=force,
+        dry_run=dry_run,
+        restore=restore,
+        profile=profile,
+        concurrency=concurrency,
+        report=report,
     )

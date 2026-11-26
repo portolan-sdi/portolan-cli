@@ -444,7 +444,6 @@ async def test_pull_async_reports_progress(
     with (
         patch("portolan_cli.sync.pull._fetch_remote_versions_async") as mock_fetch,
         patch("portolan_cli.sync.pull._download_file_async", mock_download_file_async),
-        patch("portolan_cli.sync.pull.info") as mock_info,
     ):
         from portolan_cli.versions import Asset, Version, VersionsFile
 
@@ -471,15 +470,17 @@ async def test_pull_async_reports_progress(
         )
         mock_fetch.return_value = remote
 
+        lines: list[tuple[str, str]] = []
         result = await pull_async(
             remote_url="s3://test-bucket/catalog",
             local_root=catalog_with_versions,
             collection="test-collection",
             concurrency=5,
             force=True,  # Bypass conflict detection for progress testing
+            report=lambda level, message: lines.append((level, message)),
         )
 
     # Verify progress was reported
     assert result.success
-    # Check that info was called (progress reporting)
-    assert mock_info.call_count > 0
+    assert ("info", "Pulling 5 file(s) from s3://test-bucket/catalog") in lines
+    assert ("success", "Updated to version 2.0.0") in lines

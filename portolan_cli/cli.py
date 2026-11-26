@@ -3914,6 +3914,13 @@ def push(
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+def _report(level: str, message: str) -> None:
+    """Print one progress line of the sync library through output.py."""
+    from portolan_cli import output
+
+    getattr(output, level)(message)
+
+
 def _output_pull_human(result: PullResult, *, dry_run: bool) -> None:
     """Output human-readable pull result (reduces complexity in main command)."""
     if result.up_to_date:
@@ -3934,64 +3941,16 @@ def _output_pull_human(result: PullResult, *, dry_run: bool) -> None:
             error("Pull failed")
 
 
-def _try_backend_pull(
-    catalog_path: Path,
-    remote_url: str,
-    collection: str | None,
-    dry_run: bool,
-    use_json: bool,
-) -> bool:
-    """Attempt a pull via the active non-file backend.
-
-    Returns True if the backend handled the pull (caller should return).
-    Returns False if the backend has no pull() method and the file-based pull
-    should proceed as normal.
-    """
-    from portolan_cli.version_ops import try_backend_pull
-
-    result = try_backend_pull(catalog_path, remote_url, collection, dry_run)
-    if not result.handled:
-        return False
-
-    if use_json:
-        data = {
-            "files_downloaded": result.files_downloaded,
-            "files_skipped": result.files_skipped,
-            "local_version": result.local_version,
-            "remote_version": result.remote_version,
-            "up_to_date": result.up_to_date,
-        }
-        if result.success:
-            envelope = success_envelope("pull", data)
-        else:
-            envelope = error_envelope(
-                "pull",
-                [ErrorDetail(type="PullError", message="Pull failed")],
-                data=data,
+def _single_pull_errors(result: PullResult) -> list[ErrorDetail]:
+    """Return the envelope errors of a failed pull of one collection."""
+    if result.uncommitted_changes:
+        return [
+            ErrorDetail(
+                type="UncommittedChangesError",
+                message=f"Uncommitted changes: {', '.join(result.uncommitted_changes)}",
             )
-        output_json_envelope(envelope)
-    else:
-        # Create a minimal PullResult-like object for _output_pull_human
-        from types import SimpleNamespace
-        from typing import cast
-
-        pull_result = cast(
-            "PullResult",
-            SimpleNamespace(
-                success=result.success,
-                files_downloaded=result.files_downloaded,
-                files_skipped=result.files_skipped,
-                local_version=result.local_version,
-                remote_version=result.remote_version,
-                up_to_date=result.up_to_date,
-                uncommitted_changes=[],
-            ),
-        )
-        _output_pull_human(pull_result, dry_run=dry_run)
-
-    if not result.success:
-        raise SystemExit(1)
-    return True
+        ]
+    return [ErrorDetail(type="PullError", message="Pull failed")]
 
 
 @cli.command()
@@ -4089,8 +4048,7 @@ def pull_command(
         portolan pull s3://mybucket/catalog
         portolan pull s3://mybucket/catalog --workers 4
     """
-    from portolan_cli.sync.pull import pull as pull_fn
-    from portolan_cli.sync.pull import pull_all_collections
+    from portolan_cli.sync.pull import BackendPull, PullAllResult, pull_catalog
 
     use_json = should_output_json(ctx, json_output)
 
@@ -4109,110 +4067,49 @@ def pull_command(
         emit_error("pull", "ConfigError", str(e), use_json=use_json)
         raise SystemExit(1) from None
 
-    # Route to backend-specific pull if using non-file backend
-    if collection is not None and _try_backend_pull(
-        catalog_path, remote_url, collection, dry_run, use_json
-    ):
-        return
-
-    # Catalog-wide pull (no --collection specified)
-    if collection is None:
-        try:
-            all_result = pull_all_collections(
-                remote_url=remote_url,
-                local_root=catalog_path,
-                force=force,
-                dry_run=dry_run,
-                restore=restore,
-                profile=resolved_profile,
-                workers=workers,
-                file_concurrency=concurrency,
-            )
-
-            if use_json:
-                data = {
-                    "total_collections": all_result.total_collections,
-                    "successful_collections": all_result.successful_collections,
-                    "failed_collections": all_result.failed_collections,
-                    "total_files_downloaded": all_result.total_files_downloaded,
-                    "collection_errors": all_result.collection_errors,
-                }
-
-                if all_result.success:
-                    envelope = success_envelope("pull", data)
-                else:
-                    errors = [
-                        ErrorDetail(
-                            type="PullError",
-                            message=f"{coll}: {', '.join(errs)}",
-                        )
-                        for coll, errs in all_result.collection_errors.items()
-                    ]
-                    envelope = error_envelope("pull", errors, data=data)
-
-                output_json_envelope(envelope)
-
-            if not all_result.success:
-                raise SystemExit(1)
-
-            return
-
-        except Exception as err:
-            emit_error("pull", type(err).__name__, str(err), use_json=use_json)
-            raise SystemExit(1) from err
-
-    # Single collection pull
+    # A catalog-wide pull reports any error. A one-collection pull reports
+    # these two and lets the others propagate.
+    caught: tuple[type[Exception], ...] = (
+        (Exception,) if collection is None else (FileNotFoundError, ValueError)
+    )
     try:
-        single_result = pull_fn(
-            remote_url=remote_url,
-            local_root=catalog_path,
-            collection=collection,
+        result = pull_catalog(
+            remote_url,
+            catalog_path,
+            collection,
             force=force,
             dry_run=dry_run,
             restore=restore,
             profile=resolved_profile,
+            workers=workers,
             concurrency=concurrency,
+            report=_report,
         )
+    except caught as err:
+        error_type = type(err).__name__
+        if collection is not None:
+            error_type = "FileNotFoundError" if isinstance(err, FileNotFoundError) else "ValueError"
+        emit_error("pull", error_type, str(err), use_json=use_json)
+        raise SystemExit(1) from err
 
-        if use_json:
-            data = {
-                "files_downloaded": single_result.files_downloaded,
-                "files_skipped": single_result.files_skipped,
-                "files_restored": single_result.files_restored,
-                "local_version": single_result.local_version,
-                "remote_version": single_result.remote_version,
-                "up_to_date": single_result.up_to_date,
-            }
-
-            if single_result.success:
-                envelope = success_envelope("pull", data)
-            else:
-                errors = []
-                if single_result.uncommitted_changes:
-                    errors.append(
-                        ErrorDetail(
-                            type="UncommittedChangesError",
-                            message=f"Uncommitted changes: {', '.join(single_result.uncommitted_changes)}",
-                        )
-                    )
-                else:
-                    errors.append(ErrorDetail(type="PullError", message="Pull failed"))
-                envelope = error_envelope("pull", errors, data=data)
-
-            output_json_envelope(envelope)
+    outcome = result.result if isinstance(result, BackendPull) else result
+    if outcome.success:
+        emit_success("pull", result.to_dict(), use_json=use_json)
+    elif use_json:
+        if isinstance(outcome, PullAllResult):
+            errors = [
+                ErrorDetail(type="PullError", message=f"{coll}: {', '.join(errs)}")
+                for coll, errs in outcome.collection_errors.items()
+            ]
         else:
-            _output_pull_human(single_result, dry_run=dry_run)
+            errors = _single_pull_errors(outcome)
+        output_json_envelope(error_envelope("pull", errors, data=result.to_dict()))
 
-        if not single_result.success:
-            raise SystemExit(1)
+    if not use_json and not isinstance(outcome, PullAllResult):
+        _output_pull_human(outcome, dry_run=dry_run)
 
-    except FileNotFoundError as err:
-        emit_error("pull", "FileNotFoundError", str(err), use_json=use_json)
-        raise SystemExit(1) from err
-
-    except ValueError as err:
-        emit_error("pull", "ValueError", str(err), use_json=use_json)
-        raise SystemExit(1) from err
+    if not outcome.success:
+        raise SystemExit(1)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
