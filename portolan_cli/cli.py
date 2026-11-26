@@ -2408,23 +2408,11 @@ def scan(
     """
     use_json = should_output_json(ctx, json_output)
 
-    # Validate path exists and is a directory (handle in code for JSON envelope support)
-    if not path.exists():
-        emit_error(
-            "scan", "PathNotFoundError", f"Directory does not exist: {path}", use_json=use_json
-        )
-        raise SystemExit(1)
-
-    if not path.is_dir():
-        emit_error(
-            "scan", "NotADirectoryError", f"Path is not a directory: {path}", use_json=use_json
-        )
-        raise SystemExit(1)
-
     from portolan_cli.scan.workflow import run_scan
 
     # Pre-count directories only when progress will be displayed
     # ScanProgressReporter displays progress when: not json_mode AND stderr is TTY
+    # count_directories returns 0 for a bad path, and run_scan then reports it.
     should_show_progress = not use_json and sys.stderr.isatty()
     total_dirs = 0
     if should_show_progress:
@@ -2458,11 +2446,9 @@ def scan(
                 dry_run=dry_run,
                 progress_callback=progress_reporter.advance,
             )
-    except FileNotFoundError as err:
-        emit_error("scan", "FileNotFoundError", str(err), use_json=use_json)
-        raise SystemExit(1) from err
-    except NotADirectoryError as err:
-        emit_error("scan", "NotADirectoryError", str(err), use_json=use_json)
+    except (FileNotFoundError, NotADirectoryError) as err:
+        # The class name is the error type: PathNotFoundError for a missing path.
+        emit_error("scan", type(err).__name__, str(err), use_json=use_json)
         raise SystemExit(1) from err
 
     # Warn if --dry-run is used without --fix (no effect)

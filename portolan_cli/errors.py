@@ -310,6 +310,15 @@ class NoGeometryError(ValueError):
         super().__init__(f"Cannot create STAC item for '{path}': missing bounding box. {reason}")
 
 
+class PathNotFoundError(FileNotFoundError):
+    """Raised when a path that a command reads does not exist.
+
+    This is a FileNotFoundError subclass, not a PortolanError. Its message has
+    no ``[code]`` prefix, so the JSON error envelope keeps the message that
+    commands reported before the class existed.
+    """
+
+
 class MissingGeometryError(ValidationError):
     """Raised when a GeoParquet file has no geometry column.
 

@@ -90,9 +90,16 @@ def run_scan(
         The outcome of the scan.
 
     Raises:
-        FileNotFoundError: If `path` does not exist.
+        PathNotFoundError: If `path` does not exist.
         NotADirectoryError: If `path` is not a directory.
     """
+    from portolan_cli.errors import PathNotFoundError
+
+    if not path.exists():
+        raise PathNotFoundError(f"Directory does not exist: {path}")
+    if not path.is_dir():
+        raise NotADirectoryError(f"Path is not a directory: {path}")
+
     options = ScanOptions(
         recursive=recursive,
         max_depth=max_depth,
