@@ -12,7 +12,7 @@ import json
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from rashid.model import Finding, Report, Severity
+from rashid_core import Finding, Report, Severity
 
 from portolan_cli.metadata.fix import FixAction, FixReport, FixResult
 from portolan_cli.validation.remediation import Bucket
@@ -139,6 +139,17 @@ class TestFindingEnrichment:
         assert emitted["remediation"] == Bucket.AUTO.value
         assert emitted["auto_fixable"] is True
         assert emitted["requirement"].startswith("Declare the versioned Portolan schema URI")
+
+    def test_an_info_finding_of_an_auto_rule_is_not_auto_fixable(self) -> None:
+        """An INFO is a note, so an agent running ``--fix`` until ``auto`` is zero stops."""
+        payload = build_check_payload(
+            _outcome([_finding("PTL-DAT-006", Severity.INFO)]), mode="all"
+        )
+        emitted = payload["findings"][0]
+        assert emitted["remediation"] == Bucket.INSTRUCT.value
+        assert emitted["auto_fixable"] is False
+        assert emitted["requirement"]
+        assert payload["counts_by_remediation"][Bucket.AUTO.value] == 0
 
     def test_instruct_rule_is_not_auto_fixable(self) -> None:
         emitted = build_check_payload(_outcome([_finding("PTL-LIC-001")]), mode="all")["findings"][
@@ -293,6 +304,14 @@ class TestFixPayloadAccounting:
             pre_findings=[_finding("PTL-BBX-001"), _finding("PTL-LIC-001")],
         )
         assert payload["auto_count"] == 1
+
+    def test_an_info_finding_is_neither_counted_nor_a_survivor(self) -> None:
+        info = _finding("PTL-DAT-006", Severity.INFO)
+        payload = _fix_payload(pre_findings=[info])
+        annotate_survivors(payload, _outcome([info]), pre_findings=[info])
+        assert payload["auto_count"] == 0
+        assert payload["survivors"] == []
+        assert payload["fixed_count"] == 0
 
     def test_legacy_and_dry_run_keys_survive(self) -> None:
         payload = _fix_payload(dry_run=True)

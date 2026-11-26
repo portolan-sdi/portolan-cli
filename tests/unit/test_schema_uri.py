@@ -10,14 +10,14 @@ from __future__ import annotations
 import re
 
 import pytest
-from rashid.schema import bundled_schema_versions
+from rashid_core.schema import bundled_schema_versions
 
 from portolan_cli.constants import PORTOLAN_SCHEMA_URI, PORTOLAN_SPEC_VERSION
 from portolan_cli.stac import ensure_portolan_schema_uri
 
 pytestmark = pytest.mark.unit
 
-# The pattern rashid matches profile URIs against (rashid.rules.conformance).
+# The pattern rashid matches profile URIs against (rashid_core.rules.conformance).
 RASHID_PATTERN = re.compile(
     r"^https://schemas\.portolan-sdi\.org/portolan/v\d+\.\d+\.\d+/schema\.json$"
 )

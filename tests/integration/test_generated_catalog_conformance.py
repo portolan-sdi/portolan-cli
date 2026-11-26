@@ -38,8 +38,8 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 import yaml
-from rashid import RulesConfig, Severity, validate
-from rashid.data.reader import LocalOnlyReader
+from rashid_core import RulesConfig, Severity, ValidationOptions, validate
+from rashid_core.data.reader import LocalOnlyReader
 
 from tests.catalog_invariants import check_catalog_invariants
 from tests.known_upstream import GPIO_WFS_OOM
@@ -511,7 +511,29 @@ HOST_UNSET = {"PTL-PRV-002": "host unset by design", "PTL-SCH-001": "host unset 
 ONE_MIRROR = {"PTL-PRO-002": 1}
 
 
-def _realdata_row(source: Path) -> Scenario:
+def _undescribed(assets: int, columns: int = 0, too_few_rows: int = 0) -> dict[str, int]:
+    """The advisories rashid 0.4 added that a CLI-built catalog still draws.
+
+    PTL-AST-010 asks every asset for a title and a description (PORTO-CORE-088,
+    a SHOULD), and ``add`` writes neither on most assets (#1137, item 6).
+    PTL-DAT-020 asks every ``table:columns`` entry for a description
+    (PORTO-FMT-077, a SHOULD), and ``add`` has none to copy (#1137, item 3).
+    PTL-DAT-006 is an INFO when a file holds too few rows to judge its spatial
+    order, as the small test files do.
+    """
+    counts = {"PTL-AST-010": assets, "PTL-DAT-020": columns, "PTL-DAT-006": too_few_rows}
+    return {rule: count for rule, count in counts.items() if count}
+
+
+# One vector `add` into a mirror collection.
+ONE_VECTOR = {**ONE_MIRROR, **_undescribed(4, columns=1, too_few_rows=1)}
+
+# The sample scene declares no nodata value, alpha band, or mask, so rashid asks
+# for one (PTL-DAT-019, PORTO-FMT-073, a SHOULD). That is the data, not the CLI.
+NO_NODATA = {"PTL-DAT-019": 1}
+
+
+def _realdata_row(source: Path, *, too_few_rows: int = 0) -> Scenario:
     """A realdata file that ``add`` takes as it ships.
 
     The four older Parquet files declare GeoParquet 1.0.0, which PTL-DAT-012
@@ -519,27 +541,46 @@ def _realdata_row(source: Path) -> Scenario:
     column, so the published file passes (TestRealdataGeoParquetIsRewritten).
     """
     return Scenario(
-        _realdata(source), expected_advisories=ONE_MIRROR, marks=(pytest.mark.realdata,)
+        _realdata(source),
+        expected_advisories={
+            **ONE_MIRROR,
+            **_undescribed(4, columns=1, too_few_rows=too_few_rows),
+        },
+        marks=(pytest.mark.realdata,),
     )
 
 
 SCENARIOS: dict[str, Scenario] = {
-    "fresh": Scenario(build_fresh, expected_advisories={"PTL-PRO-002": 4}),
-    "re-add": Scenario(build_re_add, expected_advisories={"PTL-PRO-002": 4}),
+    "fresh": Scenario(
+        build_fresh,
+        expected_advisories={
+            "PTL-PRO-002": 4,
+            **_undescribed(21, columns=3, too_few_rows=3),
+            **NO_NODATA,
+        },
+    ),
+    "re-add": Scenario(
+        build_re_add,
+        expected_advisories={
+            "PTL-PRO-002": 4,
+            **_undescribed(21, columns=3, too_few_rows=3),
+            **NO_NODATA,
+        },
+    ),
     "force-after-mutation": Scenario(
         build_force_after_mutation,
         # metadata.yaml now reaches both collections (#813), and it names a
         # producer distinct from the host, so both are mirrors.
-        expected_advisories={"PTL-PRO-002": 2},
+        expected_advisories={"PTL-PRO-002": 2, **_undescribed(6, columns=2, too_few_rows=1)},
     ),
-    "readme": Scenario(build_readme, expected_advisories=ONE_MIRROR),
-    "item-id": Scenario(build_item_id, expected_advisories={"PTL-PRO-002": 1}),
+    "readme": Scenario(build_readme, expected_advisories=ONE_VECTOR),
+    "item-id": Scenario(
+        build_item_id,
+        expected_advisories={**ONE_MIRROR, **_undescribed(11, too_few_rows=1), **NO_NODATA},
+    ),
     "multi-file": Scenario(
         build_multi_file,
-        # rashid compares each collection-level asset with extent.spatial.bbox[0]
-        # and never reads an asset-level bbox, so no CLI change clears this.
-        known_errors={"PTL-DAT-005": "#932"},
-        expected_advisories=ONE_MIRROR,
+        expected_advisories={**ONE_MIRROR, **_undescribed(6, columns=2, too_few_rows=1)},
         marks=(pytest.mark.realdata,),
     ),
     "partitioned": Scenario(
@@ -551,9 +592,13 @@ SCENARIOS: dict[str, Scenario] = {
             "PTL-EXT-001": "#914",
             "PTL-PRT-001": "#914",
             "PTL-SCH-001": "#914",
+            # `add` writes the partition glob as a `data` asset href, and
+            # PORTO-FMT-065 says a data asset href MUST NOT contain `*`.
+            "PTL-AST-012": "#1143",
         },
         expected_advisories={
             **ONE_MIRROR,
+            **_undescribed(11, too_few_rows=1),
             # The partition asset names its files with a glob, and a glob has no
             # single size or checksum. #914 holds the spec question.
             "PTL-AST-003": 2,
@@ -564,27 +609,23 @@ SCENARIOS: dict[str, Scenario] = {
     ),
     "antimeridian": Scenario(
         build_antimeridian,
-        expected_advisories={"PTL-PRO-002": 2},
+        expected_advisories={"PTL-PRO-002": 2, **_undescribed(10, columns=2, too_few_rows=2)},
         marks=(pytest.mark.realdata,),
     ),
     "sibling-pmtiles": Scenario(
         build_sibling_pmtiles,
         expected_advisories={
             **ONE_MIRROR,
+            **_undescribed(7, columns=1, too_few_rows=1),
             # sample.pmtiles holds three points in San Francisco, New York, and
             # Chicago, so its bounds differ from points.parquet on purpose.
             "PTL-DAT-005": 1,
         },
     ),
-    "iceberg": Scenario(
-        build_iceberg,
-        expected_advisories={
-            **ONE_MIRROR,
-            # The incubating Iceberg extension is not in rashid's registry.
-            "PTL-EXT-002": 1,
-        },
+    "iceberg": Scenario(build_iceberg, expected_advisories=ONE_VECTOR),
+    "realdata-fieldmaps-boundaries": _realdata_row(
+        REALDATA / "fieldmaps-boundaries.parquet", too_few_rows=1
     ),
-    "realdata-fieldmaps-boundaries": _realdata_row(REALDATA / "fieldmaps-boundaries.parquet"),
     "realdata-nwi-wetlands": _realdata_row(REALDATA / "nwi-wetlands.parquet"),
     "realdata-open-buildings": _realdata_row(REALDATA / "open-buildings.parquet"),
     "realdata-road-detections": _realdata_row(REALDATA / "road-detections.parquet"),
@@ -596,11 +637,13 @@ SCENARIOS: dict[str, Scenario] = {
             # level. No layout of one COG passes both. The maintainer decides.
             "PTL-COL-001": SINGLE_COG_LAYOUT,
         },
-        expected_advisories={"PTL-PRO-002": 1},
+        expected_advisories={**ONE_MIRROR, **_undescribed(7, too_few_rows=1), **NO_NODATA},
         marks=(pytest.mark.realdata,),
     ),
     "realdata-affordable-housing": _realdata_row(PHILADELPHIA / "affordable_housing.parquet"),
-    "realdata-council-districts": _realdata_row(PHILADELPHIA / "council_districts_2024.parquet"),
+    "realdata-council-districts": _realdata_row(
+        PHILADELPHIA / "council_districts_2024.parquet", too_few_rows=1
+    ),
     # The GDAL autotest file declares no CRS on its one spatial layer, so `add`
     # refuses it. That refusal is correct, and the catalog stays empty.
     "realdata-field-alias-gdb": Scenario(
@@ -610,19 +653,22 @@ SCENARIOS: dict[str, Scenario] = {
     "extract-arcgis": Scenario(
         build_extract_arcgis,
         known_errors=HOST_UNSET,
+        expected_advisories=_undescribed(10, columns=2, too_few_rows=1),
         marks=(pytest.mark.realdata,),
     ),
     "extract-wfs": Scenario(
         build_extract_wfs,
         known_errors=HOST_UNSET,
+        expected_advisories=_undescribed(10, columns=2, too_few_rows=2),
         marks=(GPIO_WFS_OOM,),
     ),
     "extract-carto": Scenario(
         build_extract_carto,
         known_errors=HOST_UNSET,
+        expected_advisories=_undescribed(4, columns=1, too_few_rows=1),
     ),
-    "push": Scenario(build_push, expected_advisories=ONE_MIRROR),
-    "clone": Scenario(build_clone, expected_advisories=ONE_MIRROR),
+    "push": Scenario(build_push, expected_advisories=ONE_VECTOR),
+    "clone": Scenario(build_clone, expected_advisories=ONE_VECTOR),
 }
 
 
@@ -682,15 +728,17 @@ def _validate(root: Path, **kwargs: Any) -> Any:
     the catalog tree and nowhere else. ``live`` stays off; it is the only pass
     that probes hosts by design. The extension pass still fetches a registered
     extension at a version rashid does not pin. A test that declares one stubs
-    ``rashid.extensions._fetch_schema``.
+    ``rashid_core.extensions.fetch_schema``.
     """
     return validate(
         root,
-        structural=True,
-        schema=True,
-        data=True,
-        data_reader_factory=LocalOnlyReader,
-        **kwargs,
+        options=ValidationOptions(
+            structural=True,
+            schema=True,
+            data=True,
+            data_reader_factory=LocalOnlyReader,
+            **kwargs,
+        ),
     )
 
 
@@ -1374,12 +1422,12 @@ class TestTheGateCatchesTheDriftItWasBuiltFor:
         not pin. The stub makes that fetch fail, so the extension pass reports
         PTL-EXT-000 on every machine and the test stays offline.
         """
-        import rashid.extensions
+        import rashid_core.extensions
 
         def offline(uri: str) -> dict[str, Any]:
             raise OSError(f"offline test: {uri}")
 
-        monkeypatch.setattr(rashid.extensions, "_fetch_schema", offline)
+        monkeypatch.setattr(rashid_core.extensions, "fetch_schema", offline)
         item_path = damaged / "imagery" / "scene-a" / "scene-a.json"
         item = _load(item_path)
         item["stac_extensions"] = [

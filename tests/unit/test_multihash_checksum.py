@@ -29,7 +29,7 @@ class TestMultihashSha256:
         assert encoded == f"1220{digest}"
 
     def test_decodes_as_a_well_formed_multihash(self) -> None:
-        from rashid.api import decode_multihash
+        from rashid_core.api import decode_multihash
 
         decoded = decode_multihash(multihash_sha256(hashlib.sha256(b"x").hexdigest()))
 

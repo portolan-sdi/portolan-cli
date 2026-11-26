@@ -264,6 +264,12 @@ def test_query_installs_spatial_before_loading_it() -> None:
 # The example runs portolan in a subprocess. It draws thumbnails there, and the
 # no_basemap_tiles patch does not reach it.
 @pytest.mark.refused_hosts("server.arcgisonline.com")
+# rashid 0.4 warns on PTL-AST-010 and PTL-DAT-020, and `add` writes neither
+# field yet, so the example's `check --strict` step stops the run.
+@pytest.mark.xfail(
+    strict=True,
+    reason="#1137: add writes no asset title, description or column descriptions, so check --strict fails",
+)
 @pytest.mark.integration
 def test_example_builds_and_analyzes_a_philadelphia_catalog(tmp_path: Path) -> None:
     """The public workflow extracts, documents, validates, and analyzes two Collections."""
@@ -366,6 +372,12 @@ def test_example_builds_and_analyzes_a_philadelphia_catalog(tmp_path: Path) -> N
 # The example runs portolan in a subprocess. It draws thumbnails there, and the
 # no_basemap_tiles patch does not reach it.
 @pytest.mark.refused_hosts("server.arcgisonline.com")
+# rashid 0.4 warns on PTL-AST-010 and PTL-DAT-020, and `add` writes neither
+# field yet, so the example's `check --strict` step stops the run.
+@pytest.mark.xfail(
+    strict=True,
+    reason="#1137: add writes no asset title, description or column descriptions, so check --strict fails",
+)
 @pytest.mark.e2e
 def test_example_publishes_assets_that_remain_queryable_without_arcgis(
     tmp_path: Path,

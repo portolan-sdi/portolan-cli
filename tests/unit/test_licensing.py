@@ -3,7 +3,7 @@
 A collection with no license, or with ``other`` and no ``rel="license"`` link,
 fails the validator: PTL-LIC-001 and PTL-LIC-002 are both ERROR. ``license_gap``
 answers whether generation is about to produce one of those, branch for branch
-against ``rashid.rules.license``, so ``portolan add`` refuses the write instead
+against ``rashid_core.rules.license``, so ``portolan add`` refuses the write instead
 of shipping a catalog ``portolan check`` then rejects.
 
 Spelling is deliberately out of scope here. rashid keeps its 727-identifier SPDX

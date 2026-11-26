@@ -6,7 +6,7 @@ to avoid duplication and ensure consistency.
 
 from __future__ import annotations
 
-from rashid.schema import bundled_schema_versions
+from rashid_core.schema import bundled_schema_versions
 
 from portolan_cli import extension_registry as _reg
 

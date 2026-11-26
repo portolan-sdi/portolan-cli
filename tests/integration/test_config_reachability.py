@@ -1148,10 +1148,19 @@ def test_the_default_vector_thumbnail_is_over_128_at_quality_75(
 # ---------------------------------------------------------------------------
 
 
+#: The two rules the check.* settings act on. The tests read only these, so a
+#: rashid release that adds an unrelated rule cannot move them.
+_CONFIGURED_RULES = frozenset({"PTL-FIL-005", "PTL-PRV-001"})
+
+
 def _findings(run_cli: RunCli, catalog: Path, expect: int) -> list[tuple[str, str]]:
     result = run_cli("--format", "json", "check", str(catalog), expect=expect)
     findings = json.loads(result.output)["data"]["findings"]
-    return [(finding["rule_id"], finding["severity"]) for finding in findings]
+    return [
+        (finding["rule_id"], finding["severity"])
+        for finding in findings
+        if finding["rule_id"] in _CONFIGURED_RULES
+    ]
 
 
 @_tests("check.disabled", "check.severity.*")

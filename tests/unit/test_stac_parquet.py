@@ -1097,7 +1097,7 @@ class TestMirrorAssetFileFields:
     def test_checksum_is_a_well_formed_multihash(self, collection_with_items: Path) -> None:
         # PORTO-CORE-029 / PTL-AST-004. Assert with rashid's own predicate so the
         # test cannot drift away from the rule that gates the catalog.
-        from rashid.api import is_well_formed_multihash
+        from rashid_core.api import is_well_formed_multihash
 
         from portolan_cli.stac_parquet import (
             generate_items_parquet,

@@ -6,7 +6,7 @@ directions on the same file, so a user was told a real license was invalid, or
 shipped a catalog that failed validation after ``metadata validate`` passed.
 
 These tests assert the two now agree by construction. They compare against
-``rashid.api.SPDX_LICENSE_IDS``, the object the rule itself uses, so a future
+``rashid_core.api.SPDX_LICENSE_IDS``, the object the rule itself uses, so a future
 divergence has nowhere to hide.
 """
 
@@ -15,7 +15,7 @@ from __future__ import annotations
 import random
 
 import pytest
-from rashid.api import SPDX_LICENSE_IDS
+from rashid_core.api import SPDX_LICENSE_IDS
 
 from portolan_cli.metadata_yaml import validate_metadata
 

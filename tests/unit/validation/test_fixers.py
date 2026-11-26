@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from rashid.model import Finding, Severity
+from rashid_core.model import Finding, Severity
 
 from portolan_cli.metadata.fix import FixAction, FixResult
 from portolan_cli.validation import fixers as fixers_module
@@ -161,6 +161,22 @@ class TestAutoFixerKeys:
 
     def test_unknown_rule_id_is_not_auto(self) -> None:
         assert auto_fixer_keys([_finding("PTL-ZZZ-999")]) == []
+
+    def test_an_info_finding_selects_no_fixer(self) -> None:
+        """An INFO is a note, not a defect, so it never starts a repair.
+
+        rashid 0.4 reports PTL-DAT-006 as an INFO when a file has too few rows
+        to judge its order. Selecting ``convert`` for it claimed a repair the
+        file did not need.
+        """
+        info = Finding(
+            rule_id="PTL-DAT-006",
+            severity=Severity.INFO,
+            message="too few rows to judge",
+            path="roads/roads.parquet",
+        )
+        assert auto_fixer_keys([info]) == []
+        assert auto_fixer_keys([info, _finding("PTL-DAT-006")]) == ["convert"]
 
 
 class TestApplyFixers:

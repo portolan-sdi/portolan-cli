@@ -21,7 +21,7 @@ import json
 from pathlib import Path, PurePath
 from typing import Any
 
-from rashid.catalog import is_absolute_href
+from rashid_core.api import is_absolute_href
 
 from portolan_cli.json_io import write_json_atomic
 from portolan_cli.stac_links import visible_stac_files
@@ -55,7 +55,7 @@ def markdown_link_gap(stac_path: Path, data: dict[str, Any], *, rel: str, target
 
     Replicated rather than imported because rashid keeps ``_check_markdown_link``
     private. rashid#57 exported the COG predicate, the structural relations, and
-    the multihash helpers, so those now come from ``rashid.api``; this one still
+    the multihash helpers, so those now come from ``rashid_core.api``; this one still
     has no public counterpart. A change to PTL-FIL-002/-003 must land here too.
 
     Args:

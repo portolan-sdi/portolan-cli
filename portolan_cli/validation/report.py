@@ -8,7 +8,9 @@ The contract, per finding, is rashid's ``Finding.to_dict()`` verbatim plus three
 CLI-owned keys:
 
 - ``remediation`` — ``auto`` / ``instruct`` / ``external``.
-- ``auto_fixable`` — shorthand for ``remediation == "auto"``.
+- ``auto_fixable`` — shorthand for ``remediation == "auto"``. An INFO finding
+  is never ``auto``: it is a note, so it reports its rule's sentence as
+  ``instruct``.
 - ``requirement`` — the imperative sentence for the defect, empty when the rule
   id is not in the remediation table.
 
@@ -49,7 +51,7 @@ from importlib.metadata import version
 from typing import TYPE_CHECKING, Any
 
 from portolan_cli.constants import PORTOLAN_SPEC_VERSION
-from portolan_cli.validation.remediation import Bucket, remediation_for
+from portolan_cli.validation.remediation import Bucket, remediation_of
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -62,7 +64,7 @@ VALIDATOR_NAME = "rashid"
 
 def _enrich(finding: Any) -> dict[str, Any]:
     payload: dict[str, Any] = finding.to_dict()
-    remediation = remediation_for(finding.rule_id)
+    remediation = remediation_of(finding)
     payload["remediation"] = remediation.bucket.value
     payload["auto_fixable"] = remediation.bucket is Bucket.AUTO
     payload["requirement"] = remediation.requirement
@@ -176,7 +178,7 @@ def build_fix_payload(
     payload["selected"] = selected
     payload["skipped"] = skipped
     payload["auto_count"] = sum(
-        1 for finding in pre_findings if remediation_for(finding.rule_id).bucket is Bucket.AUTO
+        1 for finding in pre_findings if remediation_of(finding).bucket is Bucket.AUTO
     )
     payload["dry_run"] = dry_run
     return payload
@@ -191,7 +193,7 @@ def _auto_occurrences(findings: Iterable[Any]) -> list[tuple[str, str | None, st
     seen: dict[tuple[str, str | None, str | None], int] = {}
     keys: list[tuple[str, str | None, str | None, int]] = []
     for finding in findings:
-        if remediation_for(finding.rule_id).bucket is not Bucket.AUTO:
+        if remediation_of(finding).bucket is not Bucket.AUTO:
             continue
         group = (finding.rule_id, finding.path, finding.json_pointer)
         index = seen.get(group, 0)

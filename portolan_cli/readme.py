@@ -1216,7 +1216,7 @@ def readme_link_gap(stac_path: Path, data: dict[str, Any]) -> bool:
 
     Replicated rather than imported because rashid keeps ``_check_markdown_link``
     private. rashid#57 exported the COG predicate, the structural relations, and
-    the multihash helpers, so those now come from ``rashid.api``; this one still
+    the multihash helpers, so those now come from ``rashid_core.api``; this one still
     has no public counterpart. A change to PTL-FIL-003 must land here too.
 
     Args:

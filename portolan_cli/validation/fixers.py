@@ -49,11 +49,11 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
 
-from rashid.api import STRUCTURAL_RELS, has_cog, links_of, roles_of
-from rashid.catalog import CatalogGraph, Node, is_absolute_href
+from rashid_core.api import STRUCTURAL_RELS, has_cog, is_absolute_href, links_of, roles_of
+from rashid_core.catalog import CatalogGraph, Node
 
 from portolan_cli.metadata.fix import FixAction, FixReport, FixResult
-from portolan_cli.validation.remediation import Bucket, remediation_for
+from portolan_cli.validation.remediation import Bucket, remediation_of
 
 if TYPE_CHECKING:
     from portolan_cli.run_state import RunState
@@ -1090,7 +1090,7 @@ def auto_fixer_keys(findings: Iterable[Any]) -> list[str]:
     """The distinct fixer keys the AUTO findings call for, in execution order.
 
     Args:
-        findings: rashid findings, any severity.
+        findings: rashid findings, any severity. An INFO selects no fixer.
 
     Returns:
         Registry keys, deduplicated (including across :data:`_COMPOSED_OF`) and
@@ -1098,7 +1098,7 @@ def auto_fixer_keys(findings: Iterable[Any]) -> list[str]:
     """
     wanted = set()
     for finding in findings:
-        remediation = remediation_for(finding.rule_id)
+        remediation = remediation_of(finding)
         if remediation.bucket is Bucket.AUTO and remediation.fixer in FIXERS:
             wanted.add(remediation.fixer)
     for composite, members in _COMPOSED_OF.items():

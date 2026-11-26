@@ -11,7 +11,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from rashid.model import Report
+from rashid_core import Report
 
 from portolan_cli.metadata.models import MetadataCheckResult, MetadataReport, MetadataStatus
 from portolan_cli.validation.runner import run_check

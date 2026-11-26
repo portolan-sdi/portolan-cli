@@ -32,7 +32,7 @@ import os
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any
 
-from rashid.catalog import is_absolute_href
+from rashid_core.api import is_absolute_href
 
 from portolan_cli.constants import ROLE_COLLECTION_MIRROR
 from portolan_cli.json_io import write_json_atomic
