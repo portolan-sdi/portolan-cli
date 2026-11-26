@@ -267,9 +267,7 @@ def test_mixed_catalog_pull_uses_plugins_and_file_backend(
         patch("portolan_cli.sync.pull._setup_store_and_kwargs", return_value=(object(), {})),
         patch("portolan_cli.sync.pull.pull_async", file_pull),
     ):
-        result = asyncio.run(
-            pull_all_collections_async("s3://example/catalog", root)
-        )
+        result = asyncio.run(pull_all_collections_async("s3://example/catalog", root))
     assert result.success is True
     assert recording.pulls == [("remote", False)]
     assert [call.kwargs["collection"] for call in file_pull.call_args_list] == ["local"]

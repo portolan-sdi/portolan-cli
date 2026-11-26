@@ -238,7 +238,7 @@ class TestProfileDefaultBehavior:
         runner = CliRunner()
         clone_target = tmp_path / "cloned-catalog"
 
-        with patch("portolan_cli.sync.core.clone") as mock_clone:
+        with patch("portolan_cli.sync.transport.clone") as mock_clone:
             mock_clone.return_value = MagicMock(
                 success=True,
                 local_path=clone_target,
@@ -409,7 +409,7 @@ class TestProfileConfigResolution:
         runner = CliRunner()
         clone_target = tmp_path / "cloned-catalog"
 
-        with patch("portolan_cli.sync.core.clone") as mock_clone:
+        with patch("portolan_cli.sync.transport.clone") as mock_clone:
             mock_clone.return_value = MagicMock(
                 success=True,
                 local_path=clone_target,

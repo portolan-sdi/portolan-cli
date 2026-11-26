@@ -4217,44 +4217,22 @@ def sync(
             fix=fix,
             profile=resolved_profile,
             region=resolved_region,
+            report=_report,
         )
     except ProfileCredentialsError as err:
         emit_error("sync", type(err).__name__, str(err), use_json=use_json, code=err.code)
         raise SystemExit(1) from err
 
     if use_json:
-        data: dict[str, Any] = {
-            "init_performed": result.init_performed,
-            "errors": result.errors,
-        }
-
-        # Include pull results if available
-        if result.pull_result is not None:
-            data["pull"] = {
-                "files_downloaded": result.pull_result.files_downloaded,
-                "files_skipped": result.pull_result.files_skipped,
-                "up_to_date": result.pull_result.up_to_date,
-                "local_version": result.pull_result.local_version,
-                "remote_version": result.pull_result.remote_version,
-            }
-
-        # Include push results if available
-        if result.push_result is not None:
-            data["push"] = {
-                "files_uploaded": result.push_result.files_uploaded,
-                "versions_pushed": result.push_result.versions_pushed,
-                "conflicts": result.push_result.conflicts,
-            }
-
         if result.success:
-            envelope = success_envelope("sync", data)
+            envelope = success_envelope("sync", result.to_dict())
         else:
             errors = [ErrorDetail(type="SyncError", message=err_msg) for err_msg in result.errors]
-            envelope = error_envelope("sync", errors, data=data)
+            envelope = error_envelope("sync", errors, data=result.to_dict())
 
         output_json_envelope(envelope)
     else:
-        # Human-readable output is already printed by sync()
+        # sync() reported each step through _report.
         # Just handle the final status
         if result.success:
             if dry_run:
@@ -4334,8 +4312,8 @@ def clone(
         # Clone specific collection with profile
         portolan clone s3://mybucket/catalog ./data -c imagery --profile prod
     """
-    from portolan_cli.sync.core import clone as clone_fn
-    from portolan_cli.sync.core import infer_local_path_from_url
+    from portolan_cli.sync.transport import clone as clone_fn
+    from portolan_cli.sync.transport import infer_local_path_from_url
 
     use_json = should_output_json(ctx, json_output)
 
@@ -4362,23 +4340,12 @@ def clone(
         local_path=local_path,
         collection=collection,
         profile=resolved_profile,
+        report=_report,
     )
 
     if use_json:
-        data: dict[str, Any] = {
-            "local_path": str(result.local_path),
-            "collections_cloned": result.collections_cloned,
-            "total_files_downloaded": result.total_files_downloaded,
-        }
-
-        if result.pull_result is not None:
-            data["pull"] = {
-                "files_downloaded": result.pull_result.files_downloaded,
-                "remote_version": result.pull_result.remote_version,
-            }
-
         if result.success:
-            envelope = success_envelope("clone", data)
+            envelope = success_envelope("clone", result.to_dict())
         else:
             errors = [
                 ErrorDetail(type="CloneError", message=err, code="CLONE_FAILED")

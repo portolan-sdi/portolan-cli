@@ -1,8 +1,10 @@
-"""Command parity for `pull`, `sync`, and `clone` against a local directory remote.
+"""Command parity for `pull`, `sync`, and `clone` against an in-memory remote.
 
-The remote is a directory. Each object-store setup returns a ``LocalStore``
-rooted above it, so ``s3://bucket/catalog`` resolves to ``<remote>/catalog``.
-No test sends a network request.
+Each object-store setup returns one ``MemoryStore``. The fixture fills it from
+a local source catalog under the key prefix ``catalog``, so
+``s3://bucket/catalog`` resolves to that catalog. No test sends a network
+request. A ``LocalStore`` does not take the conditional puts of push, so the
+remote is in memory.
 """
 
 from __future__ import annotations
@@ -13,9 +15,11 @@ from typing import TYPE_CHECKING, Any
 from unittest.mock import patch
 
 import pytest
-from obstore.store import LocalStore
+from obstore.store import MemoryStore
 
+from portolan_cli.sync.core import sync
 from portolan_cli.sync.pull import pull_catalog
+from portolan_cli.sync.transport import clone
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
@@ -30,20 +34,19 @@ ASSET = Path("points") / "points.parquet"
 
 
 @pytest.fixture
-def remote_dir(tmp_path: Path) -> Iterator[Path]:
-    """Route every object-store setup of push and pull to a directory remote."""
-    bucket = tmp_path / "bucket"
-    bucket.mkdir()
+def remote() -> Iterator[list[MemoryStore]]:
+    """Route every object-store setup of push and pull to the current remote store."""
+    current = [MemoryStore()]
 
-    def local_store(*_args: Any, **_kwargs: Any) -> tuple[LocalStore, dict[str, Any]]:
-        return LocalStore(prefix=bucket), {}
+    def memory_store(*_args: Any, **_kwargs: Any) -> tuple[MemoryStore, dict[str, Any]]:
+        return current[0], {}
 
     with (
-        patch("portolan_cli.sync.upload._setup_store_and_kwargs", side_effect=local_store),
-        patch("portolan_cli.sync.pull._setup_store_and_kwargs", side_effect=local_store),
-        patch("portolan_cli.sync.download._setup_store_and_kwargs", side_effect=local_store),
+        patch("portolan_cli.sync.upload._setup_store_and_kwargs", side_effect=memory_store),
+        patch("portolan_cli.sync.pull._setup_store_and_kwargs", side_effect=memory_store),
+        patch("portolan_cli.sync.download._setup_store_and_kwargs", side_effect=memory_store),
     ):
-        yield bucket / "catalog"
+        yield current
 
 
 @pytest.fixture
@@ -63,13 +66,16 @@ def source_catalog(
 
 
 @pytest.fixture
-def published(source_catalog: Path, remote_dir: Path) -> Callable[[], None]:
-    """Return a function that publishes the source catalog to the remote again."""
+def published(source_catalog: Path, remote: list[MemoryStore]) -> Callable[[], None]:
+    """Return a function that publishes the source catalog to a fresh remote."""
 
     def publish() -> None:
-        if remote_dir.exists():
-            shutil.rmtree(remote_dir)
-        shutil.copytree(source_catalog, remote_dir, ignore=shutil.ignore_patterns(".portolan"))
+        store = MemoryStore()
+        for path in sorted(source_catalog.rglob("*")):
+            rel = path.relative_to(source_catalog)
+            if path.is_file() and rel.parts[0] != ".portolan":
+                store.put(f"catalog/{rel.as_posix()}", path.read_bytes())
+        remote[0] = store
 
     return publish
 
@@ -129,4 +135,36 @@ def test_pull_invalid_remote(parity: Parity, local_in_sync: Callable[[Path], Non
         catalog=local_in_sync,
         call=lambda root: pull_catalog("ftp://bucket/catalog", Path(), "points"),
         raises=ValueError,
+    )
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "#1133: sync.push still prints through portolan_cli.output. The push change "
+        "of #1133 removes that output. Delete this mark when it merges."
+    ),
+)
+def test_sync_in_sync(parity: Parity, local_in_sync: Callable[[Path], None]) -> None:
+    """`sync -c points` runs pull, init, scan, check, and push on a catalog in sync."""
+    parity(
+        "sync",
+        [REMOTE, "-c", "points"],
+        catalog=local_in_sync,
+        call=lambda root: sync(Path(), "points", REMOTE),
+    )
+
+
+def test_clone_all(parity: Parity, published: Callable[[], None]) -> None:
+    """`clone <remote> cloned` copies every collection into a new catalog."""
+
+    def empty(root: Path) -> None:
+        published()
+        root.mkdir()
+
+    parity(
+        "clone",
+        [REMOTE, "cloned"],
+        catalog=empty,
+        call=lambda root: clone(REMOTE, Path("cloned")),
     )

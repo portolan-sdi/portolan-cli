@@ -349,7 +349,6 @@ ignore = [
 "portolan_cli/collection_thumbnail.py" = ["TID251"] # D
 "portolan_cli/viz/pmtiles.py" = ["TID251"] # D
 "portolan_cli/viz/style.py" = ["TID251"] # D
-"portolan_cli/sync/core.py" = ["TID251"] # E
 "portolan_cli/sync/push.py" = ["TID251"] # E
 "portolan_cli/extract/arcgis/imageserver/extractor.py" = ["TID251"] # F
 "portolan_cli/extract/arcgis/imageserver/orchestrator.py" = ["TID251"] # F
@@ -700,7 +699,6 @@ ignore_imports = [
     "portolan_cli.collection_thumbnail -> portolan_cli.output", # D
     "portolan_cli.viz.pmtiles -> portolan_cli.output", # D
     "portolan_cli.viz.style -> portolan_cli.output", # D
-    "portolan_cli.sync.core -> portolan_cli.output", # E
     "portolan_cli.sync.push -> portolan_cli.output", # E
     "portolan_cli.sync.upload -> portolan_cli.output", # E
     "portolan_cli.extract.arcgis.imageserver.extractor -> portolan_cli.output", # F

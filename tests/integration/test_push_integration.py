@@ -1723,8 +1723,8 @@ class TestPushAgainstMoto:
         self, tmp_path: Path, bucket: tuple[str, Any]
     ) -> None:
         """Issue #1042: the clone holds collection.json, README.md, and AGENTS.md."""
-        from portolan_cli.sync.core import clone
         from portolan_cli.sync.push import push_all_collections
+        from portolan_cli.sync.transport import clone
 
         name, client = bucket
         root = _catalog(tmp_path, {"roads": {"roads.parquet": b"P"}})
