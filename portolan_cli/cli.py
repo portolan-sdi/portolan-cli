@@ -3085,18 +3085,7 @@ def add_external_cmd(
         emit_error("add-external", type(err).__name__, str(err), use_json=use_json)
         raise SystemExit(1) from err
 
-    if not emit_success(
-        "add-external",
-        {
-            "collection_id": result.collection_id,
-            "collection_path": str(result.collection_path),
-            "href": result.href,
-            "media_type": result.media_type,
-            "via": result.via_url,
-            "managed": False,
-        },
-        use_json=use_json,
-    ):
+    if not emit_success("add-external", result.to_dict(), use_json=use_json):
         success(f"Registered external collection '{result.collection_id}'")
         info_output(f"  href: {result.href}")
         info_output(f"  type: {result.media_type} (external, not managed)")

@@ -25,6 +25,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlparse
 
 import pystac
@@ -88,6 +89,17 @@ class ExternalAddResult:
     href: str
     media_type: str
     via_url: str | None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return the envelope ``data`` of ``portolan add-external``."""
+        return {
+            "collection_id": self.collection_id,
+            "collection_path": str(self.collection_path),
+            "href": self.href,
+            "media_type": self.media_type,
+            "via": self.via_url,
+            "managed": False,
+        }
 
 
 def is_external_href(href: str) -> bool:
