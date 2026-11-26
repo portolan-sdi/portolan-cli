@@ -73,6 +73,9 @@ commit pushed to `main` and creates the tag itself, it is not tag-triggered. See
    `portolan-cli`, each with `skip-existing`
 4. GitHub Release created with both sets of files
 
+The `wheel-smoke` CI job (`scripts/wheel_smoke.py`) installs the
+`portolan-core` wheel alone and writes a catalog with it.
+
 **Versioning policy:** the project is pre-1.0. `major_version_zero = true` in
 `[tool.commitizen]` holds the major number at zero, so a `BREAKING CHANGE:`
 commit bumps the minor number.

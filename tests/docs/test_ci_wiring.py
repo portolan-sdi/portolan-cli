@@ -471,6 +471,13 @@ def test_release_checks_the_versions_before_the_tag() -> None:
     assert "if" not in steps[guard]
 
 
+def test_ci_runs_the_wheel_smoke() -> None:
+    """The wheel-smoke job installs the built portolan-core wheel alone (#1133)."""
+    job = _jobs("ci.yml")["wheel-smoke"]
+
+    assert "python scripts/wheel_smoke.py" in _run_text(job)
+    assert job["steps"][0]["with"]["persist-credentials"] is False
+
 
 # ---------------------------------------------------------------------------
 # Cheap gate faults, run on every pull request
