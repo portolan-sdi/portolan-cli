@@ -223,7 +223,9 @@ class TestResolveHref:
     @pytest.mark.unit
     def test_absolute_href_is_not_decoded(self, tmp_path: Path) -> None:
         """Only a relative href names a file below the catalog."""
-        assert resolve_href(tmp_path, "/data/a%20b.json") == Path("/data/a%20b.json")
+        # The anchor is "/" on POSIX and the drive of tmp_path on Windows.
+        expected = Path(tmp_path.anchor) / "data" / "a%20b.json"
+        assert resolve_href(tmp_path, "/data/a%20b.json") == expected
 
 
 class TestCommandsAgree:
