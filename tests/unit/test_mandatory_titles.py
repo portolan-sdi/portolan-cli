@@ -360,3 +360,35 @@ class TestSymlinkOutOfTheCatalog:
 
         catalog = json.loads((catalog_root / "catalog.json").read_text())
         assert "title" not in catalog["links"][0]
+
+
+@pytest.mark.unit
+class TestAbsoluteLocalHrefs:
+    """An absolute filesystem href inside the catalog names its file."""
+
+    def test_the_child_link_gets_the_title_of_the_target(self, tmp_path: Path) -> None:
+        _slug_catalog(tmp_path)
+        catalog_json = tmp_path / "catalog.json"
+        catalog = json.loads(catalog_json.read_text())
+        catalog["links"][0]["href"] = str(tmp_path / "publico_arbolado" / "collection.json")
+        _write(catalog_json, catalog)
+        collection_json = tmp_path / "publico_arbolado" / "collection.json"
+        collection = json.loads(collection_json.read_text())
+        collection["title"] = "Arbolado"
+        _write(collection_json, collection)
+
+        ensure_link_titles(tmp_path)
+
+        assert json.loads(catalog_json.read_text())["links"][0]["title"] == "Arbolado"
+
+    def test_the_item_gets_a_title(self, tmp_path: Path) -> None:
+        _slug_catalog(tmp_path)
+        collection_json = tmp_path / "publico_arbolado" / "collection.json"
+        item_json = tmp_path / "publico_arbolado" / "tree_census" / "tree_census.json"
+        collection = json.loads(collection_json.read_text())
+        collection["links"][0]["href"] = str(item_json)
+        _write(collection_json, collection)
+
+        repair_titles_and_links(tmp_path)
+
+        assert json.loads(item_json.read_text())["properties"]["title"] == "Tree Census"
