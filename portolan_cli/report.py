@@ -1,57 +1,46 @@
 """The callback that library code calls in place of printing (#1133).
 
-Each line a user sees goes to a ``Report`` callable with its level. The CLI
-prints the line through ``portolan_cli.output``. ``Level`` and ``Report`` are
-the types of ``portolan_cli/sync/report.py`` on the pull branch.
+Each line a user sees goes to a ``MessageCallback`` with its level, the
+callback type of the extract path (``extract.common.progress``). The CLI prints
+the line through ``portolan_cli.output``.
 
 A format handler, a ``viz`` function, and the finalization helpers take no
 callback, so :func:`reporting` holds one for a block, as ``formats.in_run``
 holds the run state. ``trace.submit`` copies the context, so a worker thread
-reports to the same callback. With no callback, :func:`emit` logs the line, so
-a library caller writes nothing to the terminal through this module.
+reports to the same callback. With no callback, :func:`emit` logs the line
+through ``emit_message``, so a library caller writes nothing to the terminal.
 """
 
 from __future__ import annotations
 
 import contextlib
-import logging
-from collections.abc import Callable, Iterator
 from contextvars import ContextVar
-from typing import Literal
+from typing import TYPE_CHECKING
 
-Level = Literal["success", "info", "warn", "error", "detail"]
-Report = Callable[[Level, str], None]
+from portolan_cli.extract.common.progress import MessageCallback, emit_message
 
-logger = logging.getLogger(__name__)
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
-_LOG_LEVELS: dict[Level, int] = {
-    "success": logging.INFO,
-    "info": logging.INFO,
-    "detail": logging.DEBUG,
-    "warn": logging.WARNING,
-    "error": logging.ERROR,
-}
-
-_REPORT: ContextVar[Report | None] = ContextVar("portolan_report", default=None)
+_REPORT: ContextVar[MessageCallback | None] = ContextVar("portolan_report", default=None)
 
 
 @contextlib.contextmanager
-def reporting(report: Report | None) -> Iterator[None]:
-    """Send each :func:`emit` in the block to ``report``. None keeps the current one."""
-    if report is None:
+def reporting(on_message: MessageCallback | None) -> Iterator[None]:
+    """Send each :func:`emit` in the block to ``on_message``. None keeps the current one."""
+    if on_message is None:
         yield
         return
-    token = _REPORT.set(report)
+    token = _REPORT.set(on_message)
     try:
         yield
     finally:
         _REPORT.reset(token)
 
 
-def emit(level: Level, message: str) -> None:
-    """Hand one line for the user to the current callback, or log it without one."""
-    report = _REPORT.get()
-    if report is not None:
-        report(level, message)
-    else:
-        logger.log(_LOG_LEVELS[level], message)
+def emit(level: str, text: str) -> None:
+    """Hand one line for the user to the current callback, or log it without one.
+
+    The level is ``info``, ``detail``, ``success``, ``warn``, or ``error``.
+    """
+    emit_message(_REPORT.get(), level, text)

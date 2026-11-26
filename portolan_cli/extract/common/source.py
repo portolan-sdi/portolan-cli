@@ -965,7 +965,6 @@ def build_catalog(
     from portolan_cli.extract.common.orchestrator_base import (
         add_source_links,
         init_extracted_catalog,
-        print_report,
         register_collection_styles,
     )
     from portolan_cli.report import reporting
@@ -990,7 +989,7 @@ def build_catalog(
     # A step after the add may raise. The files that the add finalized keep
     # their version, so the commit runs in any case.
     try:
-        register_collection_styles(output_dir, report, include_legends=True)
+        register_collection_styles(output_dir, report, include_legends=True, on_message=on_message)
         by_path = {layer_path(layer): layer for layer in discovery.layers}
 
         def link(result: LayerResult) -> SourceLink | None:
@@ -1009,12 +1008,25 @@ def build_catalog(
         # frees aborts the process on Windows.
         files, versioned = added
         collection_ids = {path.parent.relative_to(output_dir).as_posix() for path in files}
-        with reporting(print_report):
+        with reporting(_without_detail(on_message)):
             ensure_collection_thumbnails(
                 output_dir, collection_ids, versioned_collections=versioned, state=state
             )
     finally:
         commit_run(state)
+
+
+def _without_detail(on_message: MessageCallback | None) -> MessageCallback | None:
+    """Return ``on_message`` without the detail lines, which only ``add --verbose`` prints."""
+    if on_message is None:
+        return None
+    callback = on_message
+
+    def report(level: str, text: str) -> None:
+        if level != "detail":
+            callback(level, text)
+
+    return report
 
 
 def run_layer_extraction(

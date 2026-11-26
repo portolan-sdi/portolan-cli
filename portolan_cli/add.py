@@ -187,7 +187,7 @@ if TYPE_CHECKING:
     from contextlib import AbstractContextManager
     from datetime import datetime
 
-    from portolan_cli.report import Report
+    from portolan_cli.extract.common.progress import MessageCallback
     from portolan_cli.run_state import RunState
     from portolan_cli.stac_parquet import MirrorReport
     from portolan_cli.viz.pmtiles import PMTilesOutcome, PMTilesReport
@@ -1510,7 +1510,7 @@ def run_add(
     skip_partitioning: bool = False,
     on_progress: Callable[[Path], None] | None = None,
     adding: AbstractContextManager[object] | None = None,
-    report: Report | None = None,
+    on_message: MessageCallback | None = None,
     on_step: Callable[[MirrorReport | PMTilesOutcome], None] | None = None,
     state: RunState | None = None,
 ) -> AddOutcome:
@@ -1547,9 +1547,9 @@ def run_add(
         adding: Held open while the files are added, before the side-steps.
             An error from adding the files passes through it, and an error
             from a side-step does not.
-        report: Gets each line for the user, at the moment it happens. The
-            code below this function reports through it too
-            (``report.reporting``). None logs the lines.
+        on_message: Called as ``on_message(level, text)`` with each line for
+            the user, at the moment it happens. The code below this function
+            reports through it too (``report.reporting``). None logs the lines.
         on_step: Gets the report of the mirror step, and the outcome of each
             collection in the PMTiles step, as soon as each is done.
         state: The run state. None opens one. This function commits it.
@@ -1568,7 +1568,7 @@ def run_add(
 
     if state is None:
         state = RunState.open(catalog_root)
-    with reporting(report):
+    with reporting(on_message):
         skip_reasons: dict[Path, str] = {}
         with adding or contextlib.nullcontext():
             added, skipped, failures = add_files(

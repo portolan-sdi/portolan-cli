@@ -15,6 +15,7 @@ from typing import Any
 
 import pytest
 
+from portolan_cli.extract.common.cli_helpers import print_message
 from portolan_cli.extract.common.orchestrator_base import (
     add_extracted_files,
     add_source_links,
@@ -146,26 +147,39 @@ def test_add_extracted_files_logs_what_stays_out(
 def test_the_add_of_extract_prints_what_the_library_reports(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """A rewrite notice prints as it did before #1133. A detail line stays hidden."""
+    """A rewrite notice prints as it did before #1133."""
     import portolan_cli.catalog as catalog_mod
     from portolan_cli.report import emit
 
     def add(**_: Any) -> tuple[list[Any], ...]:
         emit("info", "Rewriting a.parquet (1.0KB): it carries no bbox covering column")
         emit("warn", "Kept b.parquet as it is: it would lose the CRS it declared")
-        emit("detail", "Rendered thumbnail for a: a.thumb.jpg")
         return [], [], []
 
     monkeypatch.setattr(catalog_mod, "init_catalog", lambda *_a, **_k: (tmp_path, []))
     monkeypatch.setattr("portolan_cli.add.add_files", add)
     report = _report([_layer(0, "a", output_path="a/a.parquet")])
-    init_extracted_catalog(tmp_path, report, title="t", description="d")
+    init_extracted_catalog(tmp_path, report, title="t", description="d", on_message=print_message)
 
     captured = capsys.readouterr()
     assert captured.out == (
         "\u2192 Rewriting a.parquet (1.0KB): it carries no bbox covering column\n"
     )
     assert captured.err == "\u26a0 Kept b.parquet as it is: it would lose the CRS it declared\n"
+
+
+def test_the_thumbnails_of_extract_print_no_detail_line() -> None:
+    """Only `add --verbose` prints a thumbnail detail line. Extract never did."""
+    from portolan_cli.extract.common.source import _without_detail
+
+    lines: list[tuple[str, str]] = []
+    report = _without_detail(lambda level, text: lines.append((level, text)))
+    assert report is not None
+    report("detail", "Rendered thumbnail for a: a.thumb.jpg")
+    report("warn", "No thumbnail for a: a.parquet did not render")
+
+    assert lines == [("warn", "No thumbnail for a: a.parquet did not render")]
+    assert _without_detail(None) is None
 
 
 class TestInitExtractedCatalog:
@@ -424,7 +438,7 @@ class TestRegisterCollectionStyles:
                 f'{{"version":8,"name":"{name}","layers":[]}}'
             )
 
-        register_collection_styles(tmp_path, report)
+        register_collection_styles(tmp_path, report, on_message=print_message)
 
         assert capsys.readouterr().out == (
             "\u2192 Default style: styles/muted (chosen from 2 styles). To pick another, move "

@@ -809,6 +809,9 @@ def test_catalog_messages_reach_the_callback(fixtures_dir: Path, tmp_path: Path)
             f"No host provider: set contact.name and contact.email in {host}, then run "
             "'portolan add --force <collection>'. Until then, check reports PTL-PRV-002.",
         ),
+        # The add reports its rewrites, as `portolan add` prints them.
+        ("info", "Rewriting points.parquet (1.5KB): it carries no bbox covering column"),
+        ("info", "Rewriting lines.parquet (1.4KB): it carries no bbox covering column"),
     ]
 
 

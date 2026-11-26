@@ -2201,7 +2201,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
 
     from portolan_cli.add import AddOutcome
-    from portolan_cli.report import Level, Report
+    from portolan_cli.extract.common.progress import MessageCallback
     from portolan_cli.stac_parquet import MirrorReport
     from portolan_cli.viz.pmtiles import PMTilesOutcome, PMTilesResult
 
@@ -2381,14 +2381,14 @@ def _output_add_human(
         _print_add_failures_batched(failures)
 
 
-def _add_report(*, verbose: bool) -> Report:
+def _add_report(*, verbose: bool) -> MessageCallback:
     """Return the callback that prints each library line of ``add`` as before.
 
     A detail line is per-file detail, so it shows with --verbose only.
     """
     printers = {"success": success, "info": info_output, "warn": warn, "error": error}
 
-    def report(level: Level, message: str) -> None:
+    def report(level: str, message: str) -> None:
         if level == "detail":
             if verbose:
                 detail(message)
@@ -2882,7 +2882,7 @@ def add_cmd(
         skip_partitioning=skip_partitioning,
         on_progress=on_file_progress,
         adding=adding(),
-        report=_add_report(verbose=verbose),
+        on_message=_add_report(verbose=verbose),
         on_step=lambda step: _report_add_step(step, verbose=verbose, use_json=use_json),
         state=state,
     )
