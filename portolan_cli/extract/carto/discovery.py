@@ -97,8 +97,10 @@ def normalize_sql_api_url(url: str) -> str:
         return f"{base}/api/v2/sql"
 
     raise CartoDiscoveryError(
-        f"Invalid Carto SQL API URL: {url}. "
-        "Expected https://account.carto.com or https://account.carto.com/api/v2/sql"
+        redact_credentials(
+            f"Invalid Carto SQL API URL: {url}. "
+            "Expected https://account.carto.com or https://account.carto.com/api/v2/sql"
+        )
     )
 
 
