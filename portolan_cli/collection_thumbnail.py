@@ -34,7 +34,7 @@ from portolan_cli import extension_registry as _reg
 from portolan_cli.constants import ROLE_THUMBNAIL
 from portolan_cli.formats import is_geoparquet, run_scope
 from portolan_cli.json_io import write_json_atomic
-from portolan_cli.output import detail, warn
+from portolan_cli.output import warn
 from portolan_cli.stac_parquet import sync_file_extension
 from portolan_cli.sync.checksums import compute_checksum, multihash_sha256
 from portolan_cli.trace import span
@@ -407,7 +407,6 @@ def ensure_collection_thumbnail(
     generate: bool | None = None,
     force: bool = False,
     amend_latest: bool = False,
-    verbose: bool = False,
     state: RunState | None = None,
 ) -> Path | None:
     """Give one collection a thumbnail asset, if it needs and can have one.
@@ -426,12 +425,36 @@ def ensure_collection_thumbnail(
         amend_latest: Fold the thumbnail into the version the caller just wrote
             instead of bumping. ``add`` sets this for collections it versioned
             this run, so one add stays one version.
-        verbose: Emit a line per collection touched.
         state: The run state. It parses the config once per run and holds
             the staged version that the thumbnail joins.
 
     Returns:
         The registered thumbnail path, or None when nothing was registered.
+    """
+    registered = _ensure_thumbnail(
+        collection_path,
+        catalog_root,
+        generate=generate,
+        force=force,
+        amend_latest=amend_latest,
+        state=state,
+    )
+    return None if registered is None else registered[0]
+
+
+def _ensure_thumbnail(
+    collection_path: Path,
+    catalog_root: Path,
+    *,
+    generate: bool | None,
+    force: bool,
+    amend_latest: bool,
+    state: RunState | None,
+) -> tuple[Path, bool] | None:
+    """Do the work of :func:`ensure_collection_thumbnail`.
+
+    Returns:
+        The registered thumbnail and True when this run rendered it, or None.
     """
     if not _thumbnails_wanted(catalog_root, generate, state):
         return None
@@ -473,11 +496,7 @@ def ensure_collection_thumbnail(
         )
     except Exception as exc:
         warn(f"Failed to track {thumbnail.name} in versions.json: {exc}")
-
-    if verbose:
-        verb = "Rendered" if was_rendered else "Registered existing"
-        detail(f"{verb} thumbnail for {collection_path.name}: {thumbnail.name}")
-    return thumbnail
+    return thumbnail, was_rendered
 
 
 def ensure_collection_thumbnails(
@@ -487,9 +506,8 @@ def ensure_collection_thumbnails(
     generate: bool | None = None,
     force: bool = False,
     versioned_collections: set[str] | None = None,
-    verbose: bool = False,
     state: RunState | None = None,
-) -> None:
+) -> list[tuple[Path, Path, bool]]:
     """Ensure every affected collection carries a thumbnail asset.
 
     Runs after the PMTiles side-step, so a higher-fidelity thumbnail rendered
@@ -506,32 +524,36 @@ def ensure_collection_thumbnails(
             bumping a second version. A collection that was skipped is absent,
             so its backfilled thumbnail gets its own version instead of editing
             a snapshot that may already be published.
-        verbose: Emit a line per collection touched.
         state: The run state, which parses the config once per run.
+
+    Returns:
+        One ``(collection path, thumbnail, rendered)`` entry for each
+        registered thumbnail. ``rendered`` is True when this run drew it.
     """
     # Each footer read goes through the run memo.
     with span("add.thumbnails", collections=len(affected_collections)), run_scope(state):
-        if not affected_collections:
-            return
+        registered: list[tuple[Path, Path, bool]] = []
         # Resolve the flag against config once, then hand the answer down, so the
         # config read does not repeat per collection.
-        if not _thumbnails_wanted(catalog_root, generate, state):
-            return
+        if not affected_collections or not _thumbnails_wanted(catalog_root, generate, state):
+            return registered
 
         for collection_id in sorted(affected_collections):
             collection_path = catalog_root / collection_id
             if not (collection_path / "collection.json").exists():
                 continue
             with span("thumbnail.collection", collection=collection_id):
-                ensure_collection_thumbnail(
+                done = _ensure_thumbnail(
                     collection_path,
                     catalog_root,
                     generate=True,
                     force=force,
                     amend_latest=collection_id in (versioned_collections or set()),
-                    verbose=verbose,
                     state=state,
                 )
+            if done is not None:
+                registered.append((collection_path, *done))
+        return registered
 
 
 __all__ = [

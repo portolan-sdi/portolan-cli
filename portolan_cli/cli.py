@@ -60,7 +60,6 @@ from portolan_cli.output import detail, error, set_writer, stdout_to_stderr, suc
 from portolan_cli.output import info as info_output
 from portolan_cli.plugins.commands import ExtractGroup, PluginGroup
 from portolan_cli.plugins.manager import PluginWarning
-from portolan_cli.remove import _resolve_collection_dir
 from portolan_cli.scan.core import (
     IssueType,
     ScanIssue,
@@ -2198,29 +2197,21 @@ def _print_next_steps(result: ScanResult) -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def _output_add_json(
-    added: list[ItemInfo],
-    skipped: list[tuple[Path, str]],
-    failures: list[AddFailure],
-) -> None:
+if TYPE_CHECKING:
+    from portolan_cli.add import AddOutcome
+    from portolan_cli.viz.pmtiles import PMTilesReport, PMTilesResult
+
+
+def _output_add_json(outcome: AddOutcome) -> None:
     """Output add command results as JSON."""
-    data = {
-        "added": [
-            {
-                "item_id": ds.item_id,
-                "collection_id": ds.collection_id,
-                "format_type": ds.format_type or "unknown",
-                "bbox": ds.bbox,
-            }
-            for ds in added
-        ],
-        "skipped": [{"path": str(p), "reason": reason} for p, reason in skipped],
-        "failures": [{"path": str(f.path), "error": f.error} for f in failures],
-    }
-    if failures:
+    data = outcome.to_dict()
+    if outcome.failures:
         envelope = error_envelope(
             "add",
-            [ErrorDetail(type="AddError", message=f"{str(f.path)}: {f.error}") for f in failures],
+            [
+                ErrorDetail(type="AddError", message=f"{str(f.path)}: {f.error}")
+                for f in outcome.failures
+            ],
             data=data,
         )
     else:
@@ -2386,57 +2377,86 @@ def _output_add_human(
         _print_add_failures_batched(failures)
 
 
-def _report_skips_and_find_collections(
-    added: list[ItemInfo], skips: list[tuple[Path, str]], catalog_root: Path
-) -> tuple[set[str], set[str]]:
-    """Warn about each file that stayed out of the catalog, and find the collections to refresh.
+def _report_add_side_steps(outcome: AddOutcome, *, verbose: bool, use_json: bool) -> None:
+    """Print what the add did besides adding files, in the order the steps ran.
 
-    The warning goes to stderr in both modes. The affected set holds the
-    collections of the added files and of the skips still in the catalog, so
-    --pmtiles works on already-tracked files. An ignored file has no
-    collection to refresh.
-
-    The versioned set holds the collections this run wrote a version for. A
-    side-step's derived asset folds into that snapshot instead of bumping a
-    second version, so one `add` stays one version. A skipped collection is
-    absent, so its backfill gets a version of its own rather than editing a
-    published snapshot.
+    A warning about a file that stayed out of the catalog goes to stderr in
+    both modes. The PMTiles lines print only in text mode.
     """
     from portolan_cli.add import SKIPS_THAT_TRACK
 
-    affected: set[str] = set()
-    versioned: set[str] = set()
-    for a in added:
-        if a.collection_id:
-            affected.add(a.collection_id)
-            versioned.add(a.collection_id)
-    for p, reason in skips:
+    for p, reason in outcome.skipped:
         if reason not in SKIPS_THAT_TRACK:
             warn(f"Skipping {p.name}: {reason}")
+    if verbose:
+        for coll_id in outcome.mirrors.generated:
+            info_output(f"Generated items.parquet for '{coll_id}'")
+    for coll_id, exc in outcome.mirrors.failed.items():
+        warn(f"Failed to generate parquet for '{coll_id}': {exc}")
+    if not use_json:
+        _report_pmtiles(outcome.pmtiles, verbose=verbose)
+    if verbose:
+        for collection_path, thumbnail, rendered in outcome.thumbnails:
+            verb = "Rendered" if rendered else "Registered existing"
+            detail(f"{verb} thumbnail for {collection_path.name}: {thumbnail.name}")
+
+
+def _report_pmtiles(report: PMTilesReport, *, verbose: bool) -> None:
+    """Print the PMTiles side-step, and the explicit request that failed."""
+    from portolan_cli.viz.pmtiles import PMTilesNotAvailableError
+
+    for outcome in report.outcomes:
+        result = outcome.result
+        if result is not None:
+            _report_pmtiles_result(result, verbose=verbose, requested=report.requested)
+        elif report.requested:
             continue
-        # A nested collection id spans several path segments.
-        collection_dir = _resolve_collection_dir(p, catalog_root)
-        if collection_dir is not None:
-            affected.add(collection_dir.relative_to(catalog_root.resolve()).as_posix())
-    return affected, versioned
+        elif not isinstance(outcome.missing, PMTilesNotAvailableError):
+            warn(f"Skipping PMTiles for '{outcome.collection_id}': tippecanoe not installed")
+        elif outcome.config_enabled:
+            warn(
+                f"PMTiles enabled for '{outcome.collection_id}' "
+                "but geoparquet-io has no PMTiles support"
+            )
+        elif verbose:
+            info_output(
+                f"Skipping PMTiles for '{outcome.collection_id}': "
+                "geoparquet-io has no PMTiles support"
+            )
+    if report.failure is not None:
+        error(report.failure)
 
 
-def _output_add_results(
-    added: list[ItemInfo],
-    skipped: list[tuple[Path, str]],
-    failures: list[AddFailure],
-    verbose: bool,
-    use_json: bool,
-) -> None:
+def _report_pmtiles_result(result: PMTilesResult, *, verbose: bool, requested: bool) -> None:
+    """Print the PMTiles of one collection. A failure of a request prints as the failure."""
+    for p in result.generated:
+        if p in result.older:
+            success(f"Rebuilt PMTiles: {p.name} was older than {result.sources[p].name}")
+        else:
+            success(f"Generated PMTiles: {p.name}")
+    for p in result.skipped:
+        if p in result.older:
+            warn(
+                f"Kept PMTiles: {p.name} is older than {result.sources[p].name}. "
+                "Pass --pmtiles to rebuild it."
+            )
+        elif verbose:
+            info_output(f"Skipped PMTiles: {p.name} is not older than {result.sources[p].name}")
+    if not requested:
+        for path, error_msg in result.failed:
+            warn(f"Failed to generate PMTiles for '{path}': {error_msg}")
+
+
+def _output_add_results(outcome: AddOutcome, verbose: bool, use_json: bool) -> None:
     """Output results for add command.
 
     Per Issue #175: Shows both successes and failures, enabling users to see
     all issues at once rather than stopping on the first error.
     """
     if use_json:
-        _output_add_json(added, skipped, failures)
+        _output_add_json(outcome)
     else:
-        _output_add_human(added, skipped, failures, verbose)
+        _output_add_human(outcome.added, outcome.skipped, outcome.failures, verbose)
 
 
 def _resolve_catalog_root_for_add(
@@ -2562,32 +2582,6 @@ def _check_partition_prompt(
         return True
 
     return False
-
-
-def _generate_add_mirrors(
-    catalog_root: Path,
-    affected: set[str],
-    *,
-    generate_parquet: bool,
-    verbose: bool,
-    versioned_collections: set[str],
-    state: RunState | None = None,
-) -> None:
-    """Generate the item mirrors after ``add`` and report the outcome."""
-    from portolan_cli.stac_parquet import generate_parquet_mirrors
-
-    mirrors = generate_parquet_mirrors(
-        catalog_root,
-        affected,
-        generate_parquet=generate_parquet,
-        versioned_collections=versioned_collections,
-        state=state,
-    )
-    if verbose:
-        for coll_id in mirrors.generated:
-            info_output(f"Generated items.parquet for '{coll_id}'")
-    for coll_id, exc in mirrors.failed.items():
-        warn(f"Failed to generate parquet for '{coll_id}': {exc}")
 
 
 @cli.command("add")
@@ -2772,8 +2766,7 @@ def add_cmd(
             partitioning.prompt: true/false (default: true)
             partitioning.threshold_gb: size in GB (default: 2.0)
     """
-    from portolan_cli.add import SKIP_UNCHANGED, add_files
-    from portolan_cli.stac import MergeStrategy
+    from portolan_cli.add import run_add
 
     use_json = should_output_json(ctx, json_output)
 
@@ -2786,9 +2779,9 @@ def add_cmd(
     catalog_root = _resolve_catalog_root_for_add(catalog_path, use_json)
 
     from portolan_cli.run_state import RunState
-    from portolan_cli.version_ops import commit_run
 
     # One state for the whole command: each YAML file parses once (issue #994).
+    # run_add commits it.
     state = RunState.open(catalog_root)
 
     # Load .env so PORTOLAN_REMOTE (and other sensitive settings) reach the
@@ -2805,25 +2798,11 @@ def add_cmd(
     # For single-file adds, validate that the file is in a collection subdirectory.
     # This catches the error early with a clear message, matching pre-batch behavior.
     if len(resolved_paths) == 1 and not resolved_paths[0].is_dir():
-        single_path = resolved_paths[0]
         try:
-            resolve_collection_id(single_path, catalog_root)
+            resolve_collection_id(resolved_paths[0], catalog_root)
         except ValueError as err:
             emit_error("add", "PathError", str(err), use_json=use_json)
             raise SystemExit(1) from err
-
-    # Call add_files once with all resolved paths.
-    # We pass collection_id=None so that add_files infers the collection per-file
-    # from directory structure. This handles:
-    # - `portolan add .` (catalog-root add, multiple collections)
-    # - `portolan add file1 file2` (files from different collections)
-    # - `portolan add file1 file2` (files from same collection)
-    # Add_files deduplicates paths internally.
-    #
-    # NOTE: We intentionally do NOT do per-path collection inference in the CLI.
-    # add_files already does this correctly when collection_id=None, and batching
-    # avoids duplicate item writes when the same item directory appears via
-    # multiple CLI arguments (e.g. `portolan add. foo/data.parquet`).
 
     # Pre-count files for progress bar (unified progress output)
     # Only count when progress will be displayed:
@@ -2850,25 +2829,26 @@ def add_cmd(
         _check_partition_prompt(resolved_paths, catalog_root, state) if not use_json else False
     )
 
-    # item_datetime is parsed by Click via FLEXIBLE_DATETIME type
-    skip_reasons: dict[Path, str] = {}
     try:
-        with progress_reporter:
-            all_added, all_skipped, all_failures = add_files(
-                paths=resolved_paths,
-                catalog_root=catalog_root,
-                collection_id=None,
-                item_id=item_id,
-                item_datetime=item_datetime,
-                on_progress=on_file_progress,
-                workers=workers,
-                force=force,
-                reconvert=reconvert,
-                skip_partitioning=skip_partitioning,
-                merge_strategy=MergeStrategy(merge_strategy),
-                skip_reasons=skip_reasons,
-                state=state,
-            )
+        outcome = run_add(
+            resolved_paths,
+            catalog_root,
+            item_id=item_id,
+            item_datetime=item_datetime,
+            workers=workers,
+            generate_parquet=generate_parquet,
+            generate_pmtiles=generate_pmtiles,
+            force_pmtiles=force_pmtiles,
+            generate_thumbnails=generate_thumbnails,
+            force_thumbnails=force_thumbnails,
+            force=force,
+            reconvert=reconvert,
+            merge_strategy=merge_strategy,
+            skip_partitioning=skip_partitioning,
+            on_progress=on_file_progress,
+            progress=progress_reporter,
+            state=state,
+        )
     except MissingLicenseError as err:
         # Issue #686: a collection with no license fails PTL-LIC-001/002 the moment
         # check reads it, so add refuses the write and names what to supply.
@@ -2887,62 +2867,17 @@ def add_cmd(
         # that no plugin provides. Its message names the known handlers.
         _fail_on_add_error(err, resolved_paths, use_json=use_json)
     trace.current_span().set(elapsed_seconds=progress_reporter.elapsed_seconds)
-    # add_files gives every skip a reason. A path without one reads as unchanged.
-    skips = [(p, skip_reasons.get(p, SKIP_UNCHANGED)) for p in all_skipped]
-    affected, versioned = _report_skips_and_find_collections(all_added, skips, catalog_root)
 
-    # The side steps may exit, as --pmtiles does without tippecanoe. The files
-    # that add_files finalized keep their version, so the commit runs in any case.
-    # A side step stages an asset only after it writes the file.
-    try:
-        # Handle stac-geoparquet generation BEFORE output (so JSON reflects final state).
-        # Always run it when --stac-geoparquet was passed, in every output mode.
-        with trace.span("add.mirrors"):
-            _generate_add_mirrors(
-                catalog_root,
-                affected,
-                generate_parquet=generate_parquet,
-                verbose=verbose,
-                versioned_collections=versioned,
-                state=state,
-            )
-
-        # Handle PMTiles generation BEFORE output (so JSON reflects final state)
-        from portolan_cli.viz.pmtiles import generate_or_suggest_pmtiles
-
-        with trace.span("add.pmtiles"):
-            generate_or_suggest_pmtiles(
-                catalog_root,
-                affected,
-                generate_pmtiles=generate_pmtiles,
-                force=force_pmtiles,
-                verbose=verbose,
-                use_json=use_json,
-                state=state,
-            )
-
-        # Thumbnails last, so a higher-fidelity render from the PMTiles above is
-        # adopted rather than replaced. Every geospatial collection needs a
-        # thumbnail asset to satisfy PTL-VIZ-001 (Issue #683).
-        from portolan_cli.collection_thumbnail import ensure_collection_thumbnails
-
-        ensure_collection_thumbnails(
-            catalog_root,
-            affected,
-            generate=generate_thumbnails,
-            force=force_thumbnails,
-            versioned_collections=versioned,
-            verbose=verbose,
-            state=state,
-        )
-    finally:
-        commit_run(state)
+    _report_add_side_steps(outcome, verbose=verbose, use_json=use_json)
+    # An explicit PMTiles request that failed exits 1 with no envelope, as before.
+    if outcome.pmtiles.failure is not None:
+        raise SystemExit(1)
 
     # Output combined results (after all processing complete)
-    _output_add_results(all_added, skips, all_failures, verbose, use_json)
+    _output_add_results(outcome, verbose, use_json)
 
     # Exit with non-zero code if any failures occurred
-    if all_failures:
+    if outcome.failures:
         raise SystemExit(1)
 
 

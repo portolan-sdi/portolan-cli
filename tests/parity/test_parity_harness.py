@@ -32,7 +32,6 @@ PARITY_DIR = Path(__file__).parent
 # One command path per line, sorted, so parallel removals merge cleanly.
 PARITY_PENDING = frozenset(
     {
-        "add",
         "partition",
         "push",
         "sync",

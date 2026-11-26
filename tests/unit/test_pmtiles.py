@@ -1447,7 +1447,6 @@ class TestGenerateOrSuggestPMTiles:
                 {"roads"},
                 generate_pmtiles=False,
                 force=False,
-                verbose=False,
             )
         # Issue #929: the step still registers tiles a user built, and builds none.
         mock_gen.assert_called_once()
@@ -1467,7 +1466,6 @@ class TestGenerateOrSuggestPMTiles:
                 {"roads"},
                 generate_pmtiles=True,
                 force=False,
-                verbose=False,
             )
         mock_gen.assert_called_once()
         assert mock_gen.call_args.args[0] == coll_path
@@ -1485,15 +1483,14 @@ class TestGenerateOrSuggestPMTiles:
                 "portolan_cli.viz.pmtiles.generate_pmtiles_for_collection",
                 side_effect=PMTilesNotAvailableError(),
             ),
-            pytest.raises(SystemExit),
         ):
-            generate_or_suggest_pmtiles(
+            report = generate_or_suggest_pmtiles(
                 tmp_path,
                 {"roads"},
                 generate_pmtiles=True,
                 force=False,
-                verbose=False,
             )
+        assert report.failure == str(PMTilesNotAvailableError())
 
     @pytest.mark.unit
     def test_auto_unavailable_does_not_exit(self, tmp_path: Path) -> None:
@@ -1508,14 +1505,15 @@ class TestGenerateOrSuggestPMTiles:
             "portolan_cli.viz.pmtiles.generate_pmtiles_for_collection",
             side_effect=PMTilesNotAvailableError(),
         ):
-            # Must not raise SystemExit on the auto path.
-            generate_or_suggest_pmtiles(
+            # An auto path that cannot run is no failure.
+            report = generate_or_suggest_pmtiles(
                 tmp_path,
                 {"roads"},
                 generate_pmtiles=False,
                 force=False,
-                verbose=False,
             )
+        assert report.failure is None
+        assert report.outcomes[0].config_enabled is True
 
     @pytest.mark.unit
     def test_missing_collection_json_skipped(self, tmp_path: Path) -> None:
@@ -1528,7 +1526,6 @@ class TestGenerateOrSuggestPMTiles:
                 {"ghost"},
                 generate_pmtiles=True,
                 force=False,
-                verbose=False,
             )
         mock_gen.assert_not_called()
 
@@ -1552,7 +1549,6 @@ class TestGenerateOrSuggestPMTiles:
                 {"roads"},
                 generate_pmtiles=False,
                 force=True,
-                verbose=False,
             )
         mock_gen.assert_called_once()
         assert mock_gen.call_args.args[0] == coll_path
@@ -1572,15 +1568,14 @@ class TestGenerateOrSuggestPMTiles:
                 "portolan_cli.viz.pmtiles.generate_pmtiles_for_collection",
                 side_effect=PMTilesNotAvailableError(),
             ),
-            pytest.raises(SystemExit),
         ):
-            generate_or_suggest_pmtiles(
+            report = generate_or_suggest_pmtiles(
                 tmp_path,
                 {"roads"},
                 generate_pmtiles=False,
                 force=True,
-                verbose=False,
             )
+        assert report.failure == str(PMTilesNotAvailableError())
 
     @pytest.mark.unit
     def test_force_alone_failure_exits(self, tmp_path: Path) -> None:
@@ -1594,12 +1589,11 @@ class TestGenerateOrSuggestPMTiles:
                 "portolan_cli.viz.pmtiles.generate_pmtiles_for_collection",
                 return_value=failed,
             ),
-            pytest.raises(SystemExit),
         ):
-            generate_or_suggest_pmtiles(
+            report = generate_or_suggest_pmtiles(
                 tmp_path,
                 {"roads"},
                 generate_pmtiles=False,
                 force=True,
-                verbose=False,
             )
+        assert report.failure == "PMTiles generation failed: tippecanoe failed"

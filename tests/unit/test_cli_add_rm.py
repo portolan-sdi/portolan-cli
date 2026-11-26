@@ -1186,7 +1186,10 @@ class TestReportSkipsAndFindCollections:
         A tracked skip belongs to the nearest collection above it, which can
         sit below a subcatalog.
         """
-        from portolan_cli.cli import _report_skips_and_find_collections
+        from portolan_cli.add import AddOutcome, _collections_to_refresh
+        from portolan_cli.cli import _report_add_side_steps
+        from portolan_cli.stac_parquet import MirrorReport
+        from portolan_cli.viz.pmtiles import PMTilesReport
 
         for collection in ("roads", "parks", "region/trails"):
             (tmp_path / collection).mkdir(parents=True)
@@ -1199,7 +1202,9 @@ class TestReportSkipsAndFindCollections:
             (tmp_path.parent / "elsewhere.parquet", "unchanged since the last add"),
         ]
 
-        affected, versioned = _report_skips_and_find_collections([], skips, tmp_path)
+        affected, versioned = _collections_to_refresh([], skips, tmp_path)
+        outcome = AddOutcome([], skips, [], MirrorReport(), PMTilesReport(requested=False))
+        _report_add_side_steps(outcome, verbose=False, use_json=False)
 
         assert (affected, versioned) == ({"roads", "parks", "region/trails"}, set())
         assert capsys.readouterr().err == (

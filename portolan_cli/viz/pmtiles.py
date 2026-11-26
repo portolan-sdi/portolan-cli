@@ -32,7 +32,7 @@ from portolan_cli.constants import ROLE_VISUAL
 from portolan_cli.errors import PortolanError
 from portolan_cli.formats import is_geoparquet, run_scope
 from portolan_cli.json_io import write_json_atomic
-from portolan_cli.output import error, info, success, warn
+from portolan_cli.output import warn
 from portolan_cli.stac_parquet import stamp_file_fields, sync_file_extension
 from portolan_cli.versions import track_generated_assets
 
@@ -1000,41 +1000,74 @@ def get_pmtiles_settings(
     )
 
 
+@dataclass
+class PMTilesOutcome:
+    """What the PMTiles side-step did for one collection.
+
+    Attributes:
+        collection_id: The collection.
+        config_enabled: The ``pmtiles.enabled`` setting of the collection.
+        result: The generation result, or None when a tool is missing.
+        missing: The error that says which tool is missing, or None.
+    """
+
+    collection_id: str
+    config_enabled: bool
+    result: PMTilesResult | None = None
+    missing: PMTilesNotAvailableError | TippecanoeNotFoundError | None = None
+
+
+@dataclass
+class PMTilesReport:
+    """The outcome of one ``generate_or_suggest_pmtiles`` run.
+
+    The function writes no terminal output. The caller reports this.
+
+    Attributes:
+        requested: True when ``--pmtiles`` or ``--force-pmtiles`` was passed.
+        outcomes: One entry for each collection that the step processed.
+        failure: The message of an explicit request that failed. The step
+            stops at that collection, and the command must exit non-zero.
+    """
+
+    requested: bool
+    outcomes: list[PMTilesOutcome] = field(default_factory=list)
+    failure: str | None = None
+
+
 def generate_or_suggest_pmtiles(
     catalog_root: Path,
     affected_collections: set[str],
     *,
     generate_pmtiles: bool,
     force: bool,
-    verbose: bool,
-    use_json: bool = False,
     state: RunState | None = None,
-) -> None:
+) -> PMTilesReport:
     """Generate PMTiles for affected collections when requested or configured.
 
     For each affected collection, resolves PMTiles settings and generates when
     ``--pmtiles`` or ``--force-pmtiles`` was passed, or ``pmtiles.enabled`` is
     configured. Otherwise it only registers the sibling PMTiles that exist
-    (Issue #929). Generation runs
-    regardless of output mode so the JSON envelope reflects the final state; an explicitly-requested generation that fails exits non-zero.
+    (Issue #929). Generation runs regardless of output mode so the JSON
+    envelope reflects the final state. An explicitly-requested generation
+    that fails sets ``failure`` and stops the step.
 
     Args:
         catalog_root: Catalog root directory.
         affected_collections: Collection IDs modified by the add command.
         generate_pmtiles: Whether ``--pmtiles`` was passed.
         force: Whether to regenerate up-to-date PMTiles.
-        verbose: Whether to emit per-file detail.
-        use_json: Whether the command runs in JSON output mode.
         state: The run state, which parses the config once per run.
-    """
-    if not affected_collections:
-        return
 
+    Returns:
+        The report of each collection, for the caller to print.
+    """
     # --force-pmtiles asks for a rebuild, so it also turns generation on. The
     # default is pmtiles.enabled false, so the flag alone used to exit 0 and
     # leave the old tiles in place (Issue #760). `requested` also drives the
-    # reports below: an explicit request that fails must exit non-zero.
+    # report: an explicit request that fails must exit non-zero.
     requested = generate_pmtiles or force
+    report = PMTilesReport(requested=requested)
 
     for coll_id in affected_collections:
         coll_path = catalog_root / coll_id
@@ -1042,14 +1075,15 @@ def generate_or_suggest_pmtiles(
             continue
 
         settings = get_pmtiles_settings(catalog_root, coll_id, coll_path, state=state)
-        # Without a request, register the tiles a user built and build none.
-        generate = requested or settings.enabled
+        outcome = PMTilesOutcome(coll_id, settings.enabled)
+        report.outcomes.append(outcome)
         try:
-            result = generate_pmtiles_for_collection(
+            outcome.result = generate_pmtiles_for_collection(
                 coll_path,
                 catalog_root,
                 force=force,
-                generate=generate,
+                # Without a request, register the tiles a user built and build none.
+                generate=requested or settings.enabled,
                 min_zoom=settings.min_zoom,
                 max_zoom=settings.max_zoom,
                 layer=settings.layer,
@@ -1061,72 +1095,18 @@ def generate_or_suggest_pmtiles(
                 src_crs=settings.src_crs,
                 state=state,
             )
-            _report_pmtiles_result(result, verbose, requested, use_json=use_json)
-        except PMTilesNotAvailableError as e:
-            _report_pmtiles_unavailable(
-                e, requested, settings.enabled, verbose, coll_id, use_json=use_json
-            )
-        except TippecanoeNotFoundError as e:
-            _report_tippecanoe_missing(e, requested, coll_id, use_json=use_json)
+        except (PMTilesNotAvailableError, TippecanoeNotFoundError) as e:
+            outcome.missing = e
+        report.failure = _explicit_failure(outcome) if requested else None
+        if report.failure is not None:
+            break
+    return report
 
 
-def _report_pmtiles_result(
-    result: PMTilesResult, verbose: bool, explicit_flag: bool, *, use_json: bool = False
-) -> None:
-    """Report PMTiles generation results; exit non-zero on explicit-flag failure."""
-    if not use_json:
-        for p in result.generated:
-            if p in result.older:
-                success(f"Rebuilt PMTiles: {p.name} was older than {result.sources[p].name}")
-            else:
-                success(f"Generated PMTiles: {p.name}")
-        for p in result.skipped:
-            if p in result.older:
-                warn(
-                    f"Kept PMTiles: {p.name} is older than {result.sources[p].name}. "
-                    "Pass --pmtiles to rebuild it."
-                )
-            elif verbose:
-                info(f"Skipped PMTiles: {p.name} is not older than {result.sources[p].name}")
-    for path, error_msg in result.failed:
-        if explicit_flag:
-            if not use_json:
-                error(f"PMTiles generation failed: {error_msg}")
-            raise SystemExit(1)
-        if not use_json:
-            warn(f"Failed to generate PMTiles for '{path}': {error_msg}")
-
-
-def _report_pmtiles_unavailable(
-    e: Exception,
-    explicit_flag: bool,
-    config_enabled: bool,
-    verbose: bool,
-    coll_id: str,
-    *,
-    use_json: bool = False,
-) -> None:
-    """Report a PMTilesNotAvailableError; exit non-zero when explicitly requested."""
-    if explicit_flag:
-        if not use_json:
-            error(str(e))
-        raise SystemExit(1) from e
-    if use_json:
-        return
-    # Warn if pmtiles.enabled in config (user expectation), or info if just verbose
-    if config_enabled:
-        warn(f"PMTiles enabled for '{coll_id}' but geoparquet-io has no PMTiles support")
-    elif verbose:
-        info(f"Skipping PMTiles for '{coll_id}': geoparquet-io has no PMTiles support")
-
-
-def _report_tippecanoe_missing(
-    e: Exception, explicit_flag: bool, coll_id: str, *, use_json: bool = False
-) -> None:
-    """Report a TippecanoeNotFoundError; exit non-zero when explicitly requested."""
-    if explicit_flag:
-        if not use_json:
-            error(str(e))
-        raise SystemExit(1) from e
-    if not use_json:
-        warn(f"Skipping PMTiles for '{coll_id}': tippecanoe not installed")
+def _explicit_failure(outcome: PMTilesOutcome) -> str | None:
+    """Return the message of an explicit request that failed for ``outcome``."""
+    if outcome.missing is not None:
+        return str(outcome.missing)
+    if outcome.result is not None and outcome.result.failed:
+        return f"PMTiles generation failed: {outcome.result.failed[0][1]}"
+    return None

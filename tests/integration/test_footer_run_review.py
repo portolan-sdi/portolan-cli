@@ -234,7 +234,6 @@ def test_pmtiles_style_reuses_the_discovery_footer(tmp_path: Path) -> None:
             {"places"},
             generate_pmtiles=False,
             force=False,
-            verbose=False,
             state=state,
         )
         opens = counters()["parquet.opens"]
