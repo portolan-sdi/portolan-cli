@@ -743,6 +743,8 @@ async def _fetch_remote_versions_async(
     remote_url: str,
     collection: str,
     profile: str | None = None,
+    *,
+    report: Report = silent,
 ) -> VersionsFile:
     """Fetch remote versions.json asynchronously.
 
@@ -750,6 +752,7 @@ async def _fetch_remote_versions_async(
         remote_url: Remote catalog URL (e.g., s3://bucket/catalog).
         collection: Collection name.
         profile: AWS profile name (for S3).
+        report: Receives the endpoint line of the store setup.
 
     Returns:
         Parsed VersionsFile from remote.
@@ -764,7 +767,9 @@ async def _fetch_remote_versions_async(
     bucket_url, prefix = parse_object_store_url(remote_versions_url)
 
     # Setup store (chunk_concurrency=4 matches download.py default)
-    store, _kwargs = _setup_store_and_kwargs(bucket_url, profile, chunk_concurrency=4)
+    store, _kwargs = _setup_store_and_kwargs(
+        bucket_url, profile, chunk_concurrency=4, report=report
+    )
 
     try:
         # Fetch using async get
@@ -1116,7 +1121,9 @@ async def pull_async(
 
     # Create store if not provided (connection pooling support)
     if store is None:
-        store, _kwargs = _setup_store_and_kwargs(bucket_url, profile, chunk_concurrency=4)
+        store, _kwargs = _setup_store_and_kwargs(
+            bucket_url, profile, chunk_concurrency=4, report=report
+        )
 
     # Path to local versions.json
     versions_path = local_root / collection / "versions.json"
@@ -1148,7 +1155,9 @@ async def pull_async(
     # Fetch remote versions asynchronously
     try:
         with span("pull.fetch_remote", collection=collection):
-            remote_versions = await _fetch_remote_versions_async(remote_url, collection, profile)
+            remote_versions = await _fetch_remote_versions_async(
+                remote_url, collection, profile, report=report
+            )
     except PullError as e:
         report("error", f"Failed to fetch remote: {e}")
         return PullResult(
@@ -1390,11 +1399,11 @@ async def _download_stac_tree(
         whether the remote changed.
     """
     if expected_version is not None:
-        remote = await _fetch_remote_versions_async(remote_url, collection, profile)
+        remote = await _fetch_remote_versions_async(remote_url, collection, profile, report=report)
         if remote.current_version != expected_version:
             return 0, 0, True
     bucket_url, prefix = parse_object_store_url(remote_url)
-    store, _ = _setup_store_and_kwargs(bucket_url, profile, chunk_concurrency=4)
+    store, _ = _setup_store_and_kwargs(bucket_url, profile, chunk_concurrency=4, report=report)
     semaphore = asyncio.Semaphore(concurrency)
     counts = {"written": 0, "failed": 0}
     walked: set[str] = set()
@@ -1568,7 +1577,7 @@ async def pull_all_collections_async(
     shared_store: ObjectStore | None = None
 
     # discover_collections validates catalog and raises ValueError if invalid
-    collections = discover_collections(local_root)
+    collections = discover_collections(local_root, report=report)
     state = RunState.open(local_root)
     # Plugin history need not have a local versions.json. Keep file discovery
     # intact and include plugin collections from the STAC tree as well.
@@ -1624,7 +1633,7 @@ async def pull_all_collections_async(
                     return collection, _from_backend(backend_result, dry_run), None
                 if shared_store is None and not dry_run:
                     shared_store, _kwargs = _setup_store_and_kwargs(
-                        bucket_url, profile, chunk_concurrency=4
+                        bucket_url, profile, chunk_concurrency=4, report=report
                     )
                 # Build kwargs, only including concurrency if explicitly set
                 pull_kwargs: dict[str, Any] = {

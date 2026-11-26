@@ -70,6 +70,7 @@ from obstore.store import (
     S3Store,
 )
 
+from portolan_cli.sync.report import tell
 from portolan_cli.sync.upload import (
     _setup_store_and_kwargs,
     parse_object_store_url,
@@ -77,20 +78,12 @@ from portolan_cli.sync.upload import (
 from portolan_cli.trace import submit
 
 if TYPE_CHECKING:
-    from portolan_cli.sync.report import Level, Report
+    from portolan_cli.sync.report import Report
 
 # Transfer progress is a diagnostic. Each caller reports its own outcome from
 # the DownloadResult. download_file sends its lines to a report callback when
 # the caller passes one.
 logger = logging.getLogger(__name__)
-
-
-def _tell(report: Report | None, level: Level, message: str) -> None:
-    """Send one line to ``report``, or to the module logger without one."""
-    if report is not None:
-        report(level, message)
-    else:
-        logger.log(logging.WARNING if level in ("warn", "error") else logging.DEBUG, message)
 
 
 # Type alias for all supported object stores (same as upload.py)
@@ -308,7 +301,7 @@ def download_file(
         s3_use_ssl: Whether to use HTTPS for S3 endpoint (default: True)
         chunk_concurrency: Max concurrent chunks per file (default: 4)
         report: Receives each line of the download, with its level. Without
-            it, the lines go to the module logger.
+            it, the lines go to the log.
 
     Returns:
         DownloadResult with download statistics
@@ -334,7 +327,7 @@ def download_file(
 
     # Overwrite protection
     if not overwrite and local_path.exists():
-        _tell(report, "detail", f"Skipping existing file: {local_path}")
+        tell(report, "detail", f"Skipping existing file: {local_path}")
         return DownloadResult(
             success=True,
             files_downloaded=0,
@@ -344,7 +337,7 @@ def download_file(
         )
 
     if dry_run:
-        _tell(report, "info", f"[DRY RUN] Would download: {prefix} -> {local_path}")
+        tell(report, "info", f"[DRY RUN] Would download: {prefix} -> {local_path}")
         return DownloadResult(
             success=True,
             files_downloaded=0,
@@ -354,7 +347,7 @@ def download_file(
         )
 
     store, kwargs = _setup_store_and_kwargs(
-        bucket_url, profile, chunk_concurrency, s3_endpoint, s3_region, s3_use_ssl
+        bucket_url, profile, chunk_concurrency, s3_endpoint, s3_region, s3_use_ssl, report=report
     )
 
     try:
@@ -368,7 +361,7 @@ def download_file(
         file_size = response.meta.get("size", 0)
         size_mb = file_size / (1024 * 1024) if file_size else 0
 
-        _tell(report, "info", f"Downloading {local_path.name} ({size_mb:.2f} MB) <- {prefix}")
+        tell(report, "info", f"Downloading {local_path.name} ({size_mb:.2f} MB) <- {prefix}")
 
         # Stream download to file with cleanup on failure
         try:
@@ -392,7 +385,7 @@ def download_file(
         elapsed = time.time() - start_time
         speed_mbps = size_mb / elapsed if elapsed > 0 else 0
 
-        _tell(report, "success", f"Download complete ({speed_mbps:.2f} MB/s)")
+        tell(report, "success", f"Download complete ({speed_mbps:.2f} MB/s)")
 
         return DownloadResult(
             success=True,
@@ -408,7 +401,7 @@ def download_file(
                 local_path.unlink()
         except OSError:
             pass  # Already deleted or permission issue
-        _tell(report, "error", f"Download failed: {e}")
+        tell(report, "error", f"Download failed: {e}")
         return DownloadResult(
             success=False,
             files_downloaded=0,

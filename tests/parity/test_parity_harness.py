@@ -33,7 +33,6 @@ PARITY_DIR = Path(__file__).parent
 PARITY_PENDING = frozenset(
     {
         "partition",
-        "sync",
     }
 )
 

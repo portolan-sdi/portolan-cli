@@ -24,6 +24,8 @@ from portolan_cli.sync.push import (
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from portolan_cli.sync.report import Report
+
 # Mark all tests in this module as unit tests
 pytestmark = pytest.mark.unit
 
@@ -343,7 +345,7 @@ class TestPushAllCollections:
     def test_dry_run_reports_would_push_estimate(
         self,
         mock_push: MagicMock,
-        _print_notices: None,
+        print_report: Report,
         tmp_path: Path,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
@@ -376,6 +378,7 @@ class TestPushAllCollections:
             force=False,
             dry_run=True,
             profile=None,
+            report=print_report,
         )
 
         # The uploaded counts stay at 0 because a dry-run uploads nothing.

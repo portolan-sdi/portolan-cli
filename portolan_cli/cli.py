@@ -3290,22 +3290,6 @@ def _warn_push_footprint(
         )
 
 
-def _print_push_notice(level: str, message: str, *, verbose: bool) -> None:
-    """Print one notice of a push. A per-file notice prints only with --verbose."""
-    if level == "verbose":
-        if verbose:
-            detail(message)
-        return
-    printers = {
-        "success": success,
-        "info": info_output,
-        "warn": warn,
-        "error": error,
-        "detail": detail,
-    }
-    printers[level](message)
-
-
 def _report_push_error(err: Exception, *, collection: str | None, use_json: bool) -> bool:
     """Report an error that a push raised.
 
@@ -3344,7 +3328,7 @@ def _report_push_error(err: Exception, *, collection: str | None, use_json: bool
 def _report_push_all_result(all_result: Any, *, use_json: bool) -> None:
     """Report the outcome of a push that covered every collection.
 
-    The notices of the run already wrote the terminal output, so this adds
+    The report lines of the run already wrote the terminal output, so this adds
     the JSON envelope and the exit code.
 
     Args:
@@ -3629,9 +3613,11 @@ def push(
             max_connections=max_connections,
             adaptive=adaptive,
             verify=verify,
-            notify=lambda level, message: _print_push_notice(level, message, verbose=verbose),
-            # A progress bar and per-file lines would interleave.
-            show_progress=not use_json and not verbose,
+            # As before #1133, only a catalog-wide push prints the per-file lines of -v.
+            verbose=verbose and collection is None,
+            report=_report,
+            # As before #1133, the bar draws on a terminal unless the output is JSON.
+            show_progress=not use_json,
         )
     except Exception as err:
         if not _report_push_error(err, collection=collection, use_json=use_json):

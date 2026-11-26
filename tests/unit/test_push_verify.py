@@ -32,6 +32,8 @@ if TYPE_CHECKING:
 
     from click.testing import Result
 
+    from portolan_cli.sync.report import Report
+
 PREFIX = "catalog"
 REMOTE = "s3://bucket/catalog"
 COLLECTION: dict[str, Any] = {
@@ -521,7 +523,7 @@ class TestRepairOnlyPath:
     @pytest.mark.unit
     @pytest.mark.parametrize("force", [False, True], ids=["repair-only", "force"])
     def test_repaired_count_excludes_a_skipped_optional_derivative(
-        self, _print_notices: None, tmp_path: Path, force: bool, capsys: pytest.CaptureFixture[str]
+        self, print_report: Report, tmp_path: Path, force: bool, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """A flagged optional derivative that is missing on disk does not count as repaired."""
         a = b"a bytes"
@@ -532,7 +534,7 @@ class TestRepairOnlyPath:
         store = MemoryStore()
         obs.put(store, f"{PREFIX}/test/versions.json", json.dumps(data).encode())
 
-        result = self._push(root, store, verify=True, force=force)
+        result = self._push(root, store, verify=True, force=force, report=print_report)
 
         assert result.success is True, result.errors
         assert result.verify == VerifyReport(checked=2, mismatched=2)

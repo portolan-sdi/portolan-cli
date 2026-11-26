@@ -21,9 +21,9 @@ they do for the AWS CLI. This reads the files directly, so it applies without
 the ``aws`` extra. An explicit endpoint and ``PORTOLAN_S3_ENDPOINT`` still win,
 and the upload names the profile that supplies an endpoint.
 
-The upload prints nothing. It reports each message through
-``portolan_cli.sync.notices``. The caller makes a callback current with
-``notifying``. Without one, the messages go to the log.
+The upload prints nothing. Each function that sends a message takes a
+``report`` callback (``portolan_cli.sync.report``). Without one, the messages
+go to the log.
 
 Basic Usage:
     from portolan_cli.sync.upload import upload_file, upload_directory, check_credentials
@@ -85,7 +85,7 @@ from obstore.store import (
 )
 
 from portolan_cli.errors import InsecureS3EndpointError, ProfileCredentialsError
-from portolan_cli.sync.notices import notice
+from portolan_cli.sync.report import Report, tell
 from portolan_cli.trace import submit
 
 if TYPE_CHECKING:
@@ -541,7 +541,11 @@ def check_credentials(destination: str, profile: str | None = None) -> tuple[boo
 
 
 def _resolve_s3_endpoint_settings(
-    s3_endpoint: str | None, s3_use_ssl: bool | None, profile: str | None = None
+    s3_endpoint: str | None,
+    s3_use_ssl: bool | None,
+    profile: str | None = None,
+    *,
+    report: Report | None = None,
 ) -> tuple[str | None, bool]:
     """Resolve S3 endpoint settings from the argument, the environment, or the profile.
 
@@ -553,6 +557,7 @@ def _resolve_s3_endpoint_settings(
         s3_endpoint: An explicit endpoint, or None.
         s3_use_ssl: An explicit TLS setting, or None.
         profile: AWS profile name, or None when the caller named none.
+        report: Receives each line of the run, with its level.
 
     Returns:
         The resolved endpoint and TLS setting.
@@ -582,7 +587,7 @@ def _resolve_s3_endpoint_settings(
         return None, use_ssl
 
     # Name the source, so a redirected upload is never silent.
-    notice("detail", f"Endpoint {aws_endpoint} from {source}")
+    tell(report, "detail", f"Endpoint {aws_endpoint} from {source}")
 
     # Both sources write a full URL, so its scheme carries the TLS setting.
     # An explicit argument or PORTOLAN_S3_USE_SSL still wins.
@@ -772,9 +777,13 @@ def _create_s3_store(
     s3_endpoint: str | None,
     s3_region: str | None,
     s3_use_ssl: bool | None,
+    *,
+    report: Report | None = None,
 ) -> ObjectStore:
     """Create an S3 store with credentials and endpoint settings."""
-    endpoint, use_ssl = _resolve_s3_endpoint_settings(s3_endpoint, s3_use_ssl, profile)
+    endpoint, use_ssl = _resolve_s3_endpoint_settings(
+        s3_endpoint, s3_use_ssl, profile, report=report
+    )
     bucket = bucket_url.replace("s3://", "").split("/")[0]
     access_key, secret_key, session_token, profile_region = _resolve_s3_credentials(profile)
     credential_provider = None
@@ -817,6 +826,8 @@ def _setup_store_and_kwargs(
     s3_endpoint: str | None = None,
     s3_region: str | None = None,
     s3_use_ssl: bool | None = None,
+    *,
+    report: Report | None = None,
 ) -> tuple[ObjectStore, dict[str, int]]:
     """Setup object store and upload kwargs.
 
@@ -828,6 +839,7 @@ def _setup_store_and_kwargs(
         s3_endpoint: Custom S3-compatible endpoint (e.g., "minio.example.com:9000")
         s3_region: S3 region (auto-detected from env var or profile config)
         s3_use_ssl: Whether to use HTTPS for S3 endpoint (default: True)
+        report: Receives each line of the run, with its level.
 
     Returns:
         Tuple of (store, kwargs) where kwargs are passed to put_object
@@ -838,7 +850,9 @@ def _setup_store_and_kwargs(
     3. Default profile in the shared AWS credentials file (automatic fallback)
     """
     if bucket_url.startswith("s3://"):
-        store = _create_s3_store(bucket_url, profile, s3_endpoint, s3_region, s3_use_ssl)
+        store = _create_s3_store(
+            bucket_url, profile, s3_endpoint, s3_region, s3_use_ssl, report=report
+        )
     else:
         # Non-S3 stores (GCS, Azure, HTTP)
         store = obs.store.from_url(bucket_url)
@@ -851,6 +865,7 @@ def setup_store(
     *,
     profile: str | None = None,
     region: str | None = None,
+    report: Report | None = None,
 ) -> tuple[ObjectStore, str]:
     """Setup object store from a destination URL.
 
@@ -868,6 +883,7 @@ def setup_store(
             az://container/prefix).
         profile: AWS profile name (for S3 only).
         region: AWS region (for S3 only). Takes precedence over profile/env config.
+        report: Receives each line of the run, with its level.
 
     Returns:
         Tuple of (store, prefix).
@@ -882,6 +898,7 @@ def setup_store(
         profile=profile,
         chunk_concurrency=4,  # Default, not used for non-upload operations
         s3_region=region,
+        report=report,
     )
     return store, prefix
 
@@ -1060,18 +1077,23 @@ def _upload_one_file(
     file_path: Path,
     source: Path,
     prefix: str,
+    verbose: bool = False,
+    *,
+    report: Report | None = None,
     **kwargs: int,
 ) -> tuple[Path, Exception | None, int]:
     """Upload a single file and return result tuple for parallel processing.
 
-    Per-file lines go out at the ``verbose`` notice level. Errors go out at
-    the ``error`` level.
+    Per-file output only shown in verbose mode when used in
+    batch operations. Errors are always shown.
 
     Args:
         store: Object store instance
         file_path: Path to file to upload
         source: Source directory for relative path calculation
         prefix: Prefix for target key
+        verbose: If True, show per-file upload/success messages.
+        report: Receives each line of the upload. Without it, the lines go to the log.
         **kwargs: Additional args passed to put_object
 
     Returns:
@@ -1083,18 +1105,22 @@ def _upload_one_file(
         size_mb = file_size / (1024 * 1024)
         start_time = time.time()
 
-        notice("verbose", f"Uploading {file_path.name} ({size_mb:.2f} MB) -> {target_key}")
+        # Per-file output only in verbose mode
+        if verbose:
+            tell(report, "info", f"Uploading {file_path.name} ({size_mb:.2f} MB) -> {target_key}")
 
         put_object(store, target_key, file_path, max_concurrency=kwargs.get("max_concurrency", 4))
 
         elapsed = time.time() - start_time
         speed_mbps = size_mb / elapsed if elapsed > 0 else 0
 
-        notice("verbose", f"{file_path.name} ({speed_mbps:.2f} MB/s)")
+        # Per-file output only in verbose mode
+        if verbose:
+            tell(report, "success", f"{file_path.name} ({speed_mbps:.2f} MB/s)")
         return file_path, None, file_size
     except Exception as e:
         # Errors are always shown
-        notice("error", f"{file_path.name}: {e}")
+        tell(report, "error", f"{file_path.name}: {e}")
         return file_path, e, 0
 
 
@@ -1108,6 +1134,7 @@ def upload_file(
     s3_region: str | None = None,
     s3_use_ssl: bool | None = None,
     chunk_concurrency: int = 4,
+    report: Report | None = None,
 ) -> UploadResult:
     """Upload a single file to S3/GCS/Azure.
 
@@ -1120,6 +1147,8 @@ def upload_file(
         s3_region: S3 region (default: auto-detected)
         s3_use_ssl: Whether to use HTTPS for S3 endpoint (default: True)
         chunk_concurrency: Max concurrent chunks per file (default: 4)
+        report: Receives each line of the upload, with its level. Without
+            it, the lines go to the log.
 
     Returns:
         UploadResult with upload statistics
@@ -1144,7 +1173,11 @@ def upload_file(
     size_mb = file_size / (1024 * 1024)
 
     if dry_run:
-        notice("info", f"[DRY RUN] Would upload: {source.name} ({size_mb:.2f} MB) -> {target_key}")
+        tell(
+            report,
+            "info",
+            f"[DRY RUN] Would upload: {source.name} ({size_mb:.2f} MB) -> {target_key}",
+        )
         return UploadResult(
             success=True,
             files_uploaded=0,
@@ -1154,19 +1187,19 @@ def upload_file(
         )
 
     store, kwargs = _setup_store_and_kwargs(
-        bucket_url, profile, chunk_concurrency, s3_endpoint, s3_region, s3_use_ssl
+        bucket_url, profile, chunk_concurrency, s3_endpoint, s3_region, s3_use_ssl, report=report
     )
 
     try:
         start_time = time.time()
-        notice("info", f"Uploading {source.name} ({size_mb:.2f} MB) -> {target_key}")
+        tell(report, "info", f"Uploading {source.name} ({size_mb:.2f} MB) -> {target_key}")
 
         put_object(store, target_key, source, max_concurrency=kwargs.get("max_concurrency", 4))
 
         elapsed = time.time() - start_time
         speed_mbps = size_mb / elapsed if elapsed > 0 else 0
 
-        notice("success", f"Upload complete ({speed_mbps:.2f} MB/s)")
+        tell(report, "success", f"Upload complete ({speed_mbps:.2f} MB/s)")
 
         return UploadResult(
             success=True,
@@ -1176,7 +1209,7 @@ def upload_file(
             errors=[],
         )
     except Exception as e:
-        notice("error", f"Upload failed: {e}")
+        tell(report, "error", f"Upload failed: {e}")
         return UploadResult(
             success=False,
             files_uploaded=0,
@@ -1201,15 +1234,24 @@ def _find_files_to_upload(source: Path, pattern: str | None) -> list[Path]:
 
 
 def _print_dry_run_directory(
-    files: list[Path], source: Path, prefix: str, total_size_mb: float
+    files: list[Path],
+    source: Path,
+    prefix: str,
+    total_size_mb: float,
+    *,
+    report: Report | None = None,
 ) -> None:
     """Print dry-run information for directory upload."""
-    notice("info", f"[DRY RUN] Would upload {len(files)} file(s) ({total_size_mb:.2f} MB total)")
+    tell(
+        report,
+        "info",
+        f"[DRY RUN] Would upload {len(files)} file(s) ({total_size_mb:.2f} MB total)",
+    )
     for f in files[:10]:
         target_key = _build_target_key(f, source, prefix)
-        notice("detail", f"  {f.name} -> {target_key}")
+        tell(report, "detail", f"  {f.name} -> {target_key}")
     if len(files) > 10:
-        notice("detail", f"  ... and {len(files) - 10} more file(s)")
+        tell(report, "detail", f"  ... and {len(files) - 10} more file(s)")
 
 
 def _execute_parallel_uploads(
@@ -1220,8 +1262,13 @@ def _execute_parallel_uploads(
     max_files: int,
     fail_fast: bool,
     kwargs: dict[str, int],
+    *,
+    verbose: bool = False,
+    report: Report | None = None,
 ) -> list[tuple[Path, Exception | None, int]]:
     """Execute parallel uploads using ThreadPoolExecutor.
+
+    Per-file output controlled by verbose parameter.
 
     Args:
         store: Object store instance
@@ -1231,6 +1278,8 @@ def _execute_parallel_uploads(
         max_files: Max concurrent file uploads
         fail_fast: Stop on first error if True
         kwargs: Additional args for put_object
+        verbose: If True, show per-file upload messages.
+        report: Receives each line of the upload.
 
     Returns:
         List of (file_path, error_or_none, bytes_uploaded) tuples
@@ -1247,7 +1296,15 @@ def _execute_parallel_uploads(
             # Submit initial batch up to max_files
             for f in files_iter:
                 future: UploadResultFuture = submit(
-                    executor, _upload_one_file, store, f, source, prefix, **kwargs
+                    executor,
+                    _upload_one_file,
+                    store,
+                    f,
+                    source,
+                    prefix,
+                    verbose,
+                    report=report,
+                    **kwargs,
                 )
                 pending[future] = f
                 if len(pending) >= max_files:
@@ -1276,6 +1333,8 @@ def _execute_parallel_uploads(
                         next_file,
                         source,
                         prefix,
+                        verbose,
+                        report=report,
                         **kwargs,
                     )
                     pending[new_future] = next_file
@@ -1285,7 +1344,17 @@ def _execute_parallel_uploads(
         # For non-fail_fast mode, submit all futures upfront for maximum parallelism
         with ThreadPoolExecutor(max_workers=max_files) as executor:
             future_to_file = {
-                submit(executor, _upload_one_file, store, f, source, prefix, **kwargs): f
+                submit(
+                    executor,
+                    _upload_one_file,
+                    store,
+                    f,
+                    source,
+                    prefix,
+                    verbose,
+                    report=report,
+                    **kwargs,
+                ): f
                 for f in files
             }
 
@@ -1309,11 +1378,13 @@ def upload_directory(
     s3_endpoint: str | None = None,
     s3_region: str | None = None,
     s3_use_ssl: bool | None = None,
+    verbose: bool = False,
+    report: Report | None = None,
 ) -> UploadResult:
     """Upload a directory to S3/GCS/Azure with parallel uploads.
 
-    Per-file lines go out at the ``verbose`` notice level. Summary lines
-    go out at the start and the end.
+    Per-file output controlled by verbose parameter.
+    Progress is shown via summary messages at start/end.
 
     Args:
         source: Local directory path
@@ -1327,6 +1398,9 @@ def upload_directory(
         s3_endpoint: Custom S3-compatible endpoint (e.g., "minio.example.com:9000")
         s3_region: S3 region (default: auto-detected)
         s3_use_ssl: Whether to use HTTPS for S3 endpoint (default: True)
+        verbose: If True, show per-file upload messages.
+        report: Receives each line of the upload, with its level. Without
+            it, the lines go to the log.
 
     Returns:
         UploadResult with upload statistics
@@ -1349,7 +1423,7 @@ def upload_directory(
 
     # Early return for empty directory
     if not files:
-        notice("detail", f"No files found in {source}")
+        tell(report, "detail", f"No files found in {source}")
         return UploadResult(
             success=True, files_uploaded=0, files_failed=0, total_bytes=0, errors=[]
         )
@@ -1359,21 +1433,23 @@ def upload_directory(
     bucket_url, prefix = parse_object_store_url(destination)
 
     if dry_run:
-        _print_dry_run_directory(files, source, prefix, total_size_mb)
+        _print_dry_run_directory(files, source, prefix, total_size_mb, report=report)
         return UploadResult(
             success=True, files_uploaded=0, files_failed=0, total_bytes=0, errors=[]
         )
 
     store, kwargs = _setup_store_and_kwargs(
-        bucket_url, profile, chunk_concurrency, s3_endpoint, s3_region, s3_use_ssl
+        bucket_url, profile, chunk_concurrency, s3_endpoint, s3_region, s3_use_ssl, report=report
     )
 
-    notice("info", f"Found {len(files)} file(s) to upload ({total_size_mb:.2f} MB total)")
+    tell(report, "info", f"Found {len(files)} file(s) to upload ({total_size_mb:.2f} MB total)")
 
     # Ensure max_files is at least 1 to avoid ThreadPoolExecutor ValueError
     max_files = max(1, max_files)
 
-    results = _execute_parallel_uploads(store, files, source, prefix, max_files, fail_fast, kwargs)
+    results = _execute_parallel_uploads(
+        store, files, source, prefix, max_files, fail_fast, kwargs, verbose=verbose, report=report
+    )
 
     # Calculate results
     errors = [(path, err) for path, err, _ in results if err is not None]

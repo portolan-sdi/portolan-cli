@@ -26,6 +26,7 @@ if TYPE_CHECKING:
     from click.testing import Result
 
     from portolan_cli.sync.push import PushResult
+    from portolan_cli.sync.report import Report
 
 
 @pytest.fixture
@@ -1879,7 +1880,7 @@ class TestPushAgainstMoto:
     @pytest.mark.integration
     def test_credential_without_list_warns_once_and_deletes_nothing(
         self,
-        _print_notices: None,
+        print_report: Report,
         tmp_path: Path,
         bucket: tuple[str, Any],
         monkeypatch: pytest.MonkeyPatch,
@@ -1893,7 +1894,7 @@ class TestPushAgainstMoto:
 
         name, client = bucket
         root = _catalog(tmp_path, {"a": {"a.parquet": b"a"}, "b": {"b.parquet": b"b"}})
-        assert push_all_collections(root, f"s3://{name}/cat").success
+        assert push_all_collections(root, f"s3://{name}/cat", report=print_report).success
         keys_after_first_push = _keys(client, name)
         for coll in ("a", "b"):
             _write_collection(root, coll, "1.0.1", {f"{coll}.parquet": b"x", "new.parquet": b"n"})
@@ -1916,7 +1917,7 @@ class TestPushAgainstMoto:
         monkeypatch.setattr(obstore, "head_async", head_without_list)
         _fail_put(monkeypatch, fail_manifest)
         capsys.readouterr()
-        result = push_all_collections(root, f"s3://{name}/cat")
+        result = push_all_collections(root, f"s3://{name}/cat", report=print_report)
 
         assert result.failed_collections == 2
         notice = "Cannot read which remote keys exist before the upload"

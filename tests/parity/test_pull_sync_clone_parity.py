@@ -219,13 +219,6 @@ def test_pull_invalid_remote(parity: Parity, local_in_sync: Callable[[Path], Non
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "#1133: sync.push still prints through portolan_cli.output. The push change "
-        "of #1133 removes that output. Delete this mark when it merges."
-    ),
-)
 def test_sync_in_sync(parity: Parity, local_in_sync: Callable[[Path], None]) -> None:
     """`sync -c points` runs pull, init, scan, check, and push on a catalog in sync."""
     parity(

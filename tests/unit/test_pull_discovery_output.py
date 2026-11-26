@@ -41,10 +41,6 @@ def _deny_versions_scan(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(Path, "rglob", rglob)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="#1133: sync.push.discover_collections still prints until the push branch merges",
-)
 def test_a_denied_discovery_writes_nothing(
     catalog: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

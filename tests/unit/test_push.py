@@ -35,6 +35,8 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
 
+    from portolan_cli.sync.report import Report
+
 # =============================================================================
 # Test fixtures
 # =============================================================================
@@ -767,7 +769,7 @@ class TestRollbackRestoresOverwrittenKeys:
     @pytest.mark.unit
     async def test_failed_copy_warns_and_a_missing_key_does_not(
         self,
-        _print_notices: None,
+        print_report: Report,
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
@@ -776,14 +778,22 @@ class TestRollbackRestoresOverwrittenKeys:
         from portolan_cli.sync.push import _back_up
 
         store = MemoryStore()
-        assert await _back_up(store, {"catalog/test/gone.parquet": None}, "catalog", 4) == {}
+        assert (
+            await _back_up(
+                store, {"catalog/test/gone.parquet": None}, "catalog", 4, report=print_report
+            )
+            == {}
+        )
         assert capsys.readouterr().err == ""
 
         async def denied(*_args: Any, **_kwargs: Any) -> None:
             raise PermissionDeniedError("403 Forbidden")
 
         monkeypatch.setattr(obs, "copy_async", denied)
-        assert await _back_up(store, {"catalog/test/a.parquet": 3}, "catalog", 4) == {}
+        assert (
+            await _back_up(store, {"catalog/test/a.parquet": 3}, "catalog", 4, report=print_report)
+            == {}
+        )
         err = capsys.readouterr().err
         assert "Cannot back up catalog/test/a.parquet, a failed push leaves its new bytes" in err
 
@@ -953,7 +963,7 @@ class TestMissingDerivedAsset:
     )
     def test_missing_derived_asset_is_skipped(
         self,
-        _print_notices: None,
+        print_report: Report,
         local_catalog: Path,
         capsys: pytest.CaptureFixture[str],
         missing_href: str,
@@ -973,6 +983,7 @@ class TestMissingDerivedAsset:
                     "derived": missing_href,
                 }
             ),
+            report=print_report,
         )
 
         assert assets == [source.resolve()]
@@ -1023,7 +1034,7 @@ class TestMissingDerivedAsset:
 
     @pytest.mark.unit
     def test_thumbnail_role_wins_over_an_unknown_filename(
-        self, _print_notices: None, local_catalog: Path, capsys: pytest.CaptureFixture[str]
+        self, print_report: Report, local_catalog: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Push skips a preview the spec calls optional, whatever its name."""
         from portolan_cli.sync.push import _get_assets_to_upload
@@ -1033,6 +1044,7 @@ class TestMissingDerivedAsset:
         assets = _get_assets_to_upload(
             catalog_root=local_catalog,
             versions_data=self._versions_data({"preview.webp": "test/preview.webp"}),
+            report=print_report,
         )
 
         assert assets == []
@@ -1277,7 +1289,7 @@ class TestProgressReporting:
 
     @pytest.mark.unit
     def test_push_dry_run_shows_progress(
-        self, _print_notices: None, local_catalog: Path, capsys
+        self, print_report: Report, local_catalog: Path, capsys
     ) -> None:
         """Dry-run at push level should show what would be uploaded."""
         from portolan_cli.sync.push import push
@@ -1288,6 +1300,7 @@ class TestProgressReporting:
             collection="test",
             destination="s3://mybucket/catalog",
             dry_run=True,
+            report=print_report,
         )
 
         captured = capsys.readouterr()

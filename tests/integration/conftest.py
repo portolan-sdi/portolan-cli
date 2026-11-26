@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from tests.push_notices import print_notices_fixture  # noqa: F401  (a shared fixture)
+from tests.print_report import print_report_fixture  # noqa: F401  (a shared fixture)
 
 if TYPE_CHECKING:
     from collections.abc import Callable

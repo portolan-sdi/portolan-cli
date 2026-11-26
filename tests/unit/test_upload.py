@@ -1270,13 +1270,11 @@ class TestOutputIntegration:
     def test_upload_file_sends_notices(
         self, temp_file: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """Upload reports each step through the notify callback and prints nothing."""
-        from portolan_cli.sync.notices import notifying
+        """Upload reports each step through the report callback and prints nothing."""
         from portolan_cli.sync.upload import upload_file
 
         notices: list[tuple[str, str]] = []
         with (
-            notifying(lambda level, message: notices.append((level, message))),
             patch("portolan_cli.sync.upload.obs"),
             patch("portolan_cli.sync.upload.S3Store"),
             patch.dict(
@@ -1287,6 +1285,7 @@ class TestOutputIntegration:
             result = upload_file(
                 source=temp_file,
                 destination="s3://mybucket/data.parquet",
+                report=lambda level, message: notices.append((level, message)),
             )
 
         assert result.success is True
@@ -1400,16 +1399,21 @@ class TestProfileEndpointRegion:
     @pytest.mark.unit
     def test_profile_endpoint_names_its_source(self, default_profile_endpoint: Path) -> None:
         """The upload must name the profile that supplies the endpoint."""
-        from portolan_cli.sync.notices import notifying
         from portolan_cli.sync.upload import _create_s3_store
 
         notices: list[tuple[str, str]] = []
         with (
-            notifying(lambda level, message: notices.append((level, message))),
             cleared_environ(),
             patch("portolan_cli.sync.upload.S3Store"),
         ):
-            _create_s3_store("s3://mybucket", None, None, None, None)
+            _create_s3_store(
+                "s3://mybucket",
+                None,
+                None,
+                None,
+                None,
+                report=lambda level, message: notices.append((level, message)),
+            )
 
         assert notices == [
             ("detail", "Endpoint https://data.source.coop from AWS profile 'default'")

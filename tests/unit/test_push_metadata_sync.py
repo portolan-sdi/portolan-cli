@@ -20,6 +20,8 @@ if TYPE_CHECKING:
     from pathlib import Path
     from typing import Any
 
+    from portolan_cli.sync.report import Report
+
 
 # =============================================================================
 # Fixtures
@@ -468,7 +470,7 @@ class TestPushMetadataSync:
 
     @pytest.mark.unit
     def test_push_dry_run_shows_metadata_files(
-        self, _print_notices: None, catalog_with_metadata: Path, capsys
+        self, print_report: Report, catalog_with_metadata: Path, capsys
     ) -> None:
         """Dry run should list metadata files that would be synced."""
         from portolan_cli.sync.push import push
@@ -478,6 +480,7 @@ class TestPushMetadataSync:
             collection="collection1",
             destination="s3://test-bucket/catalog",
             dry_run=True,
+            report=print_report,
         )
 
         captured = capsys.readouterr()
@@ -524,7 +527,7 @@ class TestPushAllMetadataSync:
 
     @pytest.mark.unit
     def test_push_all_root_files_dry_run_shows_metadata(
-        self, _print_notices: None, catalog_with_metadata: Path, capsys
+        self, print_report: Report, catalog_with_metadata: Path, capsys
     ) -> None:
         """_push_all_upload_root_files dry run should show metadata files."""
         from portolan_cli.sync.push import _push_all_upload_root_files
@@ -545,6 +548,7 @@ class TestPushAllMetadataSync:
                 region=None,
                 dry_run=True,
                 stats=stats,
+                report=print_report,
             )
         )
 
@@ -915,7 +919,7 @@ class TestPushNoVersionChangeMetadataSync:
                     catalog_root=catalog_with_metadata,
                     collection="collection1",
                     destination="s3://test-bucket/catalog",
-                    notify=lambda level, message: (
+                    report=lambda level, message: (
                         warnings.append(message) if level == "warn" else None
                     ),
                 )

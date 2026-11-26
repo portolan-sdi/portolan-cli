@@ -24,6 +24,8 @@ from portolan_cli.sync.push import (
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from portolan_cli.sync.report import Report
+
 # =============================================================================
 # Formatting Tests
 # =============================================================================
@@ -179,7 +181,7 @@ class TestUploadAssetsVerboseMode:
     @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_default_mode_suppresses_success_messages(
-        self, _print_notices: None, mock_catalog: Path, capsys: pytest.CaptureFixture[str]
+        self, print_report: Report, mock_catalog: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Default mode should not print per-file success messages."""
         assets = [
@@ -195,6 +197,7 @@ class TestUploadAssetsVerboseMode:
                 catalog_root=mock_catalog,
                 prefix="test-prefix",
                 assets=assets,
+                report=print_report,
             )
 
         captured = capsys.readouterr()
@@ -233,7 +236,7 @@ class TestUploadAssetsVerboseMode:
     @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_failures_always_shown(
-        self, _print_notices: None, mock_catalog: Path, capsys: pytest.CaptureFixture[str]
+        self, print_report: Report, mock_catalog: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Failures should always be shown, regardless of verbose mode."""
         assets = [
@@ -252,6 +255,7 @@ class TestUploadAssetsVerboseMode:
                 catalog_root=mock_catalog,
                 prefix="test-prefix",
                 assets=assets,
+                report=print_report,
             )
 
         captured = capsys.readouterr()

@@ -29,6 +29,8 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
 
+    from portolan_cli.sync.report import Report
+
 pytestmark = pytest.mark.unit
 
 
@@ -206,7 +208,7 @@ class TestCatalogWideDryRun:
     def test_dry_run_lists_intermediate_catalogs(
         self,
         mock_push: MagicMock,
-        _print_notices: None,
+        print_report: Report,
         nested_catalog: Path,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
@@ -220,6 +222,7 @@ class TestCatalogWideDryRun:
             force=False,
             dry_run=True,
             profile=None,
+            report=print_report,
         )
 
         out = capsys.readouterr().out
@@ -241,13 +244,14 @@ class TestSingleCollectionIntermediateCatalogs:
         assert "tst/README.md" in readme_rel
 
     def test_dry_run_single_collection_lists_intermediates(
-        self, _print_notices: None, nested_catalog: Path, capsys: pytest.CaptureFixture[str]
+        self, print_report: Report, nested_catalog: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         push(
             catalog_root=nested_catalog,
             collection="tst/latest/adm0",
             destination="s3://bucket/catalog",
             dry_run=True,
+            report=print_report,
         )
         out = capsys.readouterr().out
         assert "tst/catalog.json" in out

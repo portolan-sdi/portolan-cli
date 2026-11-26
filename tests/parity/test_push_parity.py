@@ -20,12 +20,12 @@ from obstore.store import MemoryStore
 
 from portolan_cli.json_output import ErrorDetail
 from portolan_cli.sync.push import PushAllResult, PushResult, run_push
+from portolan_cli.sync.report import silent
 
 if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
-    from portolan_cli.sync.notices import NoticeLevel
     from tests.catalog_invariants import RunCli
     from tests.parity.harness import Parity, VerifyingRunCli
 
@@ -51,10 +51,6 @@ BEFORE_MANIFEST = {
     "catalog/points/points.thumb.jpg",
     "catalog/points/collection.json",
 }
-
-
-def _quiet(_level: NoticeLevel, _message: str) -> None:
-    """Drop each notice. The CLI prints them, and the library call must not."""
 
 
 @dataclass
@@ -145,7 +141,7 @@ def test_push_all_collections(
         "push",
         [DESTINATION],
         catalog=points_catalog,
-        call=lambda root: run_push(root, DESTINATION, notify=_quiet),
+        call=lambda root: run_push(root, DESTINATION, report=silent),
     )
     assert len(remotes.runs) == 2
     for remote in remotes.runs:
@@ -162,7 +158,7 @@ def test_push_all_collections_counts(
 ) -> None:
     """The catalog-wide result counts the one collection and its version."""
     points_catalog(tmp_path / "catalog")
-    result = run_push(tmp_path / "catalog", DESTINATION, notify=_quiet)
+    result = run_push(tmp_path / "catalog", DESTINATION, report=silent)
     assert isinstance(result, PushAllResult)
     assert (result.total_collections, result.successful_collections) == (1, 1)
     assert (result.total_versions_pushed, result.total_files_uploaded) == (1, 10)
@@ -176,7 +172,7 @@ def test_push_one_collection(
         "push",
         [DESTINATION, "--collection", "points"],
         catalog=points_catalog,
-        call=lambda root: run_push(root, DESTINATION, collection="points", notify=_quiet),
+        call=lambda root: run_push(root, DESTINATION, collection="points", report=silent),
     )
     assert len(remotes.runs) == 2
     for remote in remotes.runs:
@@ -192,7 +188,7 @@ def test_push_one_collection_counts(
 ) -> None:
     """The result counts the version and the uploaded files, not the manifest."""
     points_catalog(tmp_path / "catalog")
-    result = run_push(tmp_path / "catalog", DESTINATION, collection="points", notify=_quiet)
+    result = run_push(tmp_path / "catalog", DESTINATION, collection="points", report=silent)
     assert isinstance(result, PushResult)
     assert (result.success, result.versions_pushed, result.files_uploaded) == (True, 1, 9)
 
@@ -207,7 +203,7 @@ def test_push_dry_run(
         [DESTINATION, "--dry-run", "--collection", "points"],
         catalog=points_catalog,
         call=lambda root: run_push(
-            root, DESTINATION, collection="points", dry_run=True, notify=_quiet
+            root, DESTINATION, collection="points", dry_run=True, report=silent
         ),
     )
     assert len(remotes.runs) == 2
@@ -221,7 +217,7 @@ def test_push_missing_collection(parity: Parity, points_catalog: Callable[[Path]
         "push",
         [DESTINATION, "--collection", "missing"],
         catalog=points_catalog,
-        call=lambda root: run_push(root, DESTINATION, collection="missing", notify=_quiet),
+        call=lambda root: run_push(root, DESTINATION, collection="missing", report=silent),
         raises=FileNotFoundError,
     )
 
@@ -260,7 +256,7 @@ def test_push_blocked_backend(
         "push",
         [DESTINATION, "--collection", "points"],
         catalog=blocked_catalog,
-        call=lambda root: run_push(root, DESTINATION, collection="points", notify=_quiet),
+        call=lambda root: run_push(root, DESTINATION, collection="points", report=silent),
         raises=NotImplementedError,
     )
 
@@ -289,7 +285,7 @@ def test_push_dry_run_constructs_no_backend(
     monkeypatch.setattr(backends, "get_backend", get_backend)
     remotes.refuse_network = True
 
-    result = run_push(root, DESTINATION, collection="points", dry_run=True, notify=_quiet)
+    result = run_push(root, DESTINATION, collection="points", dry_run=True, report=silent)
 
     assert isinstance(result, PushResult)
     assert (result.success, result.dry_run, result.would_push_versions) == (True, True, 1)
@@ -337,7 +333,7 @@ def test_push_one_collection_returned_failure(
         points_catalog,
         tmp_path / "catalog",
         [DESTINATION, "--collection", "points"],
-        lambda root: run_push(root, DESTINATION, collection="points", notify=_quiet),
+        lambda root: run_push(root, DESTINATION, collection="points", report=silent),
     )
     assert envelope["data"] == {}
     assert isinstance(result, PushResult)
@@ -362,7 +358,7 @@ def test_push_all_collections_returned_failure(
         points_catalog,
         tmp_path / "catalog",
         [DESTINATION],
-        lambda root: run_push(root, DESTINATION, notify=_quiet),
+        lambda root: run_push(root, DESTINATION, report=silent),
     )
     assert isinstance(result, PushAllResult)
     assert envelope["data"]["failed_collections"] == 1

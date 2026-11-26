@@ -14,9 +14,10 @@ Design Principles:
 - Explicit conflict handling: Fail on conflicts unless --force
 
 Output:
-- Push prints nothing (#1005). Each message goes to the notify callback of
-  the run, through ``portolan_cli.sync.notices``. ``run_push`` is the entry
-  point of the ``push`` command, and it returns a result with ``to_dict()``.
+- Push prints nothing (#1005). Each function that sends a message takes a
+  ``report`` callback (``portolan_cli.sync.report``). Without one, the
+  messages go to the log. ``run_push`` is the entry point of the ``push``
+  command, and it returns a result with ``to_dict()``.
 """
 
 from __future__ import annotations
@@ -50,7 +51,7 @@ from portolan_cli.errors import PushVerifyError
 from portolan_cli.logo import LOGO_ASSETS_DIRNAME
 from portolan_cli.stac_links import published_tree
 from portolan_cli.sync.checksums import compute_checksum
-from portolan_cli.sync.notices import Notify, notice, notice_group, notifying
+from portolan_cli.sync.report import Report, tell
 from portolan_cli.sync.upload import (
     ObjectStore,
     copy_object_async,
@@ -622,6 +623,7 @@ async def _verify_skipped_assets_async(
     remote_versions_data: dict[str, Any] | None,
     *,
     concurrency: int,
+    report: Report | None = None,
 ) -> tuple[dict[str, str | None], VerifyReport]:
     """Find the skipped assets whose remote object disagrees with the manifest.
 
@@ -643,6 +645,7 @@ async def _verify_skipped_assets_async(
         versions_data: Local versions.json data.
         remote_versions_data: Remote versions.json data, or None.
         concurrency: Maximum number of HEAD requests at the same time.
+        report: Receives each line of the run, with its level.
 
     Returns:
         The flagged hrefs mapped to their HEAD ETags, and the report counts.
@@ -682,16 +685,19 @@ async def _verify_skipped_assets_async(
         raise PushVerifyError(failures)
 
     mismatched = {r.item: r.result[1] for r in results if r.result and r.result[0]}
-    report = VerifyReport(checked=len(sizes), mismatched=len(mismatched))
-    notice(
+    counts = VerifyReport(checked=len(sizes), mismatched=len(mismatched))
+    tell(
+        report,
         "info",
-        f"Verified {report.checked} skipped asset(s) against the store, "
-        f"{report.mismatched} missing or with another size",
+        f"Verified {counts.checked} skipped asset(s) against the store, "
+        f"{counts.mismatched} missing or with another size",
     )
-    return mismatched, report
+    return mismatched, counts
 
 
-def _resolve_local_asset(catalog_root: Path, href: str, version_str: str | None) -> Path | None:
+def _resolve_local_asset(
+    catalog_root: Path, href: str, version_str: str | None, *, report: Report | None = None
+) -> Path | None:
     """Return the local file of an asset to upload, or None to skip it.
 
     A recorded asset that is absent from disk raises. One exception applies.
@@ -701,6 +707,7 @@ def _resolve_local_asset(catalog_root: Path, href: str, version_str: str | None)
         catalog_root: Path to catalog root.
         href: Catalog-root-relative asset href.
         version_str: Version that records the asset, for the messages.
+        report: Receives each line of the run, with its level.
 
     Returns:
         The resolved absolute path, or None for an absent optional derivative.
@@ -719,7 +726,7 @@ def _resolve_local_asset(catalog_root: Path, href: str, version_str: str | None)
     # `portolan check`. Roles `data` and `source` stay a hard error, because
     # nothing can reconstruct them.
     if is_optional_derivative(catalog_root, href):
-        notice("warn", f"Optional asset not found, skipped: {href} (version {version_str})")
+        tell(report, "warn", f"Optional asset not found, skipped: {href} (version {version_str})")
         return None
     raise FileNotFoundError(f"Asset referenced in version {version_str} not found: {href}")
 
@@ -730,6 +737,7 @@ def _get_assets_to_upload(
     remote_versions_data: dict[str, Any] | None = None,
     *,
     reupload: frozenset[str] = frozenset(),
+    report: Report | None = None,
 ) -> list[Path]:
     """Get list of asset files that need to be uploaded.
 
@@ -759,6 +767,7 @@ def _get_assets_to_upload(
         reupload: Hrefs to upload although the snapshots match. These are
             the objects that ``push --verify`` found missing or with another
             size (Issue #966).
+        report: Receives each line of the run, with its level.
 
     Returns:
         List of absolute paths to asset files that need to be uploaded.
@@ -782,14 +791,15 @@ def _get_assets_to_upload(
         if href in skipped and href not in reupload:
             skipped_count += 1
             continue
-        asset_path = _resolve_local_asset(catalog_root, href, version_str)
+        asset_path = _resolve_local_asset(catalog_root, href, version_str, report=report)
         if asset_path is not None:
             assets_to_upload.append(asset_path)
 
     # Log diffing results for user feedback (Issue #329)
     new_count = len(assets_to_upload)
     if skipped_count > 0 or (has_remote and new_count > 0):
-        notice(
+        tell(
+            report,
             "info",
             f"Uploading {new_count} new/changed asset(s), skipping {skipped_count} unchanged",
         )
@@ -801,6 +811,8 @@ def _get_reupload_assets(
     catalog_root: Path,
     versions_data: dict[str, Any],
     reupload: frozenset[str],
+    *,
+    report: Report | None = None,
 ) -> list[Path]:
     """Return the local files of the hrefs that ``push --verify`` flagged.
 
@@ -814,6 +826,7 @@ def _get_reupload_assets(
         catalog_root: Path to catalog root.
         versions_data: Local versions.json data.
         reupload: Hrefs that ``push --verify`` found wrong in the store.
+        report: Receives each line of the run, with its level.
 
     Returns:
         List of absolute paths to upload, in local snapshot order.
@@ -828,7 +841,7 @@ def _get_reupload_assets(
     paths: list[Path] = []
     for href, entry in _snapshot_entries(local_current).items():
         if href in reupload:
-            asset_path = _resolve_local_asset(catalog_root, href, version_str)
+            asset_path = _resolve_local_asset(catalog_root, href, version_str, report=report)
             if asset_path is not None:
                 if compute_checksum(asset_path) != entry.get("sha256"):
                     raise PushVerifyError([f"{href}: local checksum differs from the manifest"])
@@ -874,14 +887,14 @@ _KEYS_UNREADABLE_NOTICE = (
 )
 
 
-def _warn_once(message: str) -> None:
+def _warn_once(message: str, *, report: Report | None = None) -> None:
     """Print ``message`` once for each push run."""
     seen = _run_notices.get()
     if seen is not None:
         if message in seen:
             return
         seen.add(message)
-    notice("warn", message)
+    tell(report, "warn", message)
 
 
 def _target_key(catalog_root: Path, prefix: str, path: Path) -> str:
@@ -890,7 +903,12 @@ def _target_key(catalog_root: Path, prefix: str, path: Path) -> str:
 
 
 async def _existing_keys(
-    store: ObjectStore, keys: list[str], list_prefix: str, concurrency: int
+    store: ObjectStore,
+    keys: list[str],
+    list_prefix: str,
+    concurrency: int,
+    *,
+    report: Report | None = None,
 ) -> dict[str, int | None]:
     """Return the size of each key that exists in the store before the upload.
 
@@ -914,7 +932,7 @@ async def _existing_keys(
         existing.update((k, listed[k]) for k in keys if k in listed)
         probe = [k for k in keys if not k.startswith(below)]
     except Exception:
-        _warn_once(_KEYS_UNREADABLE_NOTICE)
+        _warn_once(_KEYS_UNREADABLE_NOTICE, report=report)
         probe = keys
     semaphore = asyncio.Semaphore(concurrency)
     unreadable: list[str] = []
@@ -930,12 +948,17 @@ async def _existing_keys(
 
     await asyncio.gather(*(size_of(k) for k in probe))
     if unreadable:
-        _warn_once(_KEYS_UNREADABLE_NOTICE)
+        _warn_once(_KEYS_UNREADABLE_NOTICE, report=report)
     return existing
 
 
 async def _back_up(
-    store: ObjectStore, sizes: dict[str, int | None], prefix: str, concurrency: int
+    store: ObjectStore,
+    sizes: dict[str, int | None],
+    prefix: str,
+    concurrency: int,
+    *,
+    report: Report | None = None,
 ) -> dict[str, str]:
     """Copy each key that the push will overwrite to a backup key.
 
@@ -950,6 +973,7 @@ async def _back_up(
         sizes: The size of each key to back up, from ``_existing_keys``.
         prefix: Prefix in object storage. The backups go below it.
         concurrency: Maximum concurrent copies.
+        report: Receives each line of the run, with its level.
 
     Returns:
         The backup key of each key that the copy reached.
@@ -967,7 +991,11 @@ async def _back_up(
                 return f"{base}/{key}"
             except Exception as e:
                 if not (isinstance(e, FileNotFoundError) or _is_not_found(e)):
-                    notice("warn", f"Cannot back up {key}, a failed push leaves its new bytes: {e}")
+                    tell(
+                        report,
+                        "warn",
+                        f"Cannot back up {key}, a failed push leaves its new bytes: {e}",
+                    )
                 return None
 
     keys = list(sizes)
@@ -987,7 +1015,7 @@ async def _back_up(
                 await obs.delete_async(store, f"{base}/{key}")
             except Exception as e:
                 if not (isinstance(e, FileNotFoundError) or _is_not_found(e)):
-                    notice("warn", f"Failed to delete the backup of {key}: {e}")
+                    tell(report, "warn", f"Failed to delete the backup of {key}: {e}")
         raise
     return {key: backup for key, backup in zip(keys, copies, strict=True) if backup}
 
@@ -998,6 +1026,7 @@ async def _drop_backups(
     sizes: dict[str, int | None],
     *,
     restore_over: dict[str, str | None] | None = None,
+    report: Report | None = None,
 ) -> list[str]:
     """Delete each backup key, and return a message for each key that failed.
 
@@ -1009,7 +1038,7 @@ async def _drop_backups(
     A key that the restore cannot reach keeps its backup, so its old bytes stay.
     """
     if restore_over is not None and backups:
-        notice("warn", f"Restoring {len(backups)} overwritten key(s) from the backups...")
+        tell(report, "warn", f"Restoring {len(backups)} overwritten key(s) from the backups...")
     problems: list[str] = []
     for key, backup in backups.items():
         step = f"restore {key} from {backup}"
@@ -1024,7 +1053,7 @@ async def _drop_backups(
             await obs.delete_async(store, backup)
         except Exception as e:
             problems.append(f"Could not {step}: {e}")
-            notice("warn", problems[-1])
+            tell(report, "warn", problems[-1])
     return problems
 
 
@@ -1055,7 +1084,9 @@ async def _keys_to_restore(
     return {key: etag for key, etag in written.items() if named.get(key, ours != theirs)}
 
 
-def _cleanup_uploaded_assets(store: ObjectStore, uploaded_keys: list[str]) -> list[str]:
+def _cleanup_uploaded_assets(
+    store: ObjectStore, uploaded_keys: list[str], *, report: Report | None = None
+) -> list[str]:
     """Delete the keys that a failed push created, and report each key that stays.
 
     The caller passes only keys that did not exist before the push (#965).
@@ -1065,20 +1096,21 @@ def _cleanup_uploaded_assets(store: ObjectStore, uploaded_keys: list[str]) -> li
     Args:
         store: Object store instance.
         uploaded_keys: Object keys to delete.
+        report: Receives each line of the run, with its level.
 
     Returns:
         A message for each key that the delete did not reach.
     """
     if uploaded_keys:
-        notice("warn", f"Rolling back {len(uploaded_keys)} uploaded asset(s)...")
+        tell(report, "warn", f"Rolling back {len(uploaded_keys)} uploaded asset(s)...")
     problems: list[str] = []
     for key in uploaded_keys:
         try:
             obs.delete(store, key)
-            notice("detail", f"Deleted: {key}")
+            tell(report, "detail", f"Deleted: {key}")
         except Exception as e:
             problems.append(f"Could not delete {key}: {e}")
-            notice("warn", problems[-1])
+            tell(report, "warn", problems[-1])
     return problems
 
 
@@ -1092,6 +1124,7 @@ def _discover_stac_files(
     collection: str,
     *,
     include_catalog: bool = False,
+    report: Report | None = None,
 ) -> dict[str, list[Path]]:
     """Discover STAC metadata files that should be uploaded for a collection.
 
@@ -1107,6 +1140,7 @@ def _discover_stac_files(
         include_catalog: If True, include catalog.json and root README.md in discovery.
             Default False because catalog.json is a shared resource that
             should be uploaded once after all collections, not per-collection.
+        report: Receives each line of the run, with its level.
 
     Returns:
         Dict with keys 'catalog', 'collection', 'items', 'readmes' mapping to lists of paths.
@@ -1137,7 +1171,9 @@ def _discover_stac_files(
         # Intermediate catalog files for nested collections (Issue #547, #552, #905).
         # Only relevant for standalone single-collection push (include_catalog=True);
         # catalog-wide push handles these centrally after all collections succeed.
-        for inter_file in _discover_intermediate_catalog_files(catalog_root, [collection]):
+        for inter_file in _discover_intermediate_catalog_files(
+            catalog_root, [collection], report=report
+        ):
             key = "readmes" if inter_file.name == "README.md" else "catalog"
             stac_files[key].append(inter_file)
 
@@ -1169,11 +1205,11 @@ def _discover_stac_files(
         try:
             resolved = item_dir.resolve()
         except OSError:
-            notice("warn", f"Cannot resolve path {item_dir}, skipping")
+            tell(report, "warn", f"Cannot resolve path {item_dir}, skipping")
             continue
 
         if resolved in visited_paths:
-            notice("warn", f"Symlink cycle detected at {item_dir}, skipping")
+            tell(report, "warn", f"Symlink cycle detected at {item_dir}, skipping")
             continue
         visited_paths.add(resolved)
 
@@ -1509,6 +1545,7 @@ def _discover_catalog_files(
     *,
     include_catalog_root: bool = False,
     additional_exclude_patterns: list[str] | None = None,
+    report: Report | None = None,
 ) -> list[Path]:
     """Discover the catalog files that should be synced to remote (Issue #426).
 
@@ -1532,6 +1569,7 @@ def _discover_catalog_files(
         include_catalog_root: If True, include root-level files (not in collection).
         additional_exclude_patterns: Extra patterns to add (merged with defaults,
             never replaces security patterns).
+        report: Receives each line of the run, with its level.
 
     Returns:
         List of absolute paths to files that should be synced.
@@ -1556,16 +1594,20 @@ def _discover_catalog_files(
     if include_catalog_root:
         discovered.extend(_discover_root_dir_files(catalog_root, ctx))
         documents.append("catalog.json")
-    return _named_only(catalog_root, discovered, documents)
+    return _named_only(catalog_root, discovered, documents, report=report)
 
 
-def _named_only(catalog_root: Path, files: list[Path], documents: list[str]) -> list[Path]:
+def _named_only(
+    catalog_root: Path, files: list[Path], documents: list[str], *, report: Report | None = None
+) -> list[Path]:
     """Keep the files that ``documents`` or their items name, and warn about the rest."""
     named = published_tree(catalog_root, documents)
     kept = [f for f in files if f.relative_to(catalog_root).as_posix() in named]
     strays = sorted(f.relative_to(catalog_root).as_posix() for f in files if f not in kept)
     if strays:
-        _warn_once(f"Not pushed, because no STAC document names it: {', '.join(strays)}")
+        _warn_once(
+            f"Not pushed, because no STAC document names it: {', '.join(strays)}", report=report
+        )
     return kept
 
 
@@ -1599,6 +1641,7 @@ def _handle_push_dry_run(
     local_versions: list[str],
     *,
     verify: bool = False,
+    report: Report | None = None,
 ) -> PushResult:
     """Handle push dry-run mode: show what would be pushed without network I/O.
 
@@ -1611,54 +1654,64 @@ def _handle_push_dry_run(
         local_versions: List of version strings from local data.
         verify: If True, warn that the store check did not run. A HEAD is a
             network request, so a dry run never sends one.
+        report: Receives each line of the run, with its level.
 
     Returns:
         PushResult with dry_run=True and simulated counts.
     """
     # Try to get assets, but don't fail if some are missing (dry-run should be forgiving)
     try:
-        assets = _get_assets_to_upload(catalog_root, local_data)
+        assets = _get_assets_to_upload(catalog_root, local_data, report=report)
         asset_count = len(assets)
         asset_paths = [asset.relative_to(catalog_root) for asset in assets]
         missing_assets: list[str] = []
     except FileNotFoundError as e:
         # Asset file is missing - warn but continue with dry-run
-        notice("warn", f"[DRY RUN] Warning: {e}")
+        tell(report, "warn", f"[DRY RUN] Warning: {e}")
         asset_count = 0
         asset_paths = []
         missing_assets = [str(e)]
 
-    notice("info", f"[DRY RUN] Would push up to {len(local_versions)} version(s): {local_versions}")
-    notice("info", f"[DRY RUN] Would upload up to {asset_count} asset file(s)")
+    tell(
+        report,
+        "info",
+        f"[DRY RUN] Would push up to {len(local_versions)} version(s): {local_versions}",
+    )
+    tell(report, "info", f"[DRY RUN] Would upload up to {asset_count} asset file(s)")
     for rel_path in asset_paths:
-        notice("detail", f" {rel_path}")
+        tell(report, "detail", f" {rel_path}")
 
     # Show metadata files that would be synced (Issue #426)
     metadata_files = _discover_catalog_files(
         catalog_root,
         collection,
-        include_catalog_root=True,  # Dry-run shows complete picture
+        include_catalog_root=True,
+        report=report,  # Dry-run shows complete picture
     )
     if metadata_files:
-        notice("info", f"[DRY RUN] Would sync {len(metadata_files)} metadata file(s)")
+        tell(report, "info", f"[DRY RUN] Would sync {len(metadata_files)} metadata file(s)")
         for f in metadata_files:
             rel_path = f.relative_to(catalog_root)
-            notice("detail", f" {rel_path}")
+            tell(report, "detail", f" {rel_path}")
 
     # Show intermediate catalog files for nested collections (Issue #547, #552, #905)
-    intermediate_files = _discover_intermediate_catalog_files(catalog_root, [collection])
+    intermediate_files = _discover_intermediate_catalog_files(
+        catalog_root, [collection], report=report
+    )
     if intermediate_files:
-        notice(
-            "info", f"[DRY RUN] Would upload {len(intermediate_files)} intermediate catalog file(s)"
+        tell(
+            report,
+            "info",
+            f"[DRY RUN] Would upload {len(intermediate_files)} intermediate catalog file(s)",
         )
         for f in intermediate_files:
-            notice("detail", f" {f.relative_to(catalog_root).as_posix()}")
+            tell(report, "detail", f" {f.relative_to(catalog_root).as_posix()}")
 
-    notice("warn", "[DRY RUN] Remote conflict detection skipped (requires network)")
+    tell(report, "warn", "[DRY RUN] Remote conflict detection skipped (requires network)")
     if verify:
         # A HEAD is a network request, so a dry run never sends one.
-        notice("warn", "[DRY RUN] --verify skipped (requires network)")
-    notice("warn", "[DRY RUN] Actual versions pushed may be fewer if remote already has some")
+        tell(report, "warn", "[DRY RUN] --verify skipped (requires network)")
+    tell(report, "warn", "[DRY RUN] Actual versions pushed may be fewer if remote already has some")
 
     return PushResult(
         success=True,
@@ -1688,7 +1741,8 @@ def push(
     region: str | None = None,
     workers: int | None = None,
     verify: bool = False,
-    notify: Notify | None = None,
+    verbose: bool = False,
+    report: Report | None = None,
     show_progress: bool = False,
 ) -> PushResult:
     """Push local catalog changes to cloud object storage (sync wrapper).
@@ -1707,8 +1761,9 @@ def push(
         workers: Number of parallel upload workers (maps to concurrency).
         verify: If True, check each skipped asset against the store. A HEAD
             that fails raises PushVerifyError. See ``push_async``.
-        notify: Callback for the messages of the run. See ``sync.notices``.
-        show_progress: If True, draw a progress bar on a terminal.
+        show_progress: Passed to ``push_async``.
+        verbose: Passed to ``push_async``.
+        report: Passed to ``push_async``.
 
     Returns:
         PushResult with upload statistics.
@@ -1732,7 +1787,8 @@ def push(
             region=region,
             concurrency=concurrency,
             verify=verify,
-            notify=notify,
+            verbose=verbose,
+            report=report,
             show_progress=show_progress,
         )
     )
@@ -1786,6 +1842,8 @@ async def _upload_assets_async(
     adaptive: bool = True,
     written: dict[str, str | None] | None = None,
     conditions: dict[str, str | None] | None = None,
+    verbose: bool = False,
+    report: Report | None = None,
 ) -> tuple[int, list[str], list[str], UploadMetrics]:
     """Upload asset files to object storage with async concurrent uploads.
 
@@ -1811,6 +1869,8 @@ async def _upload_assets_async(
         written: A dict that receives the ETag of each put, by key.
         conditions: Object keys mapped to the ETags captured by verify. None
             overwrites normally; a None entry creates only if the key is absent.
+        verbose: If True, print per-file upload details.
+        report: Receives each line of the run, with its level.
 
     Returns:
         Tuple of (files_uploaded, errors, uploaded_keys, metrics).
@@ -1881,10 +1941,11 @@ async def _upload_assets_async(
 
     asset_strs = [str(p) for p in assets]
 
+    # Suppress progress bar when verbose (verbose replaces progress bar)
     async with AsyncProgressReporter(
         total_files=total,
         total_bytes=total_bytes,
-        json_mode=not show_progress,
+        json_mode=not show_progress or verbose,
     ) as reporter:
 
         def on_complete(
@@ -1898,17 +1959,20 @@ async def _upload_assets_async(
             rel_path = Path(item).relative_to(catalog_root).as_posix()
             if err:
                 errors_list.append(f"Failed to upload {rel_path}: {err}")
-                notice("error", f"Failed: {rel_path} - {err}")
+                tell(report, "error", f"Failed: {rel_path} - {err}")
             elif result:
                 target_key, size_bytes, duration = result
                 uploaded_keys.append(target_key)
                 metrics.record(size_bytes, duration)
                 reporter.advance(bytes_uploaded=size_bytes)
-                speed = size_bytes / duration if duration > 0 else 0
-                notice(
-                    "verbose",
-                    f"Uploaded ({completed}/{total_count}): {rel_path} ({format_file_size(size_bytes)}, {format_speed(speed)})",
-                )
+                # Verbose mode: print per-file details
+                if verbose:
+                    speed = size_bytes / duration if duration > 0 else 0
+                    tell(
+                        report,
+                        "detail",
+                        f"Uploaded ({completed}/{total_count}): {rel_path} ({format_file_size(size_bytes)}, {format_speed(speed)})",
+                    )
 
         # Create adaptive concurrency manager for slow-start (Issue #344)
         adaptive_manager = None
@@ -1936,7 +2000,7 @@ async def _upload_assets_async(
             )
         except CircuitBreakerError as e:
             errors_list.append(f"Circuit breaker tripped: {e}")
-            notice("error", f"Too many consecutive failures, aborting: {e}")
+            tell(report, "error", f"Too many consecutive failures, aborting: {e}")
         finally:
             thread_pool.shutdown(wait=True)
 
@@ -1956,6 +2020,8 @@ async def _upload_stac_files_async(
     show_progress: bool = False,
     written: dict[str, str | None] | None = None,
     root_etags: dict[str, str | None] | None = None,
+    verbose: bool = False,
+    report: Report | None = None,
 ) -> tuple[int, list[str], list[str]]:
     """Upload STAC metadata files asynchronously.
 
@@ -1975,6 +2041,8 @@ async def _upload_stac_files_async(
         written: A dict that receives the ETag of each put, by key.
         root_etags: The ETag of each root document that the push read before
             its first upload. None writes the root documents without a condition.
+        verbose: If True, print per-file upload details.
+        report: Receives each line of the run, with its level.
 
     Returns:
         Tuple of (files_uploaded, errors, uploaded_keys).
@@ -2025,33 +2093,36 @@ async def _upload_stac_files_async(
                         content, destination, collection_path
                     )
 
-                put = await _put_file(store, target_key, content, root_etags)
+                put = await _put_file(store, target_key, content, root_etags, report=report)
                 if put is not None:
                     written[target_key] = put.get("e_tag")
                 return target_key, file_size
             except Exception as e:
                 error_msg = f"Failed to upload {file_path}: {e}"
                 errors.append(error_msg)
-                notice("error", error_msg)
+                tell(report, "error", error_msg)
                 return None
 
+    # Suppress progress bar when verbose (verbose replaces progress bar)
     async with AsyncProgressReporter(
         total_files=len(uploadable_files),
         total_bytes=total_bytes,
-        json_mode=not show_progress,
+        json_mode=not show_progress or verbose,
     ) as reporter:
         completed = 0
         total_count = len(uploadable_files)
 
         def log_verbose(file_path: Path, size: int) -> None:
-            """Report one uploaded STAC file at the verbose level."""
+            """Report one uploaded STAC file in verbose mode."""
             nonlocal completed
             completed += 1
-            rel_path = file_path.relative_to(catalog_root)
-            notice(
-                "verbose",
-                f"Uploaded STAC ({completed}/{total_count}): {rel_path} ({format_file_size(size)})",
-            )
+            if verbose:
+                rel_path = file_path.relative_to(catalog_root)
+                tell(
+                    report,
+                    "detail",
+                    f"Uploaded STAC ({completed}/{total_count}): {rel_path} ({format_file_size(size)})",
+                )
 
         async def upload_wave(files: list[Path]) -> None:
             """Upload one wave of files in parallel and record each result."""
@@ -2138,7 +2209,9 @@ _ROOT_DOCUMENTS = ("catalog.json", "README.md", "AGENTS.md", "versions.json")
 _ROOT_CATALOG_ATTEMPTS = 3
 
 
-async def _root_etags(store: ObjectStore, prefix: str, keys: list[str]) -> dict[str, str | None]:
+async def _root_etags(
+    store: ObjectStore, prefix: str, keys: list[str], *, report: Report | None = None
+) -> dict[str, str | None]:
     """Read the ETag of each root document in ``keys``, before the first upload.
 
     A key that does not exist maps to None. Its write then takes the "create"
@@ -2158,7 +2231,10 @@ async def _root_etags(store: ObjectStore, prefix: str, keys: list[str]) -> dict[
         elif posixpath.basename(key) == "versions.json":
             raise etag
         else:
-            _warn_once(f"Cannot read the ETag of {key}. The push writes it without a condition.")
+            _warn_once(
+                f"Cannot read the ETag of {key}. The push writes it without a condition.",
+                report=report,
+            )
     return etags
 
 
@@ -2188,6 +2264,8 @@ async def _put_file(
     key: str,
     content: bytes,
     root_etags: dict[str, str | None] | None = None,
+    *,
+    report: Report | None = None,
 ) -> PutResult | None:
     """Write one catalog file. A root document takes an ETag condition.
 
@@ -2212,7 +2290,11 @@ async def _put_file(
             mode = _manifest_mode(root_etags[key], force=False)
             return await put_object_async(store, key, content, mode=mode)
         except (PreconditionError, AlreadyExistsError):
-            notice("warn", f"Another writer changed {key} during the push. The remote copy stays.")
+            tell(
+                report,
+                "warn",
+                f"Another writer changed {key} during the push. The remote copy stays.",
+            )
             return None
     for _ in range(_ROOT_CATALOG_ATTEMPTS):
         body, etag = content, None
@@ -2240,6 +2322,8 @@ async def _upload_metadata_files_async(
     written: dict[str, str | None] | None = None,
     root_etags: dict[str, str | None] | None = None,
     concurrency: int = 50,
+    verbose: bool = False,
+    report: Report | None = None,
 ) -> tuple[int, list[str]]:
     """Upload metadata files (style.json, thumbnails, etc.) to remote (Issue #426).
 
@@ -2258,6 +2342,8 @@ async def _upload_metadata_files_async(
         root_etags: The ETag of each root document that the push read before
             its first upload. None writes the root documents without a condition.
         concurrency: Maximum concurrent uploads.
+        verbose: If True, print per-file upload details.
+        report: Receives each line of the run, with its level.
 
     Returns:
         Tuple of (files_uploaded, errors). Errors are returned, not swallowed,
@@ -2277,15 +2363,16 @@ async def _upload_metadata_files_async(
                 rel_path = file_path.relative_to(catalog_root)
                 content = file_path.read_bytes()
                 key = _target_key(catalog_root, prefix, file_path)
-                put = await _put_file(store, key, content, root_etags)
+                put = await _put_file(store, key, content, root_etags, report=report)
                 if put is not None:
                     written[key] = put.get("e_tag")
-                notice("verbose", f" Uploaded {rel_path} ({len(content)} bytes)")
+                if verbose:
+                    tell(report, "detail", f" Uploaded {rel_path} ({len(content)} bytes)")
                 return True
             except Exception as e:
                 error_msg = f"Failed to upload metadata file {file_path.name}: {e}"
                 errors.append(error_msg)
-                notice("error", error_msg)
+                tell(report, "error", error_msg)
                 return False
 
     # Upload all metadata files in parallel
@@ -2293,8 +2380,8 @@ async def _upload_metadata_files_async(
     results = await asyncio.gather(*tasks)
     uploaded_count = sum(1 for r in results if r)
 
-    if uploaded_count > 0:
-        notice("info", f"Synced {uploaded_count} metadata file(s)")
+    if uploaded_count > 0 and not verbose:
+        tell(report, "info", f"Synced {uploaded_count} metadata file(s)")
 
     return uploaded_count, errors
 
@@ -2317,6 +2404,8 @@ async def _execute_push_uploads_async(
     remote_data: dict[str, Any] | None = None,
     adaptive: bool = True,
     reupload: frozenset[str] = frozenset(),
+    verbose: bool = False,
+    report: Report | None = None,
 ) -> PushResult:
     """Execute the upload phase of push_async.
 
@@ -2344,21 +2433,25 @@ async def _execute_push_uploads_async(
             keeps up (issue #344). False holds ``concurrency`` fixed.
         reupload: Hrefs that ``--verify`` found wrong in the store. These
             assets upload although the snapshots match (Issue #966).
+        verbose: If True, print per-file upload details.
+        report: Receives each line of the run, with its level.
 
     Returns:
         PushResult with success or failure status and metrics.
     """
     # Get assets to upload (only new/changed, per Issue #329)
     assets = _get_assets_to_upload(
-        catalog_root, local_data, remote_versions_data=remote_data, reupload=reupload
+        catalog_root, local_data, remote_versions_data=remote_data, reupload=reupload, report=report
     )
     # include_catalog controls whether catalog.json and root README.md are included.
     # - True for standalone push() so remote is a complete clonable catalog
     # - False when called from push_all_collections() (uploads once at end)
     try:
-        stac_files = _discover_stac_files(catalog_root, collection, include_catalog=include_catalog)
+        stac_files = _discover_stac_files(
+            catalog_root, collection, include_catalog=include_catalog, report=report
+        )
     except FileNotFoundError as e:
-        notice("error", str(e))
+        tell(report, "error", str(e))
         return PushResult(success=False, files_uploaded=0, versions_pushed=0, errors=[str(e)])
 
     # The plan names every key before the first write. Rollback deletes the keys
@@ -2367,22 +2460,26 @@ async def _execute_push_uploads_async(
     stac_paths = [*stac_files.get("items", []), *stac_files.get("collection", [])]
     stac_paths += stac_files.get("catalog", [])
     metadata_files = _discover_catalog_files(
-        catalog_root, collection, include_catalog_root=include_catalog
+        catalog_root, collection, include_catalog_root=include_catalog, report=report
     )
     plan_paths = [*assets, *stac_paths, *metadata_files]
     planned = [_target_key(catalog_root, prefix, p) for p in plan_paths]
     list_prefix = f"{prefix}/{collection}".lstrip("/")
     readmes = [_target_key(catalog_root, prefix, p) for p in stac_files["readmes"]]
-    root_etags = await _root_etags(store, prefix, [*planned, *readmes])
-    sizes = await _existing_keys(store, planned, list_prefix, concurrency)
-    backups = await _back_up(store, sizes, prefix, concurrency)
+    root_etags = await _root_etags(store, prefix, [*planned, *readmes], report=report)
+    sizes = await _existing_keys(store, planned, list_prefix, concurrency, report=report)
+    backups = await _back_up(store, sizes, prefix, concurrency, report=report)
     written: dict[str, str | None] = {}
     files_uploaded, metrics = 0, UploadMetrics()
 
     async def failed(errors: list[str], metadata_errors: list[str] | None = None) -> PushResult:
         # The rollback reports each key that it could not put back.
-        errors = errors + await _drop_backups(store, backups, sizes, restore_over=written)
-        errors += _cleanup_uploaded_assets(store, [k for k in written if k not in sizes])
+        errors = errors + await _drop_backups(
+            store, backups, sizes, restore_over=written, report=report
+        )
+        errors += _cleanup_uploaded_assets(
+            store, [k for k in written if k not in sizes], report=report
+        )
         return PushResult(
             success=False,
             files_uploaded=files_uploaded,
@@ -2407,11 +2504,13 @@ async def _execute_push_uploads_async(
                 show_progress=show_progress,
                 adaptive=adaptive,
                 written=written,
+                verbose=verbose,
+                report=report,
             )
             stage.set(**metrics.to_attrs())
 
         if upload_errors:
-            notice("error", "Asset upload failed, aborting push")
+            tell(report, "error", "Asset upload failed, aborting push")
             return await failed(upload_errors)
 
         # Upload STAC metadata files (async)
@@ -2426,11 +2525,13 @@ async def _execute_push_uploads_async(
                 show_progress=show_progress,
                 written=written,
                 root_etags=root_etags,
+                verbose=verbose,
+                report=report,
             )
             files_uploaded += stac_uploaded
 
             if stac_errors:
-                notice("error", "STAC metadata upload failed, aborting push")
+                tell(report, "error", "STAC metadata upload failed, aborting push")
                 return await failed(stac_errors)
 
         # Upload metadata files (style.json, thumbnails, etc.) - Issue #426
@@ -2444,6 +2545,8 @@ async def _execute_push_uploads_async(
                 written=written,
                 root_etags=root_etags,
                 concurrency=concurrency,
+                verbose=verbose,
+                report=report,
             )
             files_uploaded += metadata_uploaded
 
@@ -2453,7 +2556,7 @@ async def _execute_push_uploads_async(
 
         # Upload versions.json (async, manifest-last)
         with span("push.versions_json", collection=collection):
-            notice("info", "Uploading versions.json...")
+            tell(report, "info", "Uploading versions.json...")
             try:
                 await _upload_versions_json_async(
                     store, prefix, collection, local_data, etag, force=force
@@ -2464,10 +2567,10 @@ async def _execute_push_uploads_async(
                 # that still holds the bytes of this push gets its backup back,
                 # unless the winning manifest names those bytes.
                 restore = await _keys_to_restore(store, prefix, collection, local_data, written)
-                await _drop_backups(store, backups, sizes, restore_over=restore)
+                await _drop_backups(store, backups, sizes, restore_over=restore, report=report)
                 raise
             except Exception as e:
-                notice("error", f"Failed to upload versions.json: {e}")
+                tell(report, "error", f"Failed to upload versions.json: {e}")
                 return await failed([f"Failed to upload versions.json: {e}"], all_metadata_errors)
     except PushConflictError:
         raise
@@ -2476,7 +2579,7 @@ async def _execute_push_uploads_async(
         # versions.json names the new bytes, so the push rolls back.
         await failed([])
         raise
-    await _drop_backups(store, backups, sizes)
+    await _drop_backups(store, backups, sizes, report=report)
     repaired = _repaired_count(prefix, reupload, list(written))
     if diff.local_only:
         msg = f"Pushed {len(diff.local_only)} version(s): {diff.local_only}"
@@ -2485,7 +2588,7 @@ async def _execute_push_uploads_async(
     else:
         # Force re-push with no version delta refreshes metadata only (Issue #496)
         msg = "Refreshed metadata (no new versions)"
-    notice("success", _with_metrics(msg, metrics))
+    tell(report, "success", _with_metrics(msg, metrics))
 
     # Upload READMEs last (async, parallel)
     with span("push.readmes", collection=collection):
@@ -2496,6 +2599,8 @@ async def _execute_push_uploads_async(
             stac_files["readmes"],
             root_etags=root_etags,
             concurrency=concurrency,
+            verbose=verbose,
+            report=report,
         )
         files_uploaded += readme_uploaded
     # README errors are also non-fatal metadata issues
@@ -2503,9 +2608,9 @@ async def _execute_push_uploads_async(
 
     # Log metadata warnings (after push succeeds, so user sees them)
     if all_metadata_errors:
-        notice("warn", f"{len(all_metadata_errors)} metadata file(s) failed to upload:")
+        tell(report, "warn", f"{len(all_metadata_errors)} metadata file(s) failed to upload:")
         for err in all_metadata_errors:
-            notice("warn", f" {err}")
+            tell(report, "warn", f" {err}")
 
     return PushResult(
         success=True,
@@ -2526,6 +2631,8 @@ async def _sync_collection_metadata_only(
     *,
     include_catalog_root: bool,
     concurrency: int,
+    verbose: bool = False,
+    report: Report | None = None,
 ) -> PushResult:
     """Sync a collection's non-versioned metadata when no version changed (#816).
 
@@ -2544,24 +2651,26 @@ async def _sync_collection_metadata_only(
     A push with no new version and no metadata change uploads nothing.
     """
     files = _discover_catalog_files(
-        catalog_root, collection, include_catalog_root=include_catalog_root
+        catalog_root, collection, include_catalog_root=include_catalog_root, report=report
     )
     if include_catalog_root:
-        files += _discover_intermediate_catalog_files(catalog_root, [collection])
+        files += _discover_intermediate_catalog_files(catalog_root, [collection], report=report)
     keys = [_target_key(catalog_root, prefix, path) for path in files]
     metadata_uploaded, metadata_errors = await _upload_metadata_files_async(
         store,
         catalog_root,
         prefix,
         files,
-        root_etags=await _root_etags(store, prefix, keys),
+        root_etags=await _root_etags(store, prefix, keys, report=report),
         concurrency=concurrency,
+        verbose=verbose,
+        report=report,
     )
     # Warn with a summary count, the same as the normal upload path.
     if metadata_errors:
-        notice("warn", f"{len(metadata_errors)} metadata file(s) failed to upload:")
+        tell(report, "warn", f"{len(metadata_errors)} metadata file(s) failed to upload:")
         for err in metadata_errors:
-            notice("warn", f" {err}")
+            tell(report, "warn", f" {err}")
     return PushResult(
         success=True,
         files_uploaded=metadata_uploaded,
@@ -2586,6 +2695,8 @@ async def _repair_flagged_assets_async(
     show_progress: bool,
     adaptive: bool,
     verified_etags: dict[str, str | None],
+    verbose: bool = False,
+    report: Report | None = None,
 ) -> PushResult:
     """Repair the flagged objects when no version is new and there is no force.
 
@@ -2607,7 +2718,7 @@ async def _repair_flagged_assets_async(
     Returns:
         PushResult with the repair and metadata upload counts.
     """
-    assets = _get_reupload_assets(catalog_root, local_data, reupload)
+    assets = _get_reupload_assets(catalog_root, local_data, reupload, report=report)
     files_uploaded, upload_errors, uploaded_keys, metrics = await _upload_assets_async(
         store,
         catalog_root,
@@ -2618,9 +2729,11 @@ async def _repair_flagged_assets_async(
         show_progress=show_progress,
         adaptive=adaptive,
         conditions={f"{prefix}/{href}".lstrip("/"): etag for href, etag in verified_etags.items()},
+        verbose=verbose,
+        report=report,
     )
     if upload_errors:
-        notice("error", "Asset repair failed. The remote versions.json stays as is")
+        tell(report, "error", "Asset repair failed. The remote versions.json stays as is")
         return PushResult(
             success=False,
             files_uploaded=files_uploaded,
@@ -2637,10 +2750,16 @@ async def _repair_flagged_assets_async(
         collection,
         include_catalog_root=include_catalog_root,
         concurrency=concurrency,
+        verbose=verbose,
+        report=report,
     )
     repaired = _repaired_count(prefix, reupload, uploaded_keys)
     if repaired:
-        notice("success", _with_metrics(f"Repaired {repaired} asset(s) (no new versions)", metrics))
+        tell(
+            report,
+            "success",
+            _with_metrics(f"Repaired {repaired} asset(s) (no new versions)", metrics),
+        )
     result.files_uploaded += files_uploaded
     result.metrics = metrics
     return result
@@ -2661,7 +2780,8 @@ async def push_async(
     show_progress: bool = False,
     include_catalog: bool = True,
     verify: bool = False,
-    notify: Notify | None = None,
+    verbose: bool = False,
+    report: Report | None = None,
 ) -> PushResult:
     """Push local catalog changes to cloud object storage (async version).
 
@@ -2692,7 +2812,8 @@ async def push_async(
             assets and does not write versions.json. With a new version or
             ``force``, the flagged assets join the normal upload set. A size
             check cannot find a wrong object of the same size.
-        notify: Callback for the messages of the run. See ``sync.notices``.
+        verbose: If True, print per-file upload details.
+        report: Receives each line of the run, with its level.
 
     Returns:
         PushResult with upload statistics.
@@ -2704,130 +2825,135 @@ async def push_async(
         PushVerifyError: If ``verify`` is True and a HEAD fails for a reason
             other than a missing object.
     """
-    with notifying(notify):
-        from portolan_cli.async_utils import get_default_chunk_concurrency
+    from portolan_cli.async_utils import get_default_chunk_concurrency
 
-        concurrency = concurrency or get_default_concurrency()
-        chunk_concurrency = chunk_concurrency or get_default_chunk_concurrency()
+    concurrency = concurrency or get_default_concurrency()
+    chunk_concurrency = chunk_concurrency or get_default_chunk_concurrency()
 
-        # Validate catalog exists
-        if not catalog_root.exists():
-            raise FileNotFoundError(f"Catalog root not found: {catalog_root}")
+    # Validate catalog exists
+    if not catalog_root.exists():
+        raise FileNotFoundError(f"Catalog root not found: {catalog_root}")
 
-        catalog_root = catalog_root.resolve()
+    catalog_root = catalog_root.resolve()
 
-        # Read local versions
-        local_data = _read_local_versions(catalog_root, collection)
-        local_versions: list[str] = [
-            v.get("version") for v in local_data.get("versions", []) if v.get("version") is not None
-        ]
+    # Read local versions
+    local_data = _read_local_versions(catalog_root, collection)
+    local_versions: list[str] = [
+        v.get("version") for v in local_data.get("versions", []) if v.get("version") is not None
+    ]
 
-        # Dry-run: return early without network I/O
-        if dry_run:
-            return _handle_push_dry_run(
-                catalog_root, collection, local_data, local_versions, verify=verify
-            )
-
-        if _run_notices.get() is None:
-            _run_notices.set(set())
-
-        # Setup store and fetch remote versions
-        with span("push.fetch_remote", collection=collection):
-            store, prefix = setup_store(destination, profile=profile, region=region)
-            notice("info", f"Checking remote state: {destination}")
-            remote_data, etag = await _fetch_remote_versions_async(store, prefix, collection)
-
-        # Extract remote versions
-        if remote_data is None:
-            notice("info", "No remote versions.json found (first push)")
-            remote_versions: list[str] = []
-        else:
-            remote_versions = [v.get("version") for v in remote_data.get("versions", [])]
-            notice("detail", f"Remote version: {remote_data.get('current_version')}")
-
-        # Diff versions and check for conflicts
-        diff = diff_version_lists(local_versions, remote_versions)
-        if diff.has_conflict and not force:
-            raise PushConflictError(
-                f"Remote has changes not present locally: {diff.remote_only}. "
-                "Pull changes first or use --force to overwrite."
-            )
-
-        # With --verify, check each skipped asset against the store (Issue #966).
-        # Without the flag, push sends no request for a skipped asset.
-        verified_etags: dict[str, str | None] = {}
-        verify_report: VerifyReport | None = None
-        if verify:
-            verified_etags, verify_report = await _verify_skipped_assets_async(
-                store, prefix, local_data, remote_data, concurrency=concurrency
-            )
-
-        reupload = frozenset(verified_etags)
-
-        # No new versions to push.
-        # With --force, proceed even when the version list is unchanged so that
-        # regenerated metadata (collection.json, catalog.json, styles) is re-uploaded
-        # (Issue #496). Unchanged data assets are still skipped by the sha256 diff in
-        # _get_assets_to_upload, so this refreshes metadata without a full re-push.
-        # That diff compares the local and remote current snapshots. So a force push
-        # also uploads an asset whose bytes differ from the remote current snapshot
-        # (Issue #962).
-        if not force and not diff.local_only:
-            if reupload:
-                # A mismatch that --verify finds, with no new version and no
-                # force. Push uploads the flagged assets only and does not write
-                # versions.json. So the remote manifest stays as is (Issue #966).
-                result = await _repair_flagged_assets_async(
-                    store,
-                    catalog_root,
-                    prefix,
-                    collection,
-                    local_data,
-                    reupload,
-                    include_catalog_root=include_catalog,
-                    concurrency=concurrency,
-                    chunk_concurrency=chunk_concurrency,
-                    show_progress=show_progress,
-                    adaptive=adaptive,
-                    verified_etags=verified_etags,
-                )
-            else:
-                result = await _sync_collection_metadata_only(
-                    store,
-                    catalog_root,
-                    prefix,
-                    collection,
-                    include_catalog_root=include_catalog,
-                    concurrency=concurrency,
-                )
-            result.verify = verify_report
-            return result
-
-        # With a new version or --force, the hrefs that --verify flagged join the
-        # normal upload set. That path writes the local versions.json last, with
-        # the ETag precondition (Issue #966).
-
-        # Execute uploads (with remote data for sha256 diffing, Issue #329)
-        result = await _execute_push_uploads_async(
-            store,
-            catalog_root,
-            prefix,
-            collection,
-            local_data,
-            diff,
-            etag,
-            destination=destination,
-            concurrency=concurrency,
-            chunk_concurrency=chunk_concurrency,
-            show_progress=show_progress,
-            force=force,
-            include_catalog=include_catalog,
-            remote_data=remote_data,
-            adaptive=adaptive,
-            reupload=reupload,
+    # Dry-run: return early without network I/O
+    if dry_run:
+        return _handle_push_dry_run(
+            catalog_root, collection, local_data, local_versions, verify=verify, report=report
         )
+
+    if _run_notices.get() is None:
+        _run_notices.set(set())
+
+    # Setup store and fetch remote versions
+    with span("push.fetch_remote", collection=collection):
+        store, prefix = setup_store(destination, profile=profile, region=region, report=report)
+        tell(report, "info", f"Checking remote state: {destination}")
+        remote_data, etag = await _fetch_remote_versions_async(store, prefix, collection)
+
+    # Extract remote versions
+    if remote_data is None:
+        tell(report, "info", "No remote versions.json found (first push)")
+        remote_versions: list[str] = []
+    else:
+        remote_versions = [v.get("version") for v in remote_data.get("versions", [])]
+        tell(report, "detail", f"Remote version: {remote_data.get('current_version')}")
+
+    # Diff versions and check for conflicts
+    diff = diff_version_lists(local_versions, remote_versions)
+    if diff.has_conflict and not force:
+        raise PushConflictError(
+            f"Remote has changes not present locally: {diff.remote_only}. "
+            "Pull changes first or use --force to overwrite."
+        )
+
+    # With --verify, check each skipped asset against the store (Issue #966).
+    # Without the flag, push sends no request for a skipped asset.
+    verified_etags: dict[str, str | None] = {}
+    verify_report: VerifyReport | None = None
+    if verify:
+        verified_etags, verify_report = await _verify_skipped_assets_async(
+            store, prefix, local_data, remote_data, concurrency=concurrency, report=report
+        )
+
+    reupload = frozenset(verified_etags)
+
+    # No new versions to push.
+    # With --force, proceed even when the version list is unchanged so that
+    # regenerated metadata (collection.json, catalog.json, styles) is re-uploaded
+    # (Issue #496). Unchanged data assets are still skipped by the sha256 diff in
+    # _get_assets_to_upload, so this refreshes metadata without a full re-push.
+    # That diff compares the local and remote current snapshots. So a force push
+    # also uploads an asset whose bytes differ from the remote current snapshot
+    # (Issue #962).
+    if not force and not diff.local_only:
+        if reupload:
+            # A mismatch that --verify finds, with no new version and no
+            # force. Push uploads the flagged assets only and does not write
+            # versions.json. So the remote manifest stays as is (Issue #966).
+            result = await _repair_flagged_assets_async(
+                store,
+                catalog_root,
+                prefix,
+                collection,
+                local_data,
+                reupload,
+                include_catalog_root=include_catalog,
+                concurrency=concurrency,
+                chunk_concurrency=chunk_concurrency,
+                show_progress=show_progress,
+                adaptive=adaptive,
+                verified_etags=verified_etags,
+                verbose=verbose,
+                report=report,
+            )
+        else:
+            result = await _sync_collection_metadata_only(
+                store,
+                catalog_root,
+                prefix,
+                collection,
+                include_catalog_root=include_catalog,
+                concurrency=concurrency,
+                verbose=verbose,
+                report=report,
+            )
         result.verify = verify_report
         return result
+
+    # With a new version or --force, the hrefs that --verify flagged join the
+    # normal upload set. That path writes the local versions.json last, with
+    # the ETag precondition (Issue #966).
+
+    # Execute uploads (with remote data for sha256 diffing, Issue #329)
+    result = await _execute_push_uploads_async(
+        store,
+        catalog_root,
+        prefix,
+        collection,
+        local_data,
+        diff,
+        etag,
+        destination=destination,
+        concurrency=concurrency,
+        chunk_concurrency=chunk_concurrency,
+        show_progress=show_progress,
+        force=force,
+        include_catalog=include_catalog,
+        remote_data=remote_data,
+        adaptive=adaptive,
+        reupload=reupload,
+        verbose=verbose,
+        report=report,
+    )
+    result.verify = verify_report
+    return result
 
 
 # =============================================================================
@@ -2888,7 +3014,7 @@ class PushAllResult:
         }
 
 
-def discover_collections(catalog_root: Path) -> list[str]:
+def discover_collections(catalog_root: Path, *, report: Report | None = None) -> list[str]:
     """Recursively discover all collections by finding directories with versions.json.
 
     Collections can exist at any
@@ -2897,6 +3023,7 @@ def discover_collections(catalog_root: Path) -> list[str]:
 
     Args:
         catalog_root: Path to the catalog root directory.
+        report: Receives each line of the run, with its level.
 
     Returns:
         Sorted list of collection paths relative to catalog_root (POSIX format).
@@ -2922,7 +3049,7 @@ def discover_collections(catalog_root: Path) -> list[str]:
     try:
         versions_files = list(catalog_root.rglob("versions.json"))
     except PermissionError as e:
-        notice("warn", f"Permission denied during catalog scan: {e}")
+        tell(report, "warn", f"Permission denied during catalog scan: {e}")
         versions_files = []
 
     for versions_file in versions_files:
@@ -2946,12 +3073,12 @@ def discover_collections(catalog_root: Path) -> list[str]:
             resolved = collection_dir.resolve()
         except OSError:
             # Cannot resolve (broken symlink or permission error)
-            notice("warn", f"Cannot resolve path {collection_dir}, skipping")
+            tell(report, "warn", f"Cannot resolve path {collection_dir}, skipping")
             continue
 
         # Skip if we've already seen this resolved path (symlink cycle)
         if resolved in visited_paths:
-            notice("warn", f"Symlink cycle detected at {collection_dir}, skipping")
+            tell(report, "warn", f"Symlink cycle detected at {collection_dir}, skipping")
             continue
 
         visited_paths.add(resolved)
@@ -2967,61 +3094,69 @@ def _push_all_process_result(
     current_completed: int,
     total: int,
     stats: dict[str, Any],
+    *,
+    report: Report | None = None,
 ) -> None:
     """Process result of a single collection push (helper for push_all_collections)."""
     if isinstance(err_msg, BaseException):
         stats.setdefault("exceptions", {})[coll] = err_msg
         err_msg = f"{type(err_msg).__name__}: {err_msg}"
-    with notice_group():
-        if err_msg:
-            notice("error", f"[{current_completed}/{total}] Failed {coll}: {err_msg}")
-            stats["failed"] += 1
-            stats["errors"][coll] = [err_msg]
-        elif result and result.success:
-            # A dry-run does no remote check, so the terminal line reports the local
-            # upper-bound estimate. The estimate goes to the would-push stats, not the
-            # uploaded stats. The uploaded stats stay at 0 to keep the JSON envelope
-            # side-effect-honest and consistent with the single-collection path.
-            if result.dry_run:
-                v = result.would_push_versions
-                f = result.would_push_files
-                notice(
-                    "success",
-                    f"[{current_completed}/{total}] {coll}: "
-                    f"would push up to {v} version(s), {f} file(s)",
-                )
-                stats["total_would_push_files"] += f
-                stats["total_would_push_versions"] += v
-            else:
-                v = result.versions_pushed
-                f = result.files_uploaded
-                notice(
-                    "success", f"[{current_completed}/{total}] {coll}: {v} version(s), {f} file(s)"
-                )
-                stats["total_files"] += f
-                stats["total_versions"] += v
-            stats["successful"] += 1
-            if result.metrics:
-                stats["metrics"].merge(result.metrics)
-            if result.verify is not None and stats["verify"] is not None:
-                stats["verify"].merge(result.verify)
-        elif result:
-            errors_list = result.errors + result.conflicts
-            notice(
-                "error", f"[{current_completed}/{total}] Failed {coll}: {', '.join(errors_list)}"
+    if err_msg:
+        tell(report, "error", f"[{current_completed}/{total}] Failed {coll}: {err_msg}")
+        stats["failed"] += 1
+        stats["errors"][coll] = [err_msg]
+    elif result and result.success:
+        # A dry-run does no remote check, so the terminal line reports the local
+        # upper-bound estimate. The estimate goes to the would-push stats, not the
+        # uploaded stats. The uploaded stats stay at 0 to keep the JSON envelope
+        # side-effect-honest and consistent with the single-collection path.
+        if result.dry_run:
+            v = result.would_push_versions
+            f = result.would_push_files
+            tell(
+                report,
+                "success",
+                f"[{current_completed}/{total}] {coll}: "
+                f"would push up to {v} version(s), {f} file(s)",
             )
-            stats["failed"] += 1
-            stats["errors"][coll] = errors_list
-            # A push can fail after verify. Its counts still describe the store.
-            if result.verify is not None and stats["verify"] is not None:
-                stats["verify"].merge(result.verify)
+            stats["total_would_push_files"] += f
+            stats["total_would_push_versions"] += v
         else:
-            notice("error", f"[{current_completed}/{total}] Failed {coll}: Unknown error")
-            stats["failed"] += 1
-            stats["errors"][coll] = ["Unknown error"]
+            v = result.versions_pushed
+            f = result.files_uploaded
+            tell(
+                report,
+                "success",
+                f"[{current_completed}/{total}] {coll}: {v} version(s), {f} file(s)",
+            )
+            stats["total_files"] += f
+            stats["total_versions"] += v
+        stats["successful"] += 1
+        if result.metrics:
+            stats["metrics"].merge(result.metrics)
+        if result.verify is not None and stats["verify"] is not None:
+            stats["verify"].merge(result.verify)
+    elif result:
+        errors_list = result.errors + result.conflicts
+        tell(
+            report,
+            "error",
+            f"[{current_completed}/{total}] Failed {coll}: {', '.join(errors_list)}",
+        )
+        stats["failed"] += 1
+        stats["errors"][coll] = errors_list
+        # A push can fail after verify. Its counts still describe the store.
+        if result.verify is not None and stats["verify"] is not None:
+            stats["verify"].merge(result.verify)
+    else:
+        tell(report, "error", f"[{current_completed}/{total}] Failed {coll}: Unknown error")
+        stats["failed"] += 1
+        stats["errors"][coll] = ["Unknown error"]
 
 
-def _discover_intermediate_catalog_files(catalog_root: Path, collections: list[str]) -> list[Path]:
+def _discover_intermediate_catalog_files(
+    catalog_root: Path, collections: list[str], *, report: Report | None = None
+) -> list[Path]:
     """Discover the files of each intermediate catalog for nested collections.
 
     A nested collection ``a/b/c`` has a ``catalog.json`` at each
@@ -3041,6 +3176,7 @@ def _discover_intermediate_catalog_files(catalog_root: Path, collections: list[s
     Args:
         catalog_root: Path to the catalog root directory.
         collections: Leaf collection ids (from ``discover_collections``).
+        report: Receives each line of the run, with its level.
 
     Returns:
         Existing intermediate file paths. In each directory, ``catalog.json``
@@ -3076,7 +3212,7 @@ def _discover_intermediate_catalog_files(catalog_root: Path, collections: list[s
             and item.is_file()
             and not _should_exclude_from_push(item, catalog_root, ctx)
         ]
-        files.extend(_named_only(catalog_root, listed, [f"{sub}/catalog.json"]))
+        files.extend(_named_only(catalog_root, listed, [f"{sub}/catalog.json"], report=report))
     return files
 
 
@@ -3109,6 +3245,8 @@ def _report_root_upload_dry_run(
     catalog_root: Path,
     root_metadata: list[Path],
     intermediate_files: list[Path],
+    *,
+    report: Report | None = None,
 ) -> None:
     """Print the root files a real run would upload.
 
@@ -3116,22 +3254,25 @@ def _report_root_upload_dry_run(
         catalog_root: Path to the catalog root directory.
         root_metadata: Root metadata files the run would sync.
         intermediate_files: Intermediate catalog files the run would upload.
+        report: Receives each line of the run, with its level.
     """
     if (catalog_root / "README.md").exists():
-        notice("info", "[DRY RUN] Would upload README.md")
+        tell(report, "info", "[DRY RUN] Would upload README.md")
     if root_metadata:
-        notice("info", f"[DRY RUN] Would sync {len(root_metadata)} root metadata file(s)")
+        tell(report, "info", f"[DRY RUN] Would sync {len(root_metadata)} root metadata file(s)")
         for f in root_metadata:
-            notice("detail", f" {f.relative_to(catalog_root).as_posix()}")
-    notice("info", "[DRY RUN] Would upload catalog.json")
+            tell(report, "detail", f" {f.relative_to(catalog_root).as_posix()}")
+    tell(report, "info", "[DRY RUN] Would upload catalog.json")
     if intermediate_files:
-        notice(
-            "info", f"[DRY RUN] Would upload {len(intermediate_files)} intermediate catalog file(s)"
+        tell(
+            report,
+            "info",
+            f"[DRY RUN] Would upload {len(intermediate_files)} intermediate catalog file(s)",
         )
         for f in intermediate_files:
-            notice("detail", f" {f.relative_to(catalog_root).as_posix()}")
+            tell(report, "detail", f" {f.relative_to(catalog_root).as_posix()}")
     if (catalog_root / "versions.json").exists():
-        notice("info", "[DRY RUN] Would upload versions.json")
+        tell(report, "info", "[DRY RUN] Would upload versions.json")
 
 
 async def _upload_root_files(
@@ -3144,6 +3285,7 @@ async def _upload_root_files(
     root_etags: dict[str, str | None] | None = None,
     *,
     force: bool = False,
+    report: Report | None = None,
 ) -> None:
     """Upload the root files in manifest-last order.
 
@@ -3161,6 +3303,7 @@ async def _upload_root_files(
         root_etags: The ETag of each root document, from ``_root_etags``.
             None writes them without a condition, and versions.json only if absent.
         force: If True, overwrite the root versions.json without a condition.
+        report: Receives each line of the run, with its level.
 
     Raises:
         PushConflictError: If another writer changed the root versions.json.
@@ -3171,28 +3314,28 @@ async def _upload_root_files(
         # The key is the catalog-relative path, not the basename. `_assets/brand.png`
         # must land under `_assets/` for the catalog's rel="icon" href to resolve.
         key = _target_key(catalog_root, prefix, path)
-        await _put_file(store, key, path.read_bytes(), root_etags)
+        await _put_file(store, key, path.read_bytes(), root_etags, report=report)
         stats["total_files"] += 1
 
     root_readme = catalog_root / "README.md"
     if root_readme.exists():
         await put(root_readme)
-        notice("success", "Uploaded README.md")
+        tell(report, "success", "Uploaded README.md")
 
     for meta_file in root_metadata:
         await put(meta_file)
-        notice("detail", f" Synced {meta_file.relative_to(catalog_root).as_posix()}")
+        tell(report, "detail", f" Synced {meta_file.relative_to(catalog_root).as_posix()}")
     if root_metadata:
-        notice("info", f"Synced {len(root_metadata)} root metadata file(s)")
+        tell(report, "info", f"Synced {len(root_metadata)} root metadata file(s)")
 
     await put(catalog_root / "catalog.json")
-    notice("success", "Uploaded catalog.json")
+    tell(report, "success", "Uploaded catalog.json")
 
     for inter_file in intermediate_files:
         await put(inter_file)
-        notice("detail", f" Uploaded {inter_file.relative_to(catalog_root).as_posix()}")
+        tell(report, "detail", f" Uploaded {inter_file.relative_to(catalog_root).as_posix()}")
     if intermediate_files:
-        notice("info", f"Uploaded {len(intermediate_files)} intermediate catalog file(s)")
+        tell(report, "info", f"Uploaded {len(intermediate_files)} intermediate catalog file(s)")
 
     root_versions = catalog_root / "versions.json"
     if root_versions.exists():
@@ -3200,7 +3343,7 @@ async def _upload_root_files(
         await _put_manifest(
             store, key, root_versions.read_bytes(), root_etags.get(key), force=force
         )
-        notice("success", "Uploaded versions.json")
+        tell(report, "success", "Uploaded versions.json")
         stats["total_files"] += 1
 
 
@@ -3226,6 +3369,7 @@ async def _push_all_upload_root_files(
     root_etags: dict[str, str | None] | None = None,
     *,
     force: bool = False,
+    report: Report | None = None,
 ) -> bool:
     """Upload root-level files after all collections (Issue #357, #426, #547, #552).
 
@@ -3250,6 +3394,7 @@ async def _push_all_upload_root_files(
             discover intermediate catalogs. None/empty means no intermediates.
         root_etags: The ETag of each root document before the push.
         force: If True, overwrite the root versions.json without a condition.
+        report: Receives each line of the run, with its level.
 
     Returns True if uploads succeeded or were skipped, False if any failed.
     """
@@ -3257,22 +3402,24 @@ async def _push_all_upload_root_files(
 
     skip_reason = _root_upload_skip_reason(catalog_root, catalog_json, stats)
     if skip_reason is not None:
-        notice("warn", skip_reason)
+        tell(report, "warn", skip_reason)
         return True
 
     # Discover root metadata files (Issue #426)
-    root_metadata = _discover_catalog_files(catalog_root, include_catalog_root=True)
+    root_metadata = _discover_catalog_files(catalog_root, include_catalog_root=True, report=report)
 
     # Discover intermediate catalog files for nested collections (Issue #905)
     # (Issue #547, #552). Uploaded after root catalog.json, before versions.json.
-    intermediate_files = _discover_intermediate_catalog_files(catalog_root, collections or [])
+    intermediate_files = _discover_intermediate_catalog_files(
+        catalog_root, collections or [], report=report
+    )
 
     if dry_run:
-        _report_root_upload_dry_run(catalog_root, root_metadata, intermediate_files)
+        _report_root_upload_dry_run(catalog_root, root_metadata, intermediate_files, report=report)
         return True
 
     try:
-        store, prefix = setup_store(destination, profile=profile, region=region)
+        store, prefix = setup_store(destination, profile=profile, region=region, report=report)
         await _upload_root_files(
             store,
             prefix,
@@ -3282,10 +3429,11 @@ async def _push_all_upload_root_files(
             stats,
             root_etags,
             force=force,
+            report=report,
         )
         return True
     except Exception as e:
-        notice("error", f"Failed to upload root files: {e}")
+        tell(report, "error", f"Failed to upload root files: {e}")
         stats["errors"]["root_files"] = [str(e)]
         stats.setdefault("exceptions", {})["root_files"] = e
         return False
@@ -3304,7 +3452,8 @@ async def push_all_collections_async(
     chunk_concurrency: int | None = None,
     adaptive: bool = True,
     verify: bool = False,
-    notify: Notify | None = None,
+    verbose: bool = False,
+    report: Report | None = None,
 ) -> PushAllResult:
     """Push all collections in a catalog to cloud storage asynchronously.
 
@@ -3324,9 +3473,10 @@ async def push_all_collections_async(
         chunk_concurrency: Maximum concurrent chunks per file upload.
             None = use default (4). Total connections = file_concurrency × chunk_concurrency.
         adaptive: If True, use slow-start ramp-up for network-safe uploads (default: True).
+        verbose: If True, show per-file upload details.
         verify: If True, each collection checks its skipped assets against
             the store. See ``push_async``.
-        notify: Callback for the messages of the run. See ``sync.notices``.
+        report: Receives each line of the run, with its level.
 
     Returns:
         PushAllResult with aggregate statistics and per-collection errors.
@@ -3334,159 +3484,161 @@ async def push_all_collections_async(
     Raises:
         ValueError: If catalog_root is not a valid catalog.
     """
-    with notifying(notify):
-        from portolan_cli.version_ops import check_backend_supports_push
+    from portolan_cli.version_ops import check_backend_supports_push
 
-        blocked = check_backend_supports_push(catalog_root)
-        if blocked is not None:
-            raise NotImplementedError(blocked.message)
-        collections = discover_collections(catalog_root)
-        total = len(collections)
+    blocked = check_backend_supports_push(catalog_root)
+    if blocked is not None:
+        raise NotImplementedError(blocked.message)
+    collections = discover_collections(catalog_root, report=report)
+    total = len(collections)
 
-        if total == 0:
-            notice("warn", "No initialized collections found in catalog")
-            notice("warn", "Collections need a versions.json file to be pushable")
-            return PushAllResult(
-                success=True,
-                total_collections=0,
-                successful_collections=0,
-                failed_collections=0,
-                total_files_uploaded=0,
-                total_versions_pushed=0,
-                dry_run=dry_run,
-            )
-
-        notice("info", f"Found {total} collection(s) to push")
-        _run_notices.set(set())
-
-        # The root document writes are conditional on the ETags read here, before
-        # any collection writes (#971).
-        root_etags = None
-        if not dry_run and (catalog_root / "catalog.json").exists():
-            try:
-                store, prefix = setup_store(destination, profile=profile, region=region)
-            except Exception:
-                # The root upload sets up the store again and reports the error.
-                root_etags = None
-            else:
-                local = [catalog_root / name for name in _ROOT_DOCUMENTS]
-                keys = [_target_key(catalog_root, prefix, p) for p in local if p.exists()]
-                root_etags = await _root_etags(store, prefix, keys)
-
-        # Track aggregate stats in a dict for helper function access
-        stats: dict[str, Any] = {
-            "successful": 0,
-            "failed": 0,
-            "total_files": 0,
-            "total_versions": 0,
-            "total_would_push_files": 0,
-            "total_would_push_versions": 0,
-            "metrics": UploadMetrics(),
-            "errors": {},
-            "exceptions": {},
-            # A dry run sends no HEAD, so it has no verify counts.
-            "verify": VerifyReport() if verify and not dry_run else None,
-        }
-
-        max_concurrent = (
-            concurrency if concurrency is not None else min(total, get_default_concurrency())
-        )
-        max_concurrent = min(max_concurrent, total)
-
-        notice("info", f"Using concurrency: {max_concurrent}")
-
-        # Semaphore for collection-level concurrency control
-        semaphore = asyncio.Semaphore(max_concurrent)
-
-        async def push_one(collection: str) -> tuple[str, PushResult | None, Exception | None]:
-            """Push a single collection with semaphore control."""
-            async with semaphore:
-                try:
-                    result = await push_async(
-                        catalog_root=catalog_root,
-                        collection=collection,
-                        destination=destination,
-                        force=force,
-                        dry_run=dry_run,
-                        profile=profile,
-                        region=region,
-                        concurrency=file_concurrency,  # Pass file-level concurrency
-                        chunk_concurrency=chunk_concurrency,  # Pass chunk-level concurrency
-                        adaptive=adaptive,  # Pass adaptive slow-start flag
-                        include_catalog=False,  # Uploaded once at end by _push_all_upload_root_files
-                        verify=verify,
-                    )
-                    return (collection, result, None)
-                except Exception as e:
-                    return (collection, None, e)
-
-        # Run all collection pushes concurrently
-        tasks = [push_one(coll) for coll in collections]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-
-        # Process results
-        for i, result in enumerate(results):
-            if isinstance(result, BaseException):
-                coll = collections[i]
-                notice("error", f"[{i + 1}/{total}] Failed {coll}: {result}")
-                stats["failed"] += 1
-                stats["errors"][coll] = [str(result)]
-                stats["exceptions"][coll] = result
-            elif isinstance(result, tuple):
-                coll, push_result, err_msg = result
-                _push_all_process_result(coll, push_result, err_msg, i + 1, total, stats)
-
-        catalog_ok = await _push_all_upload_root_files(
-            catalog_root,
-            destination,
-            profile,
-            region,
-            dry_run,
-            stats,
-            collections,
-            root_etags,
-            force=force,
-        )
-
-        overall_success = stats["failed"] == 0 and catalog_ok
-        with notice_group():
-            notice("info", f"\n{'=' * 60}")
-            if overall_success:
-                if dry_run:
-                    wv = stats["total_would_push_versions"]
-                    wf = stats["total_would_push_files"]
-                    msg = f"[DRY RUN] Would push {stats['successful']} collection(s), "
-                    msg += f"{wv} version(s), {wf} file(s)"
-                else:
-                    msg = f"Pushed {stats['successful']} collection(s), "
-                    msg += f"{stats['total_versions']} version(s), {stats['total_files']} file(s)"
-                    if stats["metrics"].total_bytes > 0:
-                        size = format_file_size(stats["metrics"].total_bytes)
-                        speed = format_speed(stats["metrics"].average_speed)
-                        msg += f" ({size}, avg {speed})"
-                notice("success", msg)
-            else:
-                notice(
-                    "warn",
-                    f"Completed with errors: {stats['successful']} succeeded, {stats['failed']} failed",
-                )
-                for coll_name, errs in stats["errors"].items():
-                    notice("warn", f" {coll_name}: {', '.join(errs)}")
-
+    if total == 0:
+        tell(report, "warn", "No initialized collections found in catalog")
+        tell(report, "warn", "Collections need a versions.json file to be pushable")
         return PushAllResult(
-            success=overall_success,
-            total_collections=total,
-            successful_collections=stats["successful"],
-            failed_collections=stats["failed"],
-            total_files_uploaded=stats["total_files"],
-            total_versions_pushed=stats["total_versions"],
+            success=True,
+            total_collections=0,
+            successful_collections=0,
+            failed_collections=0,
+            total_files_uploaded=0,
+            total_versions_pushed=0,
             dry_run=dry_run,
-            total_would_push_files=stats["total_would_push_files"],
-            total_would_push_versions=stats["total_would_push_versions"],
-            collection_errors=stats["errors"],
-            verify=stats["verify"],
-            collection_exceptions=stats["exceptions"],
         )
+
+    tell(report, "info", f"Found {total} collection(s) to push")
+    _run_notices.set(set())
+
+    # The root document writes are conditional on the ETags read here, before
+    # any collection writes (#971).
+    root_etags = None
+    if not dry_run and (catalog_root / "catalog.json").exists():
+        try:
+            store, prefix = setup_store(destination, profile=profile, region=region, report=report)
+        except Exception:
+            # The root upload sets up the store again and reports the error.
+            root_etags = None
+        else:
+            local = [catalog_root / name for name in _ROOT_DOCUMENTS]
+            keys = [_target_key(catalog_root, prefix, p) for p in local if p.exists()]
+            root_etags = await _root_etags(store, prefix, keys, report=report)
+
+    # Track aggregate stats in a dict for helper function access
+    stats: dict[str, Any] = {
+        "successful": 0,
+        "failed": 0,
+        "total_files": 0,
+        "total_versions": 0,
+        "total_would_push_files": 0,
+        "total_would_push_versions": 0,
+        "metrics": UploadMetrics(),
+        "errors": {},
+        "exceptions": {},
+        # A dry run sends no HEAD, so it has no verify counts.
+        "verify": VerifyReport() if verify and not dry_run else None,
+    }
+
+    max_concurrent = (
+        concurrency if concurrency is not None else min(total, get_default_concurrency())
+    )
+    max_concurrent = min(max_concurrent, total)
+
+    tell(report, "info", f"Using concurrency: {max_concurrent}")
+
+    # Semaphore for collection-level concurrency control
+    semaphore = asyncio.Semaphore(max_concurrent)
+
+    async def push_one(collection: str) -> tuple[str, PushResult | None, Exception | None]:
+        """Push a single collection with semaphore control."""
+        async with semaphore:
+            try:
+                result = await push_async(
+                    catalog_root=catalog_root,
+                    collection=collection,
+                    destination=destination,
+                    force=force,
+                    dry_run=dry_run,
+                    profile=profile,
+                    region=region,
+                    concurrency=file_concurrency,  # Pass file-level concurrency
+                    chunk_concurrency=chunk_concurrency,  # Pass chunk-level concurrency
+                    adaptive=adaptive,  # Pass adaptive slow-start flag
+                    include_catalog=False,  # Uploaded once at end by _push_all_upload_root_files
+                    verify=verify,
+                    verbose=verbose,
+                    report=report,
+                )
+                return (collection, result, None)
+            except Exception as e:
+                return (collection, None, e)
+
+    # Run all collection pushes concurrently
+    tasks = [push_one(coll) for coll in collections]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    # Process results
+    for i, result in enumerate(results):
+        if isinstance(result, BaseException):
+            coll = collections[i]
+            tell(report, "error", f"[{i + 1}/{total}] Failed {coll}: {result}")
+            stats["failed"] += 1
+            stats["errors"][coll] = [str(result)]
+            stats["exceptions"][coll] = result
+        elif isinstance(result, tuple):
+            coll, push_result, err_msg = result
+            _push_all_process_result(coll, push_result, err_msg, i + 1, total, stats, report=report)
+
+    catalog_ok = await _push_all_upload_root_files(
+        catalog_root,
+        destination,
+        profile,
+        region,
+        dry_run,
+        stats,
+        collections,
+        root_etags,
+        force=force,
+        report=report,
+    )
+
+    overall_success = stats["failed"] == 0 and catalog_ok
+    tell(report, "info", f"\n{'=' * 60}")
+    if overall_success:
+        if dry_run:
+            wv = stats["total_would_push_versions"]
+            wf = stats["total_would_push_files"]
+            msg = f"[DRY RUN] Would push {stats['successful']} collection(s), "
+            msg += f"{wv} version(s), {wf} file(s)"
+        else:
+            msg = f"Pushed {stats['successful']} collection(s), "
+            msg += f"{stats['total_versions']} version(s), {stats['total_files']} file(s)"
+            if stats["metrics"].total_bytes > 0:
+                size = format_file_size(stats["metrics"].total_bytes)
+                speed = format_speed(stats["metrics"].average_speed)
+                msg += f" ({size}, avg {speed})"
+        tell(report, "success", msg)
+    else:
+        tell(
+            report,
+            "warn",
+            f"Completed with errors: {stats['successful']} succeeded, {stats['failed']} failed",
+        )
+        for coll_name, errs in stats["errors"].items():
+            tell(report, "warn", f" {coll_name}: {', '.join(errs)}")
+
+    return PushAllResult(
+        success=overall_success,
+        total_collections=total,
+        successful_collections=stats["successful"],
+        failed_collections=stats["failed"],
+        total_files_uploaded=stats["total_files"],
+        total_versions_pushed=stats["total_versions"],
+        dry_run=dry_run,
+        total_would_push_files=stats["total_would_push_files"],
+        total_would_push_versions=stats["total_would_push_versions"],
+        collection_errors=stats["errors"],
+        verify=stats["verify"],
+        collection_exceptions=stats["exceptions"],
+    )
 
 
 def push_all_collections(
@@ -3503,7 +3655,8 @@ def push_all_collections(
     adaptive: bool = True,
     max_connections: int | None = None,
     verify: bool = False,
-    notify: Notify | None = None,
+    verbose: bool = False,
+    report: Report | None = None,
 ) -> PushAllResult:
     """Push all collections in a catalog to cloud storage (sync wrapper).
 
@@ -3519,15 +3672,14 @@ def push_all_collections(
         region: AWS region (for S3 only). Overrides profile/env config.
         workers: Number of parallel workers. None = auto-detect, 1 = sequential.
             (Maps to 'concurrency' in async implementation.)
-        file_concurrency: Maximum concurrent file uploads within each collection.
-            None = use push_async default. (Maps to --concurrency CLI flag.)
-        chunk_concurrency: Maximum concurrent chunks per file upload.
-            None = use default (4). Total connections = file_concurrency × chunk_concurrency.
-        adaptive: If True, use slow-start ramp-up for network-safe uploads (default: True).
+        file_concurrency: Passed to ``push_all_collections_async``.
+        chunk_concurrency: Passed to ``push_all_collections_async``.
+        adaptive: Passed to ``push_all_collections_async``.
+        verbose: Passed to ``push_all_collections_async``.
         max_connections: Maximum total concurrent connections. If set, adjusts
             file_concurrency and chunk_concurrency to stay within limit.
         verify: Passed to ``push_all_collections_async``.
-        notify: Callback for the messages of the run. See ``sync.notices``.
+        report: Passed to ``push_all_collections_async``.
 
     Returns:
         PushAllResult with aggregate statistics and per-collection errors.
@@ -3574,7 +3726,8 @@ def push_all_collections(
             file_concurrency=effective_file_conc,
             chunk_concurrency=effective_chunk_conc,
             adaptive=adaptive,
-            notify=notify,
+            verbose=verbose,
+            report=report,
             verify=verify,
         )
     )
@@ -3610,7 +3763,8 @@ def run_push(
     max_connections: int | None = None,
     adaptive: bool = True,
     verify: bool = False,
-    notify: Notify | None = None,
+    verbose: bool = False,
+    report: Report | None = None,
     # The library draws the bar only when the caller asks. Moving the
     # renderer to the CLI is a follow-up.
     show_progress: bool = False,
@@ -3634,8 +3788,10 @@ def run_push(
         max_connections: Cap on the total concurrent connections.
         adaptive: If True, ramp the concurrency up from a slow start.
         verify: If True, check each skipped asset against the store.
-        notify: Callback for the messages of the run. See ``sync.notices``.
+        verbose: If True, report each uploaded file in place of the bar.
         show_progress: If True, draw a progress bar on a terminal.
+        report: Receives each line of the run, with its level. Without it,
+            the lines go to the log.
 
     Returns:
         A PushResult for one collection, or a PushAllResult for every
@@ -3660,39 +3816,42 @@ def run_push(
         blocked = check_backend_supports_push(catalog_root, collection)
         if blocked is not None:
             raise NotImplementedError(blocked.message)
-    with notifying(notify):
-        file_conc, chunk_conc = effective_push_concurrency(
-            concurrency, chunk_concurrency, max_connections
+    file_conc, chunk_conc = effective_push_concurrency(
+        concurrency, chunk_concurrency, max_connections
+    )
+    if collection is None:
+        return push_all_collections(
+            catalog_root=catalog_root,
+            destination=destination,
+            force=force,
+            dry_run=dry_run,
+            profile=profile,
+            region=region,
+            workers=workers,
+            file_concurrency=file_conc,
+            chunk_concurrency=chunk_conc,
+            max_connections=max_connections,
+            adaptive=adaptive,
+            verify=verify,
+            verbose=verbose,
+            report=report,
         )
-        if collection is None:
-            return push_all_collections(
-                catalog_root=catalog_root,
-                destination=destination,
-                force=force,
-                dry_run=dry_run,
-                profile=profile,
-                region=region,
-                workers=workers,
-                file_concurrency=file_conc,
-                chunk_concurrency=chunk_conc,
-                max_connections=max_connections,
-                adaptive=adaptive,
-                verify=verify,
-            )
-        # max_connections already applies through file_conc and chunk_conc.
-        return asyncio.run(
-            push_async(
-                catalog_root=catalog_root,
-                collection=collection,
-                destination=destination,
-                force=force,
-                dry_run=dry_run,
-                profile=profile,
-                region=region,
-                concurrency=file_conc,
-                chunk_concurrency=chunk_conc,
-                adaptive=adaptive,
-                verify=verify,
-                show_progress=show_progress,
-            )
+    # max_connections already applies through file_conc and chunk_conc.
+    return asyncio.run(
+        push_async(
+            catalog_root=catalog_root,
+            collection=collection,
+            destination=destination,
+            force=force,
+            dry_run=dry_run,
+            profile=profile,
+            region=region,
+            concurrency=file_conc,
+            chunk_concurrency=chunk_conc,
+            adaptive=adaptive,
+            verify=verify,
+            show_progress=show_progress,
+            verbose=verbose,
+            report=report,
         )
+    )

@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import shutil
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 from click.testing import CliRunner
@@ -23,6 +24,9 @@ from portolan_cli.derived_assets import resolve_asset_roles
 from portolan_cli.sync.push import _get_assets_to_upload
 
 pytestmark = [pytest.mark.integration, pytest.mark.realdata]
+
+if TYPE_CHECKING:
+    from portolan_cli.sync.report import Report
 
 
 @pytest.fixture(scope="module")
@@ -67,10 +71,10 @@ def catalog(raster_catalog: Path, tmp_path: Path) -> Path:
     return destination
 
 
-def _push_assets(catalog_root: Path) -> list[Path]:
+def _push_assets(catalog_root: Path, report: Report | None = None) -> list[Path]:
     """Drive the raise site the way ``push`` does, without a remote."""
     versions_data = json.loads((catalog_root / "imagery" / "versions.json").read_text())
-    return _get_assets_to_upload(catalog_root, versions_data, None)
+    return _get_assets_to_upload(catalog_root, versions_data, None, report=report)
 
 
 def test_add_records_both_derived_artifacts(catalog: Path) -> None:
@@ -91,12 +95,12 @@ def test_add_emits_the_roles_the_classifier_reads(catalog: Path) -> None:
 
 
 def test_missing_cog_thumbnail_is_skipped(
-    _print_notices: None, catalog: Path, capsys: pytest.CaptureFixture[str]
+    print_report: Report, catalog: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """The exact repro: delete the COG thumbnail, then push the collection."""
     (catalog / "imagery" / "scene1" / "scene1.thumb.jpg").unlink()
 
-    hrefs = [path.relative_to(catalog).as_posix() for path in _push_assets(catalog)]
+    hrefs = [path.relative_to(catalog).as_posix() for path in _push_assets(catalog, print_report)]
 
     # Sorted because the order is not a contract. push.py iterates the assets
     # dict in versions.json, so the order follows what add recorded, which
@@ -106,12 +110,12 @@ def test_missing_cog_thumbnail_is_skipped(
 
 
 def test_missing_items_parquet_is_skipped(
-    _print_notices: None, catalog: Path, capsys: pytest.CaptureFixture[str]
+    print_report: Report, catalog: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """The second path in the issue, where the item mirror is gone."""
     (catalog / "imagery" / "items.parquet").unlink()
 
-    hrefs = [path.relative_to(catalog).as_posix() for path in _push_assets(catalog)]
+    hrefs = [path.relative_to(catalog).as_posix() for path in _push_assets(catalog, print_report)]
 
     assert sorted(hrefs) == [
         "imagery/scene1/scene1.thumb.jpg",

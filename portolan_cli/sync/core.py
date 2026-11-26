@@ -229,6 +229,7 @@ def _step_push(
     profile: str | None,
     region: str | None,
     report: Report = silent,
+    show_progress: bool = False,
 ) -> tuple[PushResult | None, str | None]:
     """Execute push step. Returns (push_result, error_msg)."""
     report("info", f"Pushing to {destination}...")
@@ -242,6 +243,8 @@ def _step_push(
                 dry_run=dry_run,
                 profile=profile,
                 region=region,
+                show_progress=show_progress,
+                report=report,
             )
         )
 
@@ -309,7 +312,7 @@ def sync(
         profile: AWS profile name (for S3 destinations).
         region: AWS region (for S3 destinations). Overrides profile/env config.
         report: Receives each progress line of the five steps.
-        show_progress: If True, the pull step draws a progress bar on a
+        show_progress: If True, the pull and push steps draw a progress bar on a
             terminal. The library draws the bar only when the caller asks.
             Moving the renderer to the CLI is a follow-up.
 
@@ -395,7 +398,15 @@ def sync(
     # Step 5: Push
     with span("sync.push"):
         push_result, push_error = _step_push(
-            catalog_root, collection, destination, force, dry_run, profile, region, report
+            catalog_root,
+            collection,
+            destination,
+            force,
+            dry_run,
+            profile,
+            region,
+            report,
+            show_progress,
         )
     if push_error:
         report("error", push_error)
