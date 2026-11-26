@@ -20,11 +20,16 @@ Typical usage:
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+logger = logging.getLogger(__name__)
+
+_LOG_LEVELS = {"warn": logging.WARNING, "error": logging.ERROR}
 
 
 @dataclass
@@ -66,3 +71,17 @@ def emit_progress(
                 error=error,
             )
         )
+
+
+def emit_message(on_message: Callable[[str, str], None] | None, level: str, text: str) -> None:
+    """Hand a message for the user to ``on_message(level, text)``.
+
+    The level is ``info``, ``detail``, ``success``, ``warn``, or ``error``. The
+    CLI prints the message through ``output.py``, because library code never
+    prints (#1005). With no callback, the message goes to this module's logger
+    at the matching level, so a library caller still gets the warnings.
+    """
+    if on_message:
+        on_message(level, text)
+    else:
+        logger.log(_LOG_LEVELS.get(level, logging.INFO), text)

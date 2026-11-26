@@ -648,7 +648,7 @@ class TestAutoInitCatalogExistingCatalog:
         assert events == ["add"]
 
     def test_reports_init_catalog_warnings(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
     ) -> None:
         """The raster path prints what init_catalog had to guess (issue #821)."""
         from portolan_cli.extract.arcgis.imageserver.extractor import _auto_init_catalog
@@ -666,10 +666,10 @@ class TestAutoInitCatalogExistingCatalog:
 
         _auto_init_catalog(tmp_path, service_name="svc")
 
-        assert "Derived catalog id 'publish'" in capsys.readouterr().err
+        assert "Derived catalog id 'publish'" in caplog.text
 
     def test_warns_when_id_cannot_apply_to_an_existing_catalog(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
     ) -> None:
         """An existing catalog keeps its id, so a passed --id must not go silent."""
         from portolan_cli.extract.arcgis.imageserver.extractor import _auto_init_catalog
@@ -684,7 +684,7 @@ class TestAutoInitCatalogExistingCatalog:
 
         _auto_init_catalog(tmp_path, service_name="svc", catalog_id="phl-housing")
 
-        assert "Ignored --id 'phl-housing'" in capsys.readouterr().err
+        assert "Ignored --id 'phl-housing'" in caplog.text
 
 
 # =============================================================================
@@ -854,7 +854,7 @@ class TestFailedTileOutput:
     """The per-tile failure line shows the reason (issue #870)."""
 
     def test_failed_tile_line_includes_reason(
-        self, tmp_path: Path, sample_tile: TileSpec, capsys: pytest.CaptureFixture[str]
+        self, tmp_path: Path, sample_tile: TileSpec, caplog: pytest.LogCaptureFixture
     ) -> None:
         from datetime import datetime
 
@@ -885,11 +885,10 @@ class TestFailedTileOutput:
             attempts=3,
         )
 
-        captured = capsys.readouterr()
         assert (
             "Tile tile_0_0: failed [1/1]: "
             "Tile download failed (tile_0_0): HTTP 500 (empty response body)"
-        ) in captured.err
+        ) in caplog.text
         assert stats.tiles_failed == 1
         assert stats.tile_results[0].error == (
             "Tile download failed (tile_0_0): HTTP 500 (empty response body)"
@@ -1026,7 +1025,7 @@ class TestResumeSplitRunsBeforeTheCoarseScan:
         scanned: list[list[TileSpec]] = []
 
         async def fake_scan(
-            url: str, tiles: list[TileSpec], plan: Any, config: ExtractionConfig
+            url: str, tiles: list[TileSpec], plan: Any, config: ExtractionConfig, **_: Any
         ) -> tuple[list[TileSpec], list[TileSpec]]:
             scanned.append(list(tiles))
             return list(tiles), []
@@ -1449,7 +1448,7 @@ class TestCacheRequestCountWarning:
         ]
 
     def test_counts_only_the_blocks_that_remain_after_the_scan(
-        self, tiles_only_metadata: ImageServerMetadata, capsys: pytest.CaptureFixture[str]
+        self, tiles_only_metadata: ImageServerMetadata, caplog: pytest.LogCaptureFixture
     ) -> None:
         from portolan_cli.extract.arcgis.imageserver.extractor import (
             _warn_on_cache_request_count,
@@ -1459,10 +1458,10 @@ class TestCacheRequestCountWarning:
         # 64 blocks of 16 x 16 cache tiles is 16,384 requests.
         _warn_on_cache_request_count(self._blocks(64), tiles_only_metadata.tile_cache)
 
-        assert "16,384 cache tiles" in capsys.readouterr().err
+        assert "16,384 cache tiles" in caplog.text
 
     def test_stays_quiet_for_a_small_run(
-        self, tiles_only_metadata: ImageServerMetadata, capsys: pytest.CaptureFixture[str]
+        self, tiles_only_metadata: ImageServerMetadata, caplog: pytest.LogCaptureFixture
     ) -> None:
         from portolan_cli.extract.arcgis.imageserver.extractor import (
             _warn_on_cache_request_count,
@@ -1471,7 +1470,7 @@ class TestCacheRequestCountWarning:
         assert tiles_only_metadata.tile_cache is not None
         _warn_on_cache_request_count(self._blocks(4), tiles_only_metadata.tile_cache)
 
-        assert "cache tiles" not in capsys.readouterr().err
+        assert "cache tiles" not in caplog.text
 
 
 @pytest.mark.unit
@@ -1731,26 +1730,26 @@ class TestResumeGridGuard:
         )
 
     def test_a_different_tile_size_starts_a_fresh_state(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
         path = self._state(tmp_path, tile_size=3000)
 
         state = self._load(path, 1024, (0.0, 0.0, 100.0, 100.0))
 
         assert state.succeeded_tiles == set()
-        message = capsys.readouterr().err
+        message = caplog.text
         assert "--tile-size 3000" in message
         assert "--tile-size 1024" in message
 
     def test_a_different_extent_starts_a_fresh_state(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
         path = self._state(tmp_path, tile_size=1024)
 
         state = self._load(path, 1024, (0.0, 0.0, 200.0, 100.0))
 
         assert state.succeeded_tiles == set()
-        assert "covered another area" in capsys.readouterr().err
+        assert "covered another area" in caplog.text
 
     def test_the_same_grid_resumes(self, tmp_path: Path) -> None:
         path = self._state(tmp_path, tile_size=1024)

@@ -73,6 +73,7 @@ from portolan_cli.extract.arcgis.imageserver.tilecache import (
     select_probe_lod,
 )
 from portolan_cli.extract.arcgis.imageserver.tiling import TileSpec, compute_tile_grid
+from portolan_cli.extract.common.progress import emit_message
 from portolan_cli.extract.common.retry import PERMANENT_NOTE, permanent_status
 from portolan_cli.extract.common.urls import redact_credentials
 from portolan_cli.licensing import (
@@ -81,7 +82,6 @@ from portolan_cli.licensing import (
     resolve_harvest_license,
 )
 from portolan_cli.metadata_seeding import seed_metadata_yaml
-from portolan_cli.output import detail, error, info, success, warn
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -863,6 +863,8 @@ def _plan_tiles(
     metadata: ImageServerMetadata,
     extent: dict[str, Any],
     config: ExtractionConfig,
+    *,
+    on_message: Callable[[str, str], None] | None = None,
 ) -> _TilePlan:
     """Choose the tile source and compute the tile grid.
 
@@ -874,6 +876,7 @@ def _plan_tiles(
         metadata: Service metadata.
         extent: Extent to cover, in the service CRS.
         config: Extraction configuration.
+        on_message: Called with each message for the user.
 
     Returns:
         The tile plan.
@@ -910,15 +913,22 @@ def _plan_tiles(
 
     extent, pixel_size = _extent_in_cache_crs(metadata, extent, cache)
     lod = cache.select_lod(pixel_size)
-    info(
+    emit_message(
+        on_message,
+        "info",
         f"Service serves only cached tiles. Reading level {lod.level} "
-        f"({lod.resolution:g} units per pixel) from the {cache.tile_format} cache."
+        f"({lod.resolution:g} units per pixel) from the {cache.tile_format} cache.",
     )
     tiles = list(compute_cache_tile_grid(extent, cache, lod, tile_size=config.tile_size))
     return _TilePlan(tiles=tiles, cache=cache, lod=lod)
 
 
-def _warn_on_cache_request_count(tiles: list[TileSpec], cache: TileCacheInfo) -> None:
+def _warn_on_cache_request_count(
+    tiles: list[TileSpec],
+    cache: TileCacheInfo,
+    *,
+    on_message: Callable[[str, str], None] | None = None,
+) -> None:
     """Report how many cache requests the run still costs.
 
     The reader must ask for every cache tile of every block it keeps, because
@@ -930,6 +940,7 @@ def _warn_on_cache_request_count(tiles: list[TileSpec], cache: TileCacheInfo) ->
     Args:
         tiles: Output tiles the reader still has to read.
         cache: Cache grid.
+        on_message: Called with each message for the user.
     """
     requests = sum(
         math.ceil(tile.width_px / cache.tile_width) * math.ceil(tile.height_px / cache.tile_height)
@@ -937,9 +948,11 @@ def _warn_on_cache_request_count(tiles: list[TileSpec], cache: TileCacheInfo) ->
     )
     if requests < CACHE_REQUEST_WARNING_THRESHOLD:
         return
-    warn(
+    emit_message(
+        on_message,
+        "warn",
         f"This run reads {requests:,} cache tiles. Use --bbox to name a smaller "
-        "area, or --max-concurrent to run more requests at the same time."
+        "area, or --max-concurrent to run more requests at the same time.",
     )
 
 
@@ -1004,6 +1017,8 @@ async def _process_tile(
     last_request_time: dict[str, float],
     collection_name: str = "tiles",
     plan: _TilePlan | None = None,
+    *,
+    on_message: Callable[[str, str], None] | None = None,
 ) -> _TileProcessResult:
     """Process a single tile: download and convert to COG.
 
@@ -1022,6 +1037,7 @@ async def _process_tile(
         collection_name: Name for the collection directory (default: 'tiles').
         plan: Tile plan, which says whether to call exportImage or read the
             tile cache. None calls exportImage.
+        on_message: Called with each message for the user.
 
     Returns:
         _TileProcessResult with tile, success status, bytes, duration, error, attempts.
@@ -1108,7 +1124,11 @@ async def _process_tile(
                     # Handle 429 with exponential backoff
                     delay = e.retry_after or (RATE_LIMIT_429_INITIAL_DELAY * (2 ** (attempt - 1)))
                     delay = min(delay, RATE_LIMIT_429_MAX_DELAY)
-                    warn(f"Rate limited on tile {tile.get_id()}, waiting {delay:.1f}s")
+                    emit_message(
+                        on_message,
+                        "warn",
+                        f"Rate limited on tile {tile.get_id()}, waiting {delay:.1f}s",
+                    )
                     await asyncio.sleep(delay)
                     # Increase rate limit delay for future requests
                     rate_limit_delay = min(rate_limit_delay * 2, 2.0)
@@ -1216,12 +1236,18 @@ def _setup_extraction_dirs(output_dir: Path, collection_name: str = "tiles") -> 
     return collection_dir, portolan_dir
 
 
-def _load_effective_config(config: ExtractionConfig, output_dir: Path) -> ExtractionConfig:
+def _load_effective_config(
+    config: ExtractionConfig,
+    output_dir: Path,
+    *,
+    on_message: Callable[[str, str], None] | None = None,
+) -> ExtractionConfig:
     """Load COG settings from config.yaml if not explicitly provided.
 
     Args:
         config: Base extraction config.
         output_dir: Directory to check for .portolan/config.yaml.
+        on_message: Called with each message for the user.
 
     Returns:
         Config with COG settings from config.yaml, or original config.
@@ -1232,7 +1258,11 @@ def _load_effective_config(config: ExtractionConfig, output_dir: Path) -> Extrac
     try:
         catalog_cog_settings = get_cog_settings(output_dir)
         if catalog_cog_settings != CogSettings():
-            info(f"Using COG settings from config: {catalog_cog_settings.compression}")
+            emit_message(
+                on_message,
+                "info",
+                f"Using COG settings from config: {catalog_cog_settings.compression}",
+            )
             # replace() keeps every other option, such as raw and catalog_id.
             return replace(config, cog_settings=catalog_cog_settings)
     except Exception as e:
@@ -1245,6 +1275,8 @@ def _seed_metadata_from_report(
     output_dir: Path,
     report: ImageServerExtractionReport,
     resolved_license: ResolvedLicense | None = None,
+    *,
+    on_message: Callable[[str, str], None] | None = None,
 ) -> None:
     """Seed metadata.yaml from extraction report.
 
@@ -1256,12 +1288,13 @@ def _seed_metadata_from_report(
         report: Extraction report with metadata_extracted.
         resolved_license: License resolved before the download, which wins over
             anything the harvest found (issue #686). None in raw mode.
+        on_message: Called with each message for the user.
     """
     extracted = report.metadata_extracted.to_extracted()
 
     metadata_path = output_dir / ".portolan" / "metadata.yaml"
     if seed_metadata_yaml(extracted, metadata_path, license_override=resolved_license):
-        info(f"Seeded metadata.yaml from {extracted.source_type}")
+        emit_message(on_message, "info", f"Seeded metadata.yaml from {extracted.source_type}")
 
 
 def _auto_init_catalog(
@@ -1269,6 +1302,8 @@ def _auto_init_catalog(
     service_name: str | None = None,
     collection_name: str = "tiles",
     catalog_id: str | None = None,
+    *,
+    on_message: Callable[[str, str], None] | None = None,
 ) -> bool:
     """Initialize a Portolan catalog and add extracted COG files.
 
@@ -1282,6 +1317,7 @@ def _auto_init_catalog(
         collection_name: Name for the collection directory (default: 'tiles').
         catalog_id: Catalog id for the created catalog. None derives it from
             the output directory name, which is the behavior before issue #821.
+        on_message: Called with each message for the user.
 
     Returns:
         True if catalog was initialized, False if no files to add.
@@ -1311,13 +1347,15 @@ def _auto_init_catalog(
             output_dir, catalog_id=catalog_id, title=service_name, license_id=None
         )
         for message in init_warnings:
-            warn(message)
+            emit_message(on_message, "warn", message)
     elif catalog_id is not None:
         # The catalog already exists and keeps the id it was created with. Say so,
         # rather than accept the flag and change nothing (issue #821).
-        warn(
+        emit_message(
+            on_message,
+            "warn",
             f"Ignored --id '{catalog_id}'. {output_dir} is already a Portolan "
-            "catalog and keeps the id it was created with."
+            "catalog and keeps the id it was created with.",
         )
 
     # Add all COG files - this creates items per raster
@@ -1336,6 +1374,8 @@ async def _extract_all_tiles(
     on_progress: Callable[[TileProgress], None] | None = None,
     collection_name: str = "tiles",
     plan: _TilePlan | None = None,
+    *,
+    on_message: Callable[[str, str], None] | None = None,
 ) -> _ProcessingStats:
     """Extract all tiles with concurrency control.
 
@@ -1350,6 +1390,7 @@ async def _extract_all_tiles(
         collection_name: Name for the collection directory (default: 'tiles').
         plan: Tile plan, which says whether to call exportImage or read the
             tile cache.
+        on_message: Called with each message for the user.
 
     Returns:
         Processing statistics with tile results.
@@ -1377,6 +1418,7 @@ async def _extract_all_tiles(
                 last_request_time=last_request_time,
                 collection_name=collection_name,
                 plan=plan,
+                on_message=on_message,
             )
             for tile in tiles
         ]
@@ -1397,6 +1439,7 @@ async def _extract_all_tiles(
                 attempts=result.attempts,
                 on_progress=on_progress,
                 collection_name=collection_name,
+                on_message=on_message,
             )
 
             # Batch resume state saves
@@ -1417,6 +1460,8 @@ def _record_empty_tile(
     duration: float,
     attempts: int,
     on_progress: Callable[[TileProgress], None] | None,
+    *,
+    on_message: Callable[[str, str], None] | None = None,
 ) -> None:
     """Record a tile that holds no valid pixel.
 
@@ -1434,6 +1479,7 @@ def _record_empty_tile(
         duration: Processing duration in seconds.
         attempts: Number of attempts.
         on_progress: Optional progress callback.
+        on_message: Called with each message for the user.
     """
     tile_id = tile.get_id()
     stats.tiles_empty += 1
@@ -1449,7 +1495,7 @@ def _record_empty_tile(
             attempts=attempts,
         )
     )
-    detail(f"Tile {tile_id}: no data [{index + 1}/{total}]")
+    emit_message(on_message, "detail", f"Tile {tile_id}: no data [{index + 1}/{total}]")
     if on_progress:
         on_progress(
             TileProgress(
@@ -1475,6 +1521,8 @@ def _update_stats_and_state(
     on_progress: Callable[[TileProgress], None] | None = None,
     collection_name: str = "tiles",
     empty: bool = False,
+    *,
+    on_message: Callable[[str, str], None] | None = None,
 ) -> None:
     """Update statistics, resume state, and tile results after processing a tile.
 
@@ -1492,11 +1540,22 @@ def _update_stats_and_state(
         collection_name: Name for the collection directory (default: 'tiles').
         on_progress: Optional progress callback.
         empty: True when the tile holds no valid pixel, so it wrote no COG.
+        on_message: Called with each message for the user.
     """
     tile_id = tile.get_id()
 
     if empty:
-        _record_empty_tile(tile, stats, resume_state, index, total, duration, attempts, on_progress)
+        _record_empty_tile(
+            tile,
+            stats,
+            resume_state,
+            index,
+            total,
+            duration,
+            attempts,
+            on_progress,
+            on_message=on_message,
+        )
         return
 
     if succeeded:
@@ -1519,7 +1578,11 @@ def _update_stats_and_state(
             )
         )
 
-        detail(f"Tile {tile_id}: {bytes_downloaded:,} bytes [{index + 1}/{total}]")
+        emit_message(
+            on_message,
+            "detail",
+            f"Tile {tile_id}: {bytes_downloaded:,} bytes [{index + 1}/{total}]",
+        )
 
         if on_progress:
             on_progress(
@@ -1549,7 +1612,7 @@ def _update_stats_and_state(
         failure_line = f"Tile {tile_id}: failed [{index + 1}/{total}]"
         if error_msg:
             failure_line += f": {error_msg}"
-        error(failure_line)
+        emit_message(on_message, "error", failure_line)
 
         if on_progress:
             on_progress(
@@ -1601,6 +1664,8 @@ async def _scan_for_empty_blocks(
     tiles: list[TileSpec],
     plan: _TilePlan,
     config: ExtractionConfig,
+    *,
+    on_message: Callable[[str, str], None] | None = None,
 ) -> tuple[list[TileSpec], list[TileSpec]]:
     """Split output tiles into the ones to read and the ones with no data.
 
@@ -1615,6 +1680,7 @@ async def _scan_for_empty_blocks(
         tiles: Output tiles from the plan.
         plan: Tile plan, which must carry a cache and a level.
         config: Extraction configuration.
+        on_message: Called with each message for the user.
 
     Returns:
         Tuple of the tiles to read and the tiles the coarse level calls empty.
@@ -1628,8 +1694,10 @@ async def _scan_for_empty_blocks(
     if probe_lod is None:
         return tiles, []
 
-    info(
-        f"Scanning level {probe_lod.level} to find the blocks that hold data ({len(tiles)} blocks)"
+    emit_message(
+        on_message,
+        "info",
+        f"Scanning level {probe_lod.level} to find the blocks that hold data ({len(tiles)} blocks)",
     )
     in_flight = config.max_concurrent * DEFAULT_CACHE_CONCURRENCY
     semaphore = asyncio.Semaphore(in_flight)
@@ -1644,9 +1712,11 @@ async def _scan_for_empty_blocks(
     keep = [tile for tile, is_empty in zip(tiles, verdicts, strict=True) if not is_empty]
     empty = [tile for tile, is_empty in zip(tiles, verdicts, strict=True) if is_empty]
     if empty:
-        info(
+        emit_message(
+            on_message,
+            "info",
             f"Skipped {len(empty)} blocks that hold no data at level {probe_lod.level}. "
-            "Pass --no-coarse-scan to read every cache tile."
+            "Pass --no-coarse-scan to read every cache tile.",
         )
     return keep, empty
 
@@ -1684,7 +1754,12 @@ def _record_coarse_empty_tiles(
         )
 
 
-def _clamp_tile_size(config: ExtractionConfig, metadata: ImageServerMetadata) -> ExtractionConfig:
+def _clamp_tile_size(
+    config: ExtractionConfig,
+    metadata: ImageServerMetadata,
+    *,
+    on_message: Callable[[str, str], None] | None = None,
+) -> ExtractionConfig:
     """Clamp the tile size to the exportImage limits of the service.
 
     This is the proactive check of issue #335. The limits describe exportImage.
@@ -1694,22 +1769,33 @@ def _clamp_tile_size(config: ExtractionConfig, metadata: ImageServerMetadata) ->
     max_tile_size = min(metadata.max_image_width, metadata.max_image_height)
     if not metadata.export_image_supported or config.tile_size <= max_tile_size:
         return config
-    warn(
+    emit_message(
+        on_message,
+        "warn",
         f"Requested tile size ({config.tile_size}px) exceeds service limit "
-        f"({max_tile_size}px). Auto-adjusting to {max_tile_size}px."
+        f"({max_tile_size}px). Auto-adjusting to {max_tile_size}px.",
     )
     # Use dataclasses.replace to preserve all fields (including compression)
     return replace(config, tile_size=max_tile_size)
 
 
-def _report_tile_counts(stats: _ProcessingStats, report_path: Path) -> None:
-    """Print the downloaded, empty, and failed tile counts of a run."""
-    success(f"Extracted {stats.tiles_downloaded} tiles ({stats.total_bytes:,} bytes)")
+def _report_tile_counts(
+    stats: _ProcessingStats,
+    report_path: Path,
+    *,
+    on_message: Callable[[str, str], None] | None = None,
+) -> None:
+    """Report the downloaded, empty, and failed tile counts of a run."""
+    emit_message(
+        on_message,
+        "success",
+        f"Extracted {stats.tiles_downloaded} tiles ({stats.total_bytes:,} bytes)",
+    )
     if stats.tiles_empty > 0:
-        info(f"Skipped {stats.tiles_empty} tiles that hold no data")
+        emit_message(on_message, "info", f"Skipped {stats.tiles_empty} tiles that hold no data")
     if stats.tiles_failed > 0:
-        error(f"Failed: {stats.tiles_failed} tiles")
-    info(f"Report: {report_path}")
+        emit_message(on_message, "error", f"Failed: {stats.tiles_failed} tiles")
+    emit_message(on_message, "info", f"Report: {report_path}")
 
 
 async def extract_imageserver(
@@ -1723,6 +1809,8 @@ async def extract_imageserver(
     bbox_crs: str | None = None,
     license_id: str | None = None,
     license_url: str | None = None,
+    *,
+    on_message: Callable[[str, str], None] | None = None,
 ) -> ExtractionResult:
     """Extract raster tiles from ImageServer to COG files.
 
@@ -1742,6 +1830,9 @@ async def extract_imageserver(
         license_id: SPDX identifier from --license, or "other" with license_url.
             Overrides any license URL in the service's licenseInfo (issue #686).
         license_url: URL of the license text from --license-url.
+        on_message: Called with each message for the user, as
+            ``on_message(level, text)``. None logs them. See
+            ``extract.common.progress.emit_message``.
 
     Returns:
         ExtractionResult with extraction statistics and full report.
@@ -1766,14 +1857,18 @@ async def extract_imageserver(
 
     # Setup
     _, portolan_dir = _setup_extraction_dirs(output_dir, collection_name)
-    config = _load_effective_config(config, output_dir)
+    config = _load_effective_config(config, output_dir, on_message=on_message)
 
     # Discover service
-    info(f"Discovering ImageServer: {redact_credentials(url)}")
+    emit_message(on_message, "info", f"Discovering ImageServer: {redact_credentials(url)}")
     metadata = await discover_imageserver(url, timeout=config.timeout)
-    info(f"Service: {metadata.name} ({metadata.pixel_type}, {metadata.band_count} bands)")
+    emit_message(
+        on_message,
+        "info",
+        f"Service: {metadata.name} ({metadata.pixel_type}, {metadata.band_count} bands)",
+    )
 
-    config = _clamp_tile_size(config, metadata)
+    config = _clamp_tile_size(config, metadata, on_message=on_message)
 
     # Get service CRS for bbox reprojection
     service_crs = metadata.get_crs_string()
@@ -1785,20 +1880,26 @@ async def extract_imageserver(
         bbox = reproject_bbox_if_needed(bbox, service_crs, bbox_crs=bbox_crs)
         intersected = _intersect_bbox(bbox, extent)
         if intersected is None:
-            info("User bbox does not intersect service extent - no tiles to extract")
+            emit_message(
+                on_message,
+                "info",
+                "User bbox does not intersect service extent - no tiles to extract",
+            )
             return _create_empty_result(output_dir)
         extent = intersected
 
-    plan = _plan_tiles(metadata, extent, config)
+    plan = _plan_tiles(metadata, extent, config, on_message=on_message)
     tiles = plan.tiles
-    info(f"Computed {len(tiles)} tiles to extract")
+    emit_message(on_message, "info", f"Computed {len(tiles)} tiles to extract")
 
     if not tiles:
-        success("No tiles to extract (bbox may not intersect service extent)")
+        emit_message(
+            on_message, "success", "No tiles to extract (bbox may not intersect service extent)"
+        )
         return _create_empty_result(output_dir)
 
     if config.dry_run:
-        info(f"[DRY RUN] Would extract {len(tiles)} tiles")
+        emit_message(on_message, "info", f"[DRY RUN] Would extract {len(tiles)} tiles")
         return _create_empty_result(output_dir)
 
     # Resolve the license before downloading anything, so a harvest that cannot be
@@ -1820,7 +1921,9 @@ async def extract_imageserver(
         tile_size=config.tile_size,
         extent=(extent["xmin"], extent["ymin"], extent["xmax"], extent["ymax"]),
     )
-    resume_state = _load_or_create_resume_state(resume, resume_path, url, grid)
+    resume_state = _load_or_create_resume_state(
+        resume, resume_path, url, grid, on_message=on_message
+    )
 
     # Split the tiles before the coarse scan. A tile that a previous run
     # completed keeps the "skipped" status. The scan never probes it, and the
@@ -1831,18 +1934,22 @@ async def extract_imageserver(
     )
     tiles_skipped = len(skipped_tile_specs)
     if tiles_skipped > 0:
-        info(f"Skipping {tiles_skipped} already-completed tiles")
+        emit_message(on_message, "info", f"Skipping {tiles_skipped} already-completed tiles")
     if known_empty_tiles:
-        info(
+        emit_message(
+            on_message,
+            "info",
             f"Skipping {len(known_empty_tiles)} blocks that an earlier coarse scan "
-            "called empty. Pass --no-coarse-scan to read them again."
+            "called empty. Pass --no-coarse-scan to read them again.",
         )
 
     # Ask a coarse cache level which blocks hold data, before reading any of
     # them at full resolution (issue #870).
-    tiles_to_process, coarse_empty = await _scan_for_empty_blocks(url, pending_tiles, plan, config)
+    tiles_to_process, coarse_empty = await _scan_for_empty_blocks(
+        url, pending_tiles, plan, config, on_message=on_message
+    )
     if plan.cache is not None:
-        _warn_on_cache_request_count(tiles_to_process, plan.cache)
+        _warn_on_cache_request_count(tiles_to_process, plan.cache, on_message=on_message)
 
     # Extract tiles (COG files only, no STAC metadata)
     stats = await _extract_all_tiles(
@@ -1855,6 +1962,7 @@ async def extract_imageserver(
         on_progress=on_progress,
         collection_name=collection_name,
         plan=plan,
+        on_message=on_message,
     )
     _record_coarse_empty_tiles(coarse_empty + known_empty_tiles, stats, resume_state)
     _save_resume_state(resume_state, resume_path)
@@ -1887,21 +1995,21 @@ async def extract_imageserver(
     save_imageserver_report(report, report_path)
 
     # Seed metadata.yaml from extracted service metadata
-    _seed_metadata_from_report(output_dir, report, resolved_license)
+    _seed_metadata_from_report(output_dir, report, resolved_license, on_message=on_message)
 
-    _report_tile_counts(stats, report_path)
+    _report_tile_counts(stats, report_path, on_message=on_message)
 
     # Auto-init catalog using Portolan API (unless raw mode)
     catalog_initialized = False
     if not config.raw:
-        info("Initializing Portolan catalog...")
+        emit_message(on_message, "info", "Initializing Portolan catalog...")
         catalog_initialized = _auto_init_catalog(
-            output_dir, metadata.name, collection_name, config.catalog_id
+            output_dir, metadata.name, collection_name, config.catalog_id, on_message=on_message
         )
         if catalog_initialized:
-            success("Catalog initialized with STAC metadata")
+            emit_message(on_message, "success", "Catalog initialized with STAC metadata")
         else:
-            warn("No COG files found to add to catalog")
+            emit_message(on_message, "warn", "No COG files found to add to catalog")
 
     return ExtractionResult(
         output_dir=output_dir,
@@ -1967,6 +2075,8 @@ def _load_or_create_resume_state(
     resume_path: Path,
     url: str,
     grid: TileGrid,
+    *,
+    on_message: Callable[[str, str], None] | None = None,
 ) -> ImageServerResumeState:
     """Load existing resume state or create new one.
 
@@ -1980,6 +2090,7 @@ def _load_or_create_resume_state(
         resume_path: Path to resume state file.
         url: Service URL for new state.
         grid: Tile grid this run extracts.
+        on_message: Called with each message for the user.
 
     Returns:
         Resume state (loaded or new).
@@ -1987,13 +2098,17 @@ def _load_or_create_resume_state(
     if resume:
         state = load_resume_state(resume_path)
         if state and state.grid is not None and not state.grid.matches(grid):
-            warn(
+            emit_message(
+                on_message,
+                "warn",
                 f"{_grid_change_reason(state.grid, grid)} The tile grids differ, so "
-                "this run reads every tile again."
+                "this run reads every tile again.",
             )
             state = None
         if state:
-            info(f"Resuming: {len(state.succeeded_tiles)} tiles already complete")
+            emit_message(
+                on_message, "info", f"Resuming: {len(state.succeeded_tiles)} tiles already complete"
+            )
             state.grid = grid
             return state
 

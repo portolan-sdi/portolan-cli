@@ -276,7 +276,7 @@ class TestInitExtractedCatalog:
 
     @pytest.mark.usefixtures("stub_add_files")
     def test_reports_init_catalog_warnings(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
     ) -> None:
         """extract prints what init_catalog had to guess, the way `init` does (#821)."""
         report = _report([_layer(0, "a", output_path="a/a.parquet")])
@@ -290,11 +290,11 @@ class TestInitExtractedCatalog:
 
         init_extracted_catalog(tmp_path, report, title=None, description=None)
 
-        assert "Derived catalog id 'publish'" in capsys.readouterr().err
+        assert "Derived catalog id 'publish'" in caplog.text
 
     @pytest.mark.usefixtures("stub_add_files")
     def test_warns_when_id_cannot_apply_to_an_existing_catalog(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
     ) -> None:
         """An existing catalog keeps its id, so a passed --id must not go silent."""
         (tmp_path / ".portolan").mkdir()
@@ -310,7 +310,7 @@ class TestInitExtractedCatalog:
             tmp_path, report, catalog_id="phl-housing", title=None, description=None
         )
 
-        assert "phl-housing" in capsys.readouterr().err
+        assert "phl-housing" in caplog.text
 
 
 class TestAddSourceLinks:
@@ -418,7 +418,7 @@ class TestSeedCatalogMetadata:
         assert (tmp_path / ".portolan" / "metadata.yaml").exists()
 
     def test_attribution_names_the_producer_and_unset_host_warns(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
         """#1039: the source's attribution is the producer, and no placeholder host is made."""
         from portolan_cli.config import load_merged_metadata
@@ -442,18 +442,18 @@ class TestSeedCatalogMetadata:
             f"{tmp_path / '<collection>' / '.portolan' / 'metadata.yaml'}, then run "
             "'portolan add --force <collection>'."
         )
-        err = capsys.readouterr().err
+        err = caplog.text
         assert err.count(warning) == 1
         assert "No producer provider" not in err
 
     def test_source_without_attribution_warns_of_the_missing_producer(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
         seed_catalog_metadata(tmp_path, ExtractedMetadata(source_type="arcgis_featureserver"))
 
         metadata_path = tmp_path / ".portolan" / "metadata.yaml"
         assert (
-            capsys.readouterr().err.count(
+            caplog.text.count(
                 "No producer provider: the source publishes no author and no attribution. "
                 f"Add a provider with the producer role to {metadata_path}."
             )

@@ -1,42 +1,36 @@
-"""CLI-facing orchestrator for ImageServer extraction.
+"""The ImageServer path of ``portolan extract arcgis``.
 
-This module wraps the async extract_imageserver() function for CLI use,
-handling options, progress output, and exit codes.
+This module wraps the async ``extract_imageserver()`` function. It turns the
+options into an extraction config, picks the exit code, and returns the
+result. It prints nothing (#1005). Progress goes to ``on_progress`` and the
+messages for the user go to ``on_message``. The CLI prints both.
 
-Progress output matches FeatureServer pattern for consistency:
-    [1/5] tile_0_0
-      ✓ Done
-    [2/5] tile_0_1
-      ↪ Skipped (already extracted)
-
-Typical usage from CLI:
+Typical usage:
     from portolan_cli.extract.arcgis.imageserver.orchestrator import (
         ImageServerCLIOptions,
-        run_imageserver_extraction,
+        run_imageserver_extraction_sync,
     )
 
-    exit_code = await run_imageserver_extraction(
+    exit_code, report = run_imageserver_extraction_sync(
         url="https://services.arcgis.com/.../ImageServer",
         output_dir=Path("./output"),
         options=ImageServerCLIOptions(dry_run=True),
     )
-    sys.exit(exit_code)
 """
 
 from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-from portolan_cli.errors import MissingLicenseError
 from portolan_cli.extract.arcgis.imageserver.extractor import (
     ExtractionConfig,
     TileProgress,
     extract_imageserver,
 )
-from portolan_cli.licensing import CLI_LICENSE_REMEDIATION
-from portolan_cli.output import detail, error, info, success, warn
+from portolan_cli.extract.common.progress import emit_message
+from portolan_cli.extract.common.urls import redact_credentials
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -47,7 +41,7 @@ if TYPE_CHECKING:
 
 @dataclass
 class ImageServerCLIOptions:
-    """CLI options for ImageServer extraction.
+    """Options for ImageServer extraction.
 
     Attributes:
         tile_size: Desired tile size in pixels (default 4096).
@@ -60,7 +54,6 @@ class ImageServerCLIOptions:
         bbox_crs: Optional explicit CRS of bbox (e.g., "EPSG:4326"). Skips auto-detection.
         timeout: HTTP request timeout in seconds (default 120).
         compression: COG compression method ("DEFLATE" or "JPEG").
-        use_json: If True, suppress progress output (for JSON mode).
         collection_name: Optional name for the collection (default: 'tiles').
         catalog_id: Catalog id for the created catalog. None derives it from
             the output directory name, which is the behavior before issue #821.
@@ -82,7 +75,6 @@ class ImageServerCLIOptions:
     bbox_crs: str | None = None
     timeout: float = 120.0
     compression: str = "DEFLATE"
-    use_json: bool = False
     collection_name: str | None = None
     catalog_id: str | None = None
     license: str | None = None
@@ -90,46 +82,40 @@ class ImageServerCLIOptions:
     coarse_scan: bool = False
 
 
-def _create_progress_callback(
-    use_json: bool,
-) -> tuple[
-    dict[str, str],
-    Callable[[TileProgress], None] | None,
-]:
-    """Create a progress callback that matches FeatureServer output pattern.
+@dataclass(frozen=True)
+class ImageServerRunResult:
+    """One ImageServer run of ``portolan extract arcgis``.
 
-    Args:
-        use_json: If True, return None (no progress output in JSON mode).
-
-    Returns:
-        Tuple of (status_tracker dict, callback function or None).
+    Attributes:
+        url: The ImageServer URL.
+        output_dir: The directory the run wrote, as the caller gave it.
+        dry_run: True when the run computed the tiles and read none.
+        exit_code: 0 for success, 1 when every tile failed or held no data.
+        report: The extraction report, or None for a run that wrote none.
     """
-    if use_json:
-        return {}, None
 
-    # Track status per tile for output
-    status_tracker: dict[str, str] = {}
+    url: str
+    output_dir: Path
+    dry_run: bool
+    exit_code: int
+    report: ImageServerExtractionReport | None
 
-    def on_progress(progress: TileProgress) -> None:
-        """Progress callback matching FeatureServer pattern."""
-        tile_id = progress.tile_id
-        status = progress.status
-
-        if status == "starting":
-            info(f"[{progress.tile_index + 1}/{progress.total_tiles}] {tile_id}")
-        elif status == "success":
-            detail("  ✓ Done")
-        elif status == "failed":
-            error("  ✗ Failed")
-        elif status == "skipped":
-            detail("  ↪ Skipped (already extracted)")
-
-        status_tracker[tile_id] = status
-
-    return status_tracker, on_progress
+    def to_dict(self) -> dict[str, Any]:
+        """Return the envelope ``data`` of the command."""
+        data: dict[str, Any] = {
+            "source_url": redact_credentials(self.url),
+            "output_dir": str(self.output_dir),
+            "service_type": "ImageServer",
+            "dry_run": self.dry_run,
+        }
+        if self.report:
+            data["summary"] = self.report.summary.to_dict()
+            data["metadata_extracted"] = self.report.metadata_extracted.to_dict()
+            data["tiles"] = [tile.to_dict() for tile in self.report.tiles]
+        return data
 
 
-def _print_failure_hint(tiles_failed: int) -> None:
+def _failure_hint(tiles_failed: int) -> str:
     """Tell the user how to recover from failed tiles (issue #870).
 
     Failed tiles stay in the resume state, so a second run with --resume
@@ -140,7 +126,7 @@ def _print_failure_hint(tiles_failed: int) -> None:
     Args:
         tiles_failed: Number of tiles that failed after all retries.
     """
-    warn(
+    return (
         f"Re-run the same command with --resume to retry the {tiles_failed} failed tiles. "
         "If the server returned HTTP 5xx, lower --tile-size or --max-concurrent. "
         "A new --tile-size builds another tile grid, so that run reads every tile again."
@@ -151,29 +137,32 @@ async def run_imageserver_extraction(
     url: str,
     output_dir: Path,
     options: ImageServerCLIOptions | None = None,
+    *,
+    on_progress: Callable[[TileProgress], None] | None = None,
+    on_message: Callable[[str, str], None] | None = None,
 ) -> tuple[int, ImageServerExtractionReport | None]:
-    """Run ImageServer extraction with CLI-appropriate output.
-
-    This is the main entry point for CLI commands. It wraps
-    extract_imageserver() and handles:
-    - Progress output using portolan_cli.output helpers (matches FeatureServer)
-    - Error handling with user-friendly messages
-    - Exit code determination (0 for success, 1 for failure)
+    """Run ImageServer extraction and pick the exit code.
 
     Args:
         url: ImageServer URL.
         output_dir: Directory to write extracted data.
-        options: CLI options (defaults to ImageServerCLIOptions()).
+        options: Options (defaults to ImageServerCLIOptions()).
+        on_progress: Called with the progress of each tile.
+        on_message: Called with each message for the user, as
+            ``on_message(level, text)``. See ``extract.common.progress.emit_message``.
 
     Returns:
-        Tuple of (exit_code, report). Exit code is 0 for success, 1 for failure.
-        Report is None on complete failure. A run without a usable license
-        also prints the flags that set one.
+        Tuple of (exit_code, report). Exit code is 0 for success, 1 when every
+        tile failed or every tile is empty.
+
+    Raises:
+        MissingLicenseError: Before any download, when no license resolves.
+        ImageServerDiscoveryError: If service discovery fails.
+        ImageServerExtractionError: If no path can read the service.
     """
     if options is None:
         options = ImageServerCLIOptions()
 
-    # Build extraction config from CLI options
     config = ExtractionConfig(
         catalog_id=options.catalog_id,
         tile_size=options.tile_size,
@@ -186,71 +175,58 @@ async def run_imageserver_extraction(
         compression=options.compression,
     )
 
-    # Create progress callback (None in JSON mode)
-    _, on_progress = _create_progress_callback(options.use_json)
+    result = await extract_imageserver(
+        url=url,
+        output_dir=output_dir,
+        config=config,
+        resume=options.resume,
+        bbox=options.bbox,
+        on_progress=on_progress,
+        collection_name=options.collection_name,
+        bbox_crs=options.bbox_crs,
+        license_id=options.license,
+        license_url=options.license_url,
+        on_message=on_message,
+    )
 
-    try:
-        result = await extract_imageserver(
-            url=url,
-            output_dir=output_dir,
-            config=config,
-            resume=options.resume,
-            bbox=options.bbox,
-            on_progress=on_progress,
-            collection_name=options.collection_name,
-            bbox_crs=options.bbox_crs,
-            license_id=options.license,
-            license_url=options.license_url,
-        )
-
-        # Determine exit code based on results
-        if options.dry_run:
-            return 0, result.report
-
-        if result.tiles_downloaded == 0 and result.tiles_failed > 0:
-            # Complete failure - all tiles failed
-            error(f"Extraction failed: all {result.tiles_failed} tiles failed")
-            _print_failure_hint(result.tiles_failed)
-            return 1, result.report
-
-        if result.tiles_downloaded == 0 and result.tiles_empty > 0 and result.tiles_skipped == 0:
-            # The service answered every request, and every tile holds no data.
-            # A resumed run that skips completed tiles holds data, so it is not
-            # a failure.
-            error(
-                f"Extraction produced no data: all {result.tiles_empty} tiles are empty. "
-                "The service extent covers more area than its data does. "
-                "Use --bbox to name the area you want."
-            )
-            return 1, result.report
-
-        # Success or partial success
-        if result.tiles_failed > 0:
-            info(
-                f"Extraction completed with warnings: "
-                f"{result.tiles_downloaded} succeeded, {result.tiles_failed} failed"
-            )
-            _print_failure_hint(result.tiles_failed)
-        else:
-            success(
-                f"Extraction complete: {result.tiles_downloaded} tiles "
-                f"({result.total_bytes:,} bytes)"
-            )
-
+    if options.dry_run:
         return 0, result.report
 
-    except MissingLicenseError as e:
-        # The license resolves before any download, so the failure costs one
-        # command re-run. The user needs the flags that fix it, which the
-        # FeatureServer path also prints (pull request #871 review).
-        error(f"ImageServer extraction failed: {e}")
-        if not options.use_json:
-            info(CLI_LICENSE_REMEDIATION)
-        return 1, None
+    if result.tiles_downloaded == 0 and result.tiles_failed > 0:
+        emit_message(
+            on_message, "error", f"Extraction failed: all {result.tiles_failed} tiles failed"
+        )
+        emit_message(on_message, "warn", _failure_hint(result.tiles_failed))
+        return 1, result.report
 
-    except Exception as e:
-        error(f"ImageServer extraction failed: {e}")
-        return 1, None
+    if result.tiles_downloaded == 0 and result.tiles_empty > 0 and result.tiles_skipped == 0:
+        # The service answered every request, and every tile holds no data.
+        # A resumed run that skips completed tiles holds data, so it is not
+        # a failure.
+        emit_message(
+            on_message,
+            "error",
+            f"Extraction produced no data: all {result.tiles_empty} tiles are empty. "
+            "The service extent covers more area than its data does. "
+            "Use --bbox to name the area you want.",
+        )
+        return 1, result.report
+
+    if result.tiles_failed > 0:
+        emit_message(
+            on_message,
+            "info",
+            f"Extraction completed with warnings: "
+            f"{result.tiles_downloaded} succeeded, {result.tiles_failed} failed",
+        )
+        emit_message(on_message, "warn", _failure_hint(result.tiles_failed))
+    else:
+        emit_message(
+            on_message,
+            "success",
+            f"Extraction complete: {result.tiles_downloaded} tiles ({result.total_bytes:,} bytes)",
+        )
+    return 0, result.report
 
 
 def run_imageserver_extraction_sync(
@@ -258,14 +234,12 @@ def run_imageserver_extraction_sync(
     output_dir: Path,
     options: ImageServerCLIOptions | None = None,
 ) -> tuple[int, ImageServerExtractionReport | None]:
-    """Synchronous wrapper for run_imageserver_extraction.
-
-    Use this from Click commands which are synchronous.
+    """Run ``run_imageserver_extraction`` from synchronous code, with no callbacks.
 
     Args:
         url: ImageServer URL.
         output_dir: Directory to write extracted data.
-        options: CLI options (defaults to ImageServerCLIOptions()).
+        options: Options (defaults to ImageServerCLIOptions()).
 
     Returns:
         Tuple of (exit_code, report). Exit code is 0 for success, 1 for failure.

@@ -142,6 +142,7 @@ def extract_carto_cmd(
         ExtractionOptions,
         extract_carto_catalog,
     )
+    from portolan_cli.extract.common.report import run_extract_command
     from portolan_cli.output import detail, info
 
     use_json = should_output_json(ctx, json_output)
@@ -194,9 +195,11 @@ def extract_carto_cmd(
     )
 
     try:
-        report = extract_carto_catalog(
-            url=url,
-            output_dir=output_dir,
+        result = run_extract_command(
+            extract_carto_catalog,
+            url,
+            output_dir,
+            catalog_id,
             layer_filter=table_include,
             layer_exclude=table_exclude,
             options=options,
@@ -210,9 +213,7 @@ def extract_carto_cmd(
         )
         raise SystemExit(1) from None
 
-    cli_helpers.output_extract_result(
-        report, output_dir, use_json, dry_run, command="extract-carto"
-    )
+    cli_helpers.output_extract_result(result, use_json, dry_run, command="extract-carto")
 
 
 # =============================================================================

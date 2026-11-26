@@ -341,11 +341,11 @@ def test_extract_arcgis_rejects_bad_id_before_imageserver_extraction(
     """
     calls: list[str] = []
 
-    def _never_called(*args: object, **kwargs: object) -> None:
+    async def _never_called(*args: object, **kwargs: object) -> None:
         calls.append("imageserver")
 
     monkeypatch.setattr(
-        "portolan_cli.extract.arcgis.imageserver.orchestrator.run_imageserver_extraction_sync",
+        "portolan_cli.extract.arcgis.imageserver.orchestrator.run_imageserver_extraction",
         _never_called,
     )
     runner = CliRunner()
@@ -375,12 +375,14 @@ def _capture_imageserver_options(
     """Run `extract arcgis` against a raster URL and capture the options it built."""
     captured: list[ImageServerCLIOptions] = []
 
-    def _capture(url: str, output_dir: object, options: ImageServerCLIOptions) -> tuple[int, None]:
+    async def _capture(
+        url: str, output_dir: object, options: ImageServerCLIOptions, **_: object
+    ) -> tuple[int, None]:
         captured.append(options)
         return 0, None
 
     monkeypatch.setattr(
-        "portolan_cli.extract.arcgis.imageserver.orchestrator.run_imageserver_extraction_sync",
+        "portolan_cli.extract.arcgis.imageserver.orchestrator.run_imageserver_extraction",
         _capture,
     )
     runner = CliRunner()
@@ -422,6 +424,11 @@ def test_extract_arcgis_passes_license_to_imageserver_options(
 KEYED_IMAGESERVER_URL = f"{IMAGESERVER_URL}?token=SECRET"
 
 
+async def _no_tiles(*_args: object, **_kwargs: object) -> tuple[int, None]:
+    """Stand in for the raster extraction: success, no report."""
+    return 0, None
+
+
 @pytest.mark.unit
 @pytest.mark.parametrize(
     ("args", "answer", "line"),
@@ -435,8 +442,8 @@ def test_imageserver_text_names_the_service_without_its_token(
 ) -> None:
     """#981: the prompt and the progress line name the service, not the token in its URL."""
     monkeypatch.setattr(
-        "portolan_cli.extract.arcgis.imageserver.orchestrator.run_imageserver_extraction_sync",
-        lambda url, output_dir, options: (0, None),
+        "portolan_cli.extract.arcgis.imageserver.orchestrator.run_imageserver_extraction",
+        _no_tiles,
     )
 
     result = CliRunner().invoke(
@@ -456,8 +463,8 @@ def test_imageserver_json_names_the_service_without_its_token(
     import json
 
     monkeypatch.setattr(
-        "portolan_cli.extract.arcgis.imageserver.orchestrator.run_imageserver_extraction_sync",
-        lambda url, output_dir, options: (0, None),
+        "portolan_cli.extract.arcgis.imageserver.orchestrator.run_imageserver_extraction",
+        _no_tiles,
     )
 
     result = CliRunner().invoke(cli, ["extract", "arcgis", KEYED_IMAGESERVER_URL, "--json"])
@@ -485,3 +492,48 @@ def test_list_services_names_the_root_without_its_token(monkeypatch: pytest.Monk
 
     assert result.exit_code == 0, result.output
     assert result.output.splitlines()[0] == "Services at https://x/server/rest/services:"
+
+
+def _fail_imageserver_license(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make the raster extraction raise the license error before any download."""
+    from unittest.mock import AsyncMock
+
+    from portolan_cli.errors import MissingLicenseError
+
+    monkeypatch.setattr(
+        "portolan_cli.extract.arcgis.imageserver.orchestrator.extract_imageserver",
+        AsyncMock(
+            side_effect=MissingLicenseError(
+                "this extraction", "the source publishes no license URL to link to"
+            )
+        ),
+    )
+
+
+@pytest.mark.unit
+def test_imageserver_missing_license_prints_the_hint(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The raster path prints the license hint, as the FeatureServer path does (#871 review)."""
+    _fail_imageserver_license(monkeypatch)
+
+    result = CliRunner().invoke(cli, ["extract", "arcgis", IMAGESERVER_URL, "--auto"])
+
+    assert result.exit_code == 1
+    assert "No usable license for this extraction" in result.stderr
+    assert "Pass --license with an SPDX identifier" in result.stdout
+
+
+@pytest.mark.unit
+def test_imageserver_missing_license_json_has_no_hint(monkeypatch: pytest.MonkeyPatch) -> None:
+    """JSON output carries the error envelope, so prose would break it."""
+    import json
+
+    _fail_imageserver_license(monkeypatch)
+
+    result = CliRunner().invoke(cli, ["extract", "arcgis", IMAGESERVER_URL, "--json"])
+
+    assert result.exit_code == 1
+    assert "Pass --license" not in result.output
+    envelope = json.loads(result.stdout)
+    assert envelope["errors"] == [
+        {"type": "ExtractionError", "message": "ImageServer extraction failed"}
+    ]

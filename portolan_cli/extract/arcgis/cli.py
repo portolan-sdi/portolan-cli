@@ -1,8 +1,9 @@
 """The ``portolan extract arcgis`` command, part of the CLI layer.
 
-The command parses the options. ``orchestrator.extract_arcgis_catalog``
-harvests FeatureServer and MapServer layers, and ``imageserver/`` harvests
-ImageServer rasters.
+The command parses the options, resolves the token, and asks its questions.
+``orchestrator.run_extract_arcgis`` then lists services, harvests FeatureServer
+and MapServer layers, or harvests ImageServer rasters. This module prints the
+result.
 """
 
 from __future__ import annotations
@@ -10,7 +11,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, cast
 
 import click
 
@@ -22,30 +23,38 @@ from portolan_cli.json_output import ErrorDetail, error_envelope, success_envelo
 from portolan_cli.output import warn
 
 if TYPE_CHECKING:
+    from portolan_cli.extract.arcgis.imageserver.extractor import TileProgress
+    from portolan_cli.extract.arcgis.orchestrator import (
+        ExtractionOptions,
+        ServicesRootDiscoveryResult,
+    )
     from portolan_cli.extract.arcgis.url_parser import ParsedArcGISURL
+    from portolan_cli.extract.common.report import ExtractRunResult
 
 
 def _handle_list_services_mode(
     url: str,
     service_filter: list[str] | None,
-    timeout: float,
     use_json: bool,
-    *,
-    token: str | None = None,
-    recurse: bool = True,
+    options: ExtractionOptions,
 ) -> None:
     """Handle --list-services mode: list available services and exit."""
-    from portolan_cli.extract.arcgis.orchestrator import list_services as list_services_func
+    from portolan_cli.extract.arcgis.orchestrator import run_extract_arcgis
 
     try:
-        result = list_services_func(
-            url, service_filter=service_filter, token=token, recurse=recurse, timeout=timeout
+        # list_only selects the service list.
+        result = cast(
+            "ServicesRootDiscoveryResult",
+            run_extract_arcgis(
+                url, Path(), list_only=True, service_filter=service_filter, options=options
+            ),
         )
     except Exception as e:
         cli_helpers.output_extract_error(use_json, type(e).__name__, str(e), url)
         raise SystemExit(1) from None
 
     if use_json:
+        # This mode prints the bare result, with no envelope. Agents read it today.
         click.echo(json.dumps(result.to_dict(), indent=2))
         return
 
@@ -64,6 +73,41 @@ def _handle_list_services_mode(
             warn(f"Skipped folder {folder}: {reason}")
     elif result.folders:
         click.echo(f"Folders: {', '.join(result.folders)}")
+
+
+def _print_tile_progress(progress: TileProgress) -> None:
+    """Print the progress of one ImageServer tile, as the FeatureServer path does."""
+    from portolan_cli.output import detail, error, info
+
+    if progress.status == "starting":
+        info(f"[{progress.tile_index + 1}/{progress.total_tiles}] {progress.tile_id}")
+    elif progress.status == "success":
+        detail("  ✓ Done")
+    elif progress.status == "failed":
+        error("  ✗ Failed")
+    elif progress.status == "skipped":
+        detail("  ↪ Skipped (already extracted)")
+
+
+def _parse_imageserver_bbox(
+    bbox: str | None, url: str, use_json: bool
+) -> tuple[float, float, float, float] | None:
+    """Parse the ImageServer --bbox. Stop the command when the value is not valid."""
+    if not bbox:
+        return None
+    try:
+        parts = [float(x.strip()) for x in bbox.split(",")]
+        if len(parts) != 4:
+            raise ValueError("bbox must have exactly 4 values")
+    except (ValueError, TypeError) as e:
+        cli_helpers.output_extract_error(
+            use_json,
+            "InvalidBboxError",
+            f"Invalid bbox format: {bbox}. Expected minx,miny,maxx,maxy. Error: {e}",
+            url,
+        )
+        raise SystemExit(1) from None
+    return (parts[0], parts[1], parts[2], parts[3])
 
 
 def _handle_imageserver_extraction(
@@ -90,41 +134,20 @@ def _handle_imageserver_extraction(
     from portolan_cli.conversion_config import CogSettings, get_cog_settings
     from portolan_cli.extract.arcgis.imageserver.orchestrator import (
         ImageServerCLIOptions,
-        run_imageserver_extraction_sync,
+        ImageServerRunResult,
     )
+    from portolan_cli.extract.arcgis.orchestrator import run_extract_arcgis
+    from portolan_cli.licensing import CLI_LICENSE_REMEDIATION
     from portolan_cli.output import error, info
 
-    # Parse bbox if provided
-    bbox_tuple: tuple[float, float, float, float] | None = None
-    if bbox:
-        try:
-            parts = [float(x.strip()) for x in bbox.split(",")]
-            if len(parts) != 4:
-                raise ValueError("bbox must have exactly 4 values")
-            bbox_tuple = (parts[0], parts[1], parts[2], parts[3])
-        except (ValueError, TypeError) as e:
-            cli_helpers.output_extract_error(
-                json_output,
-                "InvalidBboxError",
-                f"Invalid bbox format: {bbox}. Expected minx,miny,maxx,maxy. Error: {e}",
-                url,
-            )
-            raise SystemExit(1) from None
+    bbox_tuple = _parse_imageserver_bbox(bbox, url, json_output)
 
     # Load COG settings from config, override with CLI args
     try:
         cog_settings = get_cog_settings(output_dir)
     except Exception:
         cog_settings = CogSettings()
-
-    if compression:
-        cog_settings = CogSettings(
-            compression=compression.upper(),
-            quality=cog_settings.quality,
-            tile_size=cog_settings.tile_size,
-            predictor=cog_settings.predictor,
-            resampling=cog_settings.resampling,
-        )
+    resolved_compression = compression.upper() if compression else cog_settings.compression
 
     # Validate collection_name at CLI layer (fail fast flat catalog rule)
     cli_helpers.validate_collection_name_cli(collection_name, json_output, url)
@@ -134,13 +157,12 @@ def _handle_imageserver_extraction(
         click.echo(f"Extract from: {redact_credentials(url)}")
         click.echo(f"Output to: {output_dir}")
         click.echo(f"Tile size: {tile_size}px")
-        click.echo(f"Compression: {cog_settings.compression}")
+        click.echo(f"Compression: {resolved_compression}")
         if bbox_tuple:
             click.echo(f"Bbox filter: {bbox_tuple}")
         if not click.confirm("Continue?", default=True):
             raise SystemExit(0)
 
-    # Build options
     options = ImageServerCLIOptions(
         catalog_id=catalog_id,
         tile_size=tile_size,
@@ -153,46 +175,50 @@ def _handle_imageserver_extraction(
         bbox=bbox_tuple,
         bbox_crs=bbox_crs,
         timeout=timeout,
-        compression=cog_settings.compression,
-        use_json=json_output,
+        compression=resolved_compression,
         collection_name=collection_name,
         license=license_id,
         license_url=license_url,
     )
 
-    # Run extraction
     if not json_output:
         info(f"Extracting ImageServer: {redact_credentials(url)}")
         if dry_run:
             info("[DRY RUN MODE]")
 
-    exit_code, report = run_imageserver_extraction_sync(url, output_dir, options)
+    try:
+        # An ImageServer URL selects the ImageServer run.
+        result = cast(
+            "ImageServerRunResult",
+            run_extract_arcgis(
+                url,
+                output_dir,
+                imageserver=options,
+                on_tile_progress=None if json_output else _print_tile_progress,
+                on_message=cli_helpers.print_message,
+            ),
+        )
+    except Exception as e:
+        # The license resolves before any download, so the failure costs one
+        # command re-run. The user needs the flags that fix it, which the
+        # FeatureServer path also prints (pull request #871 review).
+        error(f"ImageServer extraction failed: {e}")
+        if isinstance(e, MissingLicenseError) and not json_output:
+            info(CLI_LICENSE_REMEDIATION)
+        result = ImageServerRunResult(url, output_dir, dry_run, 1, None)
 
-    # Output result
     if json_output:
-        data: dict[str, Any] = {
-            "source_url": redact_credentials(url),
-            "output_dir": str(output_dir),
-            "service_type": "ImageServer",
-            "dry_run": dry_run,
-        }
-
-        # Include report data if available
-        if report:
-            data["summary"] = report.summary.to_dict()
-            data["metadata_extracted"] = report.metadata_extracted.to_dict()
-            data["tiles"] = [t.to_dict() for t in report.tiles]
-
-        if exit_code == 0:
+        data = result.to_dict()
+        if result.exit_code == 0:
             envelope = success_envelope("extract-arcgis", data)
         else:
             err = ErrorDetail(type="ExtractionError", message="ImageServer extraction failed")
             envelope = error_envelope("extract-arcgis", [err], data=data)
         output_json_envelope(envelope)
-    elif exit_code != 0:
+    elif result.exit_code != 0:
         error("ImageServer extraction failed")
 
-    raise SystemExit(exit_code)
+    raise SystemExit(result.exit_code)
 
 
 def _resolve_arcgis_token(
@@ -486,7 +512,7 @@ def extract_arcgis_cmd(
     """
     from portolan_cli.extract.arcgis.orchestrator import (
         ExtractionOptions,
-        extract_arcgis_catalog,
+        run_extract_arcgis,
     )
     from portolan_cli.extract.arcgis.url_parser import ArcGISURLType, parse_arcgis_url
 
@@ -532,9 +558,11 @@ def extract_arcgis_cmd(
                 url,
             )
             raise SystemExit(1)
-        service_filter = cli_helpers.parse_filter_patterns(services)
         _handle_list_services_mode(
-            url, service_filter, timeout, use_json, token=resolved_token, recurse=not no_recurse
+            url,
+            cli_helpers.parse_filter_patterns(services),
+            use_json,
+            ExtractionOptions(token=resolved_token, recurse=not no_recurse, timeout=timeout),
         )
         return
 
@@ -618,15 +646,19 @@ def extract_arcgis_cmd(
     )
 
     try:
-        report = extract_arcgis_catalog(
-            url=url,
-            output_dir=output_dir,
-            layer_filter=layer_include,
-            layer_exclude=layer_exclude,
-            service_filter=service_include,
-            service_exclude=service_exclude,
-            options=options,
-            on_progress=None if use_json else on_progress,
+        # A FeatureServer, MapServer, or services root URL selects the layer run.
+        result = cast(
+            "ExtractRunResult",
+            run_extract_arcgis(
+                url,
+                output_dir,
+                layer_filter=layer_include,
+                layer_exclude=layer_exclude,
+                service_filter=service_include,
+                service_exclude=service_exclude,
+                options=options,
+                on_progress=None if use_json else on_progress,
+            ),
         )
     except MissingLicenseError as e:
         cli_helpers.fail_missing_license(e, use_json=use_json, url=url)
@@ -637,4 +669,4 @@ def extract_arcgis_cmd(
         cli_helpers.output_extract_error(use_json, type(e).__name__, f"Extraction failed: {e}", url)
         raise SystemExit(1) from None
 
-    cli_helpers.output_extract_result(report, output_dir, use_json, dry_run)
+    cli_helpers.output_extract_result(result, use_json, dry_run)

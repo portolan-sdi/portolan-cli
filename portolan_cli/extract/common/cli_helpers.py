@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 
     from portolan_cli.errors import MissingLicenseError
     from portolan_cli.extract.common.progress import ExtractionProgress
-    from portolan_cli.extract.common.report import ExtractionReport
+    from portolan_cli.extract.common.report import ExtractRunResult
 
 
 def parse_filter_patterns(pattern_str: str | None) -> list[str] | None:
@@ -130,6 +130,20 @@ def output_extract_error(
         output_json_envelope(envelope)
     else:
         error(message)
+
+
+def print_message(level: str, text: str) -> None:
+    """Print one library message, the ``on_message`` callback of an extract run."""
+    from portolan_cli import output
+
+    printers = {
+        "info": output.info,
+        "detail": output.detail,
+        "success": output.success,
+        "warn": output.warn,
+        "error": output.error,
+    }
+    printers[level](text)
 
 
 def make_extract_progress_callback(
@@ -252,65 +266,34 @@ def check_extract_catalog_id(
 
 
 def output_extract_result(
-    report: ExtractionReport,
-    output_dir: Path,
+    result: ExtractRunResult,
     use_json: bool,
     dry_run: bool,
     command: str = "extract-arcgis",
 ) -> None:
-    """Output extraction results in JSON or text format."""
+    """Output extraction results in JSON or text format.
+
+    The envelope ``data`` is ``result.to_dict()``, unchanged.
+    """
     from portolan_cli.output import error, success, warn
 
+    report, output_dir = result.report, result.output_dir
     if use_json:
-        data = {
-            "source_url": report.source_url,
-            "output_dir": str(output_dir),
-            "summary": {
-                "total_layers": report.summary.total_layers,
-                "succeeded": report.summary.succeeded,
-                "failed": report.summary.failed,
-                "skipped": report.summary.skipped,
-                "empty": report.summary.empty,
-                "total_features": report.summary.total_features,
-                "total_size_bytes": report.summary.total_size_bytes,
-            },
-            "layers": [
-                {
-                    "id": layer.id,
-                    "name": layer.name,
-                    "status": layer.status,
-                    "features": layer.features,
-                    "output_path": layer.output_path,
-                    "error": layer.error,
-                }
-                for layer in report.layers
-            ],
-        }
-
-        coverage = report.folder_coverage
-        if coverage is not None:
-            data["folder_coverage"] = coverage.to_dict()
-
+        data = result.to_dict()
         if report.summary.failed > 0:
             # Emit error envelope for partial failures
-            failed_layers = [
-                {"id": layer.id, "name": layer.name, "error": layer.error}
-                for layer in report.layers
-                if layer.status == "failed"
-            ]
             errors = [
                 ErrorDetail(
                     type="ExtractionFailed",
-                    message=f"Layer '{fl['name']}' (ID: {fl['id']}): {fl['error']}",
+                    message=f"Layer '{layer.name}' (ID: {layer.id}): {layer.error}",
                 )
-                for fl in failed_layers
+                for layer in report.layers
+                if layer.status == "failed"
             ]
-            envelope = error_envelope(command, errors, data=data)
-            output_json_envelope(envelope)
+            output_json_envelope(error_envelope(command, errors, data=data))
             raise SystemExit(1)
 
-        envelope = success_envelope(command, data)
-        output_json_envelope(envelope)
+        output_json_envelope(success_envelope(command, data))
         return
 
     if dry_run:

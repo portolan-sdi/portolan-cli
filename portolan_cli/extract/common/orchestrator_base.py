@@ -139,7 +139,6 @@ def init_extracted_catalog(
     """
     from portolan_cli.catalog import CatalogState, detect_state, init_catalog
     from portolan_cli.formats import run_scope
-    from portolan_cli.output import warn
 
     parquet_files = collect_successful_parquet_files(output_dir, report)
     if not parquet_files:
@@ -168,14 +167,16 @@ def init_extracted_catalog(
             license_id=None,
         )
         for message in init_warnings:
-            warn(message)
+            logger.warning(message)
 
     elif catalog_id is not None:
         # The catalog already exists and keeps the id it was created with. Say so,
         # rather than accept the flag and change nothing (issue #821).
-        warn(
-            f"Ignored --id '{catalog_id}'. {output_dir} is already a Portolan "
-            "catalog and keeps the id it was created with."
+        logger.warning(
+            "Ignored --id '%s'. %s is already a Portolan "
+            "catalog and keeps the id it was created with.",
+            catalog_id,
+            output_dir,
         )
 
     if post_init is not None:
@@ -321,8 +322,12 @@ def seed_catalog_metadata(
     """Seed the catalog-level ``metadata.yaml`` from harvested service metadata.
 
     Writes ``{output_dir}/.portolan/metadata.yaml`` from the given serialized
-    metadata, emitting a user-facing confirmation when a file is created. A
-    ``None`` argument (no metadata harvested) is a no-op.
+    metadata, and logs a confirmation when it creates the file. A ``None``
+    argument (no metadata harvested) is a no-op.
+
+    This module prints nothing (#1005). It logs its notices, because its
+    caller ``run_layer_extraction`` is public API and takes no message
+    callback. A warning reads as ``⚠ message`` on stderr.
 
     Args:
         output_dir: The catalog output directory.
@@ -331,27 +336,30 @@ def seed_catalog_metadata(
             anything harvested (issue #686).
     """
     from portolan_cli.metadata_seeding import seed_metadata_yaml
-    from portolan_cli.output import info, warn
 
     if extracted is None:
         return
 
     metadata_path = output_dir / ".portolan" / "metadata.yaml"
     if seed_metadata_yaml(extracted, metadata_path, license_override=license_override):
-        info(f"Seeded metadata.yaml from {extracted.source_type}")
+        # shortcut: the CLI shows this INFO line only with -v. Upgrade when
+        # run_layer_extraction takes a message callback.
+        logger.info("Seeded metadata.yaml from %s", extracted.source_type)
         if not (extracted.producer or extracted.attribution):
             # A producer is a fact of the source. Portolan does not invent one.
-            warn(
+            logger.warning(
                 "No producer provider: the source publishes no author and no attribution. "
-                f"Add a provider with the producer role to {metadata_path}. Until then, "
-                "check reports PTL-PRV-001."
+                "Add a provider with the producer role to %s. Until then, "
+                "check reports PTL-PRV-001.",
+                metadata_path,
             )
         # The host serves the catalog. Only the person who runs extract knows it,
         # and a placeholder is never published as one (issue #1039).
         # A collection takes an inherited contact only on its first add, so the
         # warning names the collection file, which a re-add applies (#755).
-        warn(
+        logger.warning(
             "No host provider: set contact.name and contact.email in "
-            f"{output_dir / '<collection>' / '.portolan' / 'metadata.yaml'}, then run "
-            "'portolan add --force <collection>'. Until then, check reports PTL-PRV-002."
+            "%s, then run "
+            "'portolan add --force <collection>'. Until then, check reports PTL-PRV-002.",
+            output_dir / "<collection>" / ".portolan" / "metadata.yaml",
         )

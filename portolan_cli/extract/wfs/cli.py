@@ -152,6 +152,7 @@ def extract_wfs_cmd(
         # Extract 4 layers in parallel with 5-minute timeout per layer
         portolan extract wfs URL --workers 4 --timeout 300
     """
+    from portolan_cli.extract.common.report import run_extract_command
     from portolan_cli.extract.wfs.orchestrator import (
         ExtractionOptions,
         extract_wfs_catalog,
@@ -211,9 +212,11 @@ def extract_wfs_cmd(
     )
 
     try:
-        report = extract_wfs_catalog(
-            url=url,
-            output_dir=output_dir,
+        result = run_extract_command(
+            extract_wfs_catalog,
+            url,
+            output_dir,
+            catalog_id,
             layer_filter=layer_include,
             layer_exclude=layer_exclude,
             options=options,
@@ -227,4 +230,4 @@ def extract_wfs_cmd(
         )
         raise SystemExit(1) from None
 
-    cli_helpers.output_extract_result(report, output_dir, use_json, dry_run, command="extract-wfs")
+    cli_helpers.output_extract_result(result, use_json, dry_run, command="extract-wfs")

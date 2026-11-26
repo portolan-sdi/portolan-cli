@@ -9,7 +9,11 @@ from unittest.mock import Mock
 import pytest
 
 from portolan_cli.extract.common.cli_helpers import _print_dry_run, output_extract_result
-from portolan_cli.extract.common.report import ExtractionReport, ExtractionSummary
+from portolan_cli.extract.common.report import (
+    ExtractionReport,
+    ExtractionSummary,
+    ExtractRunResult,
+)
 
 
 def _layer(layer_id: int, status: str, error: str | None = None) -> SimpleNamespace:
@@ -89,7 +93,7 @@ def test_success_summary_includes_skipped_count(capsys: pytest.CaptureFixture[st
         folder_coverage=None,
     )
     output_dir = Path("output")
-    output_extract_result(report, output_dir, use_json=False, dry_run=False)
+    output_extract_result(ExtractRunResult(report, output_dir), use_json=False, dry_run=False)
     assert capsys.readouterr().out.splitlines() == [
         "",
         "✓ Extracted 1/4 layers (3 skipped)",

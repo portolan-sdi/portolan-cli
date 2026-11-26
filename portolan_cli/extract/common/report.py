@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any
 from portolan_cli.json_io import write_json_atomic
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
 
@@ -302,6 +303,88 @@ class ExtractionReport:
                 else None
             ),
         )
+
+
+@dataclass(frozen=True)
+class ExtractRunResult:
+    """One run of ``extract arcgis``, ``extract carto``, ``extract wfs``, or a plugin source.
+
+    ``to_dict()`` is the envelope ``data`` of the command. It holds a short
+    view of the report, not the full report file.
+
+    Attributes:
+        report: The extraction report.
+        output_dir: The directory the run wrote, as the caller gave it.
+    """
+
+    report: ExtractionReport
+    output_dir: Path
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return the envelope ``data`` of the command."""
+        summary = self.report.summary
+        data: dict[str, Any] = {
+            "source_url": self.report.source_url,
+            "output_dir": str(self.output_dir),
+            "summary": {
+                "total_layers": summary.total_layers,
+                "succeeded": summary.succeeded,
+                "failed": summary.failed,
+                "skipped": summary.skipped,
+                "empty": summary.empty,
+                "total_features": summary.total_features,
+                "total_size_bytes": summary.total_size_bytes,
+            },
+            "layers": [
+                {
+                    "id": layer.id,
+                    "name": layer.name,
+                    "status": layer.status,
+                    "features": layer.features,
+                    "output_path": layer.output_path,
+                    "error": layer.error,
+                }
+                for layer in self.report.layers
+            ],
+        }
+        if self.report.folder_coverage is not None:
+            data["folder_coverage"] = self.report.folder_coverage.to_dict()
+        return data
+
+
+def run_extract_command(
+    extract: Callable[..., ExtractionReport],
+    url: str,
+    output_dir: Path,
+    catalog_id: str | None,
+    **arguments: Any,
+) -> ExtractRunResult:
+    """Run ``portolan extract carto``, ``extract wfs``, or the layer mode of ``extract arcgis``.
+
+    The command calls this function and emits ``to_dict()`` as the envelope
+    ``data``. ``init_catalog`` checks the id only after the whole download, so
+    this function checks it first.
+
+    Args:
+        extract: ``extract_carto_catalog``, ``extract_wfs_catalog``, or
+            ``extract_arcgis_catalog``.
+        url: The service URL.
+        output_dir: The directory to write.
+        catalog_id: The ``--id`` value, or None.
+        **arguments: The other keyword arguments of ``extract``.
+
+    Returns:
+        The report and the output directory.
+
+    Raises:
+        InputValidationError: If ``catalog_id`` is not a valid STAC id. No
+            request runs before the check.
+    """
+    from portolan_cli.input_hardening import validate_catalog_id
+
+    if catalog_id is not None:
+        validate_catalog_id(catalog_id)
+    return ExtractRunResult(extract(url=url, output_dir=output_dir, **arguments), output_dir)
 
 
 def save_report(report: ExtractionReport, path: Path) -> None:
