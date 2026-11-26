@@ -1294,9 +1294,7 @@ def pull(
             and the catalogs above it, and the objects that they name. clone
             sets it, because versions.json names only the assets (#1042).
         report: Receives each progress line.
-        show_progress: If True, draw a progress bar on a terminal. The library
-            draws the bar only when the caller asks. Moving the renderer to
-            the CLI is a follow-up.
+        show_progress: If True, draw a progress bar, as for ``pull_async``.
 
     Returns:
         PullResult with operation results.
@@ -1708,9 +1706,7 @@ def pull_all_collections(
         file_concurrency: Maximum concurrent file downloads within each collection.
             None = use pull_async default. (Maps to --concurrency CLI flag.)
         report: Receives each progress line.
-        show_progress: If True, draw a progress bar on a terminal. The library
-            draws the bar only when the caller asks. Moving the renderer to
-            the CLI is a follow-up.
+        show_progress: If True, draw a progress bar, as for ``pull_all_collections_async``.
 
     Returns:
         PullAllResult with aggregate statistics and per-collection errors.

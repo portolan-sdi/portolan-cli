@@ -609,7 +609,7 @@ def download_directory(
         max_files: Max number of files to download in parallel (default: 4)
         chunk_concurrency: Max concurrent chunks per file (default: 4)
         fail_fast: If True, stop on first error; otherwise continue and report at end
-        dry_run: If True, show what would be downloaded without actually downloading
+        dry_run: If True, log the files it would download and download nothing
         overwrite: If False, skip existing files (default: True)
         s3_endpoint: Custom S3-compatible endpoint (e.g., "minio.example.com:9000")
         s3_region: S3 region (default: auto-detected)
