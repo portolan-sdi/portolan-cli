@@ -534,44 +534,6 @@ def _repair_pmtiles_collection(collection_json: Path, *, dry_run: bool) -> FixRe
     )
 
 
-def repair_agents_md(catalog_root: Path, *, dry_run: bool = False) -> list[FixResult]:
-    """Backfill missing ``AGENTS.md`` files and ``rel="agents"`` links (rashid PTL-FIL-001/-002).
-
-    Repairs what rashid PTL-FIL-001 (required files) and PTL-FIL-002
-    (``rel="agents"`` link) flag: a
-    catalog or collection missing its ``AGENTS.md`` file or the link that
-    references it. For each affected STAC object the file is scaffolded (never
-    overwriting an existing, human-authored one) and the link is added or
-    normalized. Compliant objects are left untouched.
-
-    Args:
-        catalog_root: Root directory of the catalog.
-        dry_run: If True, report what would change without writing.
-
-    Returns:
-        FixResults for each catalog/collection that was (or would be) modified.
-    """
-    from portolan_cli.agents_md import agents_md_gap, ensure_agents_md
-
-    results: list[FixResult] = []
-
-    for stac_json in visible_stac_files(catalog_root):
-        if agents_md_gap(stac_json) is None:
-            continue
-        if not dry_run:
-            ensure_agents_md(stac_json)
-        results.append(
-            FixResult(
-                file_path=stac_json,
-                action=FixAction.UPDATED,
-                success=True,
-                message="Scaffolded AGENTS.md and added rel='agents' link",
-            )
-        )
-
-    return results
-
-
 def _repair_item_titles(
     catalog_root: Path,
     stac_file: Path,

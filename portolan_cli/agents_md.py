@@ -75,9 +75,9 @@ def markdown_link_gap(
 def agents_link_gap(root: Path, stac_path: Path, data: dict[str, Any]) -> bool:
     """True when ``data``'s ``AGENTS.md`` link does not satisfy rashid PTL-FIL-002.
 
-    The already-parsed counterpart of :func:`agents_md_gap`, for callers that
-    hold the STAC dict (``check --fix`` fixers). Every case it reports is
-    repaired by :func:`ensure_agents_md`.
+    The ``check --fix`` fixers call it with the parsed STAC dict. The agents
+    fixer repairs a gap with :func:`ensure_agents_md` and reports a gap that
+    survives the repair as skipped.
     """
     return markdown_link_gap(root, stac_path, data, rel=AGENTS_LINK_REL, target=AGENTS_MD_FILENAME)
 
@@ -110,39 +110,6 @@ def agents_link_is_wellformed(link: dict[str, Any]) -> bool:
     return (
         _href_targets_agents_md(str(link.get("href", ""))) and link.get("type") == AGENTS_MEDIA_TYPE
     )
-
-
-def agents_md_gap(stac_json: Path) -> str | None:
-    """Describe the ``AGENTS.md`` gap for one STAC object, or ``None`` when compliant.
-
-    Compliant means: a single well-formed ``rel="agents"`` link is present
-    (points at ``AGENTS.md``, ``type: text/markdown``) **and** the referenced
-    file exists on disk. Every non-compliant case reported here is repairable by
-    :func:`ensure_agents_md` (hence ``check --fix``).
-
-    Returns ``None`` when the file is unreadable/malformed so that other rules
-    (schema/JSON validity) own that failure instead of this one.
-    """
-    try:
-        data = json.loads(stac_json.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-        return None
-
-    links = data.get("links", [])
-    if not isinstance(links, list):
-        return None
-
-    link = find_agents_link(links)
-    if link is None:
-        return "missing rel='agents' AGENTS.md link"
-    if not agents_link_is_wellformed(link):
-        return "rel='agents' link must point at AGENTS.md with type 'text/markdown'"
-
-    target = (stac_json.parent / str(link.get("href", ""))).resolve()
-    if not target.exists():
-        return f"rel='agents' link points at a missing file ({link.get('href')})"
-
-    return None
 
 
 def scaffold_content(title: str, *, is_catalog: bool) -> str:

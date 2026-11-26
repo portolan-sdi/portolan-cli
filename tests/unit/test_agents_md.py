@@ -1,7 +1,7 @@
 """Unit tests for AGENTS.md scaffolding, link injection, and gap detection.
 
-Covers the framework-free leaf ``portolan_cli.agents_md`` and the ``check --fix``
-repair ``portolan_cli.metadata.fix.repair_agents_md`` (RULE-0080/0081).
+Covers the framework-free leaf ``portolan_cli.agents_md``. The ``check --fix``
+repair is ``validation.fixers`` fixer ``agents`` (PTL-FIL-001/-002).
 """
 
 from __future__ import annotations
@@ -16,7 +16,6 @@ from portolan_cli.agents_md import (
     AGENTS_MD_FILENAME,
     AGENTS_MEDIA_TYPE,
     agents_link_gap,
-    agents_md_gap,
     build_agents_link,
     ensure_agents_md,
     find_agents_link,
@@ -77,44 +76,6 @@ class TestLinkHelpers:
         assert find_agents_link(links) is not None
         assert find_agents_link([{"rel": "root"}]) is None
         assert find_agents_link([]) is None
-
-
-class TestAgentsMdGap:
-    def test_no_gap_when_link_and_file_present(self, tmp_path: Path) -> None:
-        (tmp_path / AGENTS_MD_FILENAME).write_text("# hi", encoding="utf-8")
-        cj = _write(
-            tmp_path / "catalog.json",
-            _catalog(links=[build_agents_link()]),
-        )
-        assert agents_md_gap(cj) is None
-
-    def test_missing_link_is_a_gap(self, tmp_path: Path) -> None:
-        (tmp_path / AGENTS_MD_FILENAME).write_text("# hi", encoding="utf-8")
-        cj = _write(tmp_path / "catalog.json", _catalog())
-        gap = agents_md_gap(cj)
-        assert gap is not None
-        assert "missing" in gap.lower()
-
-    def test_missing_file_is_a_gap(self, tmp_path: Path) -> None:
-        # Link present but AGENTS.md file does not exist on disk.
-        cj = _write(tmp_path / "catalog.json", _catalog(links=[build_agents_link()]))
-        gap = agents_md_gap(cj)
-        assert gap is not None
-        assert "missing file" in gap.lower()
-
-    def test_malformed_link_is_a_gap(self, tmp_path: Path) -> None:
-        (tmp_path / AGENTS_MD_FILENAME).write_text("# hi", encoding="utf-8")
-        bad = {"rel": "agents", "href": "./llms.txt", "type": "text/markdown"}
-        cj = _write(tmp_path / "catalog.json", _catalog(links=[bad]))
-        gap = agents_md_gap(cj)
-        assert gap is not None
-        assert "AGENTS.md" in gap
-
-    def test_unreadable_json_yields_none(self, tmp_path: Path) -> None:
-        cj = tmp_path / "catalog.json"
-        cj.write_text("{ not json", encoding="utf-8")
-        # Malformed JSON is another rule's problem, not ours.
-        assert agents_md_gap(cj) is None
 
 
 class TestEnsureAgentsMd:
@@ -202,53 +163,6 @@ class TestEnsureAgentsMd:
         assert len(agents_links) == 1  # normalized in place, not duplicated
         assert agents_links[0]["href"] == "./AGENTS.md"
         assert agents_links[0]["type"] == "text/markdown"
-
-
-class TestRepairAgentsMd:
-    def test_repairs_catalog_and_collection(self, tmp_path: Path) -> None:
-        from portolan_cli.metadata.fix import repair_agents_md
-
-        _write(tmp_path / "catalog.json", _catalog())
-        coll_dir = tmp_path / "roads"
-        coll_dir.mkdir()
-        _write(
-            coll_dir / "collection.json",
-            {
-                "type": "Collection",
-                "stac_version": "1.1.0",
-                "id": "roads",
-                "title": "Roads",
-                "description": "d",
-                "links": [],
-            },
-        )
-
-        results = repair_agents_md(tmp_path)
-
-        assert len(results) == 2
-        assert (tmp_path / AGENTS_MD_FILENAME).exists()
-        assert (coll_dir / AGENTS_MD_FILENAME).exists()
-        # Re-running is a no-op now that everything is compliant.
-        assert repair_agents_md(tmp_path) == []
-
-    def test_dry_run_reports_without_writing(self, tmp_path: Path) -> None:
-        from portolan_cli.metadata.fix import repair_agents_md
-
-        _write(tmp_path / "catalog.json", _catalog())
-        results = repair_agents_md(tmp_path, dry_run=True)
-        assert len(results) == 1
-        assert not (tmp_path / AGENTS_MD_FILENAME).exists()
-
-    def test_skips_hidden_dirs(self, tmp_path: Path) -> None:
-        from portolan_cli.metadata.fix import repair_agents_md
-
-        _write(tmp_path / "catalog.json", _catalog(links=[build_agents_link()]))
-        (tmp_path / AGENTS_MD_FILENAME).write_text("# hi", encoding="utf-8")
-        # A stray catalog.json under .portolan/ must be ignored.
-        hidden = tmp_path / ".portolan"
-        hidden.mkdir()
-        _write(hidden / "catalog.json", _catalog())
-        assert repair_agents_md(tmp_path) == []
 
 
 class TestAgentsLinkGap:

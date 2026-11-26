@@ -737,7 +737,7 @@ class TestCheckMetadataFixFlag:
                     # this test stays focused on the scanner's empty report.
                     "title": "Test Catalog",
                     "description": "Test",
-                    # AGENTS.md link present so RULE-0080 / repair_agents_md are a
+                    # AGENTS.md link present so the PTL-FIL-002 agents fixer is a
                     # no-op and this test stays focused on the empty scanner report.
                     "links": [
                         {"rel": "agents", "href": "./AGENTS.md", "type": "text/markdown"},

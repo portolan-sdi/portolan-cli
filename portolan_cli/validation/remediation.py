@@ -76,14 +76,14 @@ def _external(requirement: str) -> Remediation:
 
 RULE_REMEDIATION: dict[str, Remediation] = {
     # ---- files: scaffolding and links are mechanical, prose is not ----
-    # fixer `required_files` composes readme.ensure_readmes + metadata.fix.repair_agents_md.
+    # fixer `required_files` composes the `agents` and `readme` fixers.
     # It subsumes `agents` and `readme`: when this row fires, fixers.auto_fixer_keys
     # drops those two from the selection so the same repair does not run three times.
     "PTL-FIL-001": _auto(
         "required_files",
         "Every catalog and collection directory must contain README.md and AGENTS.md.",
     ),
-    # fixer `agents` wraps metadata.fix.repair_agents_md
+    # fixer `agents` wraps agents_md.ensure_agents_md_tree
     "PTL-FIL-002": _auto(
         "agents",
         "Link AGENTS.md with rel='agents' and type='text/markdown'.",
