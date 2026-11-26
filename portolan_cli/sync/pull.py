@@ -405,6 +405,8 @@ def fetch_remote_versions(
     remote_url: str,
     collection: str,
     profile: str | None = None,
+    *,
+    report: Report | None = None,
 ) -> VersionsFile:
     """Fetch remote versions.json.
 
@@ -412,6 +414,7 @@ def fetch_remote_versions(
         remote_url: Remote catalog URL (e.g., s3://bucket/catalog).
         collection: Collection name.
         profile: AWS profile name (for S3).
+        report: Receives the download lines. Without it, they go to the log.
 
     Returns:
         Parsed VersionsFile from remote.
@@ -431,6 +434,7 @@ def fetch_remote_versions(
             source=remote_versions_url,
             destination=tmp_path,
             profile=profile,
+            report=report,
         )
 
         if not result.success:

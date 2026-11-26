@@ -927,6 +927,8 @@ def status_cmd(
     if not offline:
         remote_url = resolve_remote(None, catalog_path, collection)
 
+    from functools import partial
+
     from portolan_cli.status import get_catalog_status
     from portolan_cli.sync.pull import fetch_remote_versions
 
@@ -935,7 +937,8 @@ def status_cmd(
         collection,
         offline=offline,
         remote_url=remote_url,
-        fetch_remote_versions=fetch_remote_versions,
+        # The download lines print as they did before the move to the library.
+        fetch_remote_versions=partial(fetch_remote_versions, report=_report),
     )
 
     if not emit_success("status", result.to_dict(), use_json=use_json):
