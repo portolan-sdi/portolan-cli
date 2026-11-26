@@ -816,11 +816,11 @@ def apply_provenance(
 
     if provenance == "official":
         if source_url is not None:
-            from portolan_cli.output import warn as warn_output
-
-            warn_output(
-                f"{collection.id}: producer and host are the same organization, so the "
-                f"collection is official and carries no via link to {source_url}"
+            logger.warning(
+                "%s: producer and host are the same organization, so the "
+                "collection is official and carries no via link to %s",
+                collection.id,
+                source_url,
             )
         return
 
