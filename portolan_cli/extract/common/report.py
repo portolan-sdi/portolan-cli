@@ -356,35 +356,37 @@ def run_extract_command(
     extract: Callable[..., ExtractionReport],
     url: str,
     output_dir: Path,
-    catalog_id: str | None,
+    options: Any,
     **arguments: Any,
 ) -> ExtractRunResult:
     """Run ``portolan extract carto``, ``extract wfs``, or the layer mode of ``extract arcgis``.
 
     The command calls this function and emits ``to_dict()`` as the envelope
-    ``data``. ``init_catalog`` checks the id only after the whole download, so
-    this function checks it first.
+    ``data``. ``init_catalog`` checks ``options.catalog_id`` only after the
+    whole download, so this function checks that same value first.
 
     Args:
         extract: ``extract_carto_catalog``, ``extract_wfs_catalog``, or
             ``extract_arcgis_catalog``.
         url: The service URL.
         output_dir: The directory to write.
-        catalog_id: The ``--id`` value, or None.
+        options: The ``ExtractionOptions`` of ``extract``. Its ``catalog_id``
+            holds the ``--id`` value.
         **arguments: The other keyword arguments of ``extract``.
 
     Returns:
         The report and the output directory.
 
     Raises:
-        InputValidationError: If ``catalog_id`` is not a valid STAC id. No
+        InputValidationError: If ``options.catalog_id`` is not a valid STAC id. No
             request runs before the check.
     """
     from portolan_cli.input_hardening import validate_catalog_id
 
-    if catalog_id is not None:
-        validate_catalog_id(catalog_id)
-    return ExtractRunResult(extract(url=url, output_dir=output_dir, **arguments), output_dir)
+    if options.catalog_id is not None:
+        validate_catalog_id(options.catalog_id)
+    report = extract(url=url, output_dir=output_dir, options=options, **arguments)
+    return ExtractRunResult(report, output_dir)
 
 
 def save_report(report: ExtractionReport, path: Path) -> None:

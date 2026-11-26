@@ -216,10 +216,9 @@ def extract_wfs_cmd(
             extract_wfs_catalog,
             url,
             output_dir,
-            catalog_id,
+            options,
             layer_filter=layer_include,
             layer_exclude=layer_exclude,
-            options=options,
             on_progress=None if use_json else on_progress,
             on_message=cli_helpers.print_message,
         )

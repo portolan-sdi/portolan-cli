@@ -199,10 +199,9 @@ def extract_carto_cmd(
             extract_carto_catalog,
             url,
             output_dir,
-            catalog_id,
+            options,
             layer_filter=table_include,
             layer_exclude=table_exclude,
-            options=options,
             on_progress=None if use_json else on_progress,
             on_message=cli_helpers.print_message,
         )

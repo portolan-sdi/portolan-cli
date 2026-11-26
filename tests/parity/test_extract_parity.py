@@ -149,9 +149,8 @@ def test_extract_carto(parity: Parity, replay: Callable[[str | Path], str]) -> N
             extract_carto_catalog,
             url,
             Path("out"),
-            None,
+            CartoOptions(limit=3, license="CC-BY-4.0"),
             layer_filter=["zoning_basedistricts"],
-            options=CartoOptions(limit=3, license="CC-BY-4.0"),
         ),
     )
 
@@ -164,7 +163,7 @@ def test_extract_carto_rejects_bad_id(parity: Parity) -> None:
         [url, "out", "--id", "bad id!", "--auto"],
         catalog=_empty,
         call=lambda root: run_extract_command(
-            extract_carto_catalog, url, Path("out"), "bad id!", options=CartoOptions()
+            extract_carto_catalog, url, Path("out"), CartoOptions(catalog_id="bad id!")
         ),
         raises=InputValidationError,
     )
@@ -181,9 +180,8 @@ def test_extract_wfs(parity: Parity, replay: Callable[[str | Path], str]) -> Non
             extract_wfs_catalog,
             url,
             Path("out"),
-            None,
+            WFSOptions(license="CC-BY-4.0"),
             layer_filter=["topp:states"],
-            options=WFSOptions(license="CC-BY-4.0"),
         ),
     )
 
@@ -196,7 +194,7 @@ def test_extract_wfs_rejects_bad_id(parity: Parity) -> None:
         [url, "out", "--id", "bad id!", "--auto"],
         catalog=_empty,
         call=lambda root: run_extract_command(
-            extract_wfs_catalog, url, Path("out"), "bad id!", options=WFSOptions()
+            extract_wfs_catalog, url, Path("out"), WFSOptions(catalog_id="bad id!")
         ),
         raises=InputValidationError,
     )
