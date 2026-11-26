@@ -824,6 +824,8 @@ class TestCloneFunction:
             )
 
         assert result.success is False
+        assert result.errors == ["Pull failed for collection 'test'"]
+        assert result.collections_cloned == []
 
     @pytest.mark.unit
     def test_clone_fails_when_remote_not_found(self, tmp_path: Path) -> None:

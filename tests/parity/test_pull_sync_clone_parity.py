@@ -5,22 +5,27 @@ a local source catalog under the key prefix ``catalog``, so
 ``s3://bucket/catalog`` resolves to that catalog. No test sends a network
 request. A ``LocalStore`` does not take the conditional puts of push, so the
 remote is in memory.
+
+Parity proves that the command and the library return the same data. Each test
+also pins that data and the files on disk after the library call, so an empty
+result on both sides cannot pass.
 """
 
 from __future__ import annotations
 
+import contextlib
 import re
 import shutil
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NoReturn
 from unittest.mock import patch
 
 import pytest
 from obstore.store import MemoryStore
 
 from portolan_cli.sync.core import sync
-from portolan_cli.sync.pull import pull_catalog
-from portolan_cli.sync.transport import clone
+from portolan_cli.sync.pull import PullAllResult, PullResult, pull_catalog
+from portolan_cli.sync.transport import CloneResult, clone
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
@@ -32,6 +37,15 @@ pytestmark = pytest.mark.integration
 
 REMOTE = "s3://bucket/catalog"
 ASSET = Path("points") / "points.parquet"
+
+
+def tree(root: Path) -> dict[str, bytes]:
+    """Return the bytes of each file below ``root``, outside ``.portolan``."""
+    return {
+        path.relative_to(root).as_posix(): path.read_bytes()
+        for path in sorted(root.rglob("*"))
+        if path.is_file() and path.relative_to(root).parts[0] != ".portolan"
+    }
 
 
 @pytest.fixture
@@ -72,10 +86,8 @@ def published(source_catalog: Path, remote: list[MemoryStore]) -> Callable[[], N
 
     def publish() -> None:
         store = MemoryStore()
-        for path in sorted(source_catalog.rglob("*")):
-            rel = path.relative_to(source_catalog)
-            if path.is_file() and rel.parts[0] != ".portolan":
-                store.put(f"catalog/{rel.as_posix()}", path.read_bytes())
+        for rel, data in tree(source_catalog).items():
+            store.put(f"catalog/{rel}", data)
         remote[0] = store
 
     return publish
@@ -107,25 +119,93 @@ def local_in_sync(source_catalog: Path, published: Callable[[], None]) -> Callab
 
 
 def test_pull_collection_restore(
-    parity: Parity, local_missing_asset: Callable[[Path], None]
+    parity: Parity, local_missing_asset: Callable[[Path], None], source_catalog: Path
 ) -> None:
     """`pull -c points --restore` downloads the asset that the local copy lost."""
+    results: list[PullResult] = []
+
+    def call(root: Path) -> PullResult:
+        result = pull_catalog(REMOTE, Path(), "points", restore=True)
+        assert isinstance(result, PullResult)
+        results.append(result)
+        return result
+
     parity(
         "pull",
         [REMOTE, "-c", "points", "--restore"],
         catalog=local_missing_asset,
-        call=lambda root: pull_catalog(REMOTE, Path(), "points", restore=True),
+        call=call,
     )
 
+    assert results[0].to_dict() == {
+        "files_downloaded": 1,
+        "files_skipped": 0,
+        "files_restored": 1,
+        "local_version": "1.0.0",
+        "remote_version": "1.0.0",
+        "up_to_date": False,
+    }
+    assert (parity.root / ASSET).read_bytes() == (source_catalog / ASSET).read_bytes()
+    assert tree(parity.root) == tree(source_catalog)
 
-def test_pull_catalog_restore(parity: Parity, local_missing_asset: Callable[[Path], None]) -> None:
+
+def test_pull_catalog_restore(
+    parity: Parity, local_missing_asset: Callable[[Path], None], source_catalog: Path
+) -> None:
     """`pull --restore` without a collection pulls each collection of the catalog."""
-    parity(
-        "pull",
-        [REMOTE, "--restore"],
-        catalog=local_missing_asset,
-        call=lambda root: pull_catalog(REMOTE, Path(), restore=True),
-    )
+    results: list[PullAllResult] = []
+
+    def call(root: Path) -> PullAllResult:
+        result = pull_catalog(REMOTE, Path(), restore=True)
+        assert isinstance(result, PullAllResult)
+        results.append(result)
+        return result
+
+    parity("pull", [REMOTE, "--restore"], catalog=local_missing_asset, call=call)
+
+    assert results[0].to_dict() == {
+        "total_collections": 1,
+        "successful_collections": 1,
+        "failed_collections": 0,
+        "total_files_downloaded": 1,
+        "collection_errors": {},
+    }
+    assert tree(parity.root) == tree(source_catalog)
+
+
+def test_pull_dry_run_touches_no_store_and_writes_nothing(
+    parity: Parity, local_in_sync: Callable[[Path], None], source_catalog: Path
+) -> None:
+    """`pull -c points --dry-run` sends no store request and changes no local file."""
+
+    def no_store_call(*_args: Any, **_kwargs: Any) -> NoReturn:
+        raise AssertionError("a dry run called the object store")
+
+    results: list[PullResult] = []
+
+    def call(root: Path) -> PullResult:
+        result = pull_catalog(REMOTE, Path(), "points", dry_run=True)
+        assert isinstance(result, PullResult)
+        results.append(result)
+        return result
+
+    # pull and download call obstore through the module, so one patch per name
+    # covers both.
+    with contextlib.ExitStack() as stack:
+        for name in ("get", "get_async", "head", "head_async", "list"):
+            stack.enter_context(patch(f"obstore.{name}", side_effect=no_store_call))
+        parity("pull", [REMOTE, "-c", "points", "--dry-run"], catalog=local_in_sync, call=call)
+
+    assert results[0].dry_run is True
+    assert results[0].to_dict() == {
+        "files_downloaded": 0,
+        "files_skipped": 0,
+        "files_restored": 0,
+        "local_version": "1.0.0",
+        "remote_version": None,
+        "up_to_date": False,
+    }
+    assert tree(parity.root) == tree(source_catalog)
 
 
 def test_pull_invalid_remote(parity: Parity, local_in_sync: Callable[[Path], None]) -> None:
@@ -156,19 +236,25 @@ def test_sync_in_sync(parity: Parity, local_in_sync: Callable[[Path], None]) -> 
     )
 
 
-def test_clone_all(parity: Parity, published: Callable[[], None]) -> None:
+def test_clone_all(parity: Parity, published: Callable[[], None], source_catalog: Path) -> None:
     """`clone <remote> cloned` copies every collection into a new catalog."""
+    results: list[CloneResult] = []
 
     def empty(root: Path) -> None:
         published()
         root.mkdir()
 
-    parity(
-        "clone",
-        [REMOTE, "cloned"],
-        catalog=empty,
-        call=lambda root: clone(REMOTE, Path("cloned")),
-    )
+    def call(root: Path) -> CloneResult:
+        result = clone(REMOTE, Path("cloned"))
+        results.append(result)
+        return result
+
+    parity("clone", [REMOTE, "cloned"], catalog=empty, call=call)
+
+    source_files = tree(source_catalog)
+    assert results[0].collections_cloned == ["points"]
+    assert results[0].total_files_downloaded == len(source_files)
+    assert tree(parity.root / "cloned") == source_files
 
 
 def test_clone_reports_the_catalog_download(tmp_path: Path, published: Callable[[], None]) -> None:

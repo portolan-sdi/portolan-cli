@@ -228,4 +228,6 @@ class TestCloneCLIIntegration:
             # Should exit with error (partial failure)
             assert result.exit_code == 1
             # Should mention the failed collection
-            assert "bad" in result.output
+            assert "Pull failed for collection 'bad'" in result.output
+            assert "Cloned 2/3 collections with errors" in result.output
+            assert mock_pull.call_count == 3
