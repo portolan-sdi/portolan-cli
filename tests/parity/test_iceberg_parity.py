@@ -12,6 +12,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from tests.parity.snapshot import tree
+
 if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
@@ -69,11 +71,6 @@ def two_versions(
         assert_versions(root, current="1.1.0", listed=["1.0.0", "1.1.0"])
 
     return build
-
-
-def tree(root: Path) -> dict[str, bytes]:
-    """Return the bytes of each file below ``root``, by relative path."""
-    return {p.relative_to(root).as_posix(): p.read_bytes() for p in root.rglob("*") if p.is_file()}
 
 
 def assert_versions(root: Path, *, current: str, listed: list[str]) -> None:

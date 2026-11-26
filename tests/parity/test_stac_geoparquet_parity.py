@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from portolan_cli.stac_parquet import generate_stac_geoparquet
+from tests.parity.snapshot import tree
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -25,11 +26,6 @@ if TYPE_CHECKING:
     from tests.parity.harness import Parity
 
 pytestmark = pytest.mark.integration
-
-
-def tree(root: Path) -> dict[str, bytes]:
-    """Return the bytes of each file below ``root``, by relative path."""
-    return {p.relative_to(root).as_posix(): p.read_bytes() for p in root.rglob("*") if p.is_file()}
 
 
 def assert_no_mirror(root: Path) -> None:

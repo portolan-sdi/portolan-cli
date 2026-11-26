@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import shutil
 from typing import TYPE_CHECKING
 
 import pytest
@@ -15,6 +14,7 @@ from portolan_cli.version_ops import (
     describe_current_version,
     describe_version_history,
 )
+from tests.parity.snapshot import tree
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -24,23 +24,6 @@ if TYPE_CHECKING:
     from tests.parity.harness import Parity
 
 pytestmark = pytest.mark.integration
-
-
-@pytest.fixture
-def points_catalog(
-    build_conformant_catalog: Callable[..., Path],
-    run_cli: RunCli,
-    valid_points_geojson: Path,
-) -> Callable[[Path], None]:
-    """Build a catalog with one collection, `points`, at version 1.0.0."""
-
-    def build(root: Path) -> None:
-        build_conformant_catalog(root)
-        (root / "points").mkdir()
-        shutil.copy(valid_points_geojson, root / "points" / "points.geojson")
-        run_cli("add", "--portolan-dir", str(root), str(root / "points" / "points.geojson"))
-
-    return build
 
 
 def test_version_current(parity: Parity, points_catalog: Callable[[Path], None]) -> None:
@@ -76,11 +59,6 @@ def test_version_list(parity: Parity, points_catalog: Callable[[Path], None]) ->
         call=lambda root: describe_version_history("points", catalog_root=root),
         ignore=["versions.*.created"],
     )
-
-
-def tree(root: Path) -> dict[str, bytes]:
-    """Return the bytes of each file below ``root``, by relative path."""
-    return {p.relative_to(root).as_posix(): p.read_bytes() for p in root.rglob("*") if p.is_file()}
 
 
 def assert_bumped(root: Path) -> None:
