@@ -6,6 +6,7 @@ Tests vector thumbnail generation from PMTiles and GeoParquet sources.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
@@ -2229,7 +2230,7 @@ class TestHungTileServer:
             assert len(asked) == asked_in_first
             warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
             assert len(warnings) == 1, warnings
-            assert "basemaps.cartocdn.com/" in warnings[0]
+            assert re.search(r"basemaps\.cartocdn\.com/", warnings[0])
             assert self._KEY not in warnings[0]
 
             # A new run asks again.
