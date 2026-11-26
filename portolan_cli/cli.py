@@ -3265,37 +3265,23 @@ def _resolve_push_settings(
         raise SystemExit(1) from None
 
 
-def _prepare_push_concurrency(
+def _warn_push_footprint(
     concurrency: int,
     chunk_concurrency: int,
     max_connections: int | None,
     workers: int | None,
     collection: str | None,
-    use_json: bool,
-) -> tuple[int, int]:
-    """Compute effective concurrency and warn if too high (Issue #344).
+) -> None:
+    """Warn when the connection footprint of a push is high (Issue #344)."""
+    from portolan_cli.async_utils import MAX_SAFE_CONNECTIONS, calculate_connection_footprint
+    from portolan_cli.sync.push import effective_push_concurrency
 
-    Returns:
-        Tuple of (effective_file_concurrency, effective_chunk_concurrency).
-    """
-    from portolan_cli.async_utils import (
-        MAX_SAFE_CONNECTIONS,
-        adjust_concurrency_for_max_connections,
-        calculate_connection_footprint,
+    effective_file, effective_chunk = effective_push_concurrency(
+        concurrency, chunk_concurrency, max_connections
     )
-
-    # Apply max_connections cap
-    effective_file = concurrency
-    effective_chunk = chunk_concurrency
-    if max_connections is not None:
-        effective_file, effective_chunk = adjust_concurrency_for_max_connections(
-            concurrency, chunk_concurrency, max_connections
-        )
-
-    # Warn if footprint exceeds safe threshold
     eff_workers = workers if workers is not None else (4 if collection is None else 1)
     footprint = calculate_connection_footprint(effective_file, effective_chunk, eff_workers)
-    if footprint > MAX_SAFE_CONNECTIONS and not use_json:
+    if footprint > MAX_SAFE_CONNECTIONS:
         worker_part = f"{eff_workers} workers × " if eff_workers > 1 else ""
         warn(
             f"High connection count: {footprint} concurrent connections "
@@ -3303,28 +3289,63 @@ def _prepare_push_concurrency(
             "This may overwhelm home networks. Consider using --max-connections to limit."
         )
 
-    return effective_file, effective_chunk
+
+def _print_push_notice(level: str, message: str, *, verbose: bool) -> None:
+    """Print one notice of a push. A per-file notice prints only with --verbose."""
+    if level == "verbose":
+        if verbose:
+            detail(message)
+        return
+    printers = {
+        "success": success,
+        "info": info_output,
+        "warn": warn,
+        "error": error,
+        "detail": detail,
+    }
+    printers[level](message)
 
 
-def _verify_payload(result: Any) -> dict[str, Any]:
-    """Return the ``--verify`` counts for a JSON envelope.
+def _report_push_error(err: Exception, *, collection: str | None, use_json: bool) -> bool:
+    """Report an error that a push raised.
 
-    Args:
-        result: PushResult or PushAllResult.
+    A catalog-wide push reports every error by its class name. A push of one
+    collection reports its known errors, and it names any other ValueError
+    by the base class.
 
     Returns:
-        A dict with a ``verify`` key when push verified, otherwise an empty dict.
+        False when the caller must re-raise the error.
     """
-    if result.verify is None:
-        return {}
-    return {"verify": {"checked": result.verify.checked, "mismatched": result.verify.mismatched}}
+    from portolan_cli.errors import ProfileCredentialsError, PushVerifyError
+    from portolan_cli.sync.push import PushConflictError
+
+    if isinstance(err, PushConflictError):
+        if use_json:
+            envelope = error_envelope(
+                "push",
+                [ErrorDetail(type="PushConflictError", message=str(err))],
+            )
+            output_json_envelope(envelope)
+        else:
+            error(f"Push conflict: {err}")
+            info_output("Use --force to overwrite, or pull remote changes first")
+        return True
+    known = (ProfileCredentialsError, PushVerifyError, FileNotFoundError)
+    if collection is not None and not isinstance(err, known):
+        if not isinstance(err, ValueError):
+            return False
+        emit_error("push", "ValueError", str(err), use_json=use_json)
+        return True
+    code = getattr(err, "code", None)
+    emit_error("push", type(err).__name__, str(err), use_json=use_json, code=code)
+    return True
 
 
 def _report_push_all_result(all_result: Any, *, use_json: bool) -> None:
     """Report the outcome of a push that covered every collection.
 
-    push_all_collections already wrote the terminal output, so this adds the
-    JSON envelope and the exit code.
+    The notices of the run already wrote the terminal output, so this adds
+    the JSON envelope and the exit code.
 
     Args:
         all_result: PushAllResult from push_all_collections.
@@ -3334,18 +3355,7 @@ def _report_push_all_result(all_result: Any, *, use_json: bool) -> None:
         SystemExit: If any collection failed.
     """
     if use_json:
-        data = {
-            "total_collections": all_result.total_collections,
-            "successful_collections": all_result.successful_collections,
-            "failed_collections": all_result.failed_collections,
-            "total_files_uploaded": all_result.total_files_uploaded,
-            "total_versions_pushed": all_result.total_versions_pushed,
-            "dry_run": all_result.dry_run,
-            "total_would_push_files": all_result.total_would_push_files,
-            "total_would_push_versions": all_result.total_would_push_versions,
-            "collection_errors": all_result.collection_errors,
-            **_verify_payload(all_result),
-        }
+        data = all_result.to_dict()
         # A failed push returns success=false, with one error per message.
         errors: list[ErrorDetail] = []
         for name, messages in all_result.collection_errors.items():
@@ -3375,7 +3385,7 @@ def _report_push_result(result: Any, *, dry_run: bool, use_json: bool) -> None:
     """Report the outcome of a single-collection push.
 
     Args:
-        result: PushResult from push_async.
+        result: PushResult from run_push.
         dry_run: If True, the run wrote nothing.
         use_json: If True, emit a JSON envelope.
 
@@ -3385,12 +3395,14 @@ def _report_push_result(result: Any, *, dry_run: bool, use_json: bool) -> None:
     if not result.success:
         # Route a returned failure through the error path, so JSON mode reports
         # success=false and exits non-zero. It never emits a success envelope.
+        from portolan_cli.sync.push import verify_data
+
         err_msgs = result.errors or ["Push failed"]
         if use_json:
             envelope = error_envelope(
                 "push",
                 [ErrorDetail(type="PushError", message=msg) for msg in err_msgs],
-                data=_verify_payload(result),
+                data=verify_data(result.verify),
             )
             output_json_envelope(envelope)
         else:
@@ -3398,17 +3410,7 @@ def _report_push_result(result: Any, *, dry_run: bool, use_json: bool) -> None:
                 error(err_msg)
         raise SystemExit(1)
 
-    if emit_success(
-        "push",
-        {
-            "files_uploaded": result.files_uploaded,
-            "versions_pushed": result.versions_pushed,
-            "conflicts": result.conflicts,
-            "errors": result.errors,
-            **_verify_payload(result),
-        },
-        use_json=use_json,
-    ):
+    if emit_success("push", result.to_dict(), use_json=use_json):
         return
 
     if result.versions_pushed > 0:
@@ -3562,10 +3564,8 @@ def push(
         # Repair objects that disagree with the manifest
         portolan push s3://mybucket/catalog -c demographics --verify
     """
-    import asyncio
-
-    from portolan_cli.errors import ProfileCredentialsError, PushVerifyError
-    from portolan_cli.sync.push import PushConflictError, push_all_collections, push_async
+    from portolan_cli.errors import ProfileCredentialsError
+    from portolan_cli.sync.push import PushAllResult, run_push
 
     use_json = should_output_json(ctx, json_output)
 
@@ -3613,81 +3613,37 @@ def push(
         if not credentials_ok:
             warn(credential_hint)
 
-    # Apply max_connections cap and warn about high connection count (Issue #344)
-    effective_file_conc, effective_chunk_conc = _prepare_push_concurrency(
-        concurrency, chunk_concurrency, max_connections, workers, collection, use_json
-    )
-
-    # If no collection specified, push all collections
-    if collection is None:
-        try:
-            all_result = push_all_collections(
-                catalog_root=catalog_path,
-                destination=resolved_destination,
-                force=force,
-                dry_run=dry_run,
-                profile=resolved_profile,
-                region=resolved_region,
-                workers=workers,
-                file_concurrency=effective_file_conc,
-                chunk_concurrency=effective_chunk_conc,
-                max_connections=max_connections,
-                adaptive=adaptive,
-                verbose=verbose,
-                json_mode=use_json,
-                verify=verify,
-            )
-
-            _report_push_all_result(all_result, use_json=use_json)
-            return
-
-        except Exception as err:
-            code = getattr(err, "code", None)
-            emit_error("push", type(err).__name__, str(err), use_json=use_json, code=code)
-            raise SystemExit(1) from err
+    if not use_json:
+        _warn_push_footprint(concurrency, chunk_concurrency, max_connections, workers, collection)
 
     try:
-        # Use async push for single-collection push (concurrent uploads)
-        # max_connections already applied above via effective_*_conc
-        result = asyncio.run(
-            push_async(
-                catalog_root=catalog_path,
-                collection=collection,
-                destination=resolved_destination,
-                force=force,
-                dry_run=dry_run,
-                profile=resolved_profile,
-                region=resolved_region,
-                concurrency=effective_file_conc,
-                chunk_concurrency=effective_chunk_conc,
-                adaptive=adaptive,
-                json_mode=use_json,
-                verify=verify,
-            )
+        result = run_push(
+            catalog_path,
+            resolved_destination,
+            collection=collection,
+            force=force,
+            dry_run=dry_run,
+            profile=resolved_profile,
+            region=resolved_region,
+            workers=workers,
+            concurrency=concurrency,
+            chunk_concurrency=chunk_concurrency,
+            max_connections=max_connections,
+            adaptive=adaptive,
+            verify=verify,
+            notify=lambda level, message: _print_push_notice(level, message, verbose=verbose),
+            # A progress bar and per-file lines would interleave.
+            show_progress=not use_json and not verbose,
         )
+    except Exception as err:
+        if not _report_push_error(err, collection=collection, use_json=use_json):
+            raise
+        raise SystemExit(1) from err
 
+    if isinstance(result, PushAllResult):
+        _report_push_all_result(result, use_json=use_json)
+    else:
         _report_push_result(result, dry_run=dry_run, use_json=use_json)
-
-    except PushConflictError as err:
-        if use_json:
-            envelope = error_envelope(
-                "push",
-                [ErrorDetail(type="PushConflictError", message=str(err))],
-            )
-            output_json_envelope(envelope)
-        else:
-            error(f"Push conflict: {err}")
-            info_output("Use --force to overwrite, or pull remote changes first")
-        raise SystemExit(1) from err
-
-    except (ProfileCredentialsError, PushVerifyError, FileNotFoundError) as err:
-        code = getattr(err, "code", None)
-        emit_error("push", type(err).__name__, str(err), use_json=use_json, code=code)
-        raise SystemExit(1) from err
-
-    except ValueError as err:
-        emit_error("push", "ValueError", str(err), use_json=use_json)
-        raise SystemExit(1) from err
 
 
 # ─────────────────────────────────────────────────────────────────────────────

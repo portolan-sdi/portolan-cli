@@ -91,7 +91,7 @@ def test_add_emits_the_roles_the_classifier_reads(catalog: Path) -> None:
 
 
 def test_missing_cog_thumbnail_is_skipped(
-    catalog: Path, capsys: pytest.CaptureFixture[str]
+    _print_notices: None, catalog: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """The exact repro: delete the COG thumbnail, then push the collection."""
     (catalog / "imagery" / "scene1" / "scene1.thumb.jpg").unlink()
@@ -106,7 +106,7 @@ def test_missing_cog_thumbnail_is_skipped(
 
 
 def test_missing_items_parquet_is_skipped(
-    catalog: Path, capsys: pytest.CaptureFixture[str]
+    _print_notices: None, catalog: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """The second path in the issue, where the item mirror is gone."""
     (catalog / "imagery" / "items.parquet").unlink()

@@ -639,8 +639,9 @@ SMALL_COPY_LIMIT = 16
 def refuse_large_copies(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     """Make CopyObject refuse a source above ``SMALL_COPY_LIMIT``, as S3 does above 5 GB."""
     from portolan_cli.sync import push as push_module
+    from portolan_cli.sync import upload as upload_module
 
-    monkeypatch.setattr(push_module, "COPY_SOURCE_LIMIT", SMALL_COPY_LIMIT)
+    monkeypatch.setattr(upload_module, "COPY_SOURCE_LIMIT", SMALL_COPY_LIMIT)
     real_copy = push_module.obs.copy_async
     refused: list[str] = []
 

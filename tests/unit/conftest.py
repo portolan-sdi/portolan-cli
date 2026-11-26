@@ -10,6 +10,7 @@ import pytest
 
 from portolan_cli import trace
 from portolan_cli.versions import Asset, Version, VersionsFile, write_versions
+from tests.push_notices import print_notices_fixture  # noqa: F401  (a shared fixture)
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator

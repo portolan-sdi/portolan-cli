@@ -179,7 +179,7 @@ class TestUploadAssetsVerboseMode:
     @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_default_mode_suppresses_success_messages(
-        self, mock_catalog: Path, capsys: pytest.CaptureFixture[str]
+        self, _print_notices: None, mock_catalog: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Default mode should not print per-file success messages."""
         assets = [
@@ -195,7 +195,6 @@ class TestUploadAssetsVerboseMode:
                 catalog_root=mock_catalog,
                 prefix="test-prefix",
                 assets=assets,
-                suppress_progress=True,  # Default quiet mode
             )
 
         captured = capsys.readouterr()
@@ -205,15 +204,10 @@ class TestUploadAssetsVerboseMode:
 
     @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_json_mode_suppresses_progress_bar(
+    async def test_no_progress_bar_by_default(
         self, mock_catalog: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """JSON mode should suppress progress bar output.
-
-        Note: The async upload uses AsyncProgressReporter which is suppressed
-        when json_mode=True. Per-file verbose output is not implemented in
-        the async version - progress is shown via the Rich progress bar.
-        """
+        """Without show_progress, the upload draws no progress bar."""
         assets = [
             mock_catalog / "test-collection" / "item1" / "data.parquet",
         ]
@@ -226,7 +220,6 @@ class TestUploadAssetsVerboseMode:
                 catalog_root=mock_catalog,
                 prefix="test-prefix",
                 assets=assets,
-                json_mode=True,  # Suppress progress bar
             )
 
         # Should complete successfully
@@ -240,7 +233,7 @@ class TestUploadAssetsVerboseMode:
     @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_failures_always_shown(
-        self, mock_catalog: Path, capsys: pytest.CaptureFixture[str]
+        self, _print_notices: None, mock_catalog: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Failures should always be shown, regardless of verbose mode."""
         assets = [
@@ -259,7 +252,6 @@ class TestUploadAssetsVerboseMode:
                 catalog_root=mock_catalog,
                 prefix="test-prefix",
                 assets=assets,
-                suppress_progress=True,  # Even in quiet mode
             )
 
         captured = capsys.readouterr()
@@ -285,7 +277,6 @@ class TestUploadAssetsVerboseMode:
                 catalog_root=mock_catalog,
                 prefix="test-prefix",
                 assets=assets,
-                suppress_progress=True,
             )
 
         assert isinstance(metrics, UploadMetrics)
@@ -311,7 +302,6 @@ class TestUploadAssetsVerboseMode:
                 catalog_root=mock_catalog,
                 prefix="test-prefix",
                 assets=assets,
-                suppress_progress=True,  # Even in quiet mode
             )
 
         # Metrics should be populated

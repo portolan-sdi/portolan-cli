@@ -343,7 +343,6 @@ ignore = [
 # or calls obstore.put. The letter names the #1035 agent that owns the module.
 # Delete a line when its module is clean, and delete the same module from
 # RATCHET_TID251 and from the output-is-cli-only ignore_imports. Never add one.
-"portolan_cli/sync/push.py" = ["TID251"] # E
 
 [tool.ruff.lint.flake8-tidy-imports.banned-api]
 # Library output on stdout corrupts the JSON envelope (#1005) and interleaves
@@ -682,7 +681,6 @@ ignore_imports = [
     # [tool.ruff.lint.per-file-ignores], plus sync.upload: ruff exempts that
     # file for obstore.put, so only this contract sees its output import.
     # The letter names the owning #1035 agent. Delete only.
-    "portolan_cli.sync.push -> portolan_cli.output", # E
 ]
 
 [[tool.importlinter.contracts]]

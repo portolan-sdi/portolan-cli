@@ -204,7 +204,11 @@ class TestCatalogWideDryRun:
 
     @patch("portolan_cli.sync.push.push_async", new_callable=AsyncMock)
     def test_dry_run_lists_intermediate_catalogs(
-        self, mock_push: MagicMock, nested_catalog: Path, capsys: pytest.CaptureFixture[str]
+        self,
+        mock_push: MagicMock,
+        _print_notices: None,
+        nested_catalog: Path,
+        capsys: pytest.CaptureFixture[str],
     ) -> None:
         mock_push.return_value = PushResult(
             success=True, files_uploaded=0, versions_pushed=0, conflicts=[], errors=[], dry_run=True
@@ -237,7 +241,7 @@ class TestSingleCollectionIntermediateCatalogs:
         assert "tst/README.md" in readme_rel
 
     def test_dry_run_single_collection_lists_intermediates(
-        self, nested_catalog: Path, capsys: pytest.CaptureFixture[str]
+        self, _print_notices: None, nested_catalog: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         push(
             catalog_root=nested_catalog,
@@ -376,7 +380,6 @@ def _push_unchanged_collection(
                 collection=collection,
                 destination="s3://bucket/catalog",
                 include_catalog=include_catalog,
-                json_mode=True,
             )
         )
     return result, uploaded_keys

@@ -1025,6 +1025,31 @@ async def put_object_async(
     return await obs.put_async(store, key, data, **_put_kwargs(key, data, mode, max_concurrency))
 
 
+# S3 CopyObject refuses a source above 5 GiB. A larger object streams through
+# the client, in the multipart part size of an upload of the same size.
+COPY_SOURCE_LIMIT = 5 * 2**30
+
+
+async def copy_object_async(store: ObjectStore, src: str, dst: str, size: int | None) -> None:
+    """Copy ``src`` to ``dst``. A source of unknown size tries the server copy.
+
+    The streamed copy keeps the attributes of the source, so it does not go
+    through ``put_object_async``.
+    """
+    if size is None or size <= COPY_SOURCE_LIMIT:
+        await obs.copy_async(store, src, dst)
+        return
+    source = await obs.get_async(store, src)
+    chunk = multipart_chunk_size(size)
+    await obs.put_async(
+        store,
+        dst,
+        source.stream(min_chunk_size=chunk),
+        attributes=source.attributes,
+        chunk_size=chunk,
+    )
+
+
 # =============================================================================
 # Upload Functions
 # =============================================================================

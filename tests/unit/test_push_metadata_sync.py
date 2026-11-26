@@ -467,7 +467,9 @@ class TestPushMetadataSync:
         assert errors == []
 
     @pytest.mark.unit
-    def test_push_dry_run_shows_metadata_files(self, catalog_with_metadata: Path, capsys) -> None:
+    def test_push_dry_run_shows_metadata_files(
+        self, _print_notices: None, catalog_with_metadata: Path, capsys
+    ) -> None:
         """Dry run should list metadata files that would be synced."""
         from portolan_cli.sync.push import push
 
@@ -522,7 +524,7 @@ class TestPushAllMetadataSync:
 
     @pytest.mark.unit
     def test_push_all_root_files_dry_run_shows_metadata(
-        self, catalog_with_metadata: Path, capsys
+        self, _print_notices: None, catalog_with_metadata: Path, capsys
     ) -> None:
         """_push_all_upload_root_files dry run should show metadata files."""
         from portolan_cli.sync.push import _push_all_upload_root_files
@@ -812,7 +814,6 @@ class TestPushNoVersionChangeMetadataSync:
                     catalog_root=catalog_with_metadata,
                     collection="collection1",
                     destination="s3://test-bucket/catalog",
-                    json_mode=True,
                 )
             )
 
@@ -873,7 +874,6 @@ class TestPushNoVersionChangeMetadataSync:
                     destination="s3://test-bucket/catalog",
                     # include_catalog=False so root files stay out of this check.
                     include_catalog=False,
-                    json_mode=True,
                 )
             )
 
@@ -909,14 +909,15 @@ class TestPushNoVersionChangeMetadataSync:
                 new=AsyncMock(return_value=(local_versions, "etag-1")),
             ),
             patch("portolan_cli.sync.push.obs.put_async", side_effect=failing_put_async),
-            patch("portolan_cli.sync.push.warn", side_effect=warnings.append),
         ):
             result = asyncio.run(
                 push_async(
                     catalog_root=catalog_with_metadata,
                     collection="collection1",
                     destination="s3://test-bucket/catalog",
-                    json_mode=True,
+                    notify=lambda level, message: (
+                        warnings.append(message) if level == "warn" else None
+                    ),
                 )
             )
 

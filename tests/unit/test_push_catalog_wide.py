@@ -341,7 +341,11 @@ class TestPushAllCollections:
 
     @patch("portolan_cli.sync.push.push_async", new_callable=AsyncMock)
     def test_dry_run_reports_would_push_estimate(
-        self, mock_push: MagicMock, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+        self,
+        mock_push: MagicMock,
+        _print_notices: None,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
     ) -> None:
         """Dry-run per-collection and summary counts use the would-push estimate.
 

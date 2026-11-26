@@ -1879,6 +1879,7 @@ class TestPushAgainstMoto:
     @pytest.mark.integration
     def test_credential_without_list_warns_once_and_deletes_nothing(
         self,
+        _print_notices: None,
         tmp_path: Path,
         bucket: tuple[str, Any],
         monkeypatch: pytest.MonkeyPatch,

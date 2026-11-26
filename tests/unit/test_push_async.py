@@ -471,7 +471,6 @@ class TestPushAsyncConcurrency:
             destination="s3://test-bucket/catalog",
             concurrency=limit,
             adaptive=False,
-            json_mode=True,
         )
 
         assert result.success is True
@@ -497,7 +496,6 @@ class TestPushAsyncConcurrency:
             collection="test",
             destination="s3://test-bucket/catalog",
             concurrency=50,
-            json_mode=True,
         )
 
         assert result.success is False
@@ -525,7 +523,6 @@ class TestPushAsyncConcurrency:
             collection="test",
             destination="s3://test-bucket/catalog",
             concurrency=50,
-            json_mode=True,
         )
 
         assert result.success is False
@@ -548,7 +545,6 @@ class TestPushAsyncConcurrency:
             destination="s3://test-bucket/catalog",
             concurrency=1,
             adaptive=False,
-            json_mode=True,
         )
 
         assert result.success is False

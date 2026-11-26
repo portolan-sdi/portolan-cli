@@ -521,7 +521,7 @@ class TestRepairOnlyPath:
     @pytest.mark.unit
     @pytest.mark.parametrize("force", [False, True], ids=["repair-only", "force"])
     def test_repaired_count_excludes_a_skipped_optional_derivative(
-        self, tmp_path: Path, force: bool, capsys: pytest.CaptureFixture[str]
+        self, _print_notices: None, tmp_path: Path, force: bool, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """A flagged optional derivative that is missing on disk does not count as repaired."""
         a = b"a bytes"

@@ -766,7 +766,10 @@ class TestRollbackRestoresOverwrittenKeys:
 
     @pytest.mark.unit
     async def test_failed_copy_warns_and_a_missing_key_does_not(
-        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+        self,
+        _print_notices: None,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
     ) -> None:
         from obstore.exceptions import PermissionDeniedError
 
@@ -949,7 +952,11 @@ class TestMissingDerivedAsset:
         ],
     )
     def test_missing_derived_asset_is_skipped(
-        self, local_catalog: Path, capsys: pytest.CaptureFixture[str], missing_href: str
+        self,
+        _print_notices: None,
+        local_catalog: Path,
+        capsys: pytest.CaptureFixture[str],
+        missing_href: str,
     ) -> None:
         """Push skips a recorded derived artifact that is no longer on disk."""
         from portolan_cli.sync.push import _get_assets_to_upload
@@ -1016,7 +1023,7 @@ class TestMissingDerivedAsset:
 
     @pytest.mark.unit
     def test_thumbnail_role_wins_over_an_unknown_filename(
-        self, local_catalog: Path, capsys: pytest.CaptureFixture[str]
+        self, _print_notices: None, local_catalog: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Push skips a preview the spec calls optional, whatever its name."""
         from portolan_cli.sync.push import _get_assets_to_upload
@@ -1269,7 +1276,9 @@ class TestProgressReporting:
     """Tests for progress reporting during uploads."""
 
     @pytest.mark.unit
-    def test_push_dry_run_shows_progress(self, local_catalog: Path, capsys) -> None:
+    def test_push_dry_run_shows_progress(
+        self, _print_notices: None, local_catalog: Path, capsys
+    ) -> None:
         """Dry-run at push level should show what would be uploaded."""
         from portolan_cli.sync.push import push
 
