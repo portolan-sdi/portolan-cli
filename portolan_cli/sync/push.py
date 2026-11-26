@@ -175,7 +175,14 @@ class PushResult:
         return len(self.metadata_errors) > 0
 
     def to_dict(self) -> dict[str, Any]:
-        """Return the JSON data of a successful ``portolan push --collection``."""
+        """Return the JSON data of ``portolan push --collection``.
+
+        A failed push reports its errors in the envelope ``errors``, so its
+        data holds only the ``--verify`` counts. The counts stay on the
+        attributes of the result.
+        """
+        if not self.success:
+            return verify_data(self.verify)
         return {
             "files_uploaded": self.files_uploaded,
             "versions_pushed": self.versions_pushed,

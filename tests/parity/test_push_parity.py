@@ -8,6 +8,8 @@ published and that the manifest went last.
 
 from __future__ import annotations
 
+import contextlib
+import json
 import shutil
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -16,6 +18,7 @@ import obstore
 import pytest
 from obstore.store import MemoryStore
 
+from portolan_cli.json_output import ErrorDetail
 from portolan_cli.sync.push import PushAllResult, PushResult, run_push
 
 if TYPE_CHECKING:
@@ -260,3 +263,79 @@ def test_push_blocked_backend(
         call=lambda root: run_push(root, DESTINATION, collection="points", notify=_quiet),
         raises=NotImplementedError,
     )
+
+
+def _returned_failure(
+    run_cli: RunCli,
+    capsys: pytest.CaptureFixture[str],
+    build: Callable[[Path], None],
+    root: Path,
+    args: list[str],
+    call: Callable[[Path], PushResult | PushAllResult],
+) -> tuple[dict[str, Any], PushResult | PushAllResult]:
+    """Run the command and the library on fresh catalogs at ``root``, for a returned failure."""
+    build(root)
+    command = run_cli("push", *args, "--json", cwd=root, expect=1)
+    envelope: dict[str, Any] = json.loads(command.stdout)
+    shutil.rmtree(root)
+    build(root)
+    capsys.readouterr()
+    with contextlib.chdir(root):
+        result = call(root)
+    assert capsys.readouterr() == ("", ""), "the library call printed output"
+    assert result.success is False
+    assert envelope["success"] is False
+    assert envelope["data"] == json.loads(json.dumps(result.to_dict()))
+    return envelope, result
+
+
+def test_push_one_collection_returned_failure(
+    run_cli: RunCli,
+    capsys: pytest.CaptureFixture[str],
+    points_catalog: Callable[[Path], None],
+    remotes: Remotes,
+    tmp_path: Path,
+) -> None:
+    """A failed asset upload returns a failure, and the data is the result `to_dict()`."""
+    remotes.fail_key = "catalog/points/points.parquet"
+    envelope, result = _returned_failure(
+        run_cli,
+        capsys,
+        points_catalog,
+        tmp_path / "catalog",
+        [DESTINATION, "--collection", "points"],
+        lambda root: run_push(root, DESTINATION, collection="points", notify=_quiet),
+    )
+    assert envelope["data"] == {}
+    assert isinstance(result, PushResult)
+    assert result.errors
+    assert envelope["errors"] == [ErrorDetail("PushError", m).to_dict() for m in result.errors]
+    for remote in remotes.runs:
+        assert "catalog/points/versions.json" not in remote.stored()
+
+
+def test_push_all_collections_returned_failure(
+    run_cli: RunCli,
+    capsys: pytest.CaptureFixture[str],
+    points_catalog: Callable[[Path], None],
+    remotes: Remotes,
+    tmp_path: Path,
+) -> None:
+    """A failed collection returns a catalog-wide failure with the full counts."""
+    remotes.fail_key = "catalog/points/points.parquet"
+    envelope, result = _returned_failure(
+        run_cli,
+        capsys,
+        points_catalog,
+        tmp_path / "catalog",
+        [DESTINATION],
+        lambda root: run_push(root, DESTINATION, notify=_quiet),
+    )
+    assert isinstance(result, PushAllResult)
+    assert envelope["data"]["failed_collections"] == 1
+    assert envelope["errors"] == [
+        ErrorDetail("PushError", f"points: {m}").to_dict()
+        for m in result.collection_errors["points"]
+    ]
+    for remote in remotes.runs:
+        assert "catalog/catalog.json" not in remote.stored()

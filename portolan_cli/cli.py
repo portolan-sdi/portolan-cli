@@ -3395,14 +3395,12 @@ def _report_push_result(result: Any, *, dry_run: bool, use_json: bool) -> None:
     if not result.success:
         # Route a returned failure through the error path, so JSON mode reports
         # success=false and exits non-zero. It never emits a success envelope.
-        from portolan_cli.sync.push import verify_data
-
         err_msgs = result.errors or ["Push failed"]
         if use_json:
             envelope = error_envelope(
                 "push",
                 [ErrorDetail(type="PushError", message=msg) for msg in err_msgs],
-                data=verify_data(result.verify),
+                data=result.to_dict(),
             )
             output_json_envelope(envelope)
         else:
