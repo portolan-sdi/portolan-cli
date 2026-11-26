@@ -30,9 +30,37 @@ from portolan_cli.sync.pull import (
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from portolan_cli.versions import VersionsFile
+
 # =============================================================================
 # Test Fixtures
 # =============================================================================
+
+
+def _remote_with_files(count: int) -> VersionsFile:
+    """Build a remote versions.json whose version 2.0.0 adds ``count`` files."""
+    from portolan_cli.versions import Asset, Version, VersionsFile
+
+    names = [f"file_{i}.parquet" for i in range(count)]
+    return VersionsFile(
+        spec_version="1.0.0",
+        current_version="2.0.0",
+        versions=[
+            Version(
+                version="2.0.0",
+                created=datetime(2024, 1, 20, 10, 0, 0, tzinfo=UTC),
+                breaking=False,
+                message=f"Added {count} files",
+                assets={
+                    name: Asset(
+                        sha256=f"sha256_{i}", size_bytes=1000, href=f"test-collection/{name}"
+                    )
+                    for i, name in enumerate(names)
+                },
+                changes=names,
+            )
+        ],
+    )
 
 
 @pytest.fixture
@@ -135,30 +163,7 @@ async def test_pull_async_downloads_concurrently(
         patch("portolan_cli.sync.pull._download_file_async", mock_download_file_async),
     ):
         # Setup mock to return remote versions with 10 files
-        from portolan_cli.versions import Asset, Version, VersionsFile
-
-        remote = VersionsFile(
-            spec_version="1.0.0",
-            current_version="2.0.0",
-            versions=[
-                Version(
-                    version="2.0.0",
-                    created=datetime(2024, 1, 20, 10, 0, 0, tzinfo=UTC),
-                    breaking=False,
-                    message="Added many files",
-                    assets={
-                        f"file_{i}.parquet": Asset(
-                            sha256=f"sha256_{i}",
-                            size_bytes=1000,
-                            href=f"test-collection/file_{i}.parquet",
-                        )
-                        for i in range(10)
-                    },
-                    changes=[f"file_{i}.parquet" for i in range(10)],
-                )
-            ],
-        )
-        mock_fetch.return_value = remote
+        mock_fetch.return_value = _remote_with_files(10)
 
         result = await pull_async(
             remote_url="s3://test-bucket/catalog",
@@ -211,31 +216,8 @@ async def test_pull_async_respects_concurrency_limit(
         patch("portolan_cli.sync.pull._fetch_remote_versions_async") as mock_fetch,
         patch("portolan_cli.sync.pull._download_file_async", mock_download_file_async),
     ):
-        from portolan_cli.versions import Asset, Version, VersionsFile
-
         # Create 20 files to download - more than concurrency limit
-        remote = VersionsFile(
-            spec_version="1.0.0",
-            current_version="2.0.0",
-            versions=[
-                Version(
-                    version="2.0.0",
-                    created=datetime(2024, 1, 20, 10, 0, 0, tzinfo=UTC),
-                    breaking=False,
-                    message="Many files",
-                    assets={
-                        f"file_{i}.parquet": Asset(
-                            sha256=f"sha256_{i}",
-                            size_bytes=1000,
-                            href=f"test-collection/file_{i}.parquet",
-                        )
-                        for i in range(20)
-                    },
-                    changes=[f"file_{i}.parquet" for i in range(20)],
-                )
-            ],
-        )
-        mock_fetch.return_value = remote
+        mock_fetch.return_value = _remote_with_files(20)
 
         result = await pull_async(
             remote_url="s3://test-bucket/catalog",
@@ -340,31 +322,8 @@ async def test_pull_async_circuit_breaker_on_failures(
         patch("portolan_cli.sync.pull._fetch_remote_versions_async") as mock_fetch,
         patch("portolan_cli.sync.pull._download_file_async", mock_download_always_fails),
     ):
-        from portolan_cli.versions import Asset, Version, VersionsFile
-
         # Create many files to trigger circuit breaker
-        remote = VersionsFile(
-            spec_version="1.0.0",
-            current_version="2.0.0",
-            versions=[
-                Version(
-                    version="2.0.0",
-                    created=datetime(2024, 1, 20, 10, 0, 0, tzinfo=UTC),
-                    breaking=False,
-                    message="Many files",
-                    assets={
-                        f"file_{i}.parquet": Asset(
-                            sha256=f"sha256_{i}",
-                            size_bytes=1000,
-                            href=f"test-collection/file_{i}.parquet",
-                        )
-                        for i in range(50)
-                    },
-                    changes=[f"file_{i}.parquet" for i in range(50)],
-                )
-            ],
-        )
-        mock_fetch.return_value = remote
+        mock_fetch.return_value = _remote_with_files(50)
 
         result = await pull_async(
             remote_url="s3://test-bucket/catalog",
@@ -445,30 +404,7 @@ async def test_pull_async_reports_progress(
         patch("portolan_cli.sync.pull._fetch_remote_versions_async") as mock_fetch,
         patch("portolan_cli.sync.pull._download_file_async", mock_download_file_async),
     ):
-        from portolan_cli.versions import Asset, Version, VersionsFile
-
-        remote = VersionsFile(
-            spec_version="1.0.0",
-            current_version="2.0.0",
-            versions=[
-                Version(
-                    version="2.0.0",
-                    created=datetime(2024, 1, 20, 10, 0, 0, tzinfo=UTC),
-                    breaking=False,
-                    message="Files",
-                    assets={
-                        f"file_{i}.parquet": Asset(
-                            sha256=f"sha256_{i}",
-                            size_bytes=1000,
-                            href=f"test-collection/file_{i}.parquet",
-                        )
-                        for i in range(5)
-                    },
-                    changes=[f"file_{i}.parquet" for i in range(5)],
-                )
-            ],
-        )
-        mock_fetch.return_value = remote
+        mock_fetch.return_value = _remote_with_files(5)
 
         lines: list[tuple[str, str]] = []
         result = await pull_async(

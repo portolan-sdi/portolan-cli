@@ -12,7 +12,7 @@ Use PORTOLAN_PROFILE or PORTOLAN_AWS_PROFILE env vars instead.
 from __future__ import annotations
 
 import os
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -21,10 +21,34 @@ from click.testing import CliRunner
 from portolan_cli.cli import cli
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
     from pathlib import Path
 
 # Remote URL for tests - set via env var (Issue #356: sensitive settings)
 TEST_REMOTE = "s3://test-bucket/test-catalog"
+
+
+def _clone_kwargs(tmp_path: Path) -> Mapping[str, Any]:
+    """Run ``portolan clone`` against a mocked clone and return its keyword arguments."""
+    runner = CliRunner()
+    clone_target = tmp_path / "cloned-catalog"
+    with patch("portolan_cli.sync.transport.clone") as mock_clone:
+        mock_clone.return_value = MagicMock(
+            success=True,
+            local_path=clone_target,
+            collections_cloned=["test-collection"],
+            total_files_downloaded=0,
+            errors=[],
+            pull_result=None,
+        )
+        with runner.isolated_filesystem(temp_dir=tmp_path):
+            result = runner.invoke(
+                cli, ["clone", "s3://test-bucket/test-catalog", str(clone_target)]
+            )
+    assert result.exit_code == 0, result.output
+    assert mock_clone.called
+    kwargs: Mapping[str, Any] = mock_clone.call_args.kwargs
+    return kwargs
 
 
 def _write_catalog(tmp_path: Path) -> Path:
@@ -235,32 +259,8 @@ class TestProfileDefaultBehavior:
     @pytest.mark.unit
     def test_clone_defaults_to_default_profile(self, tmp_path: Path) -> None:
         """portolan clone should use 'default' profile when --profile not specified."""
-        runner = CliRunner()
-        clone_target = tmp_path / "cloned-catalog"
-
-        with patch("portolan_cli.sync.transport.clone") as mock_clone:
-            mock_clone.return_value = MagicMock(
-                success=True,
-                local_path=clone_target,
-                collections_cloned=["test-collection"],
-                total_files_downloaded=0,
-                errors=[],
-                pull_result=None,
-            )
-
-            with runner.isolated_filesystem(temp_dir=tmp_path):
-                result = runner.invoke(
-                    cli,
-                    ["clone", "s3://test-bucket/test-catalog", str(clone_target)],
-                )
-
-            # Verify command succeeded
-            assert result.exit_code == 0
-
-            # Verify clone received None, so the AWS tools choose the profile
-            assert mock_clone.called
-            call_kwargs = mock_clone.call_args.kwargs
-            assert call_kwargs["profile"] is None
+        # clone receives None, so the AWS tools choose the profile
+        assert _clone_kwargs(tmp_path)["profile"] is None
 
 
 class TestProfileConfigResolution:
@@ -406,34 +406,9 @@ class TestProfileConfigResolution:
     @pytest.mark.unit
     def test_clone_uses_aws_profile_from_env(self, tmp_path: Path) -> None:
         """portolan clone should use PORTOLAN_AWS_PROFILE env var when --profile not specified."""
-        runner = CliRunner()
-        clone_target = tmp_path / "cloned-catalog"
-
-        with patch("portolan_cli.sync.transport.clone") as mock_clone:
-            mock_clone.return_value = MagicMock(
-                success=True,
-                local_path=clone_target,
-                collections_cloned=["test-collection"],
-                total_files_downloaded=0,
-                errors=[],
-                pull_result=None,
-            )
-
-            # Clone uses env var since there's no local catalog to read config from
-            with patch.dict(os.environ, {"PORTOLAN_AWS_PROFILE": "env-profile"}):
-                with runner.isolated_filesystem(temp_dir=tmp_path):
-                    result = runner.invoke(
-                        cli,
-                        ["clone", "s3://test-bucket/test-catalog", str(clone_target)],
-                    )
-
-                # Verify command succeeded
-                assert result.exit_code == 0
-
-                # Verify clone was called with profile from env
-                assert mock_clone.called
-                call_kwargs = mock_clone.call_args.kwargs
-                assert call_kwargs["profile"] == "env-profile"
+        # Clone uses env var since there's no local catalog to read config from
+        with patch.dict(os.environ, {"PORTOLAN_AWS_PROFILE": "env-profile"}):
+            assert _clone_kwargs(tmp_path)["profile"] == "env-profile"
 
     @pytest.mark.unit
     def test_push_uses_env_var_when_no_cli(self, tmp_path: Path) -> None:

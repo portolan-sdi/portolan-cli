@@ -12,7 +12,10 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
+
+    from portolan_cli.sync.transport import CloneResult
 
 
 class TestNestedCatalogCloneIntegration:
@@ -123,8 +126,6 @@ class TestNestedCatalogCloneIntegration:
                     └── amsterdam/
                         └── demographics/collection.json
         """
-        from portolan_cli.sync.transport import clone
-
         root_catalog = {
             "type": "Catalog",
             "id": "root",
@@ -155,24 +156,7 @@ class TestNestedCatalogCloneIntegration:
                 return europe_catalog
             return root_catalog
 
-        pulled_collections: list[str] = []
-
-        def mock_pull(
-            remote_url: str, local_root: Path, collection: str, **kwargs: Any
-        ) -> MagicMock:
-            pulled_collections.append(collection)
-            return MagicMock(success=True, files_downloaded=1, remote_version="1.0.0")
-
-        with (
-            patch("portolan_cli.sync.transport._fetch_remote_catalog_json", side_effect=mock_fetch),
-            patch("portolan_cli.sync.transport.init_catalog"),
-            patch("portolan_cli.sync.transport.pull", side_effect=mock_pull),
-        ):
-            result = clone(
-                remote_url="s3://bucket/catalog",
-                local_path=tmp_path / "cloned",
-                collection=None,
-            )
+        result, pulled_collections = _clone_all(tmp_path, mock_fetch)
 
         assert result.success is True
         # Full nested path must be preserved
@@ -189,8 +173,6 @@ class TestNestedCatalogCloneIntegration:
                 └── catalog.json (subcatalog)
                     └── nested-data/collection.json
         """
-        from portolan_cli.sync.transport import clone
-
         root_catalog = {
             "type": "Catalog",
             "id": "root",
@@ -210,25 +192,29 @@ class TestNestedCatalogCloneIntegration:
                 return organized_catalog
             return root_catalog
 
-        pulled_collections: list[str] = []
-
-        def mock_pull(
-            remote_url: str, local_root: Path, collection: str, **kwargs: Any
-        ) -> MagicMock:
-            pulled_collections.append(collection)
-            return MagicMock(success=True, files_downloaded=1, remote_version="1.0.0")
-
-        with (
-            patch("portolan_cli.sync.transport._fetch_remote_catalog_json", side_effect=mock_fetch),
-            patch("portolan_cli.sync.transport.init_catalog"),
-            patch("portolan_cli.sync.transport.pull", side_effect=mock_pull),
-        ):
-            result = clone(
-                remote_url="s3://bucket/catalog",
-                local_path=tmp_path / "cloned",
-                collection=None,
-            )
+        result, pulled_collections = _clone_all(tmp_path, mock_fetch)
 
         assert result.success is True
         # Both direct and nested paths preserved
         assert set(pulled_collections) == {"quick-data", "organized/nested-data"}
+
+
+def _clone_all(
+    tmp_path: Path, fetch: Callable[..., dict[str, Any]]
+) -> tuple[CloneResult, list[str]]:
+    """Clone every collection with ``fetch`` as the remote, and record each pull."""
+    from portolan_cli.sync.transport import clone
+
+    pulled: list[str] = []
+
+    def mock_pull(remote_url: str, local_root: Path, collection: str, **kwargs: Any) -> MagicMock:
+        pulled.append(collection)
+        return MagicMock(success=True, files_downloaded=1, remote_version="1.0.0")
+
+    with (
+        patch("portolan_cli.sync.transport._fetch_remote_catalog_json", side_effect=fetch),
+        patch("portolan_cli.sync.transport.init_catalog"),
+        patch("portolan_cli.sync.transport.pull", side_effect=mock_pull),
+    ):
+        result = clone(remote_url="s3://bucket/catalog", local_path=tmp_path / "cloned")
+    return result, pulled
