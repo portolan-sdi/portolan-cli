@@ -105,6 +105,7 @@ dev = [
     "hypothesis>=6.151.5",
     "mypy>=1.19.1",
     "pip-audit>=2.10.0",
+    "prek>=0.5.11", # Hook runner. It reads prek.toml.
     "pytest>=9.0.3",
     "pytest-codspeed>=5.0.0", # CodSpeed CPU benchmarks; also runs the benchmark fixture locally
     "pytest-cov>=4.0.0",
