@@ -447,12 +447,14 @@ def _legacy_fix_result(
 
     Returns:
         The fix reports as JSON data, whether a fix failed, and the data files
-        whose items the freshness pass updated. The caller repairs those items,
-        which the finding-driven registry ran too early to see (#709).
+        whose items the freshness pass updated or whose bytes a conversion
+        rewrote. The caller repairs those items, which the finding-driven
+        registry ran too early to see (#709).
 
     Raises:
         NotACatalogError: A metadata-only fix found no catalog root (issue #384).
     """
+    from portolan_cli.convert import ConversionStatus
     from portolan_cli.metadata.fix import FixAction
 
     if outcome.fatal_error is not None:
@@ -478,6 +480,15 @@ def _legacy_fix_result(
         for result in (metadata_fix_report.results if metadata_fix_report else [])
         if result.success and result.action is FixAction.UPDATED
     ]
+    # A conversion rewrites the bytes after the checksum fixer recorded them.
+    # Without a repair the asset keeps a stale file:size and file:checksum, and
+    # only a second --fix records the new bytes.
+    conversion_report = format_fix_report.conversion_report if format_fix_report else None
+    written_items.extend(
+        result.output
+        for result in (conversion_report.results if conversion_report else [])
+        if result.status is ConversionStatus.SUCCESS and result.output is not None
+    )
 
     return (
         _fix_json_section(

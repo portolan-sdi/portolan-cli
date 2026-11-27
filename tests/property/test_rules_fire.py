@@ -53,10 +53,6 @@ NOT_REPAIRED: dict[str, str] = {
         "check --fix selects only the inert convert fixer for a type that contradicts the "
         "bytes. No pass derives the media type from the bytes again."
     ),
-    "PTL-DAT-004": (
-        "check --fix converts the GeoTIFF after the checksum fixer recorded its old bytes, "
-        "so file:size and file:checksum go stale and a second --fix rewrites the item."
-    ),
     "PTL-DAT-006": _GEOPARQUET_KEPT,
     "PTL-DAT-007": _GEOPARQUET_KEPT,
     "PTL-DAT-008": _GEOPARQUET_KEPT,
