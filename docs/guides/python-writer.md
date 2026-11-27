@@ -81,7 +81,7 @@ The STAC builders in `portolan_cli.api` make the Items and Collections for
 that writes straight to object storage can use them. Install them with
 `pip install portolan-cli`.
 
-### Build the Items
+### Build the items
 
 This example reads each GeoParquet file in a folder and makes one Item for
 each file:
@@ -98,7 +98,7 @@ outside WGS84.
 `add_projection_extension` keeps the native CRS and `bbox` as `proj:code` and
 `proj:bbox`.
 
-### Build the Collection
+### Build the collection
 
 ```python
 --8<-- "examples/python-writer/build_item.py:collection"
@@ -120,6 +120,6 @@ Convert each object with
 `transform_hrefs=False` keeps each asset `href` as you set it. A relative
 `href` resolves from the folder of its Item, and an absolute URL stays as it
 is. The writer sets the `root`, `parent`, `child`, `item`, and `collection`
-links, so leave those out. Copy each asset to its `href` yourself, for example
+links, so leave those out. Copy each asset to its `href` yourself. In this example, the asset files are
 `wetlands-catalog/wetlands/dc-2023/dc-2023.parquet` and
 `wetlands-catalog/wetlands/thumbnail.png`.

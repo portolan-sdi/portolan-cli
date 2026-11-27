@@ -9,8 +9,8 @@ format, so the docs Vale check skips heading case in this file. -->
 - `create_item` raises `InvalidBboxError` for a bbox that is not WGS84.
 Before, it accepted a projected bbox and made an Item that STAC does not
 allow. `create_collection` gives the same error with the reason (#928)
-- `add` now fails on a CRS that Portolan cannot read or transform, instead of
-publishing an untransformed bbox. `transform_bbox_to_wgs84` raises
+- `add` now fails on a CRS that Portolan cannot read or transform.
+`transform_bbox_to_wgs84` raises
 `CRSTransformError` (PRTLN-CNV012) in these cases (#928)
 
 ### Feat
