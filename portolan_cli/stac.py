@@ -1417,14 +1417,7 @@ def add_projection_extension(
             item.properties["proj:code"] = crs_str
     elif isinstance(crs_str, dict):
         # PROJJSON format (used by some GeoParquet files)
-        # Try to extract EPSG code if available
-        if "id" in crs_str and "code" in crs_str["id"]:
-            authority = crs_str["id"].get("authority", "EPSG")
-            code = crs_str["id"]["code"]
-            item.properties["proj:code"] = f"{authority}:{code}"
-        else:
-            # Store as WKT2 if we can't extract EPSG
-            item.properties["proj:code"] = str(crs_str)
+        item.properties["proj:code"] = _projjson_code(crs_str)
 
     # Set proj:bbox (native CRS bbox)
     if hasattr(metadata, "bbox") and metadata.bbox is not None:
@@ -1447,6 +1440,30 @@ def add_projection_extension(
     ext_url = EXTENSION_URLS["projection"]
     if ext_url not in item.stac_extensions:
         item.stac_extensions.append(ext_url)
+
+
+def _projjson_code(crs: dict[str, Any]) -> str:
+    """The proj:code of a PROJJSON CRS.
+
+    The id counts only when pyproj resolves it. An id such as EPSG:999999 or
+    MYORG:1 gives way to the EPSG match of the definition (#928).
+    """
+    from pyproj import CRS
+    from pyproj.exceptions import CRSError
+
+    crs_id = crs.get("id", {})
+    if "code" in crs_id:
+        code = f"{crs_id.get('authority', 'EPSG')}:{crs_id['code']}"
+        try:
+            CRS.from_user_input(code)
+            return code
+        except CRSError:
+            pass
+    try:
+        epsg = CRS.from_user_input(crs).to_epsg()
+    except CRSError:
+        epsg = None
+    return f"EPSG:{epsg}" if epsg is not None else str(crs)
 
 
 def geometry_type_list(value: object) -> list[str]:

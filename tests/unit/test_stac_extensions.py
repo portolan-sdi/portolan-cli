@@ -308,6 +308,31 @@ class TestProjectionExtension:
         assert item.properties.get("proj:code") == "EPSG:4326"
 
     @pytest.mark.unit
+    @pytest.mark.parametrize("crs_id", [("EPSG", 999999), ("MYORG", 1)])
+    def test_add_projection_extension_checks_the_projjson_id(self, crs_id: tuple[str, int]) -> None:
+        """An id that pyproj cannot resolve gives way to the EPSG match of the definition (#928)."""
+        from pyproj import CRS
+
+        from portolan_cli.stac import add_projection_extension, create_item
+
+        item = create_item(item_id="test-projjson", bbox=[0, 0, 1, 1])
+        projjson = CRS("EPSG:32610").to_json_dict()
+        projjson["id"] = {"authority": crs_id[0], "code": crs_id[1]}
+        metadata = GeoParquetMetadata(
+            bbox=(500000.0, 4000000.0, 510000.0, 4010000.0),
+            crs=projjson,
+            geometry_type="Point",
+            geometry_column="geometry",
+            feature_count=1,
+            schema={},
+        )
+
+        add_projection_extension(item, metadata)
+
+        assert item.properties["proj:code"] == "EPSG:32610"
+        assert metadata.to_stac_properties()["proj:epsg"] == 32610
+
+    @pytest.mark.unit
     def test_add_projection_extension_sets_proj_shape_for_raster(self) -> None:
         """add_projection_extension sets proj:shape for COGMetadata."""
         from portolan_cli.stac import add_projection_extension, create_item

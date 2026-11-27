@@ -96,14 +96,15 @@ class GeoParquetMetadata:
         if crs is None:
             return None
 
-        # Only an EPSG id is an EPSG code. pyproj resolves any other id.
+        # Only an EPSG id that pyproj resolves is an EPSG code. pyproj matches
+        # the definition for any other id, such as EPSG:999999 or MYORG:1.
         if isinstance(crs, dict) and crs.get("id", {}).get("authority", "EPSG") == "EPSG":
             code = crs.get("id", {}).get("code")
-            if code is not None:
-                try:
-                    return int(code)
-                except (TypeError, ValueError):
-                    pass
+            try:
+                CRS.from_epsg(int(code))
+                return int(code)
+            except (TypeError, ValueError, CRSError):
+                pass
 
         try:
             return CRS.from_user_input(crs).to_epsg()
