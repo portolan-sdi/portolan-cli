@@ -498,9 +498,9 @@ class TestLinksFixer:
         Concatenating it with a tuple raised ``TypeError`` the moment upstream
         exported anything but a tuple.
         """
-        monkeypatch.setattr(
-            fixers_module, "STRUCTURAL_RELS", frozenset(fixers_module.STRUCTURAL_RELS)
-        )
+        from rashid_core.api import STRUCTURAL_RELS
+
+        monkeypatch.setattr(fixers_module, "STRUCTURAL_RELS", frozenset(STRUCTURAL_RELS))
         collection = _tiny_catalog(tmp_path)
         data = _read_json(collection / "collection.json")
         data["links"] = [
@@ -1239,23 +1239,14 @@ class TestConvertFixer:
         assert [r.action for r in results] == [FixAction.SKIPPED]
 
     def test_the_skip_names_the_pass_that_owns_conversion(self, tmp_path: Path) -> None:
-        """The skip names both commands that do repair a file.
-
-        `convert` is selected by PTL-DAT-003, which the geo-asset pass owns, and
-        by PTL-DAT-006 and PTL-DAT-007, which it does not: those two fire on a
-        file that is already cloud-native, so the geo-asset pass skips it. Since
-        #805 `add --force --reconvert` rewrites that file, so the message names
-        it rather than leaving the operator with no route.
-        """
+        """The skip names the geo-asset pass, which rewrites the files these findings name."""
         _tiny_catalog(tmp_path)
 
         results = FIXERS["convert"](tmp_path, False)
 
         assert results[0].message == (
             "Conversion runs in the geo-asset pass; re-run `portolan check --fix` "
-            "without --metadata. A GeoParquet that is already cloud-native but "
-            "unsorted or missing its bbox covering column is rewritten by "
-            "`portolan add --force --reconvert`"
+            "without --metadata"
         )
 
 
@@ -1678,3 +1669,85 @@ class TestThumbnailFixer:
         assert [r.action for r in results] == [FixAction.UPDATED]
         assert _snapshot(tmp_path) == before
         assert collection_dir.exists()
+
+
+class TestMediaTypes:
+    """PTL-DAT-003: the declared media type follows the bytes of the asset."""
+
+    COG = "image/tiff; application=geotiff; profile=cloud-optimized"
+
+    def _asset(self, tmp_path: Path, name: str, content: bytes, declared: str) -> Path:
+        collection = _tiny_catalog(tmp_path)
+        (collection / name).write_bytes(content)
+        data = _read_json(collection / "collection.json")
+        data["assets"] = {"data": {"href": f"./{name}", "type": declared}}
+        _write_json(collection / "collection.json", data)
+        return collection / "collection.json"
+
+    @pytest.mark.parametrize(
+        ("name", "content", "expected"),
+        [
+            ("a.parquet", b"PAR1" + b"\0" * 8, "application/vnd.apache.parquet"),
+            ("a.pmtiles", b"PMTiles\x03", "application/vnd.pmtiles"),
+            ("a.png", b"\x89PNG\r\n\x1a\n", "image/png"),
+            ("a.jpg", b"\xff\xd8\xff\xe0", "image/jpeg"),
+            ("a.tif", b"II*\x00" + b"\0" * 8, "image/tiff; application=geotiff"),
+            ("a.tif", b"MM\x00*" + b"\0" * 8, "image/tiff; application=geotiff"),
+        ],
+    )
+    def test_the_bytes_decide_the_type(
+        self, tmp_path: Path, name: str, content: bytes, expected: str
+    ) -> None:
+        declared = "image/jpeg" if name == "a.png" else "image/png"
+        collection = self._asset(tmp_path, name, content, declared)
+
+        FIXERS["media_type"](tmp_path, False)
+
+        assert _read_json(collection)["assets"]["data"]["type"] == expected
+
+    def test_a_cog_gets_the_cog_profile(self, tmp_path: Path) -> None:
+        cog = Path(__file__).parents[2] / "fixtures" / "raster" / "valid" / "rgb.tif"
+        collection = self._asset(tmp_path, "a.tif", cog.read_bytes(), "image/png")
+
+        FIXERS["media_type"](tmp_path, False)
+
+        assert _read_json(collection)["assets"]["data"]["type"] == self.COG
+
+    @pytest.mark.parametrize(
+        ("name", "content", "declared"),
+        [
+            ("a.png", b"\x89PNG\r\n\x1a\n", "image/png; charset=binary"),
+            ("a.tif", b"II*\x00" + b"\0" * 8, "image/tiff; application=geotiff; profile=x"),
+            ("a.parquet", b"PAR1" + b"\0" * 8, "application/x-parquet; version=2"),
+        ],
+    )
+    def test_a_type_of_the_right_format_is_kept(
+        self, tmp_path: Path, name: str, content: bytes, declared: str
+    ) -> None:
+        self._asset(tmp_path, name, content, declared)
+        before = _snapshot(tmp_path)
+
+        assert FIXERS["media_type"](tmp_path, False) == []
+        assert _snapshot(tmp_path) == before
+
+    def test_an_unreadable_asset_is_skipped_with_a_reason(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        self._asset(tmp_path, "a.png", b"\x89PNG\r\n\x1a\n", "image/jpeg")
+        before = _snapshot(tmp_path)
+
+        real_open = Path.open
+
+        def denied(self: Path, *args: Any, **kwargs: Any) -> Any:
+            if self.name == "a.png":
+                raise PermissionError(13, "Permission denied", str(self))
+            return real_open(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "open", denied)
+        with caplog.at_level("WARNING", logger="portolan_cli.validation.fixers"):
+            results = FIXERS["media_type"](tmp_path, False)
+        monkeypatch.undo()
+
+        assert results == []
+        assert _snapshot(tmp_path) == before
+        assert "Cannot read a.png to type it: [Errno 13] Permission denied" in caplog.text

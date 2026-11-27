@@ -68,6 +68,7 @@ class TestParquetClassification:
 
         assert category == FileCategory.TABULAR_DATA
         assert skip_type is not None
+        assert message is not None
         assert "tabular" in message.lower() or "parquet" in message.lower()
 
     def test_parquet_with_geometry_column_but_no_geo_metadata(self, tmp_path: Path) -> None:
@@ -94,7 +95,7 @@ class TestTabularExtensions:
     """Tests for tabular file extension classification."""
 
     @pytest.mark.parametrize(
-        "filename,expected_category",
+        ("filename", "expected_category"),
         [
             ("data.csv", FileCategory.TABULAR_DATA),
             ("data.tsv", FileCategory.TABULAR_DATA),
@@ -109,7 +110,7 @@ class TestTabularExtensions:
         file_path = tmp_path / filename
         file_path.touch()
 
-        category, skip_type, message = classify_file(file_path)
+        category, skip_type, _message = classify_file(file_path)
 
         assert category == expected_category
         assert skip_type is not None  # Tabular files have skip reasons
@@ -180,7 +181,7 @@ class TestIsGeoParquet:
 
     def test_is_geoparquet_with_geo_metadata(self, tmp_path: Path) -> None:
         """Files with geo metadata should return True."""
-        from portolan_cli.scan.classify import is_geoparquet
+        from portolan_cli.formats import is_geoparquet
 
         parquet_file = tmp_path / "geo.parquet"
         table = pa.table({"id": [1], "geometry": [b"wkb"]})
@@ -198,7 +199,7 @@ class TestIsGeoParquet:
 
     def test_is_geoparquet_without_geo_metadata(self, tmp_path: Path) -> None:
         """Files without geo metadata should return False."""
-        from portolan_cli.scan.classify import is_geoparquet
+        from portolan_cli.formats import is_geoparquet
 
         parquet_file = tmp_path / "plain.parquet"
         table = pa.table({"id": [1], "value": [100]})
@@ -208,7 +209,7 @@ class TestIsGeoParquet:
 
     def test_is_geoparquet_handles_read_error(self, tmp_path: Path) -> None:
         """Should return False on read errors (not crash)."""
-        from portolan_cli.scan.classify import is_geoparquet
+        from portolan_cli.formats import is_geoparquet
 
         bad_file = tmp_path / "not_parquet.parquet"
         bad_file.write_text("this is not a parquet file")
@@ -218,7 +219,7 @@ class TestIsGeoParquet:
 
     def test_is_geoparquet_nonexistent_file(self, tmp_path: Path) -> None:
         """Should return False for nonexistent files."""
-        from portolan_cli.scan.classify import is_geoparquet
+        from portolan_cli.formats import is_geoparquet
 
         missing = tmp_path / "missing.parquet"
 
@@ -274,7 +275,7 @@ class TestTabularEnabledCheck:
         config_file.write_text("tabular:\n  enabled: false\n")
 
         # Add the file - should fail with hint
-        added, skipped, failures = add_files(
+        _added, _skipped, failures = add_files(
             paths=[parquet_file],
             catalog_root=catalog_root,
         )
@@ -497,7 +498,7 @@ class TestTabularEnabledCheck:
         config_file.write_text("tabular:\n  enabled: false\n")
 
         # Add both files - should work for both
-        added, skipped, failures = add_files(
+        _added, _skipped, failures = add_files(
             paths=[geo_file, tabular_file],
             catalog_root=catalog_root,
         )
@@ -537,7 +538,9 @@ class TestGpioRoutingForTabular:
 
         # Verify it's valid Parquet without geo metadata
         schema = pq.read_schema(output)
-        assert schema.metadata is None or b"geo" not in schema.metadata
+        # pyarrow returns None when the schema has no metadata. The stub omits None.
+        metadata: dict[bytes, bytes] | None = schema.metadata
+        assert metadata is None or b"geo" not in metadata
 
         # Verify data integrity
         table = pq.read_table(output)
@@ -587,14 +590,13 @@ class TestGpioRoutingForTabular:
 
     def test_xlsx_converted_to_parquet_via_gpio(self, tmp_path: Path) -> None:
         """XLSX files should be converted to Parquet when tabular.convert=true."""
-        pytest.importorskip("openpyxl")
-        from openpyxl import Workbook
+        openpyxl = pytest.importorskip("openpyxl")
 
         from portolan_cli.add import convert_tabular
 
         # Create a simple XLSX
         xlsx_path = tmp_path / "data.xlsx"
-        wb = Workbook()
+        wb = openpyxl.Workbook()
         ws = wb.active
         ws.append(["id", "name", "value"])
         ws.append([1, "foo", 100])
@@ -674,7 +676,7 @@ class TestAoiInheritance:
         config_file.write_text("tabular:\n  enabled: true\n")
 
         # Add the tabular file
-        added, skipped, failures = add_files(
+        _added, _skipped, failures = add_files(
             paths=[parquet_file],
             catalog_root=catalog_root,
         )
@@ -743,7 +745,7 @@ class TestAoiInheritance:
         config_file = catalog_root / ".portolan" / "config.yaml"
         config_file.write_text("tabular:\n  enabled: true\n")
 
-        added, skipped, failures = add_files(
+        _added, _skipped, failures = add_files(
             paths=[parquet_file],
             catalog_root=catalog_root,
         )
@@ -780,7 +782,7 @@ class TestAoiInheritance:
         config_file = catalog_root / ".portolan" / "config.yaml"
         config_file.write_text("tabular:\n  enabled: true\n")
 
-        added, skipped, failures = add_files(
+        _added, _skipped, failures = add_files(
             paths=[parquet_file],
             catalog_root=catalog_root,
         )
@@ -829,7 +831,7 @@ class TestAoiInheritance:
         config_file = catalog_root / ".portolan" / "config.yaml"
         config_file.write_text("tabular:\n  enabled: true\n")
 
-        added, skipped, failures = add_files(
+        _added, _skipped, failures = add_files(
             paths=[parquet_file],
             catalog_root=catalog_root,
         )
@@ -890,7 +892,7 @@ class TestAoiInheritance:
         config_file = catalog_root / ".portolan" / "config.yaml"
         config_file.write_text("tabular:\n  enabled: true\n")
 
-        added, skipped, failures = add_files(
+        _added, _skipped, failures = add_files(
             paths=[parquet_file],
             catalog_root=catalog_root,
         )
@@ -992,7 +994,7 @@ class TestTabularConversionIntegration:
         config_file.write_text("tabular:\n  enabled: true\n  convert: false\n")
 
         # Add the CSV
-        added, skipped, failures = add_files(
+        _added, _skipped, failures = add_files(
             paths=[csv_file],
             catalog_root=catalog_root,
         )
@@ -1013,8 +1015,7 @@ class TestTabularConversionIntegration:
 
     def test_xlsx_converted_to_parquet_in_workflow(self, tmp_path: Path) -> None:
         """XLSX file should be converted to Parquet in the add workflow."""
-        pytest.importorskip("openpyxl")
-        from openpyxl import Workbook
+        openpyxl = pytest.importorskip("openpyxl")
 
         from portolan_cli.add import add_files
 
@@ -1028,7 +1029,7 @@ class TestTabularConversionIntegration:
         collection_dir.mkdir()
 
         xlsx_file = collection_dir / "data.xlsx"
-        wb = Workbook()
+        wb = openpyxl.Workbook()
         ws = wb.active
         ws.append(["id", "name"])
         ws.append([1, "foo"])
@@ -1039,7 +1040,7 @@ class TestTabularConversionIntegration:
         config_file.write_text("tabular:\n  enabled: true\n  convert: true\n")
 
         # Add the XLSX
-        added, skipped, failures = add_files(
+        _added, _skipped, failures = add_files(
             paths=[xlsx_file],
             catalog_root=catalog_root,
         )
@@ -1057,7 +1058,7 @@ class TestPathTraversalProtection:
 
     def test_malicious_href_outside_catalog_ignored(self, tmp_path: Path) -> None:
         """Malicious hrefs pointing outside catalog should be ignored."""
-        from portolan_cli.add import _get_sibling_collection_bboxes
+        from portolan_cli.collection import _get_sibling_collection_bboxes
 
         catalog_root = tmp_path / "catalog"
         catalog_root.mkdir()
@@ -1082,7 +1083,7 @@ class TestPathTraversalProtection:
 
     def test_valid_sibling_still_found_with_malicious_mixed_in(self, tmp_path: Path) -> None:
         """Valid sibling collections should still be found even with malicious links."""
-        from portolan_cli.add import _get_sibling_collection_bboxes
+        from portolan_cli.collection import _get_sibling_collection_bboxes
 
         catalog_root = tmp_path / "catalog"
         catalog_root.mkdir()
@@ -1157,7 +1158,7 @@ class TestMalformedInputHandling:
 
     def test_invalid_parquet_returns_false_for_is_geoparquet(self, tmp_path: Path) -> None:
         """Invalid Parquet file should return False for is_geoparquet, not crash."""
-        from portolan_cli.scan.classify import is_geoparquet
+        from portolan_cli.formats import is_geoparquet
 
         # Create a file that's not valid Parquet
         bad_parquet = tmp_path / "bad.parquet"
@@ -1189,14 +1190,14 @@ class TestComputeUnionBbox:
 
     def test_empty_list_returns_global_fallback(self) -> None:
         """Empty bbox list should return global fallback."""
-        from portolan_cli.add import _compute_union_bbox
+        from portolan_cli.collection import _compute_union_bbox
 
         result = _compute_union_bbox([])
         assert result == [-180.0, -90.0, 180.0, 90.0]
 
     def test_single_bbox_returns_itself(self) -> None:
         """Single bbox should be returned as-is."""
-        from portolan_cli.add import _compute_union_bbox
+        from portolan_cli.collection import _compute_union_bbox
 
         bbox = [-75.5, 39.5, -74.5, 40.5]
         result = _compute_union_bbox([bbox])
@@ -1204,7 +1205,7 @@ class TestComputeUnionBbox:
 
     def test_multiple_bboxes_computes_union(self) -> None:
         """Multiple bboxes should compute proper union."""
-        from portolan_cli.add import _compute_union_bbox
+        from portolan_cli.collection import _compute_union_bbox
 
         bboxes = [
             [-75.5, 39.5, -75.0, 40.0],
@@ -1216,7 +1217,7 @@ class TestComputeUnionBbox:
 
     def test_handles_negative_coordinates(self) -> None:
         """Should correctly handle negative coordinates."""
-        from portolan_cli.add import _compute_union_bbox
+        from portolan_cli.collection import _compute_union_bbox
 
         bboxes = [
             [-180.0, -90.0, -170.0, -80.0],
@@ -1232,14 +1233,14 @@ class TestGetSiblingCollectionBboxes:
 
     def test_missing_catalog_json_returns_empty(self, tmp_path: Path) -> None:
         """Missing catalog.json should return empty list."""
-        from portolan_cli.add import _get_sibling_collection_bboxes
+        from portolan_cli.collection import _get_sibling_collection_bboxes
 
         result = _get_sibling_collection_bboxes(tmp_path)
         assert result == []
 
     def test_malformed_catalog_json_returns_empty(self, tmp_path: Path) -> None:
         """Malformed catalog.json should return empty list."""
-        from portolan_cli.add import _get_sibling_collection_bboxes
+        from portolan_cli.collection import _get_sibling_collection_bboxes
 
         (tmp_path / "catalog.json").write_text("not valid json {{{")
 
@@ -1248,7 +1249,7 @@ class TestGetSiblingCollectionBboxes:
 
     def test_catalog_with_no_links_returns_empty(self, tmp_path: Path) -> None:
         """Catalog with no links should return empty list."""
-        from portolan_cli.add import _get_sibling_collection_bboxes
+        from portolan_cli.collection import _get_sibling_collection_bboxes
 
         catalog = {"type": "Catalog", "id": "test", "links": []}
         (tmp_path / "catalog.json").write_text(json.dumps(catalog))
@@ -1258,7 +1259,7 @@ class TestGetSiblingCollectionBboxes:
 
     def test_catalog_with_non_collection_links_returns_empty(self, tmp_path: Path) -> None:
         """Catalog with only non-collection links should return empty list."""
-        from portolan_cli.add import _get_sibling_collection_bboxes
+        from portolan_cli.collection import _get_sibling_collection_bboxes
 
         catalog = {
             "type": "Catalog",
@@ -1275,7 +1276,7 @@ class TestGetSiblingCollectionBboxes:
 
     def test_collection_with_missing_extent_skipped(self, tmp_path: Path) -> None:
         """Collection without extent should be skipped."""
-        from portolan_cli.add import _get_sibling_collection_bboxes
+        from portolan_cli.collection import _get_sibling_collection_bboxes
 
         # Create collection without extent
         coll_dir = tmp_path / "no-extent"
@@ -1296,7 +1297,7 @@ class TestGetSiblingCollectionBboxes:
 
     def test_collection_with_invalid_bbox_skipped(self, tmp_path: Path) -> None:
         """Collection with invalid bbox format should be skipped."""
-        from portolan_cli.add import _get_sibling_collection_bboxes
+        from portolan_cli.collection import _get_sibling_collection_bboxes
 
         # Create collection with invalid bbox (only 2 elements)
         coll_dir = tmp_path / "bad-bbox"
@@ -1321,7 +1322,7 @@ class TestGetSiblingCollectionBboxes:
 
     def test_collection_with_3d_bbox_extracts_2d(self, tmp_path: Path) -> None:
         """Collection with 6-element 3D bbox should extract 2D components."""
-        from portolan_cli.add import _get_sibling_collection_bboxes
+        from portolan_cli.collection import _get_sibling_collection_bboxes
 
         # Create collection with 3D bbox
         coll_dir = tmp_path / "3d-collection"
@@ -1357,14 +1358,14 @@ class TestGetMetadataYamlBbox:
 
     def test_missing_metadata_yaml_returns_none(self, tmp_path: Path) -> None:
         """Missing metadata.yaml should return None."""
-        from portolan_cli.add import _get_metadata_yaml_bbox
+        from portolan_cli.collection import _get_metadata_yaml_bbox
 
         result = _get_metadata_yaml_bbox(tmp_path)
         assert result is None
 
     def test_empty_metadata_yaml_returns_none(self, tmp_path: Path) -> None:
         """Empty metadata.yaml should return None."""
-        from portolan_cli.add import _get_metadata_yaml_bbox
+        from portolan_cli.collection import _get_metadata_yaml_bbox
 
         (tmp_path / "metadata.yaml").write_text("")
 
@@ -1373,7 +1374,7 @@ class TestGetMetadataYamlBbox:
 
     def test_metadata_yaml_with_top_level_bbox(self, tmp_path: Path) -> None:
         """metadata.yaml with top-level bbox should be found."""
-        from portolan_cli.add import _get_metadata_yaml_bbox
+        from portolan_cli.collection import _get_metadata_yaml_bbox
 
         (tmp_path / "metadata.yaml").write_text("bbox: [-75.0, 39.0, -74.0, 40.0]\n")
 
@@ -1382,7 +1383,7 @@ class TestGetMetadataYamlBbox:
 
     def test_metadata_yaml_with_nested_extent_bbox(self, tmp_path: Path) -> None:
         """metadata.yaml with extent.bbox should be found."""
-        from portolan_cli.add import _get_metadata_yaml_bbox
+        from portolan_cli.collection import _get_metadata_yaml_bbox
 
         content = """
 extent:
@@ -1395,7 +1396,7 @@ extent:
 
     def test_metadata_yaml_with_3d_bbox_extracts_2d(self, tmp_path: Path) -> None:
         """metadata.yaml with 6-element bbox should extract 2D."""
-        from portolan_cli.add import _get_metadata_yaml_bbox
+        from portolan_cli.collection import _get_metadata_yaml_bbox
 
         # 6-element 3D bbox
         (tmp_path / "metadata.yaml").write_text("bbox: [-75.0, 39.0, 0.0, -74.0, 40.0, 100.0]\n")
@@ -1407,7 +1408,7 @@ extent:
 
     def test_metadata_yaml_with_invalid_bbox_returns_none(self, tmp_path: Path) -> None:
         """metadata.yaml with invalid bbox should return None."""
-        from portolan_cli.add import _get_metadata_yaml_bbox
+        from portolan_cli.collection import _get_metadata_yaml_bbox
 
         (tmp_path / "metadata.yaml").write_text("bbox: [1.0, 2.0]\n")  # Only 2 elements
 
@@ -1416,7 +1417,7 @@ extent:
 
     def test_metadata_yaml_with_non_numeric_bbox_returns_none(self, tmp_path: Path) -> None:
         """metadata.yaml with non-numeric bbox values should return None."""
-        from portolan_cli.add import _get_metadata_yaml_bbox
+        from portolan_cli.collection import _get_metadata_yaml_bbox
 
         (tmp_path / "metadata.yaml").write_text("bbox: ['a', 'b', 'c', 'd']\n")
 
@@ -1425,7 +1426,7 @@ extent:
 
     def test_malformed_yaml_returns_none(self, tmp_path: Path) -> None:
         """Malformed YAML should return None (not crash)."""
-        from portolan_cli.add import _get_metadata_yaml_bbox
+        from portolan_cli.collection import _get_metadata_yaml_bbox
 
         (tmp_path / "metadata.yaml").write_text("bbox: [unclosed bracket\n")
 

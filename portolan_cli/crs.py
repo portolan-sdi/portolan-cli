@@ -22,6 +22,9 @@ from portolan_core.trace import count
 
 if TYPE_CHECKING:
     from pathlib import Path
+from portolan_core.bbox import LAT_MAX, LAT_MIN, LON_MAX, LON_MIN
+
+_WGS84_EPSG = 4326
 
 logger = logging.getLogger(__name__)
 
@@ -239,7 +242,7 @@ def _is_wgs84(crs: CRS) -> bool:
     Both should be treated as WGS84 for coordinate transformation purposes.
     """
     epsg = crs.to_epsg()
-    if epsg == 4326:
+    if epsg == _WGS84_EPSG:
         return True
 
     # Check for CRS84 by name (pyproj recognizes it)
@@ -366,12 +369,12 @@ def is_likely_wgs84_bbox(bbox: tuple[float, float, float, float]) -> bool:
     minx, miny, maxx, maxy = bbox
 
     # Check latitude bounds (y coordinates must be -90 to 90)
-    if not (-90.0 <= miny <= 90.0 and -90.0 <= maxy <= 90.0):
+    if not (LAT_MIN <= miny <= LAT_MAX and LAT_MIN <= maxy <= LAT_MAX):
         return False
 
     # Check longitude bounds (x coordinates must be -180 to 180)
     # Note: for antimeridian crossing, minx > maxx is valid
-    return -180.0 <= minx <= 180.0 and -180.0 <= maxx <= 180.0
+    return LON_MIN <= minx <= LON_MAX and LON_MIN <= maxx <= LON_MAX
 
 
 def _sample_bbox_edges(
@@ -545,7 +548,7 @@ def _stream_wgs84_bounds(
                 if not finite.any():
                     continue
                 bounds.update(lon[finite], lat[finite], np=np)
-    except Exception as exc:  # noqa: BLE001 - measurement is best-effort
+    except Exception as exc:  # measurement is best-effort
         logger.debug("Cannot measure bbox from %s: %s", data_path, exc)
         return None
 
@@ -560,7 +563,7 @@ def _bbox_from_bounds(bounds: _MeasuredBounds) -> tuple[float, float, float, flo
     plain frame, so data that does not cross is unaffected.
     """
     if bounds.shifted_span() < bounds.plain_span():
-        west = bounds.min_shifted - 360.0 if bounds.min_shifted >= 180.0 else bounds.min_shifted
-        east = bounds.max_shifted - 360.0 if bounds.max_shifted > 180.0 else bounds.max_shifted
+        west = bounds.min_shifted - 360.0 if bounds.min_shifted >= LON_MAX else bounds.min_shifted
+        east = bounds.max_shifted - 360.0 if bounds.max_shifted > LON_MAX else bounds.max_shifted
         return (west, bounds.miny, east, bounds.maxy)
     return (bounds.minx, bounds.miny, bounds.maxx, bounds.maxy)

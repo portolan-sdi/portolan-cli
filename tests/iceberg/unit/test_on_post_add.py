@@ -20,6 +20,7 @@ from portolan_cli.backends.iceberg.stac_generator import (
 from tests.iceberg.conftest import publish_boundaries
 
 if TYPE_CHECKING:
+    from datetime import datetime
     from pathlib import Path
 
 
@@ -42,12 +43,13 @@ def catalog_with_stac(tmp_path: Path) -> tuple[Path, Path, pystac.Collection]:
     (item_dir / "data.parquet").write_bytes(b"fake parquet")
     (item_dir / "item1.json").write_text('{"type": "Feature"}')
 
+    open_interval: list[list[datetime | None]] = [[None, None]]
     collection = pystac.Collection(
         id="boundaries",
         description="test",
         extent=pystac.Extent(
-            spatial=pystac.SpatialExtent(bboxes=[[-180, -90, 180, 90]]),
-            temporal=pystac.TemporalExtent(intervals=[[None, None]]),
+            spatial=pystac.SpatialExtent(bboxes=[[-180.0, -90.0, 180.0, 90.0]]),
+            temporal=pystac.TemporalExtent(intervals=open_interval),
         ),
     )
 

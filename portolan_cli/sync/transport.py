@@ -22,6 +22,8 @@ from portolan_cli.sync.pull import PullError, PullResult, pull
 from portolan_cli.sync.report import Report, silent
 from portolan_core.json_io import write_json_atomic
 
+_MIN_URL_PARTS = 3
+
 # =============================================================================
 # URL Parsing Utilities
 # =============================================================================
@@ -60,7 +62,7 @@ def infer_local_path_from_url(remote_url: str) -> Path:
     # We need at least scheme://bucket/catalog (3+ parts after split)
     # e.g., ['s3:', 'bucket', 'catalog'] or ['s3:', '', 'bucket', 'catalog']
     # After removing scheme part, we need the catalog name
-    if len(parts) < 3:
+    if len(parts) < _MIN_URL_PARTS:
         raise ValueError(
             f"Cannot infer local path from URL: {remote_url}. "
             "URL must include a catalog name (e.g., s3://bucket/catalog-name)."
@@ -465,7 +467,7 @@ def _drop_missing_child_links(local_path: Path, collections: list[str]) -> None:
             write_json_atomic(path, document)
 
 
-def clone(
+def clone(  # noqa: PLR0915 - one ordered clone sequence
     remote_url: str,
     local_path: Path,
     collection: str | None = None,

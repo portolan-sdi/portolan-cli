@@ -8,6 +8,7 @@ asserted wall-clock limits on shared runners and are gone.
 
 from __future__ import annotations
 
+import functools
 import io
 from typing import TYPE_CHECKING, Any
 
@@ -67,25 +68,16 @@ def _create_minimal_parquet() -> bytes:
     return buf.getvalue()
 
 
-# Cache the bytes at module level (created once per test session)
-_MINIMAL_TIFF: bytes | None = None
-_MINIMAL_PARQUET: bytes | None = None
-
-
+@functools.cache
 def _get_minimal_tiff() -> bytes:
     """Get cached minimal TIFF bytes."""
-    global _MINIMAL_TIFF
-    if _MINIMAL_TIFF is None:
-        _MINIMAL_TIFF = _create_minimal_tiff()
-    return _MINIMAL_TIFF
+    return _create_minimal_tiff()
 
 
+@functools.cache
 def _get_minimal_parquet() -> bytes:
     """Get cached minimal Parquet bytes."""
-    global _MINIMAL_PARQUET
-    if _MINIMAL_PARQUET is None:
-        _MINIMAL_PARQUET = _create_minimal_parquet()
-    return _MINIMAL_PARQUET
+    return _create_minimal_parquet()
 
 
 # =============================================================================
@@ -165,7 +157,7 @@ def _create_deep_structure(base: Path, depth: int, files_per_level: int) -> None
     parquet_bytes = _get_minimal_parquet()
 
     for level in range(depth):
-        current = current / f"level_{level}"
+        current /= f"level_{level}"
         current.mkdir(parents=True, exist_ok=True)
 
         for j in range(files_per_level):

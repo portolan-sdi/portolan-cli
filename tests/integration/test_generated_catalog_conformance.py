@@ -43,7 +43,7 @@ from rashid_core.api import LocalOnlyReader, RulesConfig, Severity, ValidationOp
 
 from tests.catalog_invariants import check_catalog_invariants
 from tests.known_upstream import GPIO_WFS_OOM
-from tests.properties.test_rebuild_idempotence import shrink_geoparquet
+from tests.property.test_rebuild_idempotence import shrink_geoparquet
 
 if TYPE_CHECKING:
     from tests.catalog_invariants import RunCli
@@ -698,7 +698,7 @@ def build_scenario(
             try:
                 SCENARIOS[name].build(root, harness)
                 built[name] = (root, sorted(harness.roots | {root.resolve()}))
-            except BaseException as exc:  # noqa: BLE001 - cached and raised again
+            except BaseException as exc:  # cached and raised again
                 built[name] = exc
         result = built[name]
         if isinstance(result, BaseException):

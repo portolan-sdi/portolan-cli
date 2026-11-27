@@ -261,7 +261,7 @@ class JsonFileBackend:
             return "1.0.0"
 
         current = versions_file.current_version or "0.0.0"
-        major, minor, patch = parse_version(current)
+        major, minor, _patch = parse_version(current)
 
         if breaking:
             return f"{major + 1}.0.0"
@@ -333,7 +333,7 @@ class JsonFileBackend:
             message="Drift detection pending sync implementation",
         )
 
-    def on_post_add(self, context: PostAddContext) -> None:  # noqa: ARG002 - the protocol fixes it
+    def on_post_add(self, context: PostAddContext) -> None:  # the protocol fixes it
         """Do nothing: versions.json is already written when add finishes."""
 
     def pull(

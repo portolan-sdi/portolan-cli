@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import ClassVar
+
 import pytest
 
 from portolan_core.bbox import (
@@ -254,7 +256,7 @@ class TestFilterValidBboxes:
         ]
         result = filter_valid_bboxes(bboxes)
         assert len(result.invalid) == 1
-        bbox, reason = result.invalid[0]
+        _bbox, reason = result.invalid[0]
         assert "inf" in reason.lower() or "finite" in reason.lower()
 
 
@@ -412,7 +414,7 @@ class TestComputeBboxUnion:
 class TestIsValidBboxBounds:
     """Each WGS84 bound is inclusive, and each check stands on its own."""
 
-    UTM = [500000.0, 4000000.0, 600000.0, 4100000.0]
+    UTM: ClassVar[list[float]] = [500000.0, 4000000.0, 600000.0, 4100000.0]
 
     def test_wgs84_ranges_apply_by_default(self) -> None:
         assert is_valid_bbox(self.UTM) is False

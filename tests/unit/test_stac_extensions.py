@@ -61,7 +61,7 @@ class TestStacExtensionsArray:
         """build_stac_extensions includes projection extension when proj: fields present."""
         from portolan_cli.stac import build_stac_extensions
 
-        properties = {
+        properties: dict[str, object] = {
             "proj:code": "EPSG:4326",
             "proj:bbox": [-180, -90, 180, 90],
         }
@@ -75,7 +75,7 @@ class TestStacExtensionsArray:
         from portolan_cli.stac import build_stac_extensions
 
         # STAC v1.1.0: bands is now unified, but raster:spatial_resolution triggers raster ext
-        properties = {
+        properties: dict[str, object] = {
             "raster:spatial_resolution": 10.0,
         }
         result = build_stac_extensions(properties)
@@ -113,7 +113,7 @@ class TestTableExtension:
         metadata = GeoParquetMetadata(
             bbox=(-180, -90, 180, 90),
             crs="EPSG:4326",
-            geometry_type="Polygon",
+            geometry_type=["Polygon"],
             geometry_column="geometry",
             feature_count=1234,
             schema={"id": "int64", "geometry": "binary"},
@@ -135,7 +135,7 @@ class TestTableExtension:
         metadata = GeoParquetMetadata(
             bbox=(-180, -90, 180, 90),
             crs="EPSG:4326",
-            geometry_type="Point",
+            geometry_type=["Point"],
             geometry_column="geom",
             feature_count=100,
             schema={"id": "int64", "geom": "binary"},
@@ -157,7 +157,7 @@ class TestTableExtension:
         metadata = GeoParquetMetadata(
             bbox=(-180, -90, 180, 90),
             crs="EPSG:4326",
-            geometry_type="Polygon",
+            geometry_type=["Polygon"],
             geometry_column="geometry",
             feature_count=100,
             schema={"id": "int64", "name": "string", "geom": "binary"},
@@ -182,7 +182,7 @@ class TestTableExtension:
         metadata = GeoParquetMetadata(
             bbox=(-180, -90, 180, 90),
             crs="EPSG:4326",
-            geometry_type="Point",
+            geometry_type=["Point"],
             geometry_column="geometry",
             feature_count=100,
             schema={"id": "int64"},
@@ -208,7 +208,7 @@ class TestProjectionExtension:
         metadata = GeoParquetMetadata(
             bbox=(-122.5, 37.5, -122.0, 38.0),
             crs="EPSG:32610",
-            geometry_type="Polygon",
+            geometry_type=["Polygon"],
             geometry_column="geometry",
             feature_count=100,
             schema={"id": "int64"},
@@ -227,7 +227,7 @@ class TestProjectionExtension:
         metadata = GeoParquetMetadata(
             bbox=(0, 0, 1, 1),
             crs="epsg:4326",  # lowercase
-            geometry_type="Point",
+            geometry_type=["Point"],
             geometry_column="geometry",
             feature_count=1,
             schema={},
@@ -250,7 +250,7 @@ class TestProjectionExtension:
         metadata = GeoParquetMetadata(
             bbox=native_bbox,
             crs="EPSG:32610",
-            geometry_type="Polygon",
+            geometry_type=["Polygon"],
             geometry_column="geometry",
             feature_count=100,
             schema={"id": "int64"},
@@ -272,7 +272,7 @@ class TestProjectionExtension:
         metadata = GeoParquetMetadata(
             bbox=(0, 0, 1, 1),
             crs=None,
-            geometry_type="Point",
+            geometry_type=["Point"],
             geometry_column="geometry",
             feature_count=1,
             schema={},
@@ -296,8 +296,8 @@ class TestProjectionExtension:
         }
         metadata = GeoParquetMetadata(
             bbox=(0, 0, 1, 1),
-            crs=projjson_crs,  # type: ignore[arg-type]
-            geometry_type="Point",
+            crs=projjson_crs,
+            geometry_type=["Point"],
             geometry_column="geometry",
             feature_count=1,
             schema={},
@@ -447,7 +447,7 @@ class TestProjectionExtension:
         metadata = GeoParquetMetadata(
             bbox=(0, 0, 1, 1),
             crs="EPSG:4326",
-            geometry_type="Point",
+            geometry_type=["Point"],
             geometry_column="geometry",
             feature_count=1,
             schema={},
@@ -535,7 +535,7 @@ class TestBboxWgs84Transformation:
         """A transform that fails raises instead of returning the native bbox (#928)."""
         from pyproj.exceptions import ProjError
 
-        import portolan_cli.crs as crs
+        from portolan_cli import crs
         from portolan_core.errors import CRSTransformError
 
         def fail(*_args: object) -> None:
@@ -742,7 +742,7 @@ class TestTableExtensionAggregation:
             GeoParquetMetadata(
                 bbox=(0, 0, 1, 1),
                 crs="EPSG:4326",
-                geometry_type="Polygon",
+                geometry_type=["Polygon"],
                 geometry_column="geometry",
                 feature_count=100,
                 schema={"id": "int64", "geometry": "binary"},
@@ -750,7 +750,7 @@ class TestTableExtensionAggregation:
             GeoParquetMetadata(
                 bbox=(1, 1, 2, 2),
                 crs="EPSG:4326",
-                geometry_type="Polygon",
+                geometry_type=["Polygon"],
                 geometry_column="geometry",
                 feature_count=200,
                 schema={"id": "int64", "geometry": "binary"},
@@ -758,7 +758,7 @@ class TestTableExtensionAggregation:
             GeoParquetMetadata(
                 bbox=(2, 2, 3, 3),
                 crs="EPSG:4326",
-                geometry_type="Polygon",
+                geometry_type=["Polygon"],
                 geometry_column="geometry",
                 feature_count=300,
                 schema={"id": "int64", "geometry": "binary"},
@@ -780,7 +780,7 @@ class TestTableExtensionAggregation:
             GeoParquetMetadata(
                 bbox=(0, 0, 1, 1),
                 crs="EPSG:4326",
-                geometry_type="Point",
+                geometry_type=["Point"],
                 geometry_column="geometry",
                 feature_count=10,
                 schema={"id": "int64", "name": "string", "geometry": "binary"},
@@ -788,7 +788,7 @@ class TestTableExtensionAggregation:
             GeoParquetMetadata(
                 bbox=(1, 1, 2, 2),
                 crs="EPSG:4326",
-                geometry_type="Point",
+                geometry_type=["Point"],
                 geometry_column="geometry",
                 feature_count=20,
                 schema={"id": "int64", "value": "float64", "geometry": "binary"},
@@ -812,7 +812,7 @@ class TestTableExtensionAggregation:
             GeoParquetMetadata(
                 bbox=(0, 0, 1, 1),
                 crs="EPSG:4326",
-                geometry_type="Point",
+                geometry_type=["Point"],
                 geometry_column="geom",
                 feature_count=10,
                 schema={"geom": "binary"},
@@ -820,7 +820,7 @@ class TestTableExtensionAggregation:
             GeoParquetMetadata(
                 bbox=(1, 1, 2, 2),
                 crs="EPSG:4326",
-                geometry_type="Point",
+                geometry_type=["Point"],
                 geometry_column="geometry",
                 feature_count=20,
                 schema={"geometry": "binary"},
@@ -840,7 +840,7 @@ class TestTableExtensionAggregation:
             GeoParquetMetadata(
                 bbox=(0, 0, 1, 1),
                 crs="EPSG:4326",
-                geometry_type="Polygon",
+                geometry_type=["Polygon"],
                 geometry_column="geometry",
                 feature_count=500,
                 schema={"id": "int64"},
@@ -870,7 +870,7 @@ class TestTableExtensionAggregation:
             GeoParquetMetadata(
                 bbox=(-74.3, 40.5, -73.7, 40.9),  # NYC area
                 crs="EPSG:4326",
-                geometry_type="Point",
+                geometry_type=["Point"],
                 geometry_column="geometry",
                 feature_count=100,
                 schema={"id": "int64"},
@@ -878,7 +878,7 @@ class TestTableExtensionAggregation:
             GeoParquetMetadata(
                 bbox=(-118.7, 33.7, -118.1, 34.3),  # LA area
                 crs="EPSG:4326",
-                geometry_type="Point",
+                geometry_type=["Point"],
                 geometry_column="geometry",
                 feature_count=200,
                 schema={"id": "int64"},
@@ -886,7 +886,7 @@ class TestTableExtensionAggregation:
             GeoParquetMetadata(
                 bbox=(-87.9, 41.6, -87.5, 42.0),  # Chicago area
                 crs="EPSG:4326",
-                geometry_type="Point",
+                geometry_type=["Point"],
                 geometry_column="geometry",
                 feature_count=150,
                 schema={"id": "int64"},
@@ -914,7 +914,7 @@ class TestTableExtensionAggregation:
             GeoParquetMetadata(
                 bbox=(0, 0, 1, 1),
                 crs="EPSG:4326",
-                geometry_type="Point",
+                geometry_type=["Point"],
                 geometry_column="geometry",
                 feature_count=100,
                 schema={"id": "int64"},
@@ -922,7 +922,7 @@ class TestTableExtensionAggregation:
             GeoParquetMetadata(
                 bbox=(1, 1, 2, 2),
                 crs="EPSG:32618",  # Different CRS (UTM zone 18N)
-                geometry_type="Point",
+                geometry_type=["Point"],
                 geometry_column="geometry",
                 feature_count=200,
                 schema={"id": "int64"},
@@ -932,6 +932,7 @@ class TestTableExtensionAggregation:
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
             aggregated = aggregate_table_metadata(metadata_list)
+            assert isinstance(aggregated, GeoParquetMetadata)
 
             # Should have raised a warning
             assert len(w) == 1
@@ -953,7 +954,7 @@ class TestTableExtensionAggregation:
             GeoParquetMetadata(
                 bbox=(0, 0, 1, 1),
                 crs="EPSG:4326",
-                geometry_type="Point",
+                geometry_type=["Point"],
                 geometry_column="geometry",
                 feature_count=100,
                 schema={"id": "int64", "name": "string"},
@@ -961,7 +962,7 @@ class TestTableExtensionAggregation:
             GeoParquetMetadata(
                 bbox=(1, 1, 2, 2),
                 crs="EPSG:4326",
-                geometry_type="Point",
+                geometry_type=["Point"],
                 geometry_column="geometry",
                 feature_count=200,
                 schema={"id": "string", "value": "float64"},  # id is string here!
@@ -971,6 +972,7 @@ class TestTableExtensionAggregation:
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
             aggregated = aggregate_table_metadata(metadata_list)
+            assert isinstance(aggregated, GeoParquetMetadata)
 
             # Should have raised a warning about type conflict
             assert len(w) == 1
@@ -993,7 +995,7 @@ class TestTableExtensionAggregation:
             GeoParquetMetadata(
                 bbox=(0, 0, 1, 1),
                 crs="EPSG:4326",
-                geometry_type="Point",
+                geometry_type=["Point"],
                 geometry_column="geometry",
                 feature_count=100,
                 schema={"id": "int64"},
@@ -1001,7 +1003,7 @@ class TestTableExtensionAggregation:
             GeoParquetMetadata(
                 bbox=(1, 1, 2, 2),
                 crs="EPSG:4326",
-                geometry_type="Polygon",  # Different geometry type
+                geometry_type=["Polygon"],  # Different geometry type
                 geometry_column="geometry",
                 feature_count=200,
                 schema={"id": "int64"},
@@ -1011,6 +1013,7 @@ class TestTableExtensionAggregation:
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
             aggregated = aggregate_table_metadata(metadata_list)
+            assert isinstance(aggregated, GeoParquetMetadata)
 
             # Should have raised a warning about mixed geometry types
             assert len(w) == 1
@@ -1031,7 +1034,7 @@ class TestTableExtensionAggregation:
             GeoParquetMetadata(
                 bbox=None,  # No bbox
                 crs="EPSG:4326",
-                geometry_type="Point",
+                geometry_type=["Point"],
                 geometry_column="geometry",
                 feature_count=100,
                 schema={"id": "int64"},
@@ -1039,7 +1042,7 @@ class TestTableExtensionAggregation:
             GeoParquetMetadata(
                 bbox=None,  # No bbox either
                 crs="EPSG:4326",
-                geometry_type="Point",
+                geometry_type=["Point"],
                 geometry_column="geometry",
                 feature_count=200,
                 schema={"id": "int64"},
@@ -1058,7 +1061,7 @@ class TestTableExtensionAggregation:
             GeoParquetMetadata(
                 bbox=(0, 0, 1, 1),
                 crs="EPSG:4326",
-                geometry_type="Point",
+                geometry_type=["Point"],
                 geometry_column="geometry",
                 feature_count=100,
                 schema={"id": "int64"},
@@ -1066,7 +1069,7 @@ class TestTableExtensionAggregation:
             GeoParquetMetadata(
                 bbox=None,  # No bbox - should be ignored for union
                 crs="EPSG:4326",
-                geometry_type="Point",
+                geometry_type=["Point"],
                 geometry_column="geometry",
                 feature_count=200,
                 schema={"id": "int64"},
@@ -1074,7 +1077,7 @@ class TestTableExtensionAggregation:
             GeoParquetMetadata(
                 bbox=(5, 5, 10, 10),
                 crs="EPSG:4326",
-                geometry_type="Point",
+                geometry_type=["Point"],
                 geometry_column="geometry",
                 feature_count=150,
                 schema={"id": "int64"},
@@ -1226,7 +1229,7 @@ class TestRasterExtension:
             band_count=1,
             dtype="uint8",
             nodata=None,
-            resolution=None,
+            resolution=None,  # type: ignore[arg-type]  # The test passes no resolution.
         )
 
         add_raster_extension(item, metadata)
@@ -1254,7 +1257,7 @@ class TestRasterExtension:
             band_count=1,
             dtype="uint8",
             nodata=None,
-            resolution=None,
+            resolution=None,  # type: ignore[arg-type]  # The test passes no resolution.
         )
 
         add_raster_extension(item, metadata)
@@ -1276,7 +1279,7 @@ class TestRasterExtension:
             band_count=1,
             dtype="uint8",
             nodata=None,
-            resolution=None,
+            resolution=None,  # type: ignore[arg-type]  # The test passes no resolution.
         )
 
         add_raster_extension(item, metadata)

@@ -398,12 +398,12 @@ PUSHED = [
 
 @_tests("push.exclude")
 @_forms()
+@pytest.mark.usefixtures("_aws_env")
 def test_push_exclude_keeps_matching_files_out_of_the_bucket(
     form: str,
     catalog: Path,
     run_cli: RunCli,
     s3_bucket: tuple[str, str],
-    _aws_env: None,
 ) -> None:
     _catalog_with_notes(run_cli, catalog)
     configure(run_cli, catalog, form, {"push.exclude": ('["*.md"]', ["*.md"])})
@@ -414,8 +414,9 @@ def test_push_exclude_keeps_matching_files_out_of_the_bucket(
     assert keys == [key for key in PUSHED if not key.endswith(".md") or key.endswith("/README.md")]
 
 
+@pytest.mark.usefixtures("_aws_env")
 def test_push_uploads_agents_md_and_no_untracked_notes_by_default(
-    catalog: Path, run_cli: RunCli, s3_bucket: tuple[str, str], _aws_env: None
+    catalog: Path, run_cli: RunCli, s3_bucket: tuple[str, str]
 ) -> None:
     """The default patterns let AGENTS.md through, so the test above measures the key."""
     _catalog_with_notes(run_cli, catalog)
@@ -610,7 +611,7 @@ def test_conversion_vector_layout_settings_reach_the_writer(
     assert table.column("name").to_pylist() == SOURCE_ORDER
     # The H3 index stores its resolution in bits 52 to 55.
     cells = table.column("h3_cell").to_pylist()
-    assert {int(cell, 16) >> 52 & 0xF for cell in cells} == {5}
+    assert {int(str(cell), 16) >> 52 & 0xF for cell in cells} == {5}
 
 
 SOURCE_ORDER = [
@@ -854,15 +855,17 @@ def _jpeg_quality(path: Path) -> list[int]:
     """Return each quality whose standard JPEG tables match the tables in ``path``."""
     import io
 
-    from PIL import Image
+    from PIL import Image, JpegImagePlugin
 
     def tables(quality: int, mode: str) -> dict[int, list[int]]:
         buffer = io.BytesIO()
         Image.new(mode, (16, 16)).save(buffer, "JPEG", quality=quality)
         with Image.open(buffer) as image:
+            assert isinstance(image, JpegImagePlugin.JpegImageFile)
             return {key: list(table) for key, table in image.quantization.items()}
 
     with Image.open(path) as image:
+        assert isinstance(image, JpegImagePlugin.JpegImageFile)
         found = {key: list(table) for key, table in image.quantization.items()}
         mode = image.mode
     return [quality for quality in range(1, 101) if tables(quality, mode) == found]

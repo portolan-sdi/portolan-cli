@@ -514,7 +514,9 @@ class TestCleanEdgeCases:
             portolan_dir.mkdir()
             (portolan_dir / "config.yaml").write_text("# config")
             # Create catalog.json (required for MANAGED state)
-            Path("catalog.json").write_text(json.dumps({"type": "Catalog", "id": "test"}))
+            Path("catalog.json").write_text(
+                json.dumps({"type": "Catalog", "id": "test"}), encoding="utf-8"
+            )
 
             result = runner.invoke(cli, ["clean"])
 

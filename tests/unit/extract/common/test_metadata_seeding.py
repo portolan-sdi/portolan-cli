@@ -21,7 +21,7 @@ class TestIsTechnicalName:
 
     def test_underscore_only_identifier(self) -> None:
         """Lowercase with underscores detected as technical."""
-        from portolan_cli.extract.common.metadata_seeding import _is_technical_name
+        from portolan_cli.stac import is_technical_name as _is_technical_name
 
         assert _is_technical_name("bu_building_emprise") is True
         assert _is_technical_name("road_centerlines") is True
@@ -29,21 +29,21 @@ class TestIsTechnicalName:
 
     def test_namespace_prefix(self) -> None:
         """Namespace:name pattern detected as technical."""
-        from portolan_cli.extract.common.metadata_seeding import _is_technical_name
+        from portolan_cli.stac import is_technical_name as _is_technical_name
 
         assert _is_technical_name("inspire_bu:BU.Building") is True
         assert _is_technical_name("ns:LayerName") is True
 
     def test_short_no_spaces(self) -> None:
         """Short strings without spaces are technical."""
-        from portolan_cli.extract.common.metadata_seeding import _is_technical_name
+        from portolan_cli.stac import is_technical_name as _is_technical_name
 
         assert _is_technical_name("buildings") is True
         assert _is_technical_name("Layer-1") is True
 
     def test_real_description(self) -> None:
         """Real descriptions with spaces are not technical."""
-        from portolan_cli.extract.common.metadata_seeding import _is_technical_name
+        from portolan_cli.stac import is_technical_name as _is_technical_name
 
         assert _is_technical_name("Building footprints for the region") is False
         assert _is_technical_name("Road centerlines with classification") is False
@@ -51,14 +51,14 @@ class TestIsTechnicalName:
 
     def test_title_with_dashes(self) -> None:
         """Titles with dashes and spaces are not technical."""
-        from portolan_cli.extract.common.metadata_seeding import _is_technical_name
+        from portolan_cli.stac import is_technical_name as _is_technical_name
 
         assert _is_technical_name("Building - building_emprise") is False
         assert _is_technical_name("Roads - main network") is False
 
     def test_none_and_empty(self) -> None:
         """None and empty are treated as technical (unusable)."""
-        from portolan_cli.extract.common.metadata_seeding import _is_technical_name
+        from portolan_cli.stac import is_technical_name as _is_technical_name
 
         assert _is_technical_name(None) is True
         assert _is_technical_name("") is True

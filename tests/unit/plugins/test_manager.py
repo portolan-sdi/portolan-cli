@@ -154,7 +154,7 @@ def test_importing_the_cli_builds_no_manager() -> None:
     code = (
         "import portolan_cli.cli\n"
         "from portolan_cli.plugins import manager\n"
-        "print(manager._manager is None)\n"
+        "print(manager.get_plugin_manager.cache_info().currsize == 0)\n"
     )
 
     result = subprocess.run(

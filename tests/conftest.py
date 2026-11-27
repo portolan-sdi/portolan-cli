@@ -453,7 +453,7 @@ def rapidai4eo_path(fixtures_dir: Path) -> Path:
 
 
 @pytest.fixture
-def temp_catalog_dir(tmp_path: Path) -> Iterator[Path]:
+def temp_catalog_dir(tmp_path: Path) -> Path:
     """Create a temporary directory for catalog operations.
 
     Yields the path to a clean temporary directory that will be
@@ -461,7 +461,7 @@ def temp_catalog_dir(tmp_path: Path) -> Iterator[Path]:
     """
     catalog_dir = tmp_path / "test-catalog"
     catalog_dir.mkdir()
-    yield catalog_dir
+    return catalog_dir
 
 
 # =============================================================================
@@ -873,7 +873,7 @@ def no_extract_side_requests(monkeypatch: pytest.MonkeyPatch) -> None:
     layer details, and WFS 1.1.0. A test of one of these requests patches it
     itself, and its patch replaces this one.
     """
-    from geoparquet_io.core import wfs as gpio_wfs  # type: ignore[import-untyped]
+    from geoparquet_io.core import wfs as gpio_wfs
 
     from portolan_cli.extract.arcgis import discovery
     from portolan_cli.extract.arcgis import orchestrator as arcgis

@@ -51,7 +51,8 @@ def _run_text(job: dict[str, Any]) -> str:
 
 def _load_selftest() -> ModuleType:
     spec = importlib.util.spec_from_file_location("gate_selftest", SELFTEST_SCRIPT)
-    assert spec is not None and spec.loader is not None
+    assert spec is not None
+    assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     sys.modules["gate_selftest"] = module
     spec.loader.exec_module(module)
@@ -173,7 +174,8 @@ def test_only_the_linux_cell_measures_coverage(job: str, prefix: str, flag: str)
         "coverage=()",
         f'if [ "$MATRIX_OS" = "{COVERAGE_OS}" ] && [ "$MATRIX_PYTHON" = "{COVERAGE_PYTHON}" ]; then',
     ]
-    assert lines[2].startswith("coverage=(") and lines[2].endswith(")")
+    assert lines[2].startswith("coverage=(")
+    assert lines[2].endswith(")")
     assert flag in lines[2]
     assert lines[3] == "fi"
     assert [line for line in lines if "coverage=" in line] == lines[0:1] + lines[2:3]
@@ -258,20 +260,43 @@ def test_diff_cover_gates_the_changed_lines() -> None:
 
 
 def test_only_the_live_network_step_continues_on_error() -> None:
-    """A soft-fail step gates nothing. Live third-party servers are the one exception."""
-    jobs = _jobs("nightly.yml")
+    """A soft-fail step gates nothing. Live third-party servers are the one exception.
 
-    soft = [
-        (name, step.get("name"))
-        for name, job in jobs.items()
-        for step in job.get("steps", [])
-        if step.get("continue-on-error")
-    ]
-    soft_jobs = [name for name, job in jobs.items() if job.get("continue-on-error")]
+    The check reads every workflow. The security audit once had two soft-fail
+    steps. One ran the ruff S rules that the quality job already gates, and it
+    could only warn. The other let a pip-audit crash end in a green run.
+    """
+    soft: list[tuple[str, str, str | None]] = []
+    soft_jobs: list[tuple[str, str]] = []
+    for workflow in sorted(WORKFLOWS.glob("*.yml")):
+        for name, job in _jobs(workflow.name).items():
+            if job.get("continue-on-error"):
+                soft_jobs.append((workflow.name, name))
+            soft.extend(
+                (workflow.name, name, step.get("name"))
+                for step in job.get("steps", [])
+                if step.get("continue-on-error")
+            )
 
-    assert soft == [("network-live", "Run network tests against live services")]
+    assert soft == [("nightly.yml", "network-live", "Run network tests against live services")]
     assert soft_jobs == []
-    assert "dependency-check" not in jobs
+    assert "dependency-check" not in _jobs("nightly.yml")
+
+
+def test_security_audit_fails_when_pip_audit_cannot_run() -> None:
+    """A crash or invalid JSON from pip-audit must turn the run red.
+
+    The vulnerability path stays green and opens the tracking issue instead.
+    The capture must keep stderr out of the JSON. A clean pip-audit run writes
+    "No known vulnerabilities found" to stderr, and ``2>&1`` made that run
+    look like a crash.
+    """
+    (step,) = [s for s in _jobs("security-audit.yml")["audit"]["steps"] if s.get("id") == "audit"]
+    capture = step["run"].split("AUDIT_OUTPUT=$(uv run pip-audit", 1)[1].split(")", 1)[0]
+    error_branch = step["run"].split("::error::pip-audit failed", 1)[1]
+
+    assert capture.rstrip().endswith("--format json")
+    assert "exit 1" in error_branch
 
 
 @pytest.mark.parametrize("workflow", ["ci.yml", "nightly.yml"])
@@ -544,7 +569,8 @@ def _load_digests() -> ModuleType:
     spec = importlib.util.spec_from_file_location(
         "check_pypi_digests", REPO_ROOT / "scripts" / "check_pypi_digests.py"
     )
-    assert spec is not None and spec.loader is not None
+    assert spec is not None
+    assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module

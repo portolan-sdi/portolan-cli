@@ -36,6 +36,7 @@ class TestISOMetadata:
 
         assert metadata.file_identifier == "9a8322bd-f53a-4f99-ad9e-753b45bdee85"
         assert metadata.title == "INSPIRE - Bâtiments en Wallonie (BE)"
+        assert metadata.keywords is not None
         assert "Bâtiments" in metadata.keywords
         assert metadata.license_url == "https://creativecommons.org/licenses/by/4.0/"
 

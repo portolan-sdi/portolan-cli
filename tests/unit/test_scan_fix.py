@@ -224,8 +224,7 @@ class TestComputeSafeRename:
         extension = ".geojson"
         stem_len = 201 - len(str(tmp_path)) - len(extension)
         # Ensure we have a reasonable stem length
-        if stem_len < 50:
-            stem_len = 50  # Force long enough to trigger truncation
+        stem_len = max(stem_len, 50)  # Force long enough to trigger truncation
         long_stem = "a" * stem_len
         path = tmp_path / f"{long_stem}{extension}"
         path.touch()
@@ -275,7 +274,7 @@ class TestComputeSafeRename:
         deep_path = tmp_path
         # Create nested dirs to exceed threshold
         for _ in range(3):  # 3 x 100 = 300 chars just in dir names
-            deep_path = deep_path / long_dir_name
+            deep_path /= long_dir_name
         deep_path.mkdir(parents=True, exist_ok=True)
 
         # Even a short filename can't help
@@ -435,7 +434,7 @@ class TestApplySafeFixes:
 
         issues = [self._make_issue(shp)]
 
-        _, applied = apply_safe_fixes(issues, dry_run=False)
+        _, _applied = apply_safe_fixes(issues, dry_run=False)
 
         # Original files should be gone
         assert not shp.exists()
@@ -494,7 +493,7 @@ class TestApplySafeFixes:
 
         issues = [self._make_issue(path)]
 
-        proposed, applied = apply_safe_fixes(issues, dry_run=False)
+        _proposed, applied = apply_safe_fixes(issues, dry_run=False)
 
         # Should handle gracefully without crashing
         assert len(applied) == 0
@@ -509,7 +508,7 @@ class TestApplySafeFixes:
 
         issues = [self._make_issue(file1)]
 
-        proposed, applied = apply_safe_fixes(issues, dry_run=False)
+        _proposed, applied = apply_safe_fixes(issues, dry_run=False)
 
         # Should NOT overwrite existing file
         assert file1.exists()
@@ -528,7 +527,7 @@ class TestApplySafeFixes:
 
         issues = [self._make_issue(tmp_path / "données.shp")]
 
-        proposed, applied = apply_safe_fixes(issues, dry_run=False)
+        _proposed, applied = apply_safe_fixes(issues, dry_run=False)
 
         # All original files should still exist
         assert (tmp_path / "données.shp").exists()
@@ -635,7 +634,7 @@ class TestPreviewFix:
         long_dir_name = "d" * 100
         deep_path = tmp_path
         for _ in range(3):
-            deep_path = deep_path / long_dir_name
+            deep_path /= long_dir_name
         deep_path.mkdir(parents=True, exist_ok=True)
 
         path = deep_path / "x.shp"

@@ -441,7 +441,7 @@ class TestCorruptedParquetScan:
     @pytest.mark.unit
     def test_corrupted_parquet_skipped_with_error(self, tmp_path: Path) -> None:
         """Corrupted .parquet file is skipped with INVALID_FORMAT reason."""
-        from portolan_cli.scan.classify import FileCategory, SkipReasonType
+        from portolan_cli.scan.classify import FileCategory, SkippedFile, SkipReasonType
         from portolan_cli.scan.core import ScanOptions, scan_directory
 
         # Create a fake parquet file
@@ -458,6 +458,7 @@ class TestCorruptedParquetScan:
         assert len(result.skipped) == 1
 
         skipped = result.skipped[0]
+        assert isinstance(skipped, SkippedFile)
         assert skipped.category == FileCategory.UNKNOWN
         assert skipped.reason_type == SkipReasonType.INVALID_FORMAT
         assert "not a valid Parquet file" in skipped.reason_message
@@ -465,7 +466,7 @@ class TestCorruptedParquetScan:
     @pytest.mark.unit
     def test_valid_non_geo_parquet_is_tabular(self, tmp_path: Path, fixtures_dir: Path) -> None:
         """Valid Parquet without geo metadata is skipped as TABULAR_DATA."""
-        from portolan_cli.scan.classify import FileCategory, SkipReasonType
+        from portolan_cli.scan.classify import FileCategory, SkippedFile, SkipReasonType
         from portolan_cli.scan.core import ScanOptions, scan_directory
 
         # Use one of our companion fixtures (plain Parquet)
@@ -487,5 +488,6 @@ class TestCorruptedParquetScan:
         assert len(result.skipped) == 1
 
         skipped = result.skipped[0]
+        assert isinstance(skipped, SkippedFile)
         assert skipped.category == FileCategory.TABULAR_DATA
         assert skipped.reason_type == SkipReasonType.NOT_GEOSPATIAL

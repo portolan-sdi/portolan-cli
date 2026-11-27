@@ -428,6 +428,7 @@ push:
         )
 
         patterns = get_setting("push.exclude", catalog_path=tmp_path)
+        assert patterns is not None
         assert "*.backup" in patterns
         assert "temp/" in patterns
 

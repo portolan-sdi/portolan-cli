@@ -70,7 +70,7 @@ class TestVendoredRasterSchema:
         """
         import jsonschema
 
-        bare_item = {
+        bare_item: dict[str, object] = {
             "type": "Feature",
             "stac_version": "1.1.0",
             "id": "no-raster-fields",

@@ -31,6 +31,8 @@ from tests.conftest import aws_files_environ, cleared_environ
 if TYPE_CHECKING:
     from collections.abc import Generator
 
+    from obstore.store import S3Credential
+
 
 # =============================================================================
 # Test fixtures
@@ -368,7 +370,7 @@ class TestParseObjectStoreUrl:
                 else f"{scheme}://{bucket}{trailing}"
             )
 
-        bucket_url, prefix = parse_object_store_url(url)
+        _bucket_url, prefix = parse_object_store_url(url)
 
         # The invariant: prefix never ends with slash
         assert not prefix.endswith("/"), f"Prefix {prefix!r} should not end with '/'"
@@ -1663,7 +1665,7 @@ class TestGuardedCredentialProvider:
         from portolan_cli.sync.upload import _GuardedCredentialProvider
         from portolan_core.errors import ProfileCredentialsError
 
-        def failing_provider() -> dict[str, str]:
+        def failing_provider() -> S3Credential:
             raise RuntimeError("credential_process returned nonzero")
 
         guarded = _GuardedCredentialProvider(failing_provider, "work")
@@ -1679,7 +1681,11 @@ class TestGuardedCredentialProvider:
         """A working provider must return its credentials unchanged."""
         from portolan_cli.sync.upload import _GuardedCredentialProvider
 
-        credential = {"access_key_id": "AKIAKEY", "secret_access_key": "secret"}
+        credential: S3Credential = {
+            "access_key_id": "AKIAKEY",
+            "secret_access_key": "secret",
+            "expires_at": None,
+        }
         guarded = _GuardedCredentialProvider(lambda: credential, "work")
 
         assert guarded() == credential
@@ -1709,6 +1715,7 @@ class TestDelegatedCredentialProvider:
             assert provider is not None
             credential = provider()
 
+        assert isinstance(credential, dict)
         assert credential["access_key_id"] == "ASIAPROCESSKEY"
         assert credential["token"] == "process-session-token"
 

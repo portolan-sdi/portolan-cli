@@ -238,7 +238,9 @@ class TestGpkgNonSpatialLayers:
 
         assert layers is not None
         assert "layer_styles" not in layers
-        assert sorted(layers) == sorted(list_layers(FIXTURES_DIR / "multilayer.gpkg"))
+        expected = list_layers(FIXTURES_DIR / "multilayer.gpkg")
+        assert expected is not None
+        assert sorted(layers) == sorted(expected)
 
     @pytest.mark.unit
     def test_matches_fixture_listing(self) -> None:
@@ -247,7 +249,9 @@ class TestGpkgNonSpatialLayers:
 
         direct = _gpkg_feature_layers(FIXTURES_DIR / "multilayer.gpkg")
         assert direct is not None
-        assert sorted(direct) == sorted(list_layers(FIXTURES_DIR / "multilayer.gpkg"))
+        expected = list_layers(FIXTURES_DIR / "multilayer.gpkg")
+        assert expected is not None
+        assert sorted(direct) == sorted(expected)
 
     @pytest.mark.unit
     def test_non_gpkg_returns_none(self, tmp_path: Path) -> None:

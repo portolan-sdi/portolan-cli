@@ -628,7 +628,7 @@ class _Run:
     def _styles(self, layer: LayerRef, collection_dir: Path) -> None:
         try:
             self.source.styles(self.discovery.source_url, layer, collection_dir)
-        except Exception:  # noqa: BLE001 - a missing style must not fail the layer
+        except Exception:  # a missing style must not fail the layer
             logger.warning(
                 "Style extraction failed for layer '%s'; skipping style.", layer.name, exc_info=True
             )
@@ -734,7 +734,7 @@ def _report_kept(run: _Run, index: int, total: int, layer: LayerRef) -> None:
     run.emit(index, total, layer, "skipped", layer.skip_reason)
 
 
-def _fetch_parallel(
+def _fetch_parallel(  # noqa: PLR0914 - one ordered fetch sequence
     run: _Run, jobs: list[tuple[int, LayerRef]], total: int
 ) -> list[tuple[int, LayerResult]]:
     """Fetch layers on worker threads, with a deadline per started layer.
@@ -778,7 +778,7 @@ def _fetch_parallel(
                 index, layer = futures[future]
                 try:
                     result = run.promote(future.result())
-                except Exception as err:  # noqa: BLE001 - one layer must not stop the run
+                except Exception as err:  # one layer must not stop the run
                     logger.error("Layer %s failed: %s", layer.name, redact_credentials(str(err)))
                     result = _result(layer, "failed", error=str(err), attempts=1)
                 run.emit(

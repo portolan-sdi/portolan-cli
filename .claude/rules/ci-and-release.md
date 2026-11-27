@@ -17,11 +17,14 @@ paths:
 | Tier 2 | Every PR | lint, mypy, security, full tests, perf counter gates, CodSpeed, docs build |
 | Tier 3 | Nightly | rashid main conformance, perf scenarios (wall time and peak RSS), live network tests, slow tests, property tests, gate self-test |
 
-**All checks are strict**, no `continue-on-error`. Fix issues or they block.
+**All checks are strict.** Fix issues or they block. The nightly live network
+tests are the one `continue-on-error` step. Third-party services fail at random,
+so a failure opens a tracking issue instead. `tests/docs/test_ci_wiring.py` pins
+that exception.
 
 ### prek Hooks
 
-Install: `uv tool install prek && prek install`. All hooks block, no `--no-verify`. See `prek.toml` for full list.
+Install: `uv run prek install`. It installs the pre-commit, commit-msg, and pre-push hooks. All hooks block, no `--no-verify`. See `prek.toml` for full list.
 
 ## Git Workflow
 

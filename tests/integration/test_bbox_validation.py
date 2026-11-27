@@ -70,8 +70,8 @@ class TestBboxValidationIntegration:
         with runner.isolated_filesystem():
             # Initialize catalog by creating .portolan/config.yaml
             Path(".portolan").mkdir()
-            Path(".portolan/config.yaml").write_text("version: 1\n")
-            Path(".portolan/metadata.yaml").write_text('license: "CC-BY-4.0"\n')
+            Path(".portolan/config.yaml").write_text("version: 1\n", encoding="utf-8")
+            Path(".portolan/metadata.yaml").write_text('license: "CC-BY-4.0"\n', encoding="utf-8")
             Path("catalog.json").write_text(
                 json.dumps(
                     {
@@ -81,7 +81,8 @@ class TestBboxValidationIntegration:
                         "description": "Test",
                         "links": [],
                     }
-                )
+                ),
+                encoding="utf-8",
             )
 
             # Create collection directory with poisoned parquet
@@ -107,8 +108,8 @@ class TestBboxValidationIntegration:
         with runner.isolated_filesystem():
             # Initialize catalog
             Path(".portolan").mkdir()
-            Path(".portolan/config.yaml").write_text("version: 1\n")
-            Path(".portolan/metadata.yaml").write_text('license: "CC-BY-4.0"\n')
+            Path(".portolan/config.yaml").write_text("version: 1\n", encoding="utf-8")
+            Path(".portolan/metadata.yaml").write_text('license: "CC-BY-4.0"\n', encoding="utf-8")
             Path("catalog.json").write_text(
                 json.dumps(
                     {
@@ -118,7 +119,8 @@ class TestBboxValidationIntegration:
                         "description": "Test",
                         "links": [],
                     }
-                )
+                ),
+                encoding="utf-8",
             )
 
             # Create a collection with BOTH a valid and an invalid parquet file.
@@ -141,7 +143,7 @@ class TestBboxValidationIntegration:
             collection_json = collection_dir / "collection.json"
             assert collection_json.exists(), "collection.json should exist"
 
-            with open(collection_json) as f:
+            with open(collection_json, encoding="utf-8") as f:
                 collection_data = json.load(f)
 
             extent = collection_data.get("extent", {})
@@ -158,8 +160,8 @@ class TestBboxValidationIntegration:
         with runner.isolated_filesystem():
             # Initialize catalog
             Path(".portolan").mkdir()
-            Path(".portolan/config.yaml").write_text("version: 1\n")
-            Path(".portolan/metadata.yaml").write_text('license: "CC-BY-4.0"\n')
+            Path(".portolan/config.yaml").write_text("version: 1\n", encoding="utf-8")
+            Path(".portolan/metadata.yaml").write_text('license: "CC-BY-4.0"\n', encoding="utf-8")
             Path("catalog.json").write_text(
                 json.dumps(
                     {
@@ -169,7 +171,8 @@ class TestBboxValidationIntegration:
                         "description": "Test",
                         "links": [],
                     }
-                )
+                ),
+                encoding="utf-8",
             )
 
             # Create collection with valid file first
@@ -184,13 +187,13 @@ class TestBboxValidationIntegration:
 
             # Manually corrupt the collection bbox (simulating upstream bug)
             collection_json = collection_dir / "collection.json"
-            with open(collection_json) as f:
+            with open(collection_json, encoding="utf-8") as f:
                 data = json.load(f)
 
             # Inject poisoned bbox
             data["extent"]["spatial"]["bbox"] = [[-1.79e308, -1.79e308, 180.0, 66.55]]
 
-            with open(collection_json, "w") as f:
+            with open(collection_json, "w", encoding="utf-8") as f:
                 json.dump(data, f)
 
             # Run check - PTL-BBX-001 must name the poisoned extent.
@@ -208,8 +211,8 @@ class TestBboxValidationIntegration:
         with runner.isolated_filesystem():
             # Initialize catalog
             Path(".portolan").mkdir()
-            Path(".portolan/config.yaml").write_text("version: 1\n")
-            Path(".portolan/metadata.yaml").write_text('license: "CC-BY-4.0"\n')
+            Path(".portolan/config.yaml").write_text("version: 1\n", encoding="utf-8")
+            Path(".portolan/metadata.yaml").write_text('license: "CC-BY-4.0"\n', encoding="utf-8")
             Path("catalog.json").write_text(
                 json.dumps(
                     {
@@ -219,7 +222,8 @@ class TestBboxValidationIntegration:
                         "description": "Test",
                         "links": [],
                     }
-                )
+                ),
+                encoding="utf-8",
             )
 
             # Create collection with valid file
@@ -302,8 +306,8 @@ class TestAntimeridianBboxIntegration:
 
         with runner.isolated_filesystem():
             Path(".portolan").mkdir()
-            Path(".portolan/config.yaml").write_text("version: 1\n")
-            Path(".portolan/metadata.yaml").write_text('license: "CC-BY-4.0"\n')
+            Path(".portolan/config.yaml").write_text("version: 1\n", encoding="utf-8")
+            Path(".portolan/metadata.yaml").write_text('license: "CC-BY-4.0"\n', encoding="utf-8")
             Path("catalog.json").write_text(
                 json.dumps(
                     {
@@ -313,7 +317,8 @@ class TestAntimeridianBboxIntegration:
                         "description": "Test",
                         "links": [],
                     }
-                )
+                ),
+                encoding="utf-8",
             )
             collection_dir = Path("boundaries")
             collection_dir.mkdir()

@@ -145,7 +145,7 @@ class TestClassifyFile:
         pycache.mkdir()
         test_path = pycache / "module.cpython-312.pyc"
         test_path.write_bytes(b"\x00")
-        category, skip_type, skip_msg = classify_file(test_path)
+        category, skip_type, _skip_msg = classify_file(test_path)
         assert category == FileCategory.JUNK
         assert skip_type == SkipReasonType.JUNK_FILE
 
@@ -159,7 +159,7 @@ class TestClassifyFile:
         pycache.mkdir()
         test_path = pycache / "module.cpython-312.pyc"
         test_path.write_bytes(b"\x00")
-        category, skip_type, skip_msg = classify_file(test_path)
+        category, skip_type, _skip_msg = classify_file(test_path)
         assert category == FileCategory.JUNK
         assert skip_type == SkipReasonType.JUNK_FILE
 
@@ -173,7 +173,7 @@ class TestClassifyFile:
         git_dir.mkdir()
         test_path = git_dir / "config"
         test_path.write_text("[core]\n")
-        category, skip_type, skip_msg = classify_file(test_path)
+        category, skip_type, _skip_msg = classify_file(test_path)
         assert category == FileCategory.JUNK
         assert skip_type == SkipReasonType.JUNK_FILE
 
@@ -222,7 +222,7 @@ class TestClassifyFile:
         """
         test_path = tmp_path / "tiles.mbtiles"
         test_path.write_bytes(b"\x00")
-        category, skip_type, skip_msg = classify_file(test_path)
+        category, skip_type, _skip_msg = classify_file(test_path)
         assert category == FileCategory.VISUALIZATION
         assert skip_type == SkipReasonType.VISUALIZATION_ONLY
 
@@ -253,7 +253,7 @@ class TestClassifyFile:
         """
         test_path = tmp_path / "data.parquet"
         test_path.write_bytes(b"PAR1")  # Invalid parquet = no geo metadata
-        category, skip_type, skip_msg = classify_file(test_path)
+        category, skip_type, _skip_msg = classify_file(test_path)
         assert category == FileCategory.TABULAR_DATA
         assert skip_type is not None
 
@@ -262,7 +262,7 @@ class TestClassifyFile:
 
         test_path = tmp_path / "data.dbf"
         test_path.write_bytes(b"\x00")
-        category, skip_type, skip_msg = classify_file(test_path)
+        category, skip_type, _skip_msg = classify_file(test_path)
         assert category == FileCategory.KNOWN_SIDECAR
         assert skip_type == SkipReasonType.SIDECAR_FILE
 
@@ -271,7 +271,7 @@ class TestClassifyFile:
 
         test_path = tmp_path / "README.md"
         test_path.write_text("# Readme\n")
-        category, skip_type, skip_msg = classify_file(test_path)
+        category, skip_type, _skip_msg = classify_file(test_path)
         assert category == FileCategory.DOCUMENTATION
         assert skip_type == SkipReasonType.NOT_GEOSPATIAL
 
@@ -280,7 +280,7 @@ class TestClassifyFile:
 
         test_path = tmp_path / "catalog.json"
         test_path.write_text('{"type": "Catalog"}')
-        category, skip_type, skip_msg = classify_file(test_path)
+        category, skip_type, _skip_msg = classify_file(test_path)
         assert category == FileCategory.STAC_METADATA
         assert skip_type == SkipReasonType.METADATA_FILE
 
@@ -290,7 +290,7 @@ class TestClassifyFile:
         test_path = tmp_path / "preview.png"
         # Write a small file (< 1MB)
         test_path.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 100)
-        category, skip_type, skip_msg = classify_file(test_path)
+        category, skip_type, _skip_msg = classify_file(test_path)
         assert category == FileCategory.THUMBNAIL
         assert skip_type == SkipReasonType.NOT_GEOSPATIAL
 
@@ -299,7 +299,7 @@ class TestClassifyFile:
 
         test_path = tmp_path / "mystery.xyz123"
         test_path.write_text("unknown content")
-        category, skip_type, skip_msg = classify_file(test_path)
+        category, skip_type, _skip_msg = classify_file(test_path)
         assert category == FileCategory.UNKNOWN
         assert skip_type == SkipReasonType.UNKNOWN_FORMAT
 
@@ -349,6 +349,7 @@ class TestClassifyFileEdgeCases:
 
         assert category == FileCategory.UNKNOWN
         assert skip_type == SkipReasonType.UNKNOWN_FORMAT
+        assert skip_msg is not None
         assert "large image" in skip_msg.lower() or "unknown" in skip_msg.lower()
 
     def test_image_with_size_provided(self, tmp_path: Path) -> None:
@@ -358,7 +359,7 @@ class TestClassifyFileEdgeCases:
         test_path.write_bytes(b"\xff\xd8\xff\xe0" + b"\x00" * 2_000_000)
 
         # But provide small size_bytes - should be classified as thumbnail
-        category, skip_type, skip_msg = classify_file(test_path, size_bytes=500)
+        category, skip_type, _skip_msg = classify_file(test_path, size_bytes=500)
 
         assert category == FileCategory.THUMBNAIL
         assert skip_type == SkipReasonType.NOT_GEOSPATIAL
@@ -396,7 +397,7 @@ class TestClassifyFileEdgeCases:
         # Write a small WebP-like file
         test_path.write_bytes(b"RIFF" + b"\x00" * 100)
 
-        category, skip_type, skip_msg = classify_file(test_path)
+        category, skip_type, _skip_msg = classify_file(test_path)
 
         # Small webp should be thumbnail
         assert category == FileCategory.THUMBNAIL
@@ -412,7 +413,7 @@ class TestClassifyFileSupportingFormats:
         test_path = tmp_path / "style.json"
         test_path.write_text('{"version": 8, "sources": {}}')
 
-        category, skip_type, skip_msg = classify_file(test_path)
+        category, skip_type, _skip_msg = classify_file(test_path)
 
         assert category == FileCategory.STYLE
         assert skip_type == SkipReasonType.METADATA_FILE
@@ -428,6 +429,7 @@ class TestClassifyFileSupportingFormats:
 
         assert category == FileCategory.STYLE
         assert skip_type == SkipReasonType.METADATA_FILE
+        assert skip_msg is not None
         assert "styles/ directory" in skip_msg
 
     def test_txt_classified_as_documentation(self, tmp_path: Path) -> None:
@@ -435,7 +437,7 @@ class TestClassifyFileSupportingFormats:
         test_path = tmp_path / "notes.txt"
         test_path.write_text("Some notes about the data")
 
-        category, skip_type, skip_msg = classify_file(test_path)
+        category, skip_type, _skip_msg = classify_file(test_path)
 
         assert category == FileCategory.DOCUMENTATION
         assert skip_type == SkipReasonType.NOT_GEOSPATIAL
@@ -445,7 +447,7 @@ class TestClassifyFileSupportingFormats:
         test_path = tmp_path / "data.xlsx"
         test_path.write_bytes(b"PK\x03\x04")  # ZIP header for xlsx
 
-        category, skip_type, skip_msg = classify_file(test_path)
+        category, skip_type, _skip_msg = classify_file(test_path)
 
         assert category == FileCategory.TABULAR_DATA
         assert skip_type == SkipReasonType.NOT_GEOSPATIAL

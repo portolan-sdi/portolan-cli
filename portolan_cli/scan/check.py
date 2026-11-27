@@ -310,6 +310,7 @@ def check_directory(
     dry_run: bool = False,
     remove_legacy: bool = False,
     force: bool = False,
+    reoptimize: frozenset[Path] = frozenset(),
     workers: int | None = None,
     on_progress: Callable[[ConversionResult], None] | None = None,
     catalog_path: Path | None = None,
@@ -333,10 +334,10 @@ def check_directory(
         remove_legacy: If True, delete source files after successful conversion.
             Requires fix=True. Handles sidecars (.dbf, .shx, etc.) and
             FileGDB directories (.gdb). Only removes files converted in THIS run.
-        force: If True, also re-optimize already-cloud-native RASTERS (valid COGs)
-            by re-applying current COG settings, e.g. to add missing overviews.
-            Requires fix=True. Raster-scoped: valid GeoParquet is left untouched
-            (issue #530).
+        force: If True, also re-optimize every already-cloud-native RASTER (valid
+            COG) by re-applying current COG settings. Requires fix=True.
+        reoptimize: Cloud-native files to rewrite with the current settings,
+            whatever ``force`` says. ``check --fix`` passes the files a finding names.
         workers: Parallel worker processes for conversion. None/1 runs serially;
             >1 uses a process pool. Threaded to convert_directory.
         on_progress: Optional callback for conversion progress (--fix mode).
@@ -400,26 +401,25 @@ def check_directory(
 
     report = CheckReport(root=path, files=file_statuses)
 
+    forced = _forced_paths(
+        file_statuses, reoptimize, force=force, catalog_path=catalog_path, state=state
+    )
     # Handle fix mode
     if fix and not dry_run:
-        # Convert CONVERTIBLE files, plus (when --force) already-cloud-native
-        # RASTERS so valid-but-unoptimized COGs get re-encoded with current
-        # settings (issue #530). Valid vectors are never force-re-processed.
         files_to_convert = [
             f.path for f in file_statuses if f.status == CloudNativeStatus.CONVERTIBLE
         ]
-        if force:
-            files_to_convert.extend(_forced_raster_paths(file_statuses, catalog_path, state))
         conversion_report = convert_directory(
             path,
             on_progress=on_progress,
-            file_paths=files_to_convert,
+            file_paths=[*files_to_convert, *forced],
             catalog_path=catalog_path,
             workers=workers,
-            force=force,
+            force=force or bool(forced),
             state=state,
         )
         report.conversion_report = conversion_report
+        _stage_converted(conversion_report, catalog_path or path, state)
 
         # Handle legacy file removal (only after actual conversions, not dry run)
         if remove_legacy and conversion_report is not None:
@@ -435,7 +435,7 @@ def check_directory(
         # Preview mode - show what would be converted (no changes on disk).
         report.conversion_report = ConversionReport(
             results=_build_preview_results(
-                file_statuses, force=force, catalog_path=catalog_path, state=state
+                file_statuses, forced, catalog_path=catalog_path, state=state
             )
         )
         # Note: remove_legacy is ignored in dry_run mode (no actual removal)
@@ -443,74 +443,94 @@ def check_directory(
     return report
 
 
-def _forced_raster_paths(
-    file_statuses: list[FileStatus],
-    catalog_path: Path | None = None,
-    state: RunState | None = None,
-) -> list[Path]:
-    """Paths of already-cloud-native files eligible for --force re-optimization.
+def _stage_converted(report: ConversionReport, root: Path, state: RunState | None) -> None:
+    """Record the new bytes of every tracked file a conversion wrote, so ``push`` uploads them."""
+    from portolan_cli.finalization import stage_rewritten
+    from portolan_cli.version_ops import commit_run
+    from portolan_core.run_state import RunState
 
-    These are files `--fix` would normally skip, whose format handler has a
-    ``reoptimize`` method. Only the COG handler has one, so `--force` only
-    re-encodes rasters (issue #530).
-    """
-    from portolan_cli.plugins.formats import handler_for
-
-    return [
-        f.path
-        for f in file_statuses
-        if f.status == CloudNativeStatus.CLOUD_NATIVE
-        and hasattr(handler_for(f.path, catalog_path, state=state), "reoptimize")
+    outputs = [
+        r.output for r in report.results if r.status is ConversionStatus.SUCCESS and r.output
     ]
+    run = state or RunState.open(root)
+    stage_rewritten(run, outputs)
+    # A run that stages nothing must not commit: that commit rewrites the catalog index.
+    if state is None and run.staged():
+        commit_run(run)
 
 
-def _build_preview_results(
+def _forced_paths(
     file_statuses: list[FileStatus],
+    reoptimize: frozenset[Path],
     *,
     force: bool,
     catalog_path: Path | None = None,
     state: RunState | None = None,
+) -> list[Path]:
+    """Cloud-native files to rewrite: rasters under ``force``, and every file in ``reoptimize``.
+
+    A file qualifies only when its format handler has a ``reoptimize`` method. A symlink never does.
+    """
+    from portolan_cli.plugins.formats import handler_for
+    from portolan_cli.report import emit
+
+    if not force and not reoptimize:
+        return []
+    named = {p.resolve() for p in reoptimize}
+    forced = []
+    for f in file_statuses:
+        if f.status != CloudNativeStatus.CLOUD_NATIVE:
+            continue
+        handler = handler_for(f.path, catalog_path, state=state)
+        if handler is None or not hasattr(handler, "reoptimize"):
+            continue
+        if f.path.resolve() not in named and not (force and handler.family == "raster"):
+            continue
+        if f.path.is_symlink():
+            # The rewrite swaps a new file in, so it would replace the link with a copy.
+            emit("warn", f"{f.path.name}: a symlink, not rewritten in place")
+            continue
+        forced.append(f.path)
+    return forced
+
+
+def _build_preview_results(
+    file_statuses: list[FileStatus],
+    forced: list[Path],
+    *,
+    catalog_path: Path | None = None,
+    state: RunState | None = None,
 ) -> list[ConversionResult]:
-    """Build dry-run preview ConversionResults for --fix (and --force)."""
+    """Build dry-run preview ConversionResults for --fix: conversions, then rewrites in place."""
     from portolan_cli.plugins.formats import handler_for
 
-    def predicted_output(f: FileStatus) -> Path:
+    def preview(f: FileStatus, format_to: str | None) -> ConversionResult:
         # The handler names its output. A plugin can write any file name.
         handler = handler_for(f.path, catalog_path, state=state)
-        if handler is not None:
-            return handler.output_path(f.path, f.path.parent)
-        return f.path.parent / f"{f.path.stem}.tif"
-
-    previews = [
-        ConversionResult(
+        output = (
+            handler.output_path(f.path, f.path.parent)
+            if handler is not None
+            else f.path.parent / f"{f.path.stem}.tif"
+        )
+        return ConversionResult(
             source=f.path,
-            output=predicted_output(f),
+            output=output,
             format_from=f.display_name,
-            format_to=f.target_format,
+            format_to=format_to or (handler.display_name if handler is not None else None),
             status=ConversionStatus.SUCCESS,  # Predicted outcome
             error=None,
             duration_ms=0,
         )
-        for f in file_statuses
-        if f.status == CloudNativeStatus.CONVERTIBLE
-    ]
-    if force:
-        # Forced rasters re-encode in place: COG -> COG, same path.
-        forced = set(_forced_raster_paths(file_statuses, catalog_path, state))
-        previews.extend(
-            ConversionResult(
-                source=f.path,
-                output=f.path.parent / f"{f.path.stem}.tif",
-                format_from=f.display_name,
-                format_to="COG",
-                status=ConversionStatus.SUCCESS,  # Predicted outcome
-                error=None,
-                duration_ms=0,
-            )
+
+    rewritten = set(forced)
+    return [
+        *(
+            preview(f, f.target_format)
             for f in file_statuses
-            if f.path in forced
-        )
-    return previews
+            if f.status == CloudNativeStatus.CONVERTIBLE
+        ),
+        *(preview(f, None) for f in file_statuses if f.path in rewritten),
+    ]
 
 
 def _scan_for_files(path: Path) -> list[Path]:
@@ -602,6 +622,7 @@ def run_fix_workflow(
     dry_run: bool,
     remove_legacy: bool,
     force: bool = False,
+    reoptimize: frozenset[Path] = frozenset(),
     workers: int | None = None,
     on_progress: Callable[[ConversionResult], None] | None = None,
     state: RunState | None = None,
@@ -620,6 +641,7 @@ def run_fix_workflow(
         dry_run: Preview changes without applying them.
         remove_legacy: Remove source files after successful conversion.
         force: Re-optimize already-valid COGs (raster-scoped, issue #530).
+        reoptimize: Cloud-native files to rewrite. See :func:`check_directory`.
         workers: Parallel worker processes for conversion.
         on_progress: Optional per-conversion progress callback.
         state: The run state of the command. The fix stages its versions in it.
@@ -682,6 +704,7 @@ def run_fix_workflow(
             dry_run=dry_run,
             remove_legacy=remove_legacy,
             force=force,
+            reoptimize=reoptimize,
             workers=workers,
             on_progress=on_progress,
             catalog_path=resolve_catalog_root_for_check(path) or path,

@@ -99,7 +99,7 @@ from portolan_core.checksums import (
     compute_dir_size,
     file_fields_from,
 )
-from portolan_core.config import get_ignored_files, get_setting, load_merged_metadata
+from portolan_core.config import get_ignored_files, get_setting
 from portolan_core.constants import ROLE_VISUAL
 from portolan_core.errors import (
     AssetKeyCollisionError,
@@ -1186,7 +1186,7 @@ def _item_bbox(
         raise
 
 
-def prepare_item(
+def prepare_item(  # noqa: PLR0914 - the whole per-file pipeline in one sequence
     *,
     path: Path,
     catalog_root: Path,
@@ -1289,17 +1289,13 @@ def prepare_item(
         )
     created_output = created_output and output_path == target
     source_paths = {output_path: versions_asset_key(path, collection_dir)}
-    if state is not None and isinstance(metadata, GeoParquetMetadata) and output_path.is_file():
+    if isinstance(metadata, GeoParquetMetadata) and output_path.is_file():
         # The handler API takes no state. Give the run the footer the handler
         # read, so finalization does not read it again.
         state.memo("geoparquet.metadata", output_path, lambda _path: metadata)
 
     # Step 3b: Load metadata.yaml defaults (for temporal/nodata when source lacks them)
-    metadata_yaml = (
-        state.metadata(collection_dir)
-        if state is not None
-        else load_merged_metadata(collection_dir, catalog_root)
-    )
+    metadata_yaml = state.metadata(collection_dir)
     defaults = metadata_yaml.get("defaults", {})
 
     # Validate defaults section if present (fail fast on invalid config)
@@ -1455,9 +1451,9 @@ def _needs_spatial_rewrite(
       conformant file would cost time and change nothing.
 
     The footer says nothing about row order, so a file with the column but
-    unordered rows still fails PTL-DAT-006. ``reconvert`` is the operator's
-    answer to that, and to a sort-only configuration: ``add --force
-    --reconvert`` rewrites the file whatever its footer says.
+    unordered rows still fails PTL-DAT-006. ``check --fix`` rewrites a file
+    that check reports, and ``add --force --reconvert`` rewrites the file
+    whatever its footer says.
 
     Args:
         source: Source Parquet file, or the file open for its footer.
@@ -1483,6 +1479,7 @@ def convert_vector(
     catalog_root: Path | None = None,
     *,
     reconvert: bool = False,
+    strict: bool = False,
     settings: VectorSettings | None = None,
     partition_dir: Path | None = None,
 ) -> Path:
@@ -1506,6 +1503,7 @@ def convert_vector(
             None uses the built-in defaults.
         reconvert: True when the operator asked to re-convert from source, which
             rewrites a Parquet file whatever its footer already declares.
+        strict: Raise when a Parquet rewrite fails, and do not keep the file with a warning.
         settings: Explicit vector settings. None reads them from the catalog.
         partition_dir: Directory for Hive partitions by the configured spatial
             index. It applies only to a non-Parquet source, when the settings
@@ -1515,7 +1513,7 @@ def convert_vector(
         Path to the output GeoParquet file, or ``partition_dir`` when the
         table was written as partitions.
     """
-    import geoparquet_io as gpio  # type: ignore[import-untyped]
+    import geoparquet_io as gpio
 
     from portolan_cli.convert import _write_partitioned, repair_shapefile_encoding_sidecar
 
@@ -1558,7 +1556,7 @@ def convert_vector(
             # so there is no separate destination to write to. Write a sibling
             # and swap it in, because geoparquet-io cannot write the file it
             # reads.
-            _rewrite_or_keep(source, settings, before)
+            _rewrite_or_keep(source, settings, before, strict=strict)
         else:
             # Copy first, then rewrite the copy. Converting straight into
             # `output_path` would skip `_assert_rewrite_kept_everything`, so a
@@ -1566,7 +1564,7 @@ def convert_vector(
             # the same file kept it on the path above.
             shutil.copy2(source, output_path)
             invalidate(output_path)
-            _rewrite_or_keep(output_path, settings, before)
+            _rewrite_or_keep(output_path, settings, before, strict=strict)
         return output_path
 
     # A non-Parquet source. Convert with the geoparquet-io fluent API, wrapped
@@ -1628,7 +1626,7 @@ def _announce_rewrite(source: Path, reason: str) -> None:
 
 
 def _rewrite_or_keep(
-    source: Path, settings: VectorSettings, before: RewriteFidelity | None
+    source: Path, settings: VectorSettings, before: RewriteFidelity | None, *, strict: bool = False
 ) -> None:
     """Rewrite a GeoParquet in place, or keep it and say why the rewrite failed.
 
@@ -1644,12 +1642,17 @@ def _rewrite_or_keep(
         source: GeoParquet file to rewrite.
         settings: Vector conversion settings to apply.
         before: The fidelity fields of the bytes in ``source``, read before.
+        strict: Raise the failure, and keep the file with no warning.
     """
     try:
         _rewrite_parquet_in_place(source, settings, before)
     except RewriteFidelityError as err:
+        if strict:
+            raise
         emit("warn", f"Kept {source.name} as it is: it would lose {err.lost}")
-    except Exception as err:  # noqa: BLE001 - a copy is better than a failed add
+    except Exception as err:  # a copy is better than a failed add
+        if strict:
+            raise
         logger.info("Rewrite of %s failed: %s", source, err, exc_info=True)
         emit("warn", f"Kept {source.name} as it is: geoparquet-io could not rewrite it ({err})")
 
@@ -1733,7 +1736,7 @@ def _same_crs(before: Any, after: Any) -> bool:
         return True
     try:
         return bool(CRS.from_user_input(before) == CRS.from_user_input(after))
-    except Exception:  # noqa: BLE001 - an unparsable CRS is not a proven match
+    except Exception:  # an unparsable CRS is not a proven match
         return False
 
 
@@ -1756,7 +1759,7 @@ def _means_wgs84(crs: Any) -> bool:
     """
     try:
         return _is_wgs84(CRS.from_user_input(crs))
-    except Exception:  # noqa: BLE001 - an unparsable CRS is not provably WGS84
+    except Exception:  # an unparsable CRS is not provably WGS84
         return False
 
 
@@ -2052,7 +2055,7 @@ def _warn_on_failure(source: Path, step: Callable[[], Path]) -> Path | None:
     try:
         with span("convert.embed_statistics", file=source.name):
             return step()
-    except Exception as err:  # noqa: BLE001 - the original file stays usable
+    except Exception as err:  # the original file stays usable
         emit(
             "warn",
             f"{source.name} has no band statistics in the file (PTL-DAT-009), "

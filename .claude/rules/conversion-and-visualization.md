@@ -63,10 +63,9 @@ report a reason it cannot fix. A tabular Parquet has no `geo` key and must
 never reach `add_bbox()`.
 
 The footer says nothing about row order, so `--force --reconvert` forces the
-rewrite anyway. That is the documented repair both for a file that has the
-column but is unsorted and for a sort-only configuration, and
-`docs/reference/configuration.md` and the `convert` fixer's decline message
-name it.
+rewrite anyway, for a sort-only configuration. `check --fix` rewrites the
+GeoParquet files that PTL-DAT-006, -007, and -008 name, through the handler's
+`reoptimize`, which is `reconvert`.
 
 **`--force` alone must still produce a conforming file.** `--force` skips
 conversion when the output exists (issue #386), and for a single-file

@@ -18,20 +18,20 @@ from portolan_core.models.item import AssetModel, ItemModel
 from portolan_core.models.schema import BandSchema, ColumnSchema, SchemaModel
 
 __all__ = [
+    "AssetModel",
+    "BandSchema",
     # Catalog
     "CatalogModel",
-    "Link",
     # Collection
     "CollectionModel",
+    "ColumnSchema",
     "ExtentModel",
-    "SpatialExtent",
-    "TemporalExtent",
+    # Item
+    "ItemModel",
+    "Link",
     "Provider",
     # Schema
     "SchemaModel",
-    "ColumnSchema",
-    "BandSchema",
-    # Item
-    "ItemModel",
-    "AssetModel",
+    "SpatialExtent",
+    "TemporalExtent",
 ]

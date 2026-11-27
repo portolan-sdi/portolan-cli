@@ -13,7 +13,12 @@ from click.testing import CliRunner
 
 from portolan_cli.add import add_files
 from portolan_cli.cli import cli
-from portolan_cli.extract.common.report import ExtractionReport, ExtractionSummary, LayerResult
+from portolan_cli.extract.common.report import (
+    ExtractionReport,
+    ExtractionSummary,
+    LayerResult,
+    MetadataExtracted,
+)
 from portolan_core.versions import read_versions
 
 if TYPE_CHECKING:
@@ -30,7 +35,16 @@ def _extraction_report() -> ExtractionReport:
         source_url="https://example.com/wfs",
         portolan_version="test",
         gpio_version="test",
-        metadata_extracted=None,
+        metadata_extracted=MetadataExtracted(
+            source_url="https://example.com/wfs",
+            description=None,
+            attribution=None,
+            keywords=None,
+            producer=None,
+            processing_notes=None,
+            known_issues=None,
+            license_info_raw=None,
+        ),
         layers=[LayerResult(0, "roads", "success", 1, 1, 0.0, "roads/roads.parquet", [], None, 1)],
         summary=ExtractionSummary(1, 1, 0, 0, 0, 1, 1, 0.0),
     )

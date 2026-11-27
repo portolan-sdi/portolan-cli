@@ -226,7 +226,7 @@ class TestDiscoveryErrorKeepsNoCredential:
     )
 
     def test_discover_layers(self) -> None:
-        from geoparquet_io.core.wfs import WFSError  # type: ignore[import-untyped]
+        from geoparquet_io.core.wfs import WFSError
 
         with (
             patch("geoparquet_io.core.wfs.get_wfs_capabilities", side_effect=WFSError(self.QUOTED)),

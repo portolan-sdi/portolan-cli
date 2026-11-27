@@ -235,7 +235,7 @@ class TestGetCurrentMetadata:
         txt_file = tmp_path / "data.txt"
         txt_file.write_text("not geospatial data")
 
-        with pytest.raises(ValueError, match="unsupported|Unsupported"):
+        with pytest.raises(ValueError, match=r"unsupported|Unsupported"):
             get_current_metadata(txt_file)
 
 
@@ -539,7 +539,8 @@ class TestCheckFileMetadata:
         assert result.file_path == dest
         # Message should mention no/missing and metadata/stac
         msg = result.message.lower()
-        assert ("no" in msg or "missing" in msg) and ("metadata" in msg or "stac" in msg)
+        assert "no" in msg or "missing" in msg
+        assert "metadata" in msg or "stac" in msg
 
     @pytest.mark.unit
     def test_returns_fresh_when_metadata_current(
@@ -1110,6 +1111,7 @@ class TestPrepareHashesEachFileOnce:
 @pytest.mark.unit
 def test_a_run_converts_the_current_assets_once(tmp_path: Path) -> None:
     """Each item check reads the asset map. A run must not rebuild it per item."""
+    import dataclasses
     from unittest.mock import patch
 
     from portolan_cli.metadata import detection
@@ -1131,7 +1133,7 @@ def test_a_run_converts_the_current_assets_once(tmp_path: Path) -> None:
     )
     state = RunState.open(tmp_path)
 
-    with patch.object(detection, "asdict", wraps=detection.asdict) as converted:
+    with patch("portolan_cli.metadata.detection.asdict", wraps=dataclasses.asdict) as converted:
         for _ in range(10):
             found = detection.load_current_assets(collection, state)
             assert found is not None

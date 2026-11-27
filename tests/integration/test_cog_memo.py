@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import shutil
 from functools import partial
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 import pytest
@@ -74,7 +74,8 @@ def test_cog_replacement_invalidates_destination(
         assert state.checksum(output) == expected_checksum, "COG replacement retained old checksum"
         with trace.tracing():
             assert state.memo("cog.metadata", output, extract_cog_metadata).bbox[0] == 20
-            for mode in ("cached", "approx"):
+            modes: tuple[Literal["cached", "approx"], ...] = ("cached", "approx")
+            for mode in modes:
                 assert (
                     state.memo(
                         f"cog.statistics.{mode}",

@@ -25,6 +25,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     import pyarrow as pa
+from portolan_core.bbox import BBOX_2D_LEN
 
 T = TypeVar("T")
 
@@ -233,7 +234,7 @@ def open_footer(path: Path) -> pq.ParquetFile | None:
     """
     try:
         return parquet_footer(path)
-    except Exception:  # noqa: BLE001 - an unreadable file has no footer to read
+    except Exception:  # an unreadable file has no footer to read
         return None
 
 
@@ -260,8 +261,8 @@ def read_spatial_layout(source: Path | pq.ParquetFile) -> SpatialLayout:
     (issue #805).
 
     The answer says nothing about row order. A file that carries the column but
-    holds unordered rows still fails PTL-DAT-006, and ``add --force
-    --reconvert`` is what rewrites it.
+    holds unordered rows still fails PTL-DAT-006, and ``check --fix`` or
+    ``add --force --reconvert`` rewrites it.
 
     Args:
         source: Path to a Parquet file, or a file the caller opened with
@@ -407,7 +408,7 @@ def _raw_field_metadata(
     while token in serialized:
         nonce += 1
         token = f"{nonce:0{len(key)}d}".encode()
-    schema = pa.ipc.read_schema(pa.BufferReader(serialized.replace(key, token)))
+    schema = pa.ipc.read_schema(pa.py_buffer(serialized.replace(key, token)))
     return _field_metadata(schema, geometry_columns, masked_key=token)
 
 
@@ -417,7 +418,7 @@ def _field_metadata(
     """Keep metadata at every depth, including semantic Arrow extension keys."""
     result: dict[str | tuple[str, ...], dict[bytes, bytes]] = {}
 
-    def visit(field: pa.Field, path: tuple[str, ...]) -> None:
+    def visit(field: pa.Field[Any], path: tuple[str, ...]) -> None:
         metadata = dict(field.metadata or {})
         if masked_key is not None:
             # The byte substitution can also touch a publisher key or value
@@ -478,7 +479,7 @@ def _extract_bbox(column_meta: dict[str, Any]) -> tuple[float, float, float, flo
     logger = logging.getLogger(__name__)
 
     bbox = column_meta.get("bbox")
-    if bbox and len(bbox) >= 4:
+    if bbox and len(bbox) >= BBOX_2D_LEN:
         try:
             bbox_list = to_2d_bbox([float(value) for value in bbox])
         except (ValueError, TypeError):

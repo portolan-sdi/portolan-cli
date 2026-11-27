@@ -80,6 +80,8 @@ from portolan_core.trace import submit
 if TYPE_CHECKING:
     from portolan_cli.sync.report import Report
 
+_MAX_FILES_LISTED = 10
+
 # Transfer progress is a diagnostic. Each caller reports its own outcome from
 # the DownloadResult. download_file sends its lines to a report callback when
 # the caller passes one.
@@ -346,7 +348,7 @@ def download_file(
             errors=[],
         )
 
-    store, kwargs = _setup_store_and_kwargs(
+    store, _kwargs = _setup_store_and_kwargs(
         bucket_url, profile, chunk_concurrency, s3_endpoint, s3_region, s3_use_ssl, report=report
     )
 
@@ -451,8 +453,8 @@ def _log_dry_run_directory(
         remote_path = str(f["path"])
         local_path = _build_local_path(remote_path, prefix, destination)
         logger.info("  %s -> %s", remote_path, local_path)
-    if len(files) > 10:
-        logger.info("  ... and %d more file(s)", len(files) - 10)
+    if len(files) > _MAX_FILES_LISTED:
+        logger.info("  ... and %d more file(s)", len(files) - _MAX_FILES_LISTED)
 
 
 def _execute_parallel_downloads(

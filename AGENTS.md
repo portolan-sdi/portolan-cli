@@ -210,7 +210,6 @@ Always research before implementing:
 - **ALL** non-obvious decisions are recorded where they apply (see `.claude/rules/documentation.md`)
 - **NO** new dependencies without discussion
 
-<!-- freshness: last-verified: 2026-11-25 -->
 ## Design Principles
 
 | Principle | Meaning |
@@ -221,7 +220,6 @@ Always research before implementing:
 | **versions.json is truth** | Drives sync, validation, history |
 | **Plugin interface early** | Handlers follow consistent interface for future plugins |
 | **CLI wraps API** | All logic in library; CLI is thin Click layer |
-<!-- /freshness -->
 
 ## Known Issues
 

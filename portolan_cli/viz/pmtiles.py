@@ -167,7 +167,7 @@ def check_pmtiles_available() -> None:
     # Check for the geoparquet-io PMTiles API. geoparquet-io is a core
     # dependency, so this only fails on a version below 1.3.0 (Issue #754).
     try:
-        from geoparquet_io.api.ops import (  # type: ignore[import-untyped] # noqa: F401
+        from geoparquet_io.api.ops import (  # noqa: F401
             create_pmtiles,
         )
     except ImportError as e:
@@ -443,7 +443,7 @@ def _archive_layer(pmtiles_path: Path) -> str | None:
         from portolan_cli.metadata.pmtiles import extract_pmtiles_metadata
 
         return extract_pmtiles_metadata(pmtiles_path).layer_name
-    except Exception as e:  # noqa: BLE001 - the layer name falls back to the stem
+    except Exception as e:  # the layer name falls back to the stem
         logger.debug("Could not read the PMTiles layer of %s: %s", pmtiles_path, e)
         return None
 
@@ -750,7 +750,7 @@ def _track_side_step_assets(
         )
 
 
-def generate_pmtiles_for_collection(
+def generate_pmtiles_for_collection(  # noqa: PLR0913, PLR0915 - each tippecanoe option is an argument
     collection_path: Path,
     catalog_root: Path,
     *,

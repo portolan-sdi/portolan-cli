@@ -869,7 +869,7 @@ class TestSensitiveSettings:
 
         (tmp_path / ".portolan").mkdir()
 
-        with pytest.raises(ConfigError) as exc_info:
+        with pytest.raises(ConfigError, match=r"remote") as exc_info:
             set_setting(tmp_path, "remote", "s3://bucket/")
 
         assert "remote" in str(exc_info.value)
@@ -883,7 +883,7 @@ class TestSensitiveSettings:
 
         (tmp_path / ".portolan").mkdir()
 
-        with pytest.raises(ConfigError) as exc_info:
+        with pytest.raises(ConfigError, match=r"profile") as exc_info:
             set_setting(tmp_path, "profile", "myprofile")
 
         assert "profile" in str(exc_info.value)
@@ -896,7 +896,7 @@ class TestSensitiveSettings:
 
         (tmp_path / ".portolan").mkdir()
 
-        with pytest.raises(ConfigError) as exc_info:
+        with pytest.raises(ConfigError, match=r"aws_profile") as exc_info:
             set_setting(tmp_path, "aws_profile", "myprofile")
 
         assert "aws_profile" in str(exc_info.value)
@@ -908,7 +908,7 @@ class TestSensitiveSettings:
 
         (tmp_path / ".portolan").mkdir()
 
-        with pytest.raises(ConfigError) as exc_info:
+        with pytest.raises(ConfigError, match=r"region") as exc_info:
             set_setting(tmp_path, "region", "us-west-2")
 
         assert "region" in str(exc_info.value)
@@ -1329,7 +1329,7 @@ class TestResolvePushSettings:
 
         self._init_catalog(tmp_path)
         with mock.patch.dict(os.environ, {"PORTOLAN_REMOTE": "s3://env-bucket/"}):
-            destination, profile, _ = resolve_push_settings(None, None, tmp_path, None)
+            destination, _profile, _ = resolve_push_settings(None, None, tmp_path, None)
 
         assert destination == "s3://env-bucket/"
 
@@ -1351,7 +1351,7 @@ class TestResolvePushSettings:
         self._init_catalog(tmp_path, "remote: s3://stale-from-config/\n")
         with mock.patch.dict(os.environ, {}, clear=False):
             os.environ.pop("PORTOLAN_REMOTE", None)
-            with pytest.raises(ValueError):
+            with pytest.raises(ValueError, match=r"remote"):
                 resolve_push_settings(None, None, tmp_path, None)
 
 
@@ -1442,7 +1442,7 @@ class TestUnknownKeysRejected:
         with pytest.raises(ConfigError, match=r"Unknown setting 'conversion\.vector\.compression'"):
             set_setting(tmp_path, "conversion.vector.compression", "zstd")
 
-        with pytest.raises(ConfigError) as excinfo:
+        with pytest.raises(ConfigError, match=r"Unknown setting 'workers'") as excinfo:
             set_setting(tmp_path, "workers", "8")
         message = str(excinfo.value)
         assert "conversion.vector.sort" in message
@@ -1686,7 +1686,7 @@ class TestOneParsePerFile:
 
         with trace.tracing():
             assert state.setting("pmtiles.min_zoom", collection_dir=collection) == 3
-            # The same inode and the same size. Only st_mtime_ns moves, by 1 µs.
+            # The same inode and the same size. Only st_mtime_ns moves, by one microsecond.
             # NTFS stores the mtime in 100 ns steps, so a 1 ns step is lost there.
             _rewrite_in_place(config_file, "pmtiles:\n  min_zoom: 4\n", before.st_mtime_ns + 1_000)
             after = config_file.stat()
@@ -2058,9 +2058,9 @@ class TestCollectionBackendAndRemote:
 
         with cleared_environ():
             # The iceberg add path reads the remote this way (finalization).
-            with pytest.raises(ValueError, match="'remote' found in config.yaml"):
+            with pytest.raises(ValueError, match=r"'remote' found in config.yaml"):
                 state.setting("remote", collection_dir=catalog / "demo")
-            with pytest.raises(ValueError, match="'remote' found in config.yaml"):
+            with pytest.raises(ValueError, match=r"'remote' found in config.yaml"):
                 check_backend_supports_push(catalog, "demo", state=state)
 
     @pytest.mark.unit
@@ -2273,8 +2273,8 @@ class TestYamlLoader:
             "multi:\n  <<: [*base, {c: 3}]\n"
             "alias: *base\n"
         )
-        python = yaml.load(text, Loader=yaml.SafeLoader)  # noqa: S506 (a safe loader)
-        libyaml = yaml.load(text, Loader=yaml.CSafeLoader)  # noqa: S506 (a safe loader)
+        python = yaml.load(text, Loader=yaml.SafeLoader)  # a safe loader
+        libyaml = yaml.load(text, Loader=yaml.CSafeLoader)  # a safe loader
 
         assert python == libyaml
         assert libyaml["day"] == datetime.date(2024, 1, 2)
@@ -2527,7 +2527,7 @@ class TestListNestedSettings:
     def test_the_unknown_key_message_lists_pattern_keys_by_name(self, tmp_path: Path) -> None:
         from portolan_core.config import set_setting
 
-        with pytest.raises(ConfigError) as excinfo:
+        with pytest.raises(ConfigError, match=r"Unknown setting 'workers'") as excinfo:
             set_setting(tmp_path, "workers", "8")
 
         assert "backend, check.disabled, check.severity.<name>, conversion.cog.compression" in str(

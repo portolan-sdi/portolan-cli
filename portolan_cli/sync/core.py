@@ -236,7 +236,7 @@ def _step_check(
         return None, f"Check failed: {e}"
 
 
-def _step_push(
+def _step_push(  # noqa: PLR0917 - each push option is an argument
     catalog_root: Path,
     collection: str,
     destination: str,

@@ -10,23 +10,21 @@ import json
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from portolan_cli.add import (
     IGNORED_FILES,
-    ItemInfo,
     _get_asset_role,
     _get_media_type,
     add,
-    get_item_info,
-    list_items,
 )
 from portolan_cli.plugins.builtin.formats import COG, GEOPARQUET
 from portolan_cli.preparation import PreparedItem
 from portolan_core.checksums import compute_checksum, compute_dir_size
+from portolan_core.query import ItemInfo, get_item_info, list_items
 from portolan_core.versions import read_versions
 
 if TYPE_CHECKING:
@@ -749,7 +747,7 @@ class TestPathSegmentValidation:
     """Tests for item_id and collection_id path traversal prevention."""
 
     # item_id must always be a single segment (no slashes)
-    _UNSAFE_ITEM_IDS = [
+    _UNSAFE_ITEM_IDS: ClassVar[list[Any]] = [
         pytest.param("../etc", id="traversal"),
         pytest.param("a/b", id="slash"),
         pytest.param("a\\b", id="backslash"),
@@ -760,7 +758,7 @@ class TestPathSegmentValidation:
 
     # collection_id allows slashes (nested catalogs),
     # but still rejects traversal, backslashes, and special segments
-    _UNSAFE_COLLECTION_IDS = [
+    _UNSAFE_COLLECTION_IDS: ClassVar[list[Any]] = [
         pytest.param("../etc", id="traversal"),
         pytest.param("a/../b", id="traversal_in_path"),
         pytest.param("a\\b", id="backslash"),

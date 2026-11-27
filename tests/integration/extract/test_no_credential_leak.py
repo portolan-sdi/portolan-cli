@@ -156,9 +156,9 @@ CASES = {
             "wfs",
             "wfs/workspace_layer",
             f"/geoserver/wfs?{name}=SECRET",
-            ("--layers", "topp:states", *LICENSE),
+            ("--layers", "gs:us_states", *LICENSE),
             0,
-            _wfs("topp:states"),
+            _wfs("gs:us_states"),
         )
         for name in ("token", "key", "apikey")
     },
@@ -166,9 +166,9 @@ CASES = {
         "wfs",
         "wfs/workspace_layer",
         "/geoserver/wfs",
-        ("--layers", "topp:states", *LICENSE),
+        ("--layers", "gs:us_states", *LICENSE),
         0,
-        _wfs("topp:states"),
+        _wfs("gs:us_states"),
         userinfo=True,
     ),
 }
@@ -255,7 +255,7 @@ def test_no_credential_reaches_any_output(
         library_out = tmp_path / "library"
         try:
             library_result = case.library(url, library_out)
-        except Exception as err:  # noqa: BLE001 - any error type must hold no credential
+        except Exception as err:  # any error type must hold no credential
             shown = [str(err), repr(err)]
         else:
             shown = [repr(library_result), json.dumps(library_result.to_dict())]

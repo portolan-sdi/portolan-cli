@@ -82,7 +82,7 @@ class TestConfigWorkflow:
             # Verify file exists and contains our value
             config_file = Path(".portolan/config.yaml")
             assert config_file.exists()
-            content = config_file.read_text()
+            content = config_file.read_text(encoding="utf-8")
             assert "precision:" in content
             assert "8" in content
 

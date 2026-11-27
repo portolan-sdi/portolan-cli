@@ -66,10 +66,11 @@ class TestNoDuplicateNesting:
                         "description": "Test",
                         "links": [],
                     }
-                )
+                ),
+                encoding="utf-8",
             )
             Path(".portolan").mkdir()
-            Path(".portolan/config.yaml").write_text("version: 1\n")
+            Path(".portolan/config.yaml").write_text("version: 1\n", encoding="utf-8")
 
             # Create collection/item structure with a TIF file
             # Simulating: 2025/26453e204934n/26453E204934N.tif
@@ -116,10 +117,11 @@ class TestNoDuplicateNesting:
                         "description": "Test",
                         "links": [],
                     }
-                )
+                ),
+                encoding="utf-8",
             )
             Path(".portolan").mkdir()
-            Path(".portolan/config.yaml").write_text("version: 1\n")
+            Path(".portolan/config.yaml").write_text("version: 1\n", encoding="utf-8")
 
             # Create structure mimicking real data
             Path("imagery").mkdir()
@@ -160,10 +162,11 @@ class TestNoDuplicateNesting:
                         "description": "Test",
                         "links": [],
                     }
-                )
+                ),
+                encoding="utf-8",
             )
             Path(".portolan").mkdir()
-            Path(".portolan/config.yaml").write_text("version: 1\n")
+            Path(".portolan/config.yaml").write_text("version: 1\n", encoding="utf-8")
 
             Path("data").mkdir()
             Path("data/myitem").mkdir()

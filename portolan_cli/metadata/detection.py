@@ -501,10 +501,8 @@ def detect_changes(state: FileMetadataState) -> list[str]:
 
     # Check feature count
     if (
-        state.stored_feature_count is None
-        and state.current_feature_count is not None
-        or state.current_feature_count != state.stored_feature_count
-    ):
+        state.stored_feature_count is None and state.current_feature_count is not None
+    ) or state.current_feature_count != state.stored_feature_count:
         changes.append("feature_count")
 
     # Check schema

@@ -132,7 +132,7 @@ class TestManagedDeletes:
         ]
 
     def test_a_prior_key_that_is_not_catalog_metadata_is_refused(self) -> None:
-        with pytest.raises(InvalidKeyError, match="boundaries/boundaries.parquet"):
+        with pytest.raises(InvalidKeyError, match=r"boundaries/boundaries.parquet"):
             _plan(prior_managed_keys=["boundaries/boundaries.parquet"])
 
 
@@ -193,35 +193,35 @@ class TestBadInput:
         documents = golden_documents()
         del documents["boundaries/collection.json"]["title"]
 
-        with pytest.raises(InvalidDocumentError, match="boundaries/collection.json"):
+        with pytest.raises(InvalidDocumentError, match=r"boundaries/collection.json"):
             plan_catalog(documents, golden_documentation())
 
     def test_a_catalog_without_its_readme_is_refused(self) -> None:
         documentation = golden_documentation()
         del documentation["environment/README.md"]
 
-        with pytest.raises(InvalidDocumentError, match="environment/README.md"):
+        with pytest.raises(InvalidDocumentError, match=r"environment/README.md"):
             plan_catalog(golden_documents(), documentation)
 
     def test_documentation_without_an_owner_is_refused(self) -> None:
         documentation = golden_documentation()
         documentation["ghost/README.md"] = "# Ghost\n"
 
-        with pytest.raises(MissingOwnerError, match="ghost/README.md"):
+        with pytest.raises(MissingOwnerError, match=r"ghost/README.md"):
             plan_catalog(golden_documents(), documentation)
 
     def test_a_document_of_the_wrong_kind_is_refused(self) -> None:
         documents = golden_documents()
         documents["environment/catalog.json"]["type"] = "Collection"
 
-        with pytest.raises(InvalidDocumentError, match="environment/catalog.json"):
+        with pytest.raises(InvalidDocumentError, match=r"environment/catalog.json"):
             plan_catalog(documents, golden_documentation())
 
     def test_stac_extensions_that_is_not_a_list_is_refused(self) -> None:
         documents = golden_documents()
         documents["environment/catalog.json"]["stac_extensions"] = "not-a-list"
 
-        with pytest.raises(InvalidDocumentError, match="environment/catalog.json"):
+        with pytest.raises(InvalidDocumentError, match=r"environment/catalog.json"):
             plan_catalog(documents, golden_documentation())
 
     def test_a_tree_without_a_root_catalog_is_refused(self) -> None:
@@ -230,14 +230,14 @@ class TestBadInput:
         documentation = golden_documentation()
         del documentation["README.md"], documentation["AGENTS.md"]
 
-        with pytest.raises(InvalidDocumentError, match="catalog.json"):
+        with pytest.raises(InvalidDocumentError, match=r"catalog.json"):
             plan_catalog(documents, documentation)
 
     def test_an_item_outside_a_collection_is_refused(self) -> None:
         documents = golden_documents()
         documents["environment/stray/stray.json"] = documents.pop(f"{SOUTH}/Estación Sur.json")
 
-        with pytest.raises(InvalidDocumentError, match="environment/stray/stray.json"):
+        with pytest.raises(InvalidDocumentError, match=r"environment/stray/stray.json"):
             plan_catalog(documents, golden_documentation())
 
 
@@ -270,7 +270,7 @@ class TestReviewFixes:
     def test_keys_that_differ_only_by_case_are_refused(self) -> None:
         item = "environment/air-quality/station-north/station-north.json"
 
-        with pytest.raises(InvalidKeyError, match="Station-North.json"):
+        with pytest.raises(InvalidKeyError, match=r"Station-North.json"):
             _plan(prior_managed_keys=[item.replace("station-north.json", "Station-North.json")])
 
     def test_a_prior_key_that_a_new_asset_references_is_refused(self) -> None:
@@ -281,7 +281,7 @@ class TestReviewFixes:
             "roles": ["style"],
         }
 
-        with pytest.raises(InvalidKeyError, match="boundaries/style.json"):
+        with pytest.raises(InvalidKeyError, match=r"boundaries/style.json"):
             plan_catalog(
                 documents, golden_documentation(), prior_managed_keys=["boundaries/style.json"]
             )
@@ -294,7 +294,7 @@ class TestReviewFixes:
             "roles": ["style"],
         }
 
-        with pytest.raises(InvalidKeyError, match="boundaries/Style.json"):
+        with pytest.raises(InvalidKeyError, match=r"boundaries/Style.json"):
             plan_catalog(
                 documents, golden_documentation(), prior_managed_keys=["boundaries/Style.json"]
             )
@@ -363,7 +363,7 @@ class TestReviewFixes:
         documentation["boundaries/inner/README.md"] = "# Inner\n"
         documentation["boundaries/inner/AGENTS.md"] = "# Inner\n"
 
-        with pytest.raises(InvalidDocumentError, match="boundaries/inner/collection.json"):
+        with pytest.raises(InvalidDocumentError, match=r"boundaries/inner/collection.json"):
             plan_catalog(documents, documentation)
 
     @pytest.mark.parametrize("prefix", ["/", "///", "a//b", "a\\b", "a/./b"])
@@ -387,7 +387,7 @@ class TestReviewFixes:
         documents = golden_documents()
         documents["boundaries/collection.json"][field] = value
 
-        with pytest.raises(InvalidDocumentError, match="boundaries/collection.json"):
+        with pytest.raises(InvalidDocumentError, match=r"boundaries/collection.json"):
             plan_catalog(documents, golden_documentation())
 
 
@@ -443,7 +443,7 @@ class TestRashidKeyRules:
             plan_catalog(documents, documentation)
 
     def test_a_drive_prior_key_is_refused_on_every_host(self, host: str) -> None:
-        with pytest.raises(InvalidKeyError, match="'C:/old/collection.json'"):
+        with pytest.raises(InvalidKeyError, match=r"'C:/old/collection.json'"):
             _plan(prior_managed_keys=["C:/old/collection.json"])
 
     @pytest.mark.parametrize("prefix", ["C:/catalogs", "C:"])
@@ -462,5 +462,5 @@ class TestRashidKeyRules:
         item = documents["environment/air-quality/station-north/station-north.json"]
         documents["environment/air-quality/station-north/Station-North.json"] = item
 
-        with pytest.raises(InvalidKeyError, match="Station-North.json"):
+        with pytest.raises(InvalidKeyError, match=r"Station-North.json"):
             plan_catalog(documents, golden_documentation())

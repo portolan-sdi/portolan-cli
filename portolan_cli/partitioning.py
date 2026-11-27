@@ -33,6 +33,7 @@ import pyarrow.parquet as pq
 from portolan_core.trace import count
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
     from pathlib import Path
 
     from portolan_core.config import ConfigSource
@@ -175,6 +176,17 @@ def find_large_partition_candidates(
     )
 
 
+def _large_parquet(path: Path, threshold_gb: float) -> tuple[Path, float] | None:
+    """Return the path and its size in GB when it exceeds ``threshold_gb``, else None."""
+    try:
+        if should_partition(path, threshold_gb=threshold_gb, enabled=True):
+            return (path, path.stat().st_size / (1024 * 1024 * 1024))
+    except OSError:
+        # Skip files with permission errors or broken symlinks
+        return None
+    return None
+
+
 def _scan_partition_candidates(
     resolved_paths: list[Path], threshold_gb: float
 ) -> list[tuple[Path, float]]:
@@ -182,19 +194,15 @@ def _scan_partition_candidates(
     large_files: list[tuple[Path, float]] = []
     for p in resolved_paths:
         try:
+            candidates: Iterable[Path] = []
             if p.is_file() and p.suffix.lower() == ".parquet":
-                if should_partition(p, threshold_gb=threshold_gb, enabled=True):
-                    size_gb = p.stat().st_size / (1024 * 1024 * 1024)
-                    large_files.append((p, size_gb))
+                candidates = [p]
             elif p.is_dir():
-                for pq_file in p.rglob("*.parquet"):
-                    try:
-                        if should_partition(pq_file, threshold_gb=threshold_gb, enabled=True):
-                            size_gb = pq_file.stat().st_size / (1024 * 1024 * 1024)
-                            large_files.append((pq_file, size_gb))
-                    except OSError:
-                        # Skip files with permission errors or broken symlinks
-                        continue
+                candidates = p.rglob("*.parquet")
+            for candidate in candidates:
+                found = _large_parquet(candidate, threshold_gb)
+                if found is not None:
+                    large_files.append(found)
         except OSError:
             # Skip paths with permission errors or broken symlinks
             continue
@@ -229,7 +237,7 @@ def partition_geoparquet(
     """
     import shutil
 
-    from geoparquet_io.core.partition.by_kdtree import (  # type: ignore[import-untyped]
+    from geoparquet_io.core.partition.by_kdtree import (
         partition_by_kdtree,
     )
 

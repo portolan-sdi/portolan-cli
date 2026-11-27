@@ -231,7 +231,7 @@ class TestEnvelopeEdgeCases:
     @pytest.mark.unit
     def test_envelope_with_none_data(self) -> None:
         """Envelope with None data should serialize correctly."""
-        envelope = OutputEnvelope(success=True, command="init", data=None)  # type: ignore
+        envelope = OutputEnvelope(success=True, command="init", data=None)
 
         result = envelope.to_dict()
 

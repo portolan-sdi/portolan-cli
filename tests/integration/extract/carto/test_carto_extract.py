@@ -147,7 +147,7 @@ def test_a_thumbnail_exception_keeps_the_versions_of_the_add(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The thumbnails run after the add. An exception there still commits the add."""
-    import portolan_cli.collection_thumbnail as collection_thumbnail
+    from portolan_cli import collection_thumbnail
     from portolan_core.versions import read_versions
 
     def broken_thumbnails(*_args: object, **_kwargs: object) -> None:

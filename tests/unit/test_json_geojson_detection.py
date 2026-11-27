@@ -9,12 +9,22 @@ See: https://github.com/portolan-sdi/portolan-cli/issues/256
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
+from portolan_cli.scan.classify import SkippedFile
+
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from portolan_cli.scan.core import ScanResult
+
+
+def _skipped(result: ScanResult) -> list[SkippedFile]:
+    """Return the skipped entries. The scanner records each one as a SkippedFile."""
+    assert all(isinstance(entry, SkippedFile) for entry in result.skipped)
+    return cast("list[SkippedFile]", result.skipped)
 
 
 @pytest.mark.unit
@@ -36,7 +46,7 @@ class TestJsonGeoJsonDetectionInScan:
         ready_names = [f.path.name for f in result.ready]
         assert "rec_centers.json" in ready_names, (
             f"rec_centers.json should be detected as GeoJSON. "
-            f"Ready files: {ready_names}, Skipped: {[s.path.name for s in result.skipped]}"
+            f"Ready files: {ready_names}, Skipped: {[s.path.name for s in _skipped(result)]}"
         )
 
     def test_json_with_geojson_content_has_vector_format_type(self, fixtures_dir: Path) -> None:
@@ -75,7 +85,7 @@ class TestJsonGeoJsonDetectionInScan:
 
         # config.json should be skipped (not geospatial)
         ready_names = [f.path.name for f in result.ready]
-        skipped_names = [s.path.name for s in result.skipped]
+        skipped_names = [s.path.name for s in _skipped(result)]
 
         assert "config.json" not in ready_names, (
             f"config.json should NOT be in ready list (it's not GeoJSON). Ready: {ready_names}"
@@ -136,7 +146,7 @@ class TestJsonGeoJsonDetectionEdgeCases:
         json_file.write_text("[1, 2, 3, 4]")
 
         result = scan_directory(tmp_path)
-        skipped_names = [s.path.name for s in result.skipped]
+        skipped_names = [s.path.name for s in _skipped(result)]
         assert "array.json" in skipped_names
 
     def test_json_with_type_key_but_not_geojson_is_skipped(self, tmp_path: Path) -> None:
@@ -147,7 +157,7 @@ class TestJsonGeoJsonDetectionEdgeCases:
         json_file.write_text('{"type": "something_else", "data": [1, 2, 3]}')
 
         result = scan_directory(tmp_path)
-        skipped_names = [s.path.name for s in result.skipped]
+        skipped_names = [s.path.name for s in _skipped(result)]
         assert "not_geo.json" in skipped_names
 
     def test_large_json_geojson_is_detected(self, tmp_path: Path) -> None:
@@ -209,7 +219,7 @@ class TestJsonGeoJsonMixedDirectory:
 
         result = scan_directory(tmp_path)
         ready_names = [f.path.name for f in result.ready]
-        skipped_names = [s.path.name for s in result.skipped]
+        skipped_names = [s.path.name for s in _skipped(result)]
 
         assert "places.json" in ready_names
         assert "settings.json" in skipped_names
@@ -240,7 +250,7 @@ class TestJsonGeoJsonRobustness:
 
         # Should be skipped, not raise an exception
         ready_names = [f.path.name for f in result.ready]
-        skipped_names = [s.path.name for s in result.skipped]
+        skipped_names = [s.path.name for s in _skipped(result)]
 
         assert "binary.json" not in ready_names
         assert "binary.json" in skipped_names
@@ -262,7 +272,7 @@ class TestJsonGeoJsonRobustness:
         json_file.write_text(content)
 
         result = scan_directory(tmp_path)
-        skipped_names = [s.path.name for s in result.skipped]
+        skipped_names = [s.path.name for s in _skipped(result)]
 
         # Should be skipped because token is beyond 8KB detection window
         assert "late_token.json" in skipped_names
@@ -299,7 +309,7 @@ class TestJsonGeoJsonRobustness:
         catalog_json.write_text('{"type": "Catalog", "id": "test"}')
 
         result = scan_directory(tmp_path)
-        skipped = [s for s in result.skipped if s.path.name == "catalog.json"]
+        skipped = [s for s in _skipped(result) if s.path.name == "catalog.json"]
 
         assert len(skipped) == 1
         assert skipped[0].category == FileCategory.STAC_METADATA
@@ -314,7 +324,7 @@ class TestJsonGeoJsonRobustness:
         collection_json.write_text('{"type": "Collection", "id": "test"}')
 
         result = scan_directory(tmp_path)
-        skipped = [s for s in result.skipped if s.path.name == "collection.json"]
+        skipped = [s for s in _skipped(result) if s.path.name == "collection.json"]
 
         assert len(skipped) == 1
         assert skipped[0].category == FileCategory.STAC_METADATA
@@ -328,7 +338,7 @@ class TestJsonGeoJsonRobustness:
         corrupt_json.write_bytes(b'{"type": "\x00FeatureCollection"}')
 
         result = scan_directory(tmp_path)
-        skipped_names = [s.path.name for s in result.skipped]
+        skipped_names = [s.path.name for s in _skipped(result)]
 
         # Should be skipped (null bytes don't match GeoJSON tokens)
         assert "corrupt.json" in skipped_names

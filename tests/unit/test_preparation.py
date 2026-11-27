@@ -8,7 +8,7 @@ the new module's seam, independent of the full add() orchestration.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -448,7 +448,7 @@ class TestValidateCollectionId:
 
     @pytest.mark.parametrize("bad", ["", "..", "a\\b", "a/../b"])
     def test_rejects_unsafe_ids(self, bad: str) -> None:
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match=r"Invalid collection"):
             _validate_collection_id(bad)
 
 
@@ -550,7 +550,7 @@ class TestConvertVectorRetriesTransientInterrupt:
                 return self
 
             def write(self, path: str) -> None:
-                Path(path).write_text("parquet-bytes")
+                Path(path).write_text("parquet-bytes", encoding="utf-8")
 
         calls = {"n": 0}
 
@@ -598,7 +598,7 @@ class TestConvertVectorRetriesTransientInterrupt:
             geometry_column = None
 
             def write(self, path: str) -> None:
-                Path(path).write_text("parquet-bytes")
+                Path(path).write_text("parquet-bytes", encoding="utf-8")
 
         calls = {"n": 0}
 
@@ -653,7 +653,9 @@ class TestConvertTabularKeepsAForeignFile:
 
         out = convert_tabular(tmp_path / "t.csv", tmp_path)
 
-        recorded = pq.read_metadata(out).metadata[PROVENANCE_KEY.encode()]
+        file_metadata = pq.read_metadata(out).metadata
+        assert file_metadata is not None
+        recorded = file_metadata[PROVENANCE_KEY.encode()]
         assert json.loads(recorded) == {
             "base": "absolute",
             "path": (tmp_path / "t.csv").resolve().as_posix(),
@@ -927,15 +929,15 @@ class TestTheGateSeesWhatTheRewriteDrops:
     def _geoparquet(path: Path, case: str) -> Path:
         import json
 
-        import geopandas as gpd
+        import geopandas
         import pyarrow as pa
         import pyarrow.parquet as pq
         from shapely.geometry import Point
 
-        frame = gpd.GeoDataFrame(
+        frame = geopandas.GeoDataFrame(
             {"a": [1, 2, 3]}, geometry=[Point(0, 0), Point(1, 1), Point(2, 2)], crs=3857
         )
-        frame["g2"] = gpd.GeoSeries([Point(0, 0)] * 3).to_wkb()
+        frame["g2"] = geopandas.GeoSeries([Point(0, 0)] * 3).to_wkb()
         frame.to_parquet(path)
         table = pq.read_table(path)
         metadata = dict(table.schema.metadata or {})
@@ -954,7 +956,9 @@ class TestTheGateSeesWhatTheRewriteDrops:
             else field
             for field in table.schema
         ]
-        pq.write_table(table.cast(pa.schema(fields, metadata=metadata)), path)
+        # The pyarrow stub types the metadata as an invariant dict of bytes or str.
+        schema_metadata = cast("dict[bytes | str, bytes | str]", metadata)
+        pq.write_table(table.cast(pa.schema(fields, metadata=schema_metadata)), path)
         return path
 
     @pytest.mark.unit
@@ -996,7 +1000,7 @@ class TestTheRewrittenFooterIsReadOnce:
 
     @pytest.mark.unit
     def test_an_in_place_rewrite_opens_two_footers(self, tmp_path: Path) -> None:
-        import geopandas as gpd
+        import geopandas
         from click.testing import CliRunner
         from shapely.geometry import Point
 
@@ -1010,9 +1014,9 @@ class TestTheRewrittenFooterIsReadOnce:
         assert init.exit_code == 0, init.output
         (tmp_path / "c1").mkdir()
         source = tmp_path / "c1" / "c1.parquet"
-        gpd.GeoDataFrame({"a": [1, 2]}, geometry=[Point(0, 0), Point(1, 1)], crs=4326).to_parquet(
-            source
-        )
+        geopandas.GeoDataFrame(
+            {"a": [1, 2]}, geometry=[Point(0, 0), Point(1, 1)], crs=4326
+        ).to_parquet(source)
         state = RunState.open(tmp_path)
 
         with trace.tracing():

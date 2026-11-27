@@ -1,11 +1,15 @@
 # prek configuration - Tier 1 CI
 #
 # All hooks BLOCK on failure. No warnings, no skips.
-# Install: prek install (requires: uv tool install prek)
+# Install: uv run prek install (installs every type in default_install_hook_types)
 #:schema https://www.schemastore.org/prek.json
 
 # Stop after first hook failure for faster feedback
 fail_fast = true
+
+# A bare `prek install` installs all three, so the commit-msg and pre-push
+# hooks below do not depend on extra --hook-type flags.
+default_install_hook_types = ["pre-commit", "commit-msg", "pre-push"]
 
 # =============================================================================
 # Built-in hooks (native Rust, no network fetch required)
@@ -37,12 +41,26 @@ hooks = [
 # =============================================================================
 # External tool hooks
 # =============================================================================
+# Ruff runs from uv.lock, so the hook and `uv run ruff` use one version.
 [[repos]]
-repo = "https://github.com/astral-sh/ruff-pre-commit"
-rev = "v0.14.1"
+repo = "local"
 hooks = [
-  { id = "ruff", args = ["--fix"] },
-  { id = "ruff-format" },
+  {
+    id = "ruff",
+    name = "ruff",
+    entry = "uv run ruff check --fix --force-exclude",
+    language = "system",
+    types = ["python"],
+    require_serial = true,
+  },
+  {
+    id = "ruff-format",
+    name = "ruff-format",
+    entry = "uv run ruff format --force-exclude",
+    language = "system",
+    types = ["python"],
+    require_serial = true,
+  },
 ]
 
 [[repos]]
@@ -120,14 +138,6 @@ hooks = [
     files = { glob = ["AGENTS.md", "pyproject.toml", "portolan_cli/cli.py"] },
     pass_filenames = false,
   },
-  {
-    id = "update-freshness",
-    name = "auto-update freshness markers",
-    entry = "uv run python scripts/update_freshness.py",
-    language = "system",
-    files = { glob = ["portolan_cli/output.py", "packages/portolan-core/src/portolan_core/errors.py", "packages/portolan-core/src/portolan_core/constants.py", "portolan_cli/json_output.py", "portolan_cli/cli.py"] },
-    pass_filenames = true,
-  },
 
   # === VALIDATION HOOKS ===
   {
@@ -144,7 +154,6 @@ hooks = [
     entry = "uv run mypy",
     language = "system",
     types = ["python"],
-    args = ["portolan_cli", "packages/portolan-core/src"],
     pass_filenames = false,
     require_serial = true,
   },

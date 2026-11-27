@@ -75,7 +75,7 @@ def test_extracts_non_spatial_tables_as_tabular(
         calls[kwargs["table_name"]] = kwargs
         pq.write_table(pa.table({"a": [1]}), kwargs["output_file"])
 
-    import geoparquet_io.core.carto as gpio_carto  # type: ignore[import-untyped]
+    import geoparquet_io.core.carto as gpio_carto
 
     monkeypatch.setattr(gpio_carto, "convert_carto_to_geoparquet", fake_convert)
 
@@ -105,7 +105,7 @@ def test_threads_options_into_gpio(monkeypatch: pytest.MonkeyPatch, tmp_path: Pa
         captured.update(kwargs)
         pq.write_table(pa.table({"a": [1]}), kwargs["output_file"])
 
-    import geoparquet_io.core.carto as gpio_carto  # type: ignore[import-untyped]
+    import geoparquet_io.core.carto as gpio_carto
 
     monkeypatch.setattr(gpio_carto, "convert_carto_to_geoparquet", fake_convert)
 

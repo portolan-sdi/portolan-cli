@@ -461,10 +461,10 @@ def convert_to_geoparquet() -> None:
     print(f"Generated {output.relative_to(FIXTURES_DIR)}")
 
 
-def generate_raster_fixtures() -> None:
+def generate_raster_fixtures() -> None:  # noqa: PLR0914, PLR0915 - writes each fixture file in one sequence
     """Generate raster (COG) fixtures using rasterio and rio-cogeo."""
-    import rasterio  # type: ignore[import-untyped]
-    from rasterio.transform import from_bounds  # type: ignore[import-untyped]
+    import rasterio
+    from rasterio.transform import from_bounds
     from rio_cogeo.cogeo import cog_translate
     from rio_cogeo.profiles import cog_profiles
 
@@ -484,7 +484,7 @@ def generate_raster_fixtures() -> None:
         height,
     )
     crs = "EPSG:4326"
-    profile = cog_profiles.get("deflate")  # type: ignore[no-untyped-call]
+    profile = cog_profiles.get("deflate")
 
     # --- RGB COG (3-band uint8) ---
     # Deterministic pattern: red gradient left-to-right, green top-to-bottom

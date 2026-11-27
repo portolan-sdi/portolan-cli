@@ -39,7 +39,7 @@ def _assert_no_item_json(collection_dir: Path) -> None:
 def _assert_collection_assets(collection_dir: Path, expected_assets: dict[str, str]) -> None:
     """Assert collection.json has expected assets with correct hrefs."""
     collection_json = collection_dir / "collection.json"
-    with open(collection_json) as f:
+    with open(collection_json, encoding="utf-8") as f:
         collection_data = json.load(f)
 
     assets = collection_data.get("assets", {})
@@ -125,7 +125,7 @@ class TestCollectionLevelAssetWorkflow:
         versions_file = collection_dir / "versions.json"
         assert versions_file.exists(), "versions.json should exist"
 
-        with open(versions_file) as f:
+        with open(versions_file, encoding="utf-8") as f:
             versions_data = json.load(f)
 
         assert len(versions_data["versions"]) == 1, "Should have one version"
@@ -185,7 +185,7 @@ class TestCollectionLevelAssetWorkflow:
 
         # Verify versions.json tracks both assets
         versions_file = collection_dir / "versions.json"
-        with open(versions_file) as f:
+        with open(versions_file, encoding="utf-8") as f:
             versions_data = json.load(f)
 
         assert len(versions_data["versions"]) == 2, "Should have two versions"
@@ -260,7 +260,7 @@ class TestCollectionLevelAssetWorkflow:
 
         # Verify versions.json tracks both correctly
         versions_file = collection_dir / "versions.json"
-        with open(versions_file) as f:
+        with open(versions_file, encoding="utf-8") as f:
             versions_data = json.load(f)
 
         all_assets = {}
@@ -358,7 +358,7 @@ class TestCollectionLevelNonGeoCompanionWorkflow:
         collection_json = collection_dir / "collection.json"
         assert collection_json.exists(), "collection.json should exist"
 
-        with open(collection_json) as f:
+        with open(collection_json, encoding="utf-8") as f:
             collection_data = json.load(f)
 
         assets = collection_data.get("assets", {})
@@ -402,7 +402,7 @@ class TestCollectionLevelNonGeoCompanionWorkflow:
         pq.write_table(table, nongeo_file)
 
         # Add directory
-        added, skipped, failures = add_files(
+        _added, skipped, failures = add_files(
             paths=[collection_dir],
             catalog_root=fresh_catalog_no_versions,
             collection_id="data",

@@ -218,9 +218,13 @@ class TestCounters:
         assert trace.counters() == {}
 
     def test_tracing_resets_after_an_error(self) -> None:
-        with pytest.raises(KeyError), trace.tracing():
-            trace.count("config.merges")
-            raise KeyError("boom")
+        def fail_while_tracing() -> None:
+            with trace.tracing():
+                trace.count("config.merges")
+                raise KeyError("boom")
+
+        with pytest.raises(KeyError, match="boom"):
+            fail_while_tracing()
         assert not trace.is_enabled()
         assert trace.counters() == {}
 

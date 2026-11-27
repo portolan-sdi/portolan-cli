@@ -84,6 +84,8 @@ if TYPE_CHECKING:
     )
     from portolan_cli.extract.common.report import ExtractionReport, ExtractRunResult
 
+_WGS84_EPSG = 4326
+
 logger = logging.getLogger(__name__)
 
 
@@ -214,7 +216,7 @@ def _service_output_dir(output_dir: Path, service_name: str) -> Path:
     parts = [slugify(p) for p in service_name.split("/") if p]
     result = output_dir
     for part in parts:
-        result = result / part
+        result /= part
     return result
 
 
@@ -287,7 +289,7 @@ def _is_wgs84_crs(crs: dict[str, object]) -> bool:
     except (CRSError, KeyError, TypeError, ValueError):
         # An unparsable CRS is not WGS84, so tag it rather than assume CRS84.
         return False
-    return parsed.to_epsg() == 4326 or parsed == CRS("OGC:CRS84")
+    return parsed.to_epsg() == _WGS84_EPSG or parsed == CRS("OGC:CRS84")
 
 
 def _ensure_geoparquet_crs(output_path: Path, source_crs: dict[str, object] | None) -> None:
@@ -607,7 +609,7 @@ class ArcGISLayerSource:
             service_url = service.get_url(base_url)
             try:
                 found = discover_layers(service_url, client)
-            except Exception as err:  # noqa: BLE001 - one service must not stop the walk
+            except Exception as err:  # one service must not stop the walk
                 errors.append(f"{service.name}: {err}")
                 logger.warning("Failed to discover layers from service '%s': %s", service.name, err)
                 continue
@@ -669,7 +671,7 @@ class ArcGISLayerSource:
         options = self.options
         import inspect
 
-        import geoparquet_io as gpio  # type: ignore[import-untyped]
+        import geoparquet_io as gpio
 
         # Check which optional parameters gpio.extract_arcgis supports (feature-detected
         # so older gpio versions continue to work without modification).
@@ -737,7 +739,7 @@ class ArcGISLayerSource:
             details = fetch_layer_details(arcgis_layer.service_url, layer.id, self.options.client())
             description = details.get("description")
             name = details.get("name", layer.name)
-        except Exception as err:  # noqa: BLE001 - a missing description must not fail the catalog
+        except Exception as err:  # a missing description must not fail the catalog
             logger.debug(
                 "Failed to fetch layer details for %s (id=%s) from %s: %s",
                 layer.name,

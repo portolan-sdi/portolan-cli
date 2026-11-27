@@ -51,7 +51,7 @@ def partitioned_catalog(tmp_path_factory: pytest.TempPathFactory) -> tuple[Path,
 
     Returns (catalog_root, collection_dir).
     """
-    import geopandas as gpd
+    import geopandas
     import numpy as np
 
     catalog_root = tmp_path_factory.mktemp("partition-catalog")
@@ -69,9 +69,9 @@ def partitioned_catalog(tmp_path_factory: pytest.TempPathFactory) -> tuple[Path,
     # seconds per build.
     n = 100_000
     rng = np.random.default_rng(42)
-    gdf = gpd.GeoDataFrame(
+    gdf = geopandas.GeoDataFrame(
         {"id": range(n), "val": rng.random(n)},
-        geometry=gpd.points_from_xy(rng.uniform(-180, 180, n), rng.uniform(-90, 90, n)),
+        geometry=geopandas.points_from_xy(rng.uniform(-180, 180, n), rng.uniform(-90, 90, n)),
         crs="EPSG:4326",
     )
     gdf.to_parquet(collection_dir / "data.parquet")

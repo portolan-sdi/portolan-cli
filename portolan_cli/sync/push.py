@@ -64,19 +64,21 @@ from portolan_core.trace import count, span, submit
 if TYPE_CHECKING:
     from obstore import PutMode, PutResult
 
+_KIB = 1024
+
 __all__ = [
-    "get_default_workers",
-    "push",
-    "push_async",
-    "push_all_collections",
-    "run_push",
-    "discover_collections",
-    "UploadMetrics",
-    "format_file_size",
-    "format_speed",
     "PushVersionDiff",
+    "UploadMetrics",
     "VerifyReport",
     "VersionDiff",  # Deprecated alias
+    "discover_collections",
+    "format_file_size",
+    "format_speed",
+    "get_default_workers",
+    "push",
+    "push_all_collections",
+    "push_async",
+    "run_push",
 ]
 
 
@@ -311,7 +313,7 @@ def format_file_size(size_bytes: int) -> str:
     Returns:
         Human-readable size string (e.g., "54.2 MB").
     """
-    if size_bytes < 1024:
+    if size_bytes < _KIB:
         return f"{size_bytes} B"
     if size_bytes < 1024 * 1024:
         return f"{size_bytes / 1024:.1f} KB"
@@ -331,7 +333,7 @@ def format_speed(bytes_per_second: float) -> str:
     Returns:
         Human-readable speed string (e.g., "10.5 MiB/s").
     """
-    if bytes_per_second < 1024:
+    if bytes_per_second < _KIB:
         return f"{int(bytes_per_second)} B/s"
     if bytes_per_second < 1024 * 1024:
         return f"{bytes_per_second / 1024:.1f} KiB/s"
@@ -1836,7 +1838,7 @@ async def _fetch_remote_versions_async(
         raise
 
 
-async def _upload_assets_async(
+async def _upload_assets_async(  # noqa: PLR0915 - each transport option is threaded through each layer
     store: ObjectStore,
     catalog_root: Path,
     prefix: str,
@@ -2015,7 +2017,7 @@ async def _upload_assets_async(
     return len(uploaded_keys), errors_list, uploaded_keys, metrics
 
 
-async def _upload_stac_files_async(
+async def _upload_stac_files_async(  # noqa: PLR0915 - each transport option is threaded through each layer
     store: ObjectStore,
     catalog_root: Path,
     prefix: str,
@@ -2392,7 +2394,7 @@ async def _upload_metadata_files_async(
     return uploaded_count, errors
 
 
-async def _execute_push_uploads_async(
+async def _execute_push_uploads_async(  # noqa: PLR0913, PLR0914, PLR0915 - each transport option is threaded through each layer
     store: ObjectStore,
     catalog_root: Path,
     prefix: str,
@@ -2480,9 +2482,11 @@ async def _execute_push_uploads_async(
 
     async def failed(errors: list[str], metadata_errors: list[str] | None = None) -> PushResult:
         # The rollback reports each key that it could not put back.
-        errors = errors + await _drop_backups(
-            store, backups, sizes, restore_over=written, report=report
-        )
+        # A new list keeps the caller's list unchanged.
+        errors = [
+            *errors,
+            *await _drop_backups(store, backups, sizes, restore_over=written, report=report),
+        ]
         errors += _cleanup_uploaded_assets(
             store, [k for k in written if k not in sizes], report=report
         )
@@ -2690,7 +2694,7 @@ async def _sync_collection_metadata_only(
     )
 
 
-async def _repair_flagged_assets_async(
+async def _repair_flagged_assets_async(  # noqa: PLR0913 - each transport option is threaded through each layer
     store: ObjectStore,
     catalog_root: Path,
     prefix: str,
@@ -2774,7 +2778,7 @@ async def _repair_flagged_assets_async(
     return result
 
 
-async def push_async(
+async def push_async(  # noqa: PLR0913 - each transport option is threaded through each layer
     catalog_root: Path,
     collection: str,
     destination: str,
@@ -3461,7 +3465,7 @@ async def _push_all_upload_root_files(
         return False
 
 
-async def push_all_collections_async(
+async def push_all_collections_async(  # noqa: PLR0913, PLR0914, PLR0915 - each transport option is threaded through each layer
     catalog_root: Path,
     destination: str,
     *,
@@ -3664,7 +3668,7 @@ async def push_all_collections_async(
     )
 
 
-def push_all_collections(
+def push_all_collections(  # noqa: PLR0913 - each transport option is threaded through each layer
     catalog_root: Path,
     destination: str,
     *,
@@ -3771,7 +3775,7 @@ def effective_push_concurrency(
     return adjust_concurrency_for_max_connections(concurrency, chunk_concurrency, max_connections)
 
 
-def run_push(
+def run_push(  # noqa: PLR0913 - each transport option is threaded through each layer
     catalog_root: Path,
     destination: str,
     *,

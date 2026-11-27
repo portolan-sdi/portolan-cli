@@ -24,7 +24,8 @@ OUTPUT_PATH = Path(__file__).parent.parent / "portolan_cli" / "skills" / "INSTAL
 def fetch_readme() -> str:
     """Fetch README content from upstream repository."""
     with urllib.request.urlopen(UPSTREAM_URL, timeout=30) as response:
-        return response.read().decode("utf-8")
+        body: bytes = response.read()
+        return body.decode("utf-8")
 
 
 def extract_installation_section(readme: str) -> str:

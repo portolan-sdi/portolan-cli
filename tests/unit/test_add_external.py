@@ -64,7 +64,7 @@ class TestHelpers:
         assert not is_external_href("./relative/path.parquet")
 
     @pytest.mark.parametrize(
-        "url,expected",
+        ("url", "expected"),
         [
             ("https://example.org/data/buildings.parquet", "application/vnd.apache.parquet"),
             ("s3://b/theme=x/type=y/*.parquet", "application/vnd.apache.parquet"),

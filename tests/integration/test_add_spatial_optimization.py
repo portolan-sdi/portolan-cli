@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import shutil
 from pathlib import Path
+from typing import cast
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -122,12 +123,12 @@ class TestTheSourceFooterIsReadOnce:
     ) -> None:
         from portolan_cli import preparation
         from portolan_cli.conversion_config import VectorSettings
+        from portolan_cli.metadata.geoparquet import open_footer
         from portolan_core import trace
 
         source = tmp_path / "roads.parquet"
         shutil.copy(POINTS, source)
         opened: list[pq.ParquetFile] = []
-        open_footer = preparation.open_footer
 
         def recorded(path: Path) -> pq.ParquetFile | None:
             parquet = open_footer(path)
@@ -135,7 +136,7 @@ class TestTheSourceFooterIsReadOnce:
                 opened.append(parquet)
             return parquet
 
-        monkeypatch.setattr(preparation, "open_footer", recorded)
+        monkeypatch.setattr("portolan_cli.preparation.open_footer", recorded)
 
         with trace.tracing():
             output = preparation.convert_vector(source, tmp_path, settings=VectorSettings())
@@ -175,7 +176,7 @@ class TestAnAddReadsEachFooterOnce:
     def test_a_conformant_geoparquet_add_reads_its_footer_once(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        import geoparquet_io as gpio  # type: ignore[import-untyped]
+        import geoparquet_io as gpio
 
         root = tmp_path / "catalog"
         target = root / "roads" / "roads.parquet"
@@ -202,7 +203,7 @@ class TestAnAddReadsEachFooterOnce:
 class TestAddLeavesFilesAlone:
     def test_conformant_geoparquet_is_copied_untouched(self, tmp_path: Path) -> None:
         """A file that already carries the column costs nothing to add."""
-        import geoparquet_io as gpio  # type: ignore[import-untyped]
+        import geoparquet_io as gpio
 
         root = tmp_path / "catalog"
         collection = root / "roads"
@@ -290,7 +291,8 @@ class TestReconvertRepairsRowOrder:
 
         assert "re-convert requested" in output
         assert pq.read_table(target).column("id").to_pylist() != seeded_ids
-        assert sorted(pq.read_table(target).column("id").to_pylist()) == sorted(seeded_ids)
+        ids = pq.read_table(target).column("id").to_pylist()
+        assert sorted(cast("list[int]", ids)) == sorted(cast("list[int]", seeded_ids))
         assert _covering(target) is not None
 
 
@@ -423,7 +425,7 @@ class TestRewritePreservesPublisherMetadata:
         ``pandas`` key is the one key gpio drops on purpose: it names the columns
         of the input, and the rewrite adds a column (gpio#1268).
         """
-        import geopandas as gpd
+        import geopandas
         from geoparquet_io.api.table import Table
 
         from portolan_cli.conversion_config import VectorSettings
@@ -431,7 +433,7 @@ class TestRewritePreservesPublisherMetadata:
         from portolan_cli.preparation import _rewrite_parquet_in_place
 
         target = tmp_path / "buildings.parquet"
-        frame = gpd.read_parquet(FIXTURES / "realdata" / "open-buildings.parquet")
+        frame = geopandas.read_parquet(FIXTURES / "realdata" / "open-buildings.parquet")
         frame.to_parquet(target)
         table = pq.read_table(target)
         metadata = {**(table.schema.metadata or {}), b"publisher:provenance": b"cadastre"}
@@ -443,7 +445,8 @@ class TestRewritePreservesPublisherMetadata:
 
         def counted_write(self: Table, path: str, *args: object, **kwargs: object) -> Path:
             writes.append(str(path))
-            return table_write(self, path, *args, **kwargs)  # type: ignore[arg-type]
+            written: Path = table_write(self, path, *args, **kwargs)
+            return written
 
         class CountedWriter(parquet_writer):  # type: ignore[misc, valid-type]
             def __init__(self, where: object, *args: object, **kwargs: object) -> None:
@@ -457,10 +460,11 @@ class TestRewritePreservesPublisherMetadata:
 
         assert len(writes) == 1, writes
         after = pq.read_metadata(target).metadata
+        assert after is not None
         assert after[b"publisher:provenance"] == b"cadastre"
         assert b"pandas" not in after
         assert _covering(target) is not None
-        assert len(gpd.read_parquet(target)) == len(frame)
+        assert len(geopandas.read_parquet(target)) == len(frame)
 
     def test_the_geo_key_is_not_restored_from_the_source(self, tmp_path: Path) -> None:
         """Restoring the old `geo` would contradict the column just added."""
@@ -550,14 +554,14 @@ class TestTheRewriteNeverLosesData:
 
     def test_a_projected_file_keeps_its_crs_through_the_rewrite(self, tmp_path: Path) -> None:
         """`add` rewrites an EPSG:3857 file and leaves it in EPSG:3857."""
-        import geopandas as gpd
+        import geopandas
         from shapely.geometry import Point
 
         root = tmp_path / "catalog"
         collection = root / "roads"
         collection.mkdir(parents=True)
         target = collection / "roads.parquet"
-        gpd.GeoDataFrame(
+        geopandas.GeoDataFrame(
             {"n": [1, 2]},
             geometry=[Point(-8238310, 4970072), Point(-8237000, 4971000)],
             crs="EPSG:3857",
@@ -576,20 +580,22 @@ class TestTheRewriteNeverLosesData:
         assert "bbox" in pq.ParquetFile(target).schema_arrow.names
 
         # It kept what the gate protects.
-        assert gpd.read_parquet(target).crs.to_epsg() == 3857
-        assert len(gpd.read_parquet(target)) == 2
+        kept_crs = geopandas.read_parquet(target).crs
+        assert kept_crs is not None
+        assert kept_crs.to_epsg() == 3857
+        assert len(geopandas.read_parquet(target)) == 2
         assert "n" in pq.ParquetFile(target).schema_arrow.names
 
     def test_the_scratch_file_is_gone_after_a_successful_rewrite(self, tmp_path: Path) -> None:
         """An accepted swap leaves no hidden temporary behind."""
-        import geopandas as gpd
+        import geopandas
         from shapely.geometry import Point
 
         root = tmp_path / "catalog"
         collection = root / "roads"
         collection.mkdir(parents=True)
         target = collection / "roads.parquet"
-        gpd.GeoDataFrame(
+        geopandas.GeoDataFrame(
             {"n": [1]}, geometry=[Point(-8238310, 4970072)], crs="EPSG:3857"
         ).to_parquet(target)
         _init(root)
@@ -677,7 +683,7 @@ class TestTheGuardsCoverEveryRewritePath:
         `_assert_rewrite_kept_everything`, so a `.parquet` source lost its CRS
         on that path while the same file kept it in place.
         """
-        import geopandas as gpd
+        import geopandas
         from shapely.geometry import Point
 
         from portolan_cli.preparation import convert_vector
@@ -685,7 +691,7 @@ class TestTheGuardsCoverEveryRewritePath:
         source_dir = tmp_path / "src"
         source_dir.mkdir()
         source = source_dir / "roads.parquet"
-        gpd.GeoDataFrame(
+        geopandas.GeoDataFrame(
             {"n": [1, 2]},
             geometry=[Point(-8238310, 4970072), Point(-8237000, 4971000)],
             crs="EPSG:3857",
@@ -695,11 +701,13 @@ class TestTheGuardsCoverEveryRewritePath:
         dest.mkdir()
         output = convert_vector(source, dest)
 
-        assert gpd.read_parquet(output).crs.to_epsg() == 3857
+        output_crs = geopandas.read_parquet(output).crs
+        assert output_crs is not None
+        assert output_crs.to_epsg() == 3857
 
     def test_a_changed_crs_is_refused_like_a_dropped_one(self, tmp_path: Path) -> None:
         """The gate compares the CRS value, not only whether one is present."""
-        import geopandas as gpd
+        import geopandas
         import pytest
         from shapely.geometry import Point
 
@@ -709,7 +717,7 @@ class TestTheGuardsCoverEveryRewritePath:
 
         source = tmp_path / "a.parquet"
         rewritten = tmp_path / "b.parquet"
-        frame = gpd.GeoDataFrame({"n": [1]}, geometry=[Point(0, 0)], crs="EPSG:3857")
+        frame = geopandas.GeoDataFrame({"n": [1]}, geometry=[Point(0, 0)], crs="EPSG:3857")
         frame.to_parquet(source)
         frame.to_crs("EPSG:4326").to_parquet(rewritten)
 
@@ -719,7 +727,7 @@ class TestTheGuardsCoverEveryRewritePath:
 
     def test_an_equivalent_crs_encoding_is_not_a_change(self, tmp_path: Path) -> None:
         """Two encodings of one CRS must not trip the gate."""
-        import geopandas as gpd
+        import geopandas
         from shapely.geometry import Point
 
         from portolan_cli.metadata.geoparquet import read_rewrite_fidelity
@@ -727,7 +735,7 @@ class TestTheGuardsCoverEveryRewritePath:
 
         source = tmp_path / "a.parquet"
         rewritten = tmp_path / "b.parquet"
-        frame = gpd.GeoDataFrame({"n": [1]}, geometry=[Point(0, 0)], crs="EPSG:4326")
+        frame = geopandas.GeoDataFrame({"n": [1]}, geometry=[Point(0, 0)], crs="EPSG:4326")
         frame.to_parquet(source)
         frame.to_parquet(rewritten)
 
@@ -801,8 +809,10 @@ class TestAProjjsonCrsSurvivesAdd:
         # The declared extent is lon/lat, not POSGAR meters.
         extent = json.loads((collection / "collection.json").read_text())["extent"]
         minx, miny, maxx, maxy = extent["spatial"]["bbox"][0][:4]
-        assert -180 <= minx <= 180 and -180 <= maxx <= 180, f"longitude out of range: {extent}"
-        assert -90 <= miny <= 90 and -90 <= maxy <= 90, f"latitude out of range: {extent}"
+        assert -180 <= minx <= 180, f"longitude out of range: {extent}"
+        assert -180 <= maxx <= 180, f"longitude out of range: {extent}"
+        assert -90 <= miny <= 90, f"latitude out of range: {extent}"
+        assert -90 <= maxy <= 90, f"latitude out of range: {extent}"
 
     def test_the_projjson_crs_reaches_the_crs_layer_intact(self, tmp_path: Path) -> None:
         """The dict CRS transforms rather than raising."""
@@ -817,8 +827,10 @@ class TestAProjjsonCrsSurvivesAdd:
             (3400000.0, 6000000.0, 3410000.0, 6010000.0), projjson
         )
 
-        assert -180 <= west <= 180 and -180 <= east <= 180
-        assert -90 <= south <= 90 and -90 <= north <= 90
+        assert -180 <= west <= 180
+        assert -180 <= east <= 180
+        assert -90 <= south <= 90
+        assert -90 <= north <= 90
         assert "PROJJSON" not in describe_crs(projjson)
 
 
@@ -834,14 +846,14 @@ class TestAWgs84FileGainsItsCoveringColumn:
 
     def test_a_wgs84_parquet_is_rewritten(self, tmp_path: Path) -> None:
         """`add` rewrites an EPSG:4326 file and adds the covering column."""
-        import geopandas as gpd
+        import geopandas
         from shapely.geometry import Point
 
         root = tmp_path / "catalog"
         collection = root / "places"
         collection.mkdir(parents=True)
         target = collection / "places.parquet"
-        gpd.GeoDataFrame(
+        geopandas.GeoDataFrame(
             {"n": [1, 2]}, geometry=[Point(0.0, 0.0), Point(1.0, 1.0)], crs="EPSG:4326"
         ).to_parquet(target)
         _init(root)
@@ -851,7 +863,7 @@ class TestAWgs84FileGainsItsCoveringColumn:
         assert "Kept places.parquet as it is" not in output
         assert _covering(target) is not None
         assert "bbox" in pq.ParquetFile(target).schema_arrow.names
-        assert len(gpd.read_parquet(target)) == 2
+        assert len(geopandas.read_parquet(target)) == 2
 
     def test_a_partitioned_add_rewrites_the_source_once(self, tmp_path: Path) -> None:
         """The source gains the column, so no partition needs its own rewrite.
@@ -859,7 +871,7 @@ class TestAWgs84FileGainsItsCoveringColumn:
         A refused source rewrite made `add` rewrite every partition instead.
         With 513 partitions that turned an 11s add into a 248s one.
         """
-        import geopandas as gpd
+        import geopandas
         import numpy as np
 
         root = tmp_path / "catalog"
@@ -869,9 +881,9 @@ class TestAWgs84FileGainsItsCoveringColumn:
         rng = np.random.default_rng(0)
         n = 100_000  # 512 partitions need 100 rows each to clear gpio's floor
         # Vectorized: a Python loop of Point objects took tens of seconds.
-        gpd.GeoDataFrame(
+        geopandas.GeoDataFrame(
             {"id": range(n)},
-            geometry=gpd.points_from_xy(rng.uniform(-180, 180, n), rng.uniform(-90, 90, n)),
+            geometry=geopandas.points_from_xy(rng.uniform(-180, 180, n), rng.uniform(-90, 90, n)),
             crs="EPSG:4326",
         ).to_parquet(target)
         _init(root)

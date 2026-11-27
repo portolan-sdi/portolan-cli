@@ -53,7 +53,7 @@ class TestInitCreatesRequiredFiles:
             config_file = Path(".portolan/config.yaml")
             assert config_file.exists()
             # Config starts as a comment-only file (empty dict when parsed as YAML)
-            content = yaml.safe_load(config_file.read_text())
+            content = yaml.safe_load(config_file.read_text(encoding="utf-8"))
             assert content is None or content == {}  # Empty YAML or comment-only
 
     # Note: test_init_creates_portolan_state removed per issue #290
@@ -76,7 +76,7 @@ class TestInitCreatesRequiredFiles:
             assert not Path(".portolan/versions.json").exists(), (
                 "versions.json must NOT be inside .portolan/"
             )
-            data = json.loads(versions_file.read_text())
+            data = json.loads(versions_file.read_text(encoding="utf-8"))
             # Should have at least a version field
             assert isinstance(data, dict)
 
@@ -165,7 +165,7 @@ class TestCatalogJsonValidity:
         with runner.isolated_filesystem(temp_dir=tmp_path):
             runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
 
-            data = json.loads(Path("catalog.json").read_text())
+            data = json.loads(Path("catalog.json").read_text(encoding="utf-8"))
             assert data["type"] == "Catalog"
             # pystac uses its default STAC version (1.1.0 as of 2024)
             assert data["stac_version"] in ("1.0.0", "1.1.0")
@@ -206,7 +206,7 @@ class TestInitErrorCases:
                 "description": "Some external catalog",
                 "links": [],
             }
-            Path("catalog.json").write_text(json.dumps(catalog_data))
+            Path("catalog.json").write_text(json.dumps(catalog_data), encoding="utf-8")
 
             # Use --auto to skip interactive prompts and test error path
             result = runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
@@ -275,7 +275,7 @@ class TestInitFlags:
             )
 
             assert result.exit_code == 0
-            data = json.loads(Path("catalog.json").read_text())
+            data = json.loads(Path("catalog.json").read_text(encoding="utf-8"))
             assert data.get("title") == "My Awesome Catalog"
 
     @pytest.mark.integration
@@ -297,7 +297,7 @@ class TestInitFlags:
             )
 
             assert result.exit_code == 0
-            data = json.loads(Path("catalog.json").read_text())
+            data = json.loads(Path("catalog.json").read_text(encoding="utf-8"))
             assert data.get("description") == "A test catalog for unit tests"
 
     @pytest.mark.integration
@@ -330,7 +330,7 @@ class TestInitFlags:
             )
 
             assert result.exit_code == 0
-            data = json.loads(Path("catalog.json").read_text())
+            data = json.loads(Path("catalog.json").read_text(encoding="utf-8"))
             assert data.get("title") == "Combined Test"
             assert data.get("description") == "Testing all flags"
 
@@ -382,7 +382,7 @@ class TestInitJsonOutput:
                 "description": "External",
                 "links": [],
             }
-            Path("catalog.json").write_text(json.dumps(catalog_data))
+            Path("catalog.json").write_text(json.dumps(catalog_data), encoding="utf-8")
 
             result = runner.invoke(cli, ["--format", "json", "init", "--license", "CC-BY-4.0"])
 

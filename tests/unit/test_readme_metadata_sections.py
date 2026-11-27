@@ -6,6 +6,8 @@ fields from metadata.yaml are properly rendered in the README.
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from portolan_cli.readme import (
@@ -38,7 +40,7 @@ class TestSourceSection:
     def test_skips_when_no_source_url(self) -> None:
         """No section added when source_url is missing."""
         sections: list[str] = []
-        metadata = {}
+        metadata: dict[str, Any] = {}
 
         _add_source_section(sections, metadata)
 
@@ -74,7 +76,7 @@ class TestProcessingSection:
     def test_skips_when_no_processing_notes(self) -> None:
         """No section added when processing_notes is missing."""
         sections: list[str] = []
-        metadata = {}
+        metadata: dict[str, Any] = {}
 
         _add_processing_section(sections, metadata)
 
@@ -113,7 +115,7 @@ class TestKeywordsSection:
     def test_skips_when_no_keywords(self) -> None:
         """No section added when keywords is missing."""
         sections: list[str] = []
-        metadata = {}
+        metadata: dict[str, Any] = {}
 
         _add_keywords_section(sections, metadata)
 
@@ -123,7 +125,7 @@ class TestKeywordsSection:
     def test_skips_when_keywords_empty_list(self) -> None:
         """No section added when keywords is empty list."""
         sections: list[str] = []
-        metadata = {"keywords": []}
+        metadata: dict[str, Any] = {"keywords": []}
 
         _add_keywords_section(sections, metadata)
 
@@ -257,7 +259,7 @@ class TestAttributionSection:
     def test_skips_when_no_attribution(self) -> None:
         """No section added when attribution is missing."""
         sections: list[str] = []
-        metadata = {}
+        metadata: dict[str, Any] = {}
 
         _add_attribution_section(sections, metadata)
 

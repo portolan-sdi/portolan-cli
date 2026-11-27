@@ -62,6 +62,10 @@ if TYPE_CHECKING:
     from portolan_cli.plugins.formats import FormatHandler
     from portolan_core.run_state import RunState
 
+_RGB_BAND_COUNT = 3
+_DBF_HEADER_MIN_BYTES = 32
+_ASCII_MAX = 0x7F
+
 logger = logging.getLogger(__name__)
 
 # Type alias for rio-cogeo resampling methods
@@ -250,11 +254,11 @@ def generate_cog_thumbnail(
             # Compute target shape preserving aspect ratio
             longest = max(src.width, src.height)
             scale = min(1.0, max_size / float(longest))
-            out_w = max(1, int(round(src.width * scale)))
-            out_h = max(1, int(round(src.height * scale)))
+            out_w = max(1, round(src.width * scale))
+            out_h = max(1, round(src.height * scale))
 
             # Pick up to 3 bands for RGB; fall back to first band for grayscale
-            indexes: list[int] = [1, 2, 3] if src.count >= 3 else [1]
+            indexes: list[int] = [1, 2, 3] if src.count >= _RGB_BAND_COUNT else [1]
 
             # masked=True applies the dataset mask (nodata sentinels, alpha,
             # internal mask band) so percentile stretch on float/int rasters
@@ -348,13 +352,13 @@ def _early_exit_result(
 ) -> ConversionResult | None:
     """Return a SKIPPED/UNSUPPORTED result if no conversion should run, else None.
 
-    Cloud-native files are skipped, EXCEPT when ``force`` is set and the file is a
-    RASTER (a valid COG) — that case re-optimizes in place (issue #530), so this
-    returns None to let conversion proceed. Vectors are never force-re-processed.
+    Cloud-native files are skipped, EXCEPT when ``force`` is set and the handler
+    has a ``reoptimize`` method. That case rewrites the file in place, so this
+    returns None to let conversion proceed. The caller picks which files to force.
     Unsupported formats are accepted with no error.
     """
     if format_info.status == CloudNativeStatus.CLOUD_NATIVE:
-        # --force re-optimizes a file whose handler can rewrite it (issue #530).
+        # force re-optimizes a file whose handler can rewrite it.
         from portolan_cli.plugins.formats import handler_for
 
         handler = handler_for(source, catalog_path, state=state) if force else None
@@ -410,9 +414,8 @@ def convert_file(
         vector_settings: Explicit vector settings override. Takes precedence over
             ``catalog_path``-loaded settings. If None, loads from
             ``catalog_path`` or falls back to no spatial optimization.
-        force: Re-optimize an already-cloud-native RASTER by re-applying current
-            ``cog_settings`` (e.g. to add missing overviews). Raster-scoped only:
-            cloud-native vectors are still skipped (issue #530). Has no effect on
+        force: Rewrite an already-cloud-native file whose handler has a
+            ``reoptimize`` method, with the current settings. Has no effect on
             CONVERTIBLE or UNSUPPORTED files.
         state: The run state, which parses the config once per command.
 
@@ -432,12 +435,18 @@ def convert_file(
         from portolan_cli.plugins.formats import handler_for, plugin_handler_for
 
         # A plugin format handler converts the formats it claims (#947). A built-in
-        # format first passes the cloud-native check.
+        # format, or a cloud-native file under force, first passes the cloud-native check.
         handler = plugin_handler_for(source, catalog_path, state=state)
         reoptimize = False
         display_name = handler.display_name if handler is not None else ""
-        if handler is None:
-            format_info = get_cloud_native_status(source, catalog_path, state=state)
+        format_info = (
+            get_cloud_native_status(source, catalog_path, state=state)
+            if handler is None or force
+            else None
+        )
+        if format_info is not None and (
+            handler is None or format_info.status == CloudNativeStatus.CLOUD_NATIVE
+        ):
             early_exit = _early_exit_result(
                 source,
                 format_info,
@@ -633,7 +642,7 @@ def with_provenance(table: Any, source: Path, *, require_geometry: bool = False)
             deletes that output and tracks the source as a companion, so a
             record would only cost a hash of the source.
     """
-    from geoparquet_io.api.table import Table  # type: ignore[import-untyped]
+    from geoparquet_io.api.table import Table
 
     if not isinstance(table, Table):
         return table
@@ -665,7 +674,7 @@ def _recorded_source(output: Path) -> dict[str, object] | None:
             count("raster.opens")
             with rasterio.open(output) as dataset:
                 raw = dataset.tags().get(COG_PROVENANCE_TAG)
-    except Exception:  # noqa: BLE001 - an unreadable file names no source
+    except Exception:  # an unreadable file names no source
         return None
     if raw is None:
         return None
@@ -795,7 +804,7 @@ def _batch_has_output_inputs(paths: list[Path], catalog_root: Path, state: RunSt
                     outputs.extend(
                         source.with_name(f"{source.stem}_{layer}.parquet") for layer in layers
                     )
-        except Exception:  # noqa: BLE001 - preparation reports handler/input errors per file
+        except Exception:  # preparation reports handler/input errors per file
             logger.debug("Could not inspect output dependencies for %s", source, exc_info=True)
             continue
         for output in outputs:
@@ -903,7 +912,7 @@ def write_raster_thumbnail(cog_path: Path, catalog_root: Path | None) -> None:
         generate_cog_thumbnail(
             cog_path, max_size=settings.thumbnail_max_size, quality=settings.thumbnail_quality
         )
-    except Exception as e:  # noqa: BLE001 - the thumbnail is optional
+    except Exception as e:  # the thumbnail is optional
         logger.warning("Thumbnail generation failed for %s: %s", cog_path.name, e)
 
 
@@ -1006,7 +1015,7 @@ def repair_shapefile_encoding_sidecar(shp: Path) -> Path | None:
     if not dbf.exists():
         return None
     raw = dbf.read_bytes()
-    if len(raw) <= 32:
+    if len(raw) <= _DBF_HEADER_MIN_BYTES:
         return None
     header_len = struct.unpack_from("<H", raw, 8)[0]
     records = raw[header_len:]
@@ -1015,7 +1024,7 @@ def repair_shapefile_encoding_sidecar(shp: Path) -> Path | None:
         records_are_utf8 = True
     except UnicodeDecodeError:
         records_are_utf8 = False
-    has_non_ascii = any(b > 0x7F for b in records)
+    has_non_ascii = any(b > _ASCII_MAX for b in records)
     declared = cpg.read_text(errors="replace").strip().upper() if cpg.exists() else None
 
     if records_are_utf8 and has_non_ascii and declared not in (None, "UTF-8", "UTF8"):
@@ -1424,7 +1433,7 @@ def _copy_packbits_cog(vrt: Path, scratch: Path, options: dict[str, Any]) -> Non
 
 def _tag_vrt(vrt: Path, tags: dict[str, str]) -> None:
     """Set dataset metadata items in a VRT file. The COG copy keeps them."""
-    import xml.etree.ElementTree as ET  # noqa: N817 - the usual name
+    import xml.etree.ElementTree as ET  # the usual name
 
     tree = ET.parse(vrt)  # noqa: S314 - GDAL wrote this file a moment ago
     root = tree.getroot()
@@ -1631,7 +1640,7 @@ def validate_cog(path: Path) -> str | None:
 # Note: GEOSPATIAL_EXTENSIONS imported from portolan_core.constants
 
 
-def convert_directory(
+def convert_directory(  # noqa: PLR0917 - each convert option is an argument
     path: Path,
     output_dir: Path | None = None,
     on_progress: Callable[[ConversionResult], None] | None = None,
@@ -1664,8 +1673,8 @@ def convert_directory(
             > 1 uses a ``ProcessPoolExecutor`` for CPU-bound raster re-encoding
             (issue #530). Callers wanting parallel-by-default resolve a concrete
             count (e.g. ``os.cpu_count()``) before calling.
-        force: Re-optimize already-cloud-native rasters (passed through to
-            :func:`convert_file`). Raster-scoped; valid vectors stay skipped.
+        force: Rewrite each cloud-native file whose handler has a ``reoptimize``
+            method, raster or vector (passed through to :func:`convert_file`).
         state: The run state, which parses the config once per command.
 
     Returns:
@@ -1769,17 +1778,18 @@ def _convert_files_serial(
     return results
 
 
-#: The run state of a conversion worker process. ``_init_worker_state`` sets it.
-_WORKER_STATE: RunState | None = None
+class _Worker:
+    """Hold the run state of a conversion worker process. ``_init_worker_state`` sets it."""
+
+    state: RunState | None = None
 
 
 def _init_worker_state(catalog_path: Path | None, tracing: bool = False) -> None:
     """Give this worker process one run state, so it parses the config once."""
-    global _WORKER_STATE
     from portolan_core import trace
     from portolan_core.run_state import RunState
 
-    _WORKER_STATE = RunState.open(catalog_path) if catalog_path is not None else None
+    _Worker.state = RunState.open(catalog_path) if catalog_path is not None else None
     if tracing:
         trace.enable()
         # The perf harness supplies the same instrumentation used in its parent.
@@ -1791,6 +1801,16 @@ def _init_worker_state(catalog_path: Path | None, tracing: bool = False) -> None
         if initializer := os.environ.get("PORTOLAN_PERF_WORKER_INIT"):
             module, name = initializer.split(":", 1)
             getattr(importlib.import_module(module), name)()
+
+
+def _replay_worker_output(increments: dict[str, int], messages: list[tuple[str, str]]) -> None:
+    """Add the trace counts of a worker to this process and print its messages."""
+    for name, value in increments.items():
+        if value:
+            count(name, value)
+    # Each message prints before the progress line of its file.
+    for level, text in messages:
+        emit(level, text)
 
 
 def _convert_in_worker(
@@ -1808,7 +1828,7 @@ def _convert_in_worker(
 
     before = trace.counters() if trace.is_enabled() else {}
     with recording() as messages:
-        result = convert_file(source, state=_WORKER_STATE, **kwargs)
+        result = convert_file(source, state=_Worker.state, **kwargs)
     increments = (
         {name: value - before.get(name, 0) for name, value in trace.counters().items()}
         if trace.is_enabled()
@@ -1890,12 +1910,7 @@ def _convert_files_parallel(
                 file_path = future_to_file[future]
                 try:
                     result, increments, messages = future.result()
-                    for name, value in increments.items():
-                        if value:
-                            count(name, value)
-                    # Each message prints before the progress line of its file.
-                    for level, text in messages:
-                        emit(level, text)
+                    _replay_worker_output(increments, messages)
                 except BrokenProcessPool:
                     # The pool itself died; let the outer handler fall back to
                     # serial rather than marking this file FAILED.
@@ -2083,7 +2098,7 @@ def _convert_vector_layer(
     Raises:
         Exception: If conversion fails.
     """
-    import geoparquet_io as gpio  # type: ignore[import-untyped]
+    import geoparquet_io as gpio
 
     if settings is None:
         settings = VectorSettings()

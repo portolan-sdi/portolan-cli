@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING, Any, get_type_hints
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+from portolan_core.bbox import BBOX_2D_LEN
 
 __all__ = ["ConformanceError", "check_backend", "check_extractor", "check_format_handler"]
 
@@ -65,7 +66,7 @@ def check_format_handler(handler: Any, sample: Path, output_dir: Path) -> None:
     if problems:
         raise ConformanceError("\n".join(problems))
 
-    output = handler.convert(sample, output_dir, None)
+    output: object = handler.convert(sample, output_dir, None)
     if not isinstance(output, Path) or not output.exists():
         raise ConformanceError(f"convert returned {output!r}, expected an existing Path.")
 
@@ -75,7 +76,7 @@ def check_format_handler(handler: Any, sample: Path, output_dir: Path) -> None:
             f"read_metadata returned {type(metadata).__name__}, expected FormatMetadata."
         )
     bbox = list(metadata.bbox or [])
-    if len(bbox) != 4 or not all(isinstance(v, (int, float)) for v in bbox):
+    if len(bbox) != BBOX_2D_LEN or not all(isinstance(v, (int, float)) for v in bbox):
         problems.append(f"read_metadata bbox is {bbox!r}, expected four numbers.")
     elif bbox[0] > bbox[2] or bbox[1] > bbox[3]:
         problems.append(f"read_metadata bbox {bbox!r} has a minimum above its maximum.")
@@ -219,7 +220,9 @@ def check_backend(factory: Callable[..., Any], catalog_root: Path) -> None:
         )
 
     history = backend.list_versions(_COLLECTION)
-    wrong = sorted({type(v).__name__ for v in history if not isinstance(v, Version)})
+    # A plugin can return any type at runtime.
+    items: list[object] = list(history)
+    wrong = sorted({type(v).__name__ for v in items if not isinstance(v, Version)})
     if wrong:
         problems.append(f"list_versions returned {', '.join(wrong)} items, expected Version.")
     elif [v.version for v in history] != [first.version, second.version]:
@@ -294,13 +297,16 @@ def check_extractor(
         raise ConformanceError(f"{type(extractor).__name__} does not implement Extractor.")
 
     problems: list[str] = []
-    if not isinstance(extractor.name, str) or not re.fullmatch(r"[a-z][a-z0-9-]*", extractor.name):
-        problems.append(f"name {extractor.name!r} is not a lowercase command name.")
-    if not isinstance(extractor.summary, str) or not extractor.summary.strip():
+    # A plugin can set any type at runtime.
+    name: object = extractor.name
+    summary: object = extractor.summary
+    if not isinstance(name, str) or not re.fullmatch(r"[a-z][a-z0-9-]*", name):
+        problems.append(f"name {name!r} is not a lowercase command name.")
+    if not isinstance(summary, str) or not summary.strip():
         problems.append("summary is empty.")
     try:
         command = extractor.cli_command()
-    except Exception as err:  # noqa: BLE001 - report any load failure as a problem
+    except Exception as err:  # report any load failure as a problem
         problems.append(f"cli_command() raised {type(err).__name__}: {err}.")
     else:
         _check_command(extractor.name, command, problems)

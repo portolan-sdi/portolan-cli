@@ -30,7 +30,7 @@ Before you ask for review, a PR should clear this bar:
 - [ ] **Docs and ADRs updated.** User-facing behavior is documented; non-obvious
       decisions are recorded where they apply.
 
-If you run `prek run --all-files` locally and it is green, you have cleared most of
+If you run `uv run prek run --all-files` locally and it is green, you have cleared most of
 this bar before pushing.
 
 ## Development Setup
@@ -51,10 +51,10 @@ this bar before pushing.
    uv sync --all-extras
    ```
 
-4. **Install prek** (git hook manager)
+4. **Install the git hooks**. `uv sync` installs prek. This command installs
+   the pre-commit, commit-msg, and pre-push hooks.
    ```bash
-   uv tool install prek
-   prek install
+   uv run prek install
    ```
 
 5. **Verify setup**
@@ -91,7 +91,8 @@ so the PR title becomes the commit message — write it in conventional form.
 
 1. Create a branch from `main`
 2. Write tests first, then implement (TDD is required — see [Testing](#testing))
-3. Run `prek run --all-files` to check everything locally
+3. Run `uv run prek run --all-files` and
+   `uv run prek run --all-files --stage pre-push` to check everything locally
 4. Push and open a PR — CI runs automatically
 5. Fill in the PR template and link related issues
 

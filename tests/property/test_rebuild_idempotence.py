@@ -19,7 +19,7 @@ import json
 import shutil
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -43,7 +43,7 @@ START = datetime(2024, 1, 1, tzinfo=UTC)
 
 def _bbox_of(table: pa.Table) -> list[float]:
     """Return the union of a table's ``bbox`` covering column."""
-    boxes = table.column("bbox").to_pylist()
+    boxes = cast("list[dict[str, float]]", table.column("bbox").to_pylist())
     return [
         min(b["xmin"] for b in boxes),
         min(b["ymin"] for b in boxes),
@@ -71,7 +71,8 @@ def shrink_geoparquet(path: Path, *, drop: str | None = None) -> None:
     table = pq.read_table(path)
     xmin, ymin, xmax, ymax = _bbox_of(table)
     xmid, ymid = (xmin + xmax) / 2, (ymin + ymax) / 2
-    keep = [b["xmax"] <= xmid and b["ymax"] <= ymid for b in table.column("bbox").to_pylist()]
+    boxes = cast("list[dict[str, float]]", table.column("bbox").to_pylist())
+    keep = [b["xmax"] <= xmid and b["ymax"] <= ymid for b in boxes]
     smaller = table.filter(pa.array(keep))
     if drop is not None:
         smaller = smaller.drop_columns([drop])
@@ -90,7 +91,7 @@ def append_rows(path: Path) -> None:
     for row in moved:
         box = row["bbox"]
         row["bbox"] = {k: v + 1.0 for k, v in box.items()}
-        row["id"] = row["id"] + 1000
+        row["id"] += 1000
         # The WKB point: byte order, type, then x and y as doubles.
         x, y = _point(row["geometry"])
         row["geometry"] = _wkb_point(x + 1.0, y + 1.0)
@@ -115,7 +116,8 @@ def _wkb_point(x: float, y: float) -> bytes:
 def change_timestamp_range(path: Path) -> None:
     """Move every ``observed_at`` value one year later."""
     table = pq.read_table(path)
-    later = [value + timedelta(days=366) for value in table.column("observed_at").to_pylist()]
+    values = cast("list[datetime]", table.column("observed_at").to_pylist())
+    later = [value + timedelta(days=366) for value in values]
     index = table.schema.get_field_index("observed_at")
     changed = table.set_column(index, "observed_at", pa.array(later, pa.timestamp("us", tz="UTC")))
     write_geoparquet(changed, dict(table.schema.metadata or {}), path)

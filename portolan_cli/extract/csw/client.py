@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-import requests  # type: ignore[import-untyped]
+import requests
 
 if TYPE_CHECKING:
     from portolan_cli.extract.csw.models import ISOMetadata

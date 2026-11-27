@@ -84,7 +84,7 @@ class TestEmitSuccess:
         self, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """JSON mode output equals the prior inline success_envelope block."""
-        data = {"collections": []}
+        data: dict[str, object] = {"collections": []}
         result = emit_success("status", data, use_json=True)
         captured = capsys.readouterr().out
 

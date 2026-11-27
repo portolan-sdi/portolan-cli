@@ -19,6 +19,17 @@ from click.testing import CliRunner
 from portolan_cli.cli import cli
 
 
+def _make_managed_catalog(root: Path) -> Path:
+    """Write a managed catalog under root and return its .portolan directory."""
+    portolan_dir = root / ".portolan"
+    portolan_dir.mkdir()
+    (portolan_dir / "config.yaml").write_text("# config", encoding="utf-8")
+    (root / "catalog.json").write_text(
+        json.dumps({"type": "Catalog", "id": "test"}), encoding="utf-8"
+    )
+    return portolan_dir
+
+
 class TestIsStacMetadata:
     """Tests for STAC metadata detection logic."""
 
@@ -169,12 +180,9 @@ class TestCleanCollectFiles:
         from portolan_cli.clean import collect_files_to_remove
 
         # Create managed catalog
-        portolan_dir = tmp_path / ".portolan"
-        portolan_dir.mkdir()
-        (portolan_dir / "config.yaml").write_text("# config")
-        (tmp_path / "catalog.json").write_text(json.dumps({"type": "Catalog", "id": "test"}))
+        portolan_dir = _make_managed_catalog(tmp_path)
 
-        files, dirs = collect_files_to_remove(tmp_path)
+        _files, dirs = collect_files_to_remove(tmp_path)
 
         assert portolan_dir in dirs
 
@@ -201,10 +209,7 @@ class TestCleanCollectFiles:
         from portolan_cli.clean import collect_files_to_remove
 
         # Create managed catalog with collection
-        portolan_dir = tmp_path / ".portolan"
-        portolan_dir.mkdir()
-        (portolan_dir / "config.yaml").write_text("# config")
-        (tmp_path / "catalog.json").write_text(json.dumps({"type": "Catalog", "id": "test"}))
+        _make_managed_catalog(tmp_path)
 
         collection_dir = tmp_path / "census"
         collection_dir.mkdir()
@@ -221,10 +226,7 @@ class TestCleanCollectFiles:
         from portolan_cli.clean import collect_files_to_remove
 
         # Create managed catalog with versions
-        portolan_dir = tmp_path / ".portolan"
-        portolan_dir.mkdir()
-        (portolan_dir / "config.yaml").write_text("# config")
-        (tmp_path / "catalog.json").write_text(json.dumps({"type": "Catalog", "id": "test"}))
+        _make_managed_catalog(tmp_path)
 
         # Root versions.json
         versions_file = tmp_path / "versions.json"
@@ -247,10 +249,7 @@ class TestCleanCollectFiles:
         from portolan_cli.clean import collect_files_to_remove
 
         # Create managed catalog with item
-        portolan_dir = tmp_path / ".portolan"
-        portolan_dir.mkdir()
-        (portolan_dir / "config.yaml").write_text("# config")
-        (tmp_path / "catalog.json").write_text(json.dumps({"type": "Catalog", "id": "test"}))
+        _make_managed_catalog(tmp_path)
 
         collection_dir = tmp_path / "census"
         collection_dir.mkdir()
@@ -269,10 +268,7 @@ class TestCleanCollectFiles:
         from portolan_cli.clean import collect_files_to_remove
 
         # Create managed catalog
-        portolan_dir = tmp_path / ".portolan"
-        portolan_dir.mkdir()
-        (portolan_dir / "config.yaml").write_text("# config")
-        (tmp_path / "catalog.json").write_text(json.dumps({"type": "Catalog", "id": "test"}))
+        _make_managed_catalog(tmp_path)
 
         # Non-STAC JSON file (e.g., Mapbox style)
         style_file = tmp_path / "style.json"
@@ -288,10 +284,7 @@ class TestCleanCollectFiles:
         from portolan_cli.clean import collect_files_to_remove
 
         # Create managed catalog with data
-        portolan_dir = tmp_path / ".portolan"
-        portolan_dir.mkdir()
-        (portolan_dir / "config.yaml").write_text("# config")
-        (tmp_path / "catalog.json").write_text(json.dumps({"type": "Catalog", "id": "test"}))
+        _make_managed_catalog(tmp_path)
 
         collection_dir = tmp_path / "census"
         collection_dir.mkdir()
@@ -328,11 +321,10 @@ class TestCleanCommand:
         """portolan clean --dry-run should show what would be removed."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
             # Create managed catalog
-            portolan_dir = Path(".portolan")
-            portolan_dir.mkdir()
-            (portolan_dir / "config.yaml").write_text("# config")
-            Path("catalog.json").write_text(json.dumps({"type": "Catalog", "id": "test"}))
-            Path("versions.json").write_text(json.dumps({"schema_version": "1.0.0"}))
+            _make_managed_catalog(Path())
+            Path("versions.json").write_text(
+                json.dumps({"schema_version": "1.0.0"}), encoding="utf-8"
+            )
 
             result = runner.invoke(cli, ["clean", "--dry-run"])
 
@@ -346,10 +338,7 @@ class TestCleanCommand:
         """portolan clean --dry-run should NOT actually delete files."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
             # Create managed catalog
-            portolan_dir = Path(".portolan")
-            portolan_dir.mkdir()
-            (portolan_dir / "config.yaml").write_text("# config")
-            Path("catalog.json").write_text(json.dumps({"type": "Catalog", "id": "test"}))
+            portolan_dir = _make_managed_catalog(Path())
 
             result = runner.invoke(cli, ["clean", "--dry-run"])
 
@@ -364,11 +353,10 @@ class TestCleanCommand:
         """portolan clean should remove all metadata files."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
             # Create managed catalog
-            portolan_dir = Path(".portolan")
-            portolan_dir.mkdir()
-            (portolan_dir / "config.yaml").write_text("# config")
-            Path("catalog.json").write_text(json.dumps({"type": "Catalog", "id": "test"}))
-            Path("versions.json").write_text(json.dumps({"schema_version": "1.0.0"}))
+            portolan_dir = _make_managed_catalog(Path())
+            Path("versions.json").write_text(
+                json.dumps({"schema_version": "1.0.0"}), encoding="utf-8"
+            )
 
             result = runner.invoke(cli, ["clean"])
 
@@ -383,10 +371,7 @@ class TestCleanCommand:
         """portolan clean should preserve all data files."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
             # Create managed catalog with data
-            portolan_dir = Path(".portolan")
-            portolan_dir.mkdir()
-            (portolan_dir / "config.yaml").write_text("# config")
-            Path("catalog.json").write_text(json.dumps({"type": "Catalog", "id": "test"}))
+            _make_managed_catalog(Path())
 
             # Create collection with data
             collection_dir = Path("census")
@@ -411,14 +396,11 @@ class TestCleanCommand:
         """portolan clean should preserve non-STAC JSON files."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
             # Create managed catalog
-            portolan_dir = Path(".portolan")
-            portolan_dir.mkdir()
-            (portolan_dir / "config.yaml").write_text("# config")
-            Path("catalog.json").write_text(json.dumps({"type": "Catalog", "id": "test"}))
+            _make_managed_catalog(Path())
 
             # Create non-STAC JSON file
             style_file = Path("style.json")
-            style_file.write_text(json.dumps({"version": 8, "layers": []}))
+            style_file.write_text(json.dumps({"version": 8, "layers": []}), encoding="utf-8")
 
             result = runner.invoke(cli, ["clean"])
 
@@ -431,10 +413,7 @@ class TestCleanCommand:
         """portolan clean should output a summary of removed files."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
             # Create managed catalog
-            portolan_dir = Path(".portolan")
-            portolan_dir.mkdir()
-            (portolan_dir / "config.yaml").write_text("# config")
-            Path("catalog.json").write_text(json.dumps({"type": "Catalog", "id": "test"}))
+            _make_managed_catalog(Path())
 
             result = runner.invoke(cli, ["clean"])
 
@@ -457,10 +436,7 @@ class TestCleanFromSubdirectory:
         """portolan clean should work from any subdirectory in the catalog."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
             # Create managed catalog
-            portolan_dir = Path(".portolan")
-            portolan_dir.mkdir()
-            (portolan_dir / "config.yaml").write_text("# config")
-            Path("catalog.json").write_text(json.dumps({"type": "Catalog", "id": "test"}))
+            portolan_dir = _make_managed_catalog(Path())
 
             # Create subdirectory
             subdir = Path("census") / "2020"
@@ -495,10 +471,7 @@ class TestCleanEmptyDirectoryCleanup:
         """clean should remove directories that become empty after metadata removal."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
             # Create managed catalog
-            portolan_dir = Path(".portolan")
-            portolan_dir.mkdir()
-            (portolan_dir / "config.yaml").write_text("# config")
-            Path("catalog.json").write_text(json.dumps({"type": "Catalog", "id": "test"}))
+            _make_managed_catalog(Path())
 
             # Create item directory with only metadata
             item_dir = Path("census") / "2020"
@@ -516,10 +489,7 @@ class TestCleanEmptyDirectoryCleanup:
         """clean should NOT remove directories that contain data files."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
             # Create managed catalog
-            portolan_dir = Path(".portolan")
-            portolan_dir.mkdir()
-            (portolan_dir / "config.yaml").write_text("# config")
-            Path("catalog.json").write_text(json.dumps({"type": "Catalog", "id": "test"}))
+            _make_managed_catalog(Path())
 
             # Create item directory with data
             item_dir = Path("census") / "2020"

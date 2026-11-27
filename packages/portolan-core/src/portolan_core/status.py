@@ -77,7 +77,7 @@ class CollectionStatus:
     def _parse_version(version: str) -> tuple[int, int, int]:
         """Parse semver string to comparable tuple."""
         try:
-            parts = version.split("-")[0].split("+")[0].split(".")
+            parts = version.split("-", maxsplit=1)[0].split("+", maxsplit=1)[0].split(".")
             return (int(parts[0]), int(parts[1]), int(parts[2]))
         except (IndexError, ValueError):
             return (0, 0, 0)
@@ -185,9 +185,9 @@ def _is_stac_item(file_path: Path) -> bool:
     """Check if a JSON file is a STAC item (has type: Feature)."""
     if file_path.suffix != ".json":
         return False
-    try:
-        import json
+    import json
 
+    try:
         data = json.loads(file_path.read_text(encoding="utf-8"))
         return bool(data.get("type") == "Feature")
     except (json.JSONDecodeError, OSError, KeyError):

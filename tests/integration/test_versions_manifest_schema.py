@@ -152,7 +152,7 @@ class TestCatalogVersionsSchemaCompliance:
             result = runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             assert result.exit_code == 0, f"init failed: {result.output}"
 
-            data = json.loads(Path("versions.json").read_text())
+            data = json.loads(Path("versions.json").read_text(encoding="utf-8"))
             errors = _validate(data, catalog_versions_schema)
             assert not errors, "Schema validation failed:\n" + "\n".join(errors)
 
@@ -168,7 +168,7 @@ class TestCatalogVersionsSchemaCompliance:
         with runner.isolated_filesystem(temp_dir=tmp_path):
             _add_points_collection(runner, valid_points_geojson)
 
-            data = json.loads(Path("versions.json").read_text())
+            data = json.loads(Path("versions.json").read_text(encoding="utf-8"))
             errors = _validate(data, catalog_versions_schema)
             assert not errors, "Schema validation failed:\n" + "\n".join(errors)
 

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 from datetime import UTC
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
@@ -522,7 +522,7 @@ class TestGenerateItemsParquet:
         parquet_path = generate_items_parquet(collection_with_organizing_catalogs)
 
         ids = pq.read_table(parquet_path, columns=["id"]).column("id").to_pylist()
-        assert sorted(ids) == ["scene-2023", "scene-2024"]
+        assert sorted(cast("list[str]", ids)) == ["scene-2023", "scene-2024"]
 
     @pytest.mark.unit
     def test_generate_items_parquet_creates_file(self, collection_with_items: Path) -> None:
@@ -1885,7 +1885,7 @@ class TestMirrorOnPluginBackend:
     ) -> None:
         from typing import Any
 
-        import portolan_cli.version_ops as version_ops
+        from portolan_cli import version_ops
         from portolan_cli.stac_parquet import generate_parquet_mirrors
         from portolan_core.versions import read_versions
 

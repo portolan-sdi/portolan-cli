@@ -92,7 +92,7 @@ def rollback(
         result = rollback_collection(collection, target_version, catalog_root=root)
     except (BackendRequiredError, BackendUnavailableError) as e:
         _fail("version rollback", "BackendError", str(e), use_json=use_json)
-    except Exception as e:  # noqa: BLE001 - any backend failure is reported
+    except Exception as e:  # any backend failure is reported
         _fail("version rollback", type(e).__name__, str(e), use_json=use_json)
 
     if use_json:
@@ -142,7 +142,7 @@ def prune(
         result = prune_collection(collection, keep=keep, dry_run=dry_run, catalog_root=root)
     except (BackendRequiredError, BackendUnavailableError) as e:
         _fail("version prune", "BackendError", str(e), use_json=use_json)
-    except Exception as e:  # noqa: BLE001 - any backend failure is reported
+    except Exception as e:  # any backend failure is reported
         _fail("version prune", type(e).__name__, str(e), use_json=use_json)
 
     if use_json:

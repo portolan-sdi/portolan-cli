@@ -11,7 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-import pyogrio  # type: ignore[import-untyped]
+import pyogrio
 from pyproj import CRS
 from pyproj.exceptions import CRSError
 

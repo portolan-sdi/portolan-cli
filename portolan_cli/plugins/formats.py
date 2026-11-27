@@ -158,7 +158,8 @@ class FormatHandler(Protocol):
 #   partition(path, catalog_root) -> list[Path]
 #       Split a converted file into Hive partitions. Return [] to keep it whole.
 #   reoptimize(source, catalog_root) -> Path
-#       Rewrite a cloud-native file for ``check --fix --force`` (issue #530).
+#       Rewrite a cloud-native file that a ``check --fix`` finding names, or a
+#       raster under ``check --fix --force``.
 #   reconvert(source, catalog_root) -> Path
 #       Rewrite a file that is its own output for ``add --force --reconvert``.
 
@@ -307,7 +308,7 @@ def _claims(plugin_name: str, handler: FormatHandler, path: Path) -> bool:
         return handler.claims(path)
     try:
         return handler.claims(path)
-    except Exception as err:  # noqa: BLE001 - one broken plugin must not stop the CLI
+    except Exception as err:  # one broken plugin must not stop the CLI
         from portolan_cli.plugins.manager import warn_hook_failure
 
         warn_hook_failure(plugin_name, f"{handler.name}.claims", err)

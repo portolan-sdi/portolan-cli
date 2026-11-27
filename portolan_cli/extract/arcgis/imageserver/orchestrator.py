@@ -258,7 +258,7 @@ async def run_imageserver_extraction(
     try:
         return await run_imageserver(url, output_dir, options)
     # The old contract maps every error to exit code 1, so the catch is broad.
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         emit_message(None, "error", f"ImageServer extraction failed: {redact_credentials(str(e))}")
         if isinstance(e, MissingLicenseError):
             emit_message(None, "info", CLI_LICENSE_REMEDIATION)

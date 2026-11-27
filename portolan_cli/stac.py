@@ -39,7 +39,11 @@ from portolan_core.json_io import write_json_atomic
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Mapping, Sequence
 
+    from portolan_cli.metadata.geoparquet import GeoParquetMetadata
     from portolan_cli.metadata.tabular import TabularMetadata
+
+_RESOLUTION_LEN = 2
+_MAX_PLAIN_TITLE_LEN = 20
 
 logger = logging.getLogger(__name__)
 
@@ -882,6 +886,29 @@ def to_rfc3339(moment: datetime) -> str:
     return moment.astimezone(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
+def _merge_partition_keys(
+    value: list[Any], existing_descriptions: dict[str, str]
+) -> list[dict[str, str]]:
+    """Merge new partition keys and keep the hand-authored description of each."""
+    merged_keys: list[dict[str, str]] = []
+    for new_key in value:
+        if isinstance(new_key, dict) and "name" in new_key:
+            key_name = new_key["name"]
+            merged_key = dict(new_key)
+            # Preserve existing hand-authored description if:
+            # 1. New key has no description at all
+            # 2. New key has empty/whitespace description
+            # 3. New key has auto-generated generic description (ends with "identifier")
+            new_desc = merged_key.get("description", "").strip()
+            is_generic_desc = new_desc.endswith("identifier") or new_desc == ""
+            if key_name in existing_descriptions and (
+                "description" not in merged_key or is_generic_desc
+            ):
+                merged_key["description"] = existing_descriptions[key_name]
+            merged_keys.append(merged_key)
+    return merged_keys
+
+
 def add_partition_metadata_to_collection(
     collection: pystac.Collection,
     partition_metadata: dict[str, object],
@@ -911,23 +938,7 @@ def add_partition_metadata_to_collection(
         if key.startswith("partition:"):
             # Special handling for partition:keys to preserve descriptions
             if key == "partition:keys" and isinstance(value, list):
-                merged_keys: list[dict[str, str]] = []
-                for new_key in value:
-                    if isinstance(new_key, dict) and "name" in new_key:
-                        key_name = new_key["name"]
-                        merged_key = dict(new_key)
-                        # Preserve existing hand-authored description if:
-                        # 1. New key has no description at all
-                        # 2. New key has empty/whitespace description
-                        # 3. New key has auto-generated generic description (ends with "identifier")
-                        new_desc = merged_key.get("description", "").strip()
-                        is_generic_desc = new_desc.endswith("identifier") or new_desc == ""
-                        if key_name in existing_descriptions and (
-                            "description" not in merged_key or is_generic_desc
-                        ):
-                            merged_key["description"] = existing_descriptions[key_name]
-                        merged_keys.append(merged_key)
-                collection.extra_fields[key] = merged_keys
+                collection.extra_fields[key] = _merge_partition_keys(value, existing_descriptions)
             else:
                 collection.extra_fields[key] = value
 
@@ -1327,7 +1338,7 @@ def _warn_on_mismatches(metadata_list: Sequence[object]) -> None:
         )
 
 
-def aggregate_table_metadata(metadata_list: Sequence[object]) -> object:
+def aggregate_table_metadata(metadata_list: Sequence[object]) -> GeoParquetMetadata:
     """Aggregate table metadata from multiple vector items for collection-level extension.
 
     Used to combine metadata from multiple GeoParquet files in a collection:
@@ -1521,7 +1532,7 @@ def _get_stac_properties(metadata: object) -> dict[str, object]:
 def _compute_spatial_resolution(metadata: object) -> float | None:
     """Extract spatial resolution from metadata, returning None if unavailable."""
     resolution = getattr(metadata, "resolution", None)
-    if not isinstance(resolution, (list, tuple)) or len(resolution) < 2:
+    if not isinstance(resolution, (list, tuple)) or len(resolution) < _RESOLUTION_LEN:
         return None
     x_res, y_res = resolution[0], resolution[1]
     if isinstance(x_res, (int, float)) and isinstance(y_res, (int, float)):
@@ -1866,7 +1877,7 @@ def apply_collection_fields(collection: pystac.Collection, fields: CollectionFie
         collection.extent.spatial = fields.spatial
     if fields.temporal is not None:
         collection.extent.temporal = fields.temporal
-    stored = collection.summaries.to_dict() if collection.summaries is not None else {}
+    stored = collection.summaries.to_dict()
     collection.summaries = pystac.Summaries(_merged_summaries(stored, fields.summaries))
     other_keys = [
         *collection.extra_fields,
@@ -2114,7 +2125,7 @@ def is_technical_name(text: str | None) -> bool:
     # CamelCase and all-caps acronyms ("DenHaagHousing", "USA", "IGN") have an
     # uppercase letter after the first char, so they fail this branch's guard
     # and fall through to the final non-technical return below.
-    if not re.search(r"[A-Z]", text[1:]) and len(text) < 20:
+    if not re.search(r"[A-Z]", text[1:]) and len(text) < _MAX_PLAIN_TITLE_LEN:
         has_digit = any(char.isdigit() for char in text)
         starts_capitalized = text[:1].isupper()
         return bool(has_digit or not starts_capitalized)

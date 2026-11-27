@@ -20,7 +20,6 @@ from click.testing import CliRunner
 from portolan_cli.cli import cli
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
     from pathlib import Path
 
 
@@ -63,7 +62,7 @@ def runner() -> CliRunner:
 
 
 @pytest.fixture
-def empty_catalog(tmp_path: Path, runner: CliRunner) -> Iterator[Path]:
+def empty_catalog(tmp_path: Path, runner: CliRunner) -> Path:
     """An initialized but empty Portolan catalog.
 
     Yields a temporary directory with `portolan init --auto` already run.
@@ -71,11 +70,11 @@ def empty_catalog(tmp_path: Path, runner: CliRunner) -> Iterator[Path]:
     """
     result = runner.invoke(cli, ["init", str(tmp_path), "--auto", "--license", "CC-BY-4.0"])
     assert result.exit_code == 0, f"Init failed: {result.output}"
-    yield tmp_path
+    return tmp_path
 
 
 @pytest.fixture
-def catalog_with_geojson(empty_catalog: Path, valid_points_geojson: Path) -> Iterator[Path]:
+def catalog_with_geojson(empty_catalog: Path, valid_points_geojson: Path) -> Path:
     """A catalog with a demographics collection containing GeoJSON.
 
     Sets up the standard demo structure used in README examples:
@@ -85,11 +84,11 @@ def catalog_with_geojson(empty_catalog: Path, valid_points_geojson: Path) -> Ite
     demographics_dir = empty_catalog / "demographics"
     demographics_dir.mkdir()
     shutil.copy(valid_points_geojson, demographics_dir / "sample.geojson")
-    yield empty_catalog
+    return empty_catalog
 
 
 @pytest.fixture
-def catalog_with_minimal_data(empty_catalog: Path) -> Iterator[Path]:
+def catalog_with_minimal_data(empty_catalog: Path) -> Path:
     """A catalog with minimal inline GeoJSON data.
 
     Does not depend on external fixtures - creates data inline.
@@ -98,7 +97,7 @@ def catalog_with_minimal_data(empty_catalog: Path) -> Iterator[Path]:
     demographics_dir = empty_catalog / "demographics"
     demographics_dir.mkdir()
     (demographics_dir / "sample.geojson").write_text(MINIMAL_GEOJSON)
-    yield empty_catalog
+    return empty_catalog
 
 
 # =============================================================================

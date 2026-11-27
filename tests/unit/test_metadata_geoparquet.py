@@ -134,7 +134,7 @@ class TestGeoParquetMetadata:
         metadata = GeoParquetMetadata(
             bbox=None,
             crs=None,
-            geometry_type="Point",
+            geometry_type=["Point"],
             geometry_column="geometry",
             feature_count=0,
             schema={},
@@ -165,7 +165,7 @@ class TestGeoParquetMetadata:
         metadata = GeoParquetMetadata(
             bbox=None,
             crs="EPSG:4258",
-            geometry_type="Polygon",
+            geometry_type=["Polygon"],
             geometry_column="standardized_location",
             feature_count=5,
             schema={},
@@ -180,7 +180,7 @@ class TestGeoParquetMetadata:
         metadata = GeoParquetMetadata(
             bbox=None,
             crs="EPSG:28992",
-            geometry_type="Polygon",
+            geometry_type=["Polygon"],
             geometry_column="geom",
             feature_count=5,
             schema={},
@@ -194,7 +194,7 @@ class TestGeoParquetMetadata:
         metadata = GeoParquetMetadata(
             bbox=None,
             crs={"type": "GeographicCRS", "id": {"authority": "EPSG", "code": 4258}},
-            geometry_type="Polygon",
+            geometry_type=["Polygon"],
             geometry_column="geometry",
             feature_count=5,
             schema={},
@@ -208,7 +208,7 @@ class TestGeoParquetMetadata:
         metadata = GeoParquetMetadata(
             bbox=None,
             crs=None,
-            geometry_type="Point",
+            geometry_type=["Point"],
             geometry_column="geometry",
             feature_count=5,
             schema={},
@@ -537,7 +537,7 @@ class TestCoveringColumnDetection:
     @pytest.mark.unit
     def test_rewritten_file_carries_the_column(self, tmp_path: Path) -> None:
         """A file written through geoparquet-io's add_bbox() reports True."""
-        import geoparquet_io as gpio  # type: ignore[import-untyped]
+        import geoparquet_io as gpio
 
         source = Path(__file__).resolve().parents[1] / "fixtures" / "vector" / "valid"
         output = tmp_path / "out.parquet"
@@ -613,7 +613,7 @@ class TestReadSpatialLayout:
     @pytest.mark.unit
     def test_a_geoparquet_with_the_column(self, tmp_path: Path) -> None:
         """Both answers are True after `add_bbox`."""
-        import geoparquet_io as gpio  # type: ignore[import-untyped]
+        import geoparquet_io as gpio
 
         from portolan_cli.metadata import read_spatial_layout
 

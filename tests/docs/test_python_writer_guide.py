@@ -22,8 +22,8 @@ import obstore
 import pytest
 from click.testing import CliRunner
 
-import portolan_core.writer as writer
 from portolan_cli import cli
+from portolan_core import writer
 
 pytestmark = pytest.mark.integration
 

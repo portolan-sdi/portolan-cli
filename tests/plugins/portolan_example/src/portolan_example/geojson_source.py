@@ -43,7 +43,7 @@ class GeoJSONDirectory:
 
     def fetch(self, source: str, layer: LayerRef, dest: Path) -> int:
         """Convert the layer's file to GeoParquet with geoparquet-io."""
-        import geoparquet_io as gpio  # type: ignore[import-untyped]
+        import geoparquet_io as gpio
 
         table = gpio.convert(str(layer.data))
         table.write(str(dest))

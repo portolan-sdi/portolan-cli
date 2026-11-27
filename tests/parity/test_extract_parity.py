@@ -230,7 +230,9 @@ def test_extract_arcgis_list_services(
         url, tmp_path / "unused", list_only=True, options=ArcGISOptions(recurse=False)
     )
     assert json.loads(result.stdout) == expected.to_dict()
-    assert expected.to_dict()["total_services"] > 0
+    total = expected.to_dict()["total_services"]
+    assert isinstance(total, int)
+    assert total > 0
 
 
 def test_extract_arcgis_rejects_bad_id(parity: Parity) -> None:
@@ -317,18 +319,18 @@ def test_extract_wfs(parity: Parity, replay: Callable[[str | Path], ReplayServer
     url = server.url + "/geoserver/wfs"
     parity(
         "extract wfs",
-        [url, "out", *LICENSE, "--layers", "topp:states"],
+        [url, "out", *LICENSE, "--layers", "gs:us_states"],
         catalog=_empty,
         call=lambda _root: run_extract_command(
             extract_wfs_catalog,
             url,
             Path("out"),
             WFSOptions(license="CC-BY-4.0"),
-            layer_filter=["topp:states"],
+            layer_filter=["gs:us_states"],
         ),
     )
 
-    assert _extracted(parity.root / "out") == [(1, "topp:states", "success", 2)]
+    assert _extracted(parity.root / "out") == [(1, "gs:us_states", "success", 2)]
     assert _gets(server) == {"/geoserver/wfs", "/geoserver/wms"}
 
 

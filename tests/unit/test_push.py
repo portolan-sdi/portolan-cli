@@ -120,7 +120,7 @@ def local_catalog(tmp_path: Path) -> Path:
     (item_dir / "data.parquet").write_bytes(b"x" * 2048)
 
     # Create item STAC file using Portolan naming convention: {item_id}.json
-    item_data = {
+    item_data: dict[str, Any] = {
         "type": "Feature",
         "stac_version": "1.0.0",
         "id": "data",
@@ -784,7 +784,12 @@ class TestRollbackRestoresOverwrittenKeys:
         """The new versions.json is live, so the root catalog must name it too."""
         from portolan_cli.sync.push import push_all_collections
 
-        root = {"type": "Catalog", "id": "c", "stac_version": "1.1.0", "description": "c"}
+        root: dict[str, Any] = {
+            "type": "Catalog",
+            "id": "c",
+            "stac_version": "1.1.0",
+            "description": "c",
+        }
         root["links"] = [{"rel": "child", "href": "./test/collection.json"}]
         (local_catalog / "catalog.json").write_text(json.dumps(root))
         (local_catalog / ".portolan").mkdir(exist_ok=True)
@@ -997,7 +1002,7 @@ class TestMissingAssetDetection:
             ]
         }
 
-        with pytest.raises(FileNotFoundError, match="missing.parquet"):
+        with pytest.raises(FileNotFoundError, match=r"missing.parquet"):
             _get_assets_to_upload(
                 catalog_root=local_catalog,
                 versions_data=versions_data,
@@ -1404,7 +1409,7 @@ class TestMultiCloudStoreSetup:
             with patch("portolan_cli.sync.upload.S3Store") as mock_s3:
                 mock_s3.return_value = MagicMock()
 
-                store, prefix = setup_store("s3://mybucket/catalog", profile="myprofile")
+                _store, prefix = setup_store("s3://mybucket/catalog", profile="myprofile")
 
         mock_load.assert_called_once_with("myprofile")
         mock_s3.assert_called_once_with(
@@ -1430,7 +1435,7 @@ class TestMultiCloudStoreSetup:
         ):
             mock_s3.return_value = MagicMock()
 
-            store, prefix = setup_store("s3://mybucket/prefix")
+            _store, _prefix = setup_store("s3://mybucket/prefix")
 
         mock_s3.assert_called_once_with(
             "mybucket",
@@ -1490,7 +1495,7 @@ class TestMultiCloudStoreSetup:
         with patch("portolan_cli.sync.upload.obs.store.from_url") as mock_from_url:
             mock_from_url.return_value = MagicMock()
 
-            store, prefix = setup_store("gs://mybucket/catalog")
+            _store, prefix = setup_store("gs://mybucket/catalog")
 
         mock_from_url.assert_called_once_with("gs://mybucket")
         assert prefix == "catalog"
@@ -1507,7 +1512,7 @@ class TestMultiCloudStoreSetup:
         with patch("portolan_cli.sync.upload.obs.store.from_url") as mock_from_url:
             mock_from_url.return_value = MagicMock()
 
-            store, prefix = setup_store("gs://mybucket/prefix")
+            _store, prefix = setup_store("gs://mybucket/prefix")
 
         mock_from_url.assert_called_once_with("gs://mybucket")
         assert prefix == "prefix"
@@ -1524,7 +1529,7 @@ class TestMultiCloudStoreSetup:
         with patch("portolan_cli.sync.upload.obs.store.from_url") as mock_from_url:
             mock_from_url.return_value = MagicMock()
 
-            store, prefix = setup_store("az://account/mycontainer/catalog")
+            _store, prefix = setup_store("az://account/mycontainer/catalog")
 
         mock_from_url.assert_called_once_with("az://account/mycontainer")
         assert prefix == "catalog"
@@ -1541,7 +1546,7 @@ class TestMultiCloudStoreSetup:
         with patch("portolan_cli.sync.upload.obs.store.from_url") as mock_from_url:
             mock_from_url.return_value = MagicMock()
 
-            store, prefix = setup_store("az://account/mycontainer/data")
+            _store, prefix = setup_store("az://account/mycontainer/data")
 
         mock_from_url.assert_called_once_with("az://account/mycontainer")
         assert prefix == "data"
@@ -1559,7 +1564,7 @@ class TestMultiCloudStoreSetup:
             mock_from_url.return_value = MagicMock()
 
             # Azure format: az://account/container/prefix
-            store, prefix = setup_store("az://myaccount/mycontainer/data/v1")
+            _store, prefix = setup_store("az://myaccount/mycontainer/data/v1")
 
         # bucket_url = az://account/container, prefix = data/v1
         mock_from_url.assert_called_once_with("az://myaccount/mycontainer")
@@ -1582,7 +1587,7 @@ class TestMultiCloudStoreSetup:
             with patch("portolan_cli.sync.upload.obs.store.from_url") as mock_from_url:
                 mock_from_url.return_value = MagicMock()
 
-                store, prefix = setup_store("custom://bucket/catalog")
+                _store, prefix = setup_store("custom://bucket/catalog")
 
         mock_from_url.assert_called_once_with("custom://bucket")
         assert prefix == "catalog"
@@ -1881,7 +1886,7 @@ class TestVersionDiffInvariants:
     ) -> None:
         """Version diff should partition versions into local_only and remote_only.
 
-        Property: local_only ∪ remote_only ∪ common = local ∪ remote
+        Property: local_only | remote_only | common == local | remote
         Property: local_only ∩ remote_only = ∅
         """
         from portolan_cli.sync.push import diff_version_lists
@@ -2514,7 +2519,7 @@ class TestAssetDiffing:
             ]
         }
 
-        remote_versions_data = {"versions": []}  # Empty versions list
+        remote_versions_data: dict[str, Any] = {"versions": []}  # Empty versions list
 
         assets = _get_assets_to_upload(
             catalog_root=catalog_dir,

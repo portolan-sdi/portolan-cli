@@ -15,7 +15,7 @@ import pytest
 from obstore.store import MemoryStore
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator
+    from collections.abc import Callable
     from pathlib import Path
 
     from tests.catalog_invariants import RunCli
@@ -35,7 +35,7 @@ def remote_catalog(
     valid_points_geojson: Path,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-) -> Iterator[Path]:
+) -> Path:
     """A catalog with one collection, and a remote that holds its versions.json."""
     root = tmp_path / "catalog"
     build_conformant_catalog(root)
@@ -48,7 +48,7 @@ def remote_catalog(
     monkeypatch.setattr(
         "portolan_cli.sync.download._setup_store_and_kwargs", lambda *_, **__: (memory, {})
     )
-    yield root
+    return root
 
 
 @pytest.mark.parametrize("flags", [[], ["--quiet"], ["-v"]])

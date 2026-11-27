@@ -21,6 +21,8 @@ from portolan_core.versions import read_versions
 if TYPE_CHECKING:
     from pathlib import Path
 
+_MIN_PATH_PARTS = 2
+
 
 @dataclass
 class FileInfo:
@@ -302,7 +304,7 @@ def inspect_cog(path: Path, *, catalog_root: Path | None = None) -> FileInfo:
         path=path,
         format="COG",
         crs=metadata.crs,
-        bbox=list(metadata.bbox) if metadata.bbox else None,
+        bbox=list(metadata.bbox),
         width=metadata.width,
         height=metadata.height,
         band_count=metadata.band_count,
@@ -329,7 +331,7 @@ def _lookup_version(path: Path, catalog_root: Path) -> str | None:
         return None
 
     parts = relative.parts
-    if len(parts) < 2:
+    if len(parts) < _MIN_PATH_PARTS:
         return None
 
     # First part is collection ID ( subdirectory = collection)
@@ -361,13 +363,10 @@ def _lookup_version(path: Path, catalog_root: Path) -> str | None:
     # Determine item_id from path (parent directory name)
     item_id = path.parent.name if path.parent != catalog_root else ""
 
-    for asset_name in current_version_obj.assets:
-        # Check item-scoped key format (new format)
-        if item_id and asset_name == f"{item_id}/{filename}":
-            return f"v{versions_file.current_version}"
-        # Check legacy format (just filename)
-        if asset_name == filename:
-            return f"v{versions_file.current_version}"
+    # The item-scoped key is the new format. The bare filename is the legacy format.
+    keys = {filename, f"{item_id}/{filename}"} if item_id else {filename}
+    if any(asset_name in keys for asset_name in current_version_obj.assets):
+        return f"v{versions_file.current_version}"
 
     return None
 

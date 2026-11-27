@@ -21,7 +21,7 @@ class TestInferNestedCollectionId:
 
     def test_single_level_nesting(self, tmp_path: Path) -> None:
         """Single level: demographics/data.parquet -> demographics."""
-        from portolan_cli.add import infer_nested_collection_id
+        from portolan_cli.collection_id import infer_nested_collection_id
 
         catalog_root = tmp_path
         file_path = tmp_path / "demographics" / "data.parquet"
@@ -33,7 +33,7 @@ class TestInferNestedCollectionId:
 
     def test_two_level_nesting(self, tmp_path: Path) -> None:
         """Two levels: climate/hittekaart/data.parquet -> climate/hittekaart."""
-        from portolan_cli.add import infer_nested_collection_id
+        from portolan_cli.collection_id import infer_nested_collection_id
 
         catalog_root = tmp_path
         file_path = tmp_path / "climate" / "hittekaart" / "hittekaart.parquet"
@@ -45,7 +45,7 @@ class TestInferNestedCollectionId:
 
     def test_three_level_nesting(self, tmp_path: Path) -> None:
         """Three levels: env/air/quality/data.parquet -> env/air/quality."""
-        from portolan_cli.add import infer_nested_collection_id
+        from portolan_cli.collection_id import infer_nested_collection_id
 
         catalog_root = tmp_path
         file_path = tmp_path / "env" / "air" / "quality" / "pm25.parquet"
@@ -57,7 +57,7 @@ class TestInferNestedCollectionId:
 
     def test_file_at_root_raises_error(self, tmp_path: Path) -> None:
         """File directly at catalog root should raise ValueError."""
-        from portolan_cli.add import infer_nested_collection_id
+        from portolan_cli.collection_id import infer_nested_collection_id
 
         catalog_root = tmp_path
         file_path = tmp_path / "data.parquet"
@@ -68,7 +68,7 @@ class TestInferNestedCollectionId:
 
     def test_file_outside_catalog_raises_error(self, tmp_path: Path) -> None:
         """File outside catalog root should raise ValueError."""
-        from portolan_cli.add import infer_nested_collection_id
+        from portolan_cli.collection_id import infer_nested_collection_id
 
         catalog_root = tmp_path / "catalog"
         catalog_root.mkdir()
@@ -85,7 +85,7 @@ class TestInferNestedCollectionId:
         FileGDB directories are data assets, not collections. The collection ID
         should be the parent directory, not include the .gdb folder name.
         """
-        from portolan_cli.add import infer_nested_collection_id
+        from portolan_cli.collection_id import infer_nested_collection_id
 
         catalog_root = tmp_path
         # Create a mock FileGDB directory structure
@@ -103,7 +103,7 @@ class TestInferNestedCollectionId:
         Just like files at root, FileGDB directories at root level should
         raise an error requiring them to be in a collection subdirectory.
         """
-        from portolan_cli.add import infer_nested_collection_id
+        from portolan_cli.collection_id import infer_nested_collection_id
 
         catalog_root = tmp_path
         # Create a mock FileGDB at root level
@@ -116,7 +116,7 @@ class TestInferNestedCollectionId:
 
     def test_filegdb_nested_two_levels(self, tmp_path: Path) -> None:
         """FileGDB nested: theme/subtheme/data.gdb -> theme/subtheme (Issue #259)."""
-        from portolan_cli.add import infer_nested_collection_id
+        from portolan_cli.collection_id import infer_nested_collection_id
 
         catalog_root = tmp_path
         gdb_path = tmp_path / "theme" / "subtheme" / "boundaries.gdb"
@@ -132,7 +132,7 @@ class TestInferNestedCollectionId:
         is_filegdb() accepts either 'gdb' marker OR .gdbtable files.
         This test covers the .gdbtable detection path.
         """
-        from portolan_cli.add import infer_nested_collection_id
+        from portolan_cli.collection_id import infer_nested_collection_id
 
         catalog_root = tmp_path
         gdb_path = tmp_path / "ocha" / "boundaries.gdb"
@@ -154,7 +154,7 @@ class TestInferNestedCollectionId:
         - Partial downloads
         - Manually created .gdb folders
         """
-        from portolan_cli.add import infer_nested_collection_id
+        from portolan_cli.collection_id import infer_nested_collection_id
         from portolan_cli.scan.detect import is_filegdb
 
         catalog_root = tmp_path
@@ -175,7 +175,7 @@ class TestInferNestedCollectionId:
         Even with suffix fallback, a .gdb directory at catalog root must
         be in a collection subdirectory.
         """
-        from portolan_cli.add import infer_nested_collection_id
+        from portolan_cli.collection_id import infer_nested_collection_id
 
         catalog_root = tmp_path
         gdb_path = tmp_path / "empty.gdb"

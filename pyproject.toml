@@ -105,6 +105,7 @@ dev = [
     "hypothesis>=6.151.5",
     "mypy>=1.19.1",
     "pip-audit>=2.10.0",
+    "prek>=0.5.11", # Hook runner. It reads prek.toml.
     "pytest>=9.0.3",
     "pytest-codspeed>=5.0.0", # CodSpeed CPU benchmarks; also runs the benchmark fixture locally
     "pytest-cov>=4.0.0",
@@ -226,12 +227,16 @@ exclude_lines = [
 [tool.ruff]
 line-length = 100
 target-version = "py311"
-# .claude/ holds tooling that portolan-ops syncs into every repo. This repo does
-# not own those files, and a sync run overwrites any fix made here. Raise a rule
-# change in portolan-ops instead.
+# portolan-ops syncs .claude/hooks/ and .claude/output-styles/ into every repo,
+# and a sync run overwrites any fix made here. The rules dir holds only Markdown.
 extend-exclude = [".claude"]
 
 [tool.ruff.lint]
+# With explicit-preview-rules, preview turns on only the preview rules that
+# select names. Preview also changes the defaults of stable rules. One such
+# default bans the `gpd` alias for geopandas.
+preview = true
+explicit-preview-rules = true
 # Ruff owns complexity, security, and docstring linting for this repo. It
 # replaces three separate tools that each re-walked the same source tree:
 # xenon/radon (C901), bandit (S), and pylint R0801 (now jscpd, see prek.toml).
@@ -272,6 +277,18 @@ select = [
     # Only the banned-api rule of flake8-tidy-imports. See banned-api below.
     "TID251",
     "YTT", # flake8-2020
+    "PT", # flake8-pytest-style
+    "RUF", # ruff-specific rules
+    "PL", # pylint
+    # Preview rules opt in by name. explicit-preview-rules keeps every other
+    # preview rule off. These add the pylint size limits and a few low-noise checks.
+    "PLR0914", # too many locals
+    "PLR0916", # too many Boolean expressions
+    "PLR0917", # too many positional arguments
+    "PLR1702", # too many nested blocks
+    "PLR6104", # use an augmented assignment
+    "PLW1514", # open() without an explicit encoding
+    "RUF052", # a used variable has a dummy name
 ]
 ignore = [
     "E501", # line too long (handled by formatter)
@@ -286,7 +303,15 @@ ignore = [
     # cannot move out of the loop, because that aborts the loop on the first
     # failure. The setup cost is free from Python 3.11 and negligible before it.
     "PERF203", # try-except within a loop
+    # Lazy imports of the heavy geospatial libraries keep CLI startup fast.
+    "PLC0415", # import outside top level
+    # `from x import y as y` marks an explicit re-export for mypy strict.
+    "PLC0414", # useless import alias
 ]
+# The CLI help text and docs/reference/cli.md use the multiplication sign of
+# "workers × concurrency". The scan output prints the information sign as its
+# notice icon.
+allowed-confusables = ["×", "ℹ"]
 
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]
@@ -295,6 +320,7 @@ ignore = [
 # naming, and simplification rules.
 "tests/**/*.py" = [
     "S101", # assert is the point of a test
+    "PLR2004", # an expected value in an assertion is clearest as a literal
     "S105", # "password"-shaped fixture literals
     "S106",
     "S108", # /tmp paths in fixtures
@@ -313,11 +339,18 @@ ignore = [
 ]
 "scripts/**/*.py" = [
     "T20", # scripts are CLIs of their own and print by design
+    "PLR2004", # a script compares against literal exit codes and thresholds
     "S310", # a script opens an https URL it writes itself
     "S603", # a script starts a tool or pytest with a literal argument list
     "S607", # the script resolves its tools from PATH
 ]
 "examples/**/*.py" = ["T20"] # an example prints its result for the reader
+# A Click command takes one argument per option. Any other outlier of the pylint
+# size limits carries a line noqa with its reason.
+"portolan_cli/**/*cli.py" = ["PLR0913", "PLR0917"]
+# run_check and the check workflow take each check option as a keyword argument.
+"portolan_cli/validation/runner.py" = ["PLR0913"]
+"portolan_cli/validation/workflow.py" = ["PLR0913"]
 # vulture's whitelist format is bare names and `_.attr` expressions. They are
 # never executed, so the undefined `_` and the bare expressions are the format.
 "vulture_whitelist.py" = ["F821", "B018"]
@@ -385,6 +418,42 @@ convention = "google"
 # function cannot move an average. This is the per-function ceiling instead.
 max-complexity = 15
 
+[tool.ruff.lint.flake8-pytest-style]
+# A bare pytest.raises of a broad Portolan error passes on any failure in the
+# block. A match pins the failure that the test is about.
+raises-extend-require-match-for = [
+    "portolan_core.errors.PortolanError",
+    "portolan_core.errors.CatalogError",
+    "portolan_core.errors.CollectionError",
+    "portolan_core.errors.SchemaError",
+    "portolan_core.errors.ItemError",
+    "portolan_core.errors.VersionError",
+    "portolan_core.errors.ValidationError",
+    "portolan_core.errors.ConversionError",
+    "portolan_core.errors.LogoError",
+    "portolan_core.errors.ConfigError",
+    "portolan_core.errors.SyncError",
+]
+
+[tool.ruff.lint.pylint]
+# Each limit sits near the 99th percentile of the functions in portolan_cli,
+# packages, and scripts, so that a rule fires only on a real outlier.
+# Measured distribution on 2026-11-27 (p50 / p90 / p99 / max):
+#   arguments 2 / 5 / 12 / 33, positional arguments 2 / 4 / 8 / 33,
+#   returns 1 / 4 / 6 / 10, branches 3 / 7 / 13 / 15,
+#   statements 6 / 19 / 40 / 69, locals 3 / 8 / 15 / 31,
+#   nested blocks 2 / 3 / 5 / 8, Boolean expressions 2 / 3 / 4 / 6.
+# max-branches equals mccabe max-complexity. max-positional-args and max-locals
+# sit above p99 so that the noqa lines stay near 30.
+max-args = 12
+max-positional-args = 8
+max-returns = 8
+max-branches = 15
+max-statements = 50
+max-locals = 18
+max-nested-blocks = 5
+max-bool-expr = 5
+
 [tool.ruff.format]
 quote-style = "double"
 indent-style = "space"
@@ -395,20 +464,50 @@ docstring-code-format = true
 [tool.mypy]
 python_version = "3.11"
 strict = true # Enables all strict flags at once
-# The example plugin (#947) is a separate package. This path lets mypy check
+# Bare `uv run mypy` checks this scope. The prek hook passes no paths.
+files = ["portolan_cli", "packages/portolan-core/src", "scripts", "tests"]
+# The example plugin (#947) is a separate package. Its path lets mypy check
 # its tests and its code without installing it.
-mypy_path = "tests/plugins/portolan_example/src"
-# pyarrow >=24 ships py.typed but leaves pyarrow.parquet helpers untyped, so
-# strict's disallow_untyped_calls trips on every read_table/write_table/
-# ParquetFile/read_metadata/read_schema call. Scope the suppression to pyarrow
-# instead of relaxing strictness globally.
-untyped_calls_exclude = ["pyarrow"]
+mypy_path = ["packages/portolan-core/src", "tests/plugins/portolan_example/src"]
+explicit_package_bases = true
+enable_error_code = [
+    "ignore-without-code",
+    "redundant-expr",
+    "truthy-bool",
+    "possibly-undefined",
+    "redundant-self",
+    "unused-awaitable",
+    "deprecated",
+    "exhaustive-match",
+]
 # Reports code that the types say cannot run, such as an isinstance branch the
 # annotation already rules out.
 warn_unreachable = true
 
+# Tests may leave helpers and fixtures unannotated. Every other strict check applies.
 [[tool.mypy.overrides]]
-module = ["pyarrow.*", "rasterio.*", "gitingest.*", "matplotlib.*", "pyiceberg.*", "shapely.*", "pygeohash.*", "geopandas.*", "contextily.*", "jsonschema.*"]
+module = ["tests.*"]
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+disallow_untyped_calls = false
+disallow_any_generics = false
+
+# These packages ship no py.typed marker. PyPI has no stub for gitingest,
+# pygeohash, contextily, geoparquet-io, geoarrow, lerc, mapbox-vector-tile or
+# pyogrio. types-rasterio needs Python 3.12, and the project
+# supports Python 3.11.
+[[tool.mypy.overrides]]
+module = [
+    "rasterio.*",
+    "gitingest.*",
+    "pygeohash.*",
+    "contextily.*",
+    "geoparquet_io.*",
+    "geoarrow.*",
+    "lerc.*",
+    "mapbox_vector_tile.*",
+    "pyogrio.*",
+]
 ignore_missing_imports = true
 
 # markdown ships no inline types. types-Markdown exists on PyPI, so mypy
@@ -421,7 +520,7 @@ module = ["markdown.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
-module = ["docs.test_reference_generation"]
+module = ["tests.docs.test_reference_generation"]
 disable_error_code = ["import-untyped"]
 
 # ---------- spell check ----------
@@ -448,6 +547,8 @@ exclude = [
 ]
 sort_by_size = true
 verbose = false
+# A breaker in tests/property registers itself in BREAKERS. No caller names it.
+ignore_decorators = ["@breaks"]
 
 # ---------- architecture enforcement ----------
 # Stricter layered contracts are aspirational - the current architecture has some coupling
@@ -787,4 +888,18 @@ dev = [
     "pytest-asyncio>=1.3.0",
     "pytest-xdist>=3.8.0",
     "types-pyyaml>=6.0.12.20250915",
+    # pyarrow ships py.typed but leaves most of its API untyped.
+    "pyarrow-stubs>=20.0.0.20260819",
+    # shapely ships no inline types.
+    "types-shapely>=2.1",
+    # pandas ships no inline types.
+    "pandas-stubs>=2.2",
+    # jsonschema ships no inline types.
+    "types-jsonschema>=4.25",
+    # geopandas ships no inline types.
+    "types-geopandas>=1.0",
+    # requests ships no inline types.
+    "types-requests>=2.32",
+    # boto3 ships no inline types. The s3 extra types the S3 client the tests use.
+    "boto3-stubs[s3]>=1.35",
 ]

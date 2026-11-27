@@ -262,6 +262,7 @@ class TestSchemaModel:
             },
         )
 
+        assert schema.statistics is not None
         assert "population" in schema.statistics
         assert schema.statistics["population"]["min"] == 0
 
@@ -340,6 +341,7 @@ class TestSchemaModelSerialization:
 
         assert restored.format == original.format
         assert len(restored.columns) == len(original.columns)
+        assert restored.statistics is not None
         assert "area" in restored.statistics
 
 

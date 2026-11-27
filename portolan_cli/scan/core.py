@@ -77,6 +77,9 @@ from portolan_core.constants import PARQUET_EXTENSION, WINDOWS_RESERVED_NAMES
 # Import format detection from formats.py (delegate to upstream)
 from portolan_core.format_families import RASTER, VECTOR, is_geojson
 
+_PARENT_STEM_PARTS = 2
+_MIN_PARQUET_FILES = 2
+
 # =============================================================================
 # Constants
 # =============================================================================
@@ -339,7 +342,7 @@ class ScanResult:
                     "format_type": f.format_type or "unknown",
                     "size_bytes": f.size_bytes,
                     "inferred_collection_id": f.inferred_collection_id or None,
-                    "format_status": f.format_status.value if f.format_status else None,
+                    "format_status": f.format_status.value,
                     "format_display_name": f.format_display_name or None,
                     "metadata": f.metadata,
                 }
@@ -754,7 +757,7 @@ def _check_orphan_sidecars(ctx: _ScanContext) -> None:
             # This is an orphan - sidecars exist but no .shp
             # Extract parent dir and stem from key
             parts = key.rsplit("/", 1)
-            if len(parts) == 2:
+            if len(parts) == _PARENT_STEM_PARTS:
                 parent_str, stem = parts
                 parent = Path(parent_str)
             else:
@@ -803,7 +806,7 @@ def _check_mixed_structure(ctx: _ScanContext) -> None:
     for dir_path in dirs_with_files:
         # Walk up the parent chain
         parent = dir_path.parent
-        while parent != ctx.root.parent and parent != dir_path:
+        while parent not in (ctx.root.parent, dir_path):
             if parent in dirs_with_files and parent not in flagged_dirs:
                 # Parent has files AND we (descendant) have files = mixed structure
                 flagged_dirs.add(parent)
@@ -837,7 +840,7 @@ def _check_multiple_geo_primaries(ctx: _ScanContext) -> None:
         # Filter to only .parquet files
         parquet_files = [p for p in primaries if p.suffix.lower() == ".parquet"]
 
-        if len(parquet_files) < 2:
+        if len(parquet_files) < _MIN_PARQUET_FILES:
             continue  # At most 1 parquet file, no issue
 
         # Count how many are actual GeoParquet (have geo metadata)
@@ -1210,6 +1213,102 @@ def _other_format_type(path: Path, ext: str, catalog_root: Path | None = None) -
     return None
 
 
+def _process_filegdb(ctx: _ScanContext, path: Path, size: int) -> None:
+    """Add a FileGDB directory to the ready list as one convertible asset."""
+    # Gather FileGDB-specific metadata
+    metadata = _gather_filegdb_metadata(path)
+
+    # Compute relative path and inferred collection ID
+    relative_path = _get_relative_path(path, ctx.root)
+    inferred_collection_id = _infer_collection_id_from_relative_path(relative_path)
+
+    # Create ScannedFile for FileGDB directory
+    # FileGDB is convertible to GeoParquet
+    scanned = ScannedFile(
+        path=path,
+        relative_path=relative_path,
+        extension=".gdb",
+        format_type=VECTOR,
+        size_bytes=size,
+        inferred_collection_id=inferred_collection_id,
+        format_status=CloudNativeStatus.CONVERTIBLE,
+        format_display_name="FileGDB",
+        metadata=metadata,
+    )
+    ctx.ready.append(scanned)
+
+    # Track for duplicate/multi-asset detection
+    ctx.basenames[path.name.lower()].append(path)
+    ctx.primaries_by_dir[path.parent].append(path)
+    ctx.formats_by_dir[path.parent].add(VECTOR)
+
+
+def _parquet_skip(path: Path, root: Path) -> SkippedFile | None:
+    """Return the skip record of a .parquet file that is not GeoParquet, or None."""
+    # First check if it's a valid Parquet file at all (not corrupted)
+    if not is_valid_parquet(path):
+        # File has .parquet extension but is corrupted or not a valid Parquet
+        return SkippedFile(
+            path=path,
+            relative_path=_get_relative_path(path, root),
+            category=FileCategory.UNKNOWN,
+            reason_type=SkipReasonType.INVALID_FORMAT,
+            reason_message="File has .parquet extension but is not a valid Parquet file (corrupted or wrong format)",
+        )
+    if not is_geoparquet(path):
+        # Regular Parquet (tabular data), not a geospatial asset
+        # Create SkippedFile directly since classify_file can't detect non-geo parquet
+        return SkippedFile(
+            path=path,
+            relative_path=_get_relative_path(path, root),
+            category=FileCategory.TABULAR_DATA,
+            reason_type=SkipReasonType.NOT_GEOSPATIAL,
+            reason_message="Parquet file without GeoParquet metadata (tabular data)",
+        )
+    return None
+
+
+def _json_skip(path: Path, name: str, root: Path) -> SkippedFile | None:
+    """Return the skip record of a .json file that is not GeoJSON, or None."""
+    # Handle .json files - need content inspection for GeoJSON detection
+    # Issue #256: GeoJSON files are often saved with .json extension
+    #
+    # But first, check for STAC metadata files (catalog.json, collection.json, etc.)
+    # These should be skipped as metadata, not inspected for GeoJSON content.
+    if name in STAC_FILENAMES:
+        # STAC metadata file - skip with proper classification
+        return SkippedFile(
+            path=path,
+            relative_path=_get_relative_path(path, root),
+            category=FileCategory.STAC_METADATA,
+            reason_type=SkipReasonType.METADATA_FILE,
+            reason_message=f"{name} is STAC catalog metadata",
+        )
+    # Check for STAC item files: JSON files named after their parent directory
+    # Pattern: item_dir/item_dir.json (e.g., tile_0_0/tile_0_0.json)
+    # This is the standard Portolan item structure
+    if path.stem.lower() == path.parent.name.lower():
+        return SkippedFile(
+            path=path,
+            relative_path=_get_relative_path(path, root),
+            category=FileCategory.STAC_METADATA,
+            reason_type=SkipReasonType.METADATA_FILE,
+            reason_message=f"{path.name} is a STAC item metadata file",
+        )
+    if not is_geojson(path):
+        # Plain JSON, not GeoJSON - skip with informative message
+        # We override classify_file here because we have specific knowledge:
+        # we inspected the content and determined it's not GeoJSON.
+        return SkippedFile(
+            path=path,
+            relative_path=_get_relative_path(path, root),
+            category=FileCategory.UNKNOWN,
+            reason_type=SkipReasonType.NOT_GEOSPATIAL,
+            reason_message="JSON file does not contain GeoJSON content",
+        )
+    return None
+
+
 def _process_file(ctx: _ScanContext, path: Path, size: int) -> None:
     """Process a single discovered file or FileGDB directory."""
     # Check for FileGDB directory FIRST - these are yielded by _discover_files
@@ -1217,32 +1316,7 @@ def _process_file(ctx: _ScanContext, path: Path, size: int) -> None:
     # Issue #154: FileGDBs should be added to ready list (not special_formats)
     # so they can be processed by `portolan add`
     if path.is_dir() and is_filegdb(path):
-        # Gather FileGDB-specific metadata
-        metadata = _gather_filegdb_metadata(path)
-
-        # Compute relative path and inferred collection ID
-        relative_path = _get_relative_path(path, ctx.root)
-        inferred_collection_id = _infer_collection_id_from_relative_path(relative_path)
-
-        # Create ScannedFile for FileGDB directory
-        # FileGDB is convertible to GeoParquet
-        scanned = ScannedFile(
-            path=path,
-            relative_path=relative_path,
-            extension=".gdb",
-            format_type=VECTOR,
-            size_bytes=size,
-            inferred_collection_id=inferred_collection_id,
-            format_status=CloudNativeStatus.CONVERTIBLE,
-            format_display_name="FileGDB",
-            metadata=metadata,
-        )
-        ctx.ready.append(scanned)
-
-        # Track for duplicate/multi-asset detection
-        ctx.basenames[path.name.lower()].append(path)
-        ctx.primaries_by_dir[path.parent].append(path)
-        ctx.formats_by_dir[path.parent].add(VECTOR)
+        _process_filegdb(ctx, path, size)
         return
 
     ext = path.suffix.lower()
@@ -1279,79 +1353,16 @@ def _process_file(ctx: _ScanContext, path: Path, size: int) -> None:
 
     # Handle .parquet specially - must check if it's GeoParquet
     if ext == PARQUET_EXTENSION:
-        # First check if it's a valid Parquet file at all (not corrupted)
-        if not is_valid_parquet(path):
-            # File has .parquet extension but is corrupted or not a valid Parquet
-            ctx.skipped.append(
-                SkippedFile(
-                    path=path,
-                    relative_path=_get_relative_path(path, ctx.root),
-                    category=FileCategory.UNKNOWN,
-                    reason_type=SkipReasonType.INVALID_FORMAT,
-                    reason_message="File has .parquet extension but is not a valid Parquet file (corrupted or wrong format)",
-                )
-            )
-            return
-        if not is_geoparquet(path):
-            # Regular Parquet (tabular data), not a geospatial asset
-            # Create SkippedFile directly since classify_file can't detect non-geo parquet
-            ctx.skipped.append(
-                SkippedFile(
-                    path=path,
-                    relative_path=_get_relative_path(path, ctx.root),
-                    category=FileCategory.TABULAR_DATA,
-                    reason_type=SkipReasonType.NOT_GEOSPATIAL,
-                    reason_message="Parquet file without GeoParquet metadata (tabular data)",
-                )
-            )
+        skipped = _parquet_skip(path, ctx.root)
+        if skipped is not None:
+            ctx.skipped.append(skipped)
             return
         # It's GeoParquet - treat as vector format
         format_type = VECTOR
     elif ext == ".json":
-        # Handle .json files - need content inspection for GeoJSON detection
-        # Issue #256: GeoJSON files are often saved with .json extension
-        #
-        # But first, check for STAC metadata files (catalog.json, collection.json, etc.)
-        # These should be skipped as metadata, not inspected for GeoJSON content.
-        if name in STAC_FILENAMES:
-            # STAC metadata file - skip with proper classification
-            ctx.skipped.append(
-                SkippedFile(
-                    path=path,
-                    relative_path=_get_relative_path(path, ctx.root),
-                    category=FileCategory.STAC_METADATA,
-                    reason_type=SkipReasonType.METADATA_FILE,
-                    reason_message=f"{name} is STAC catalog metadata",
-                )
-            )
-            return
-        # Check for STAC item files: JSON files named after their parent directory
-        # Pattern: item_dir/item_dir.json (e.g., tile_0_0/tile_0_0.json)
-        # This is the standard Portolan item structure
-        if path.stem.lower() == path.parent.name.lower():
-            ctx.skipped.append(
-                SkippedFile(
-                    path=path,
-                    relative_path=_get_relative_path(path, ctx.root),
-                    category=FileCategory.STAC_METADATA,
-                    reason_type=SkipReasonType.METADATA_FILE,
-                    reason_message=f"{path.name} is a STAC item metadata file",
-                )
-            )
-            return
-        if not is_geojson(path):
-            # Plain JSON, not GeoJSON - skip with informative message
-            # We override classify_file here because we have specific knowledge:
-            # we inspected the content and determined it's not GeoJSON.
-            ctx.skipped.append(
-                SkippedFile(
-                    path=path,
-                    relative_path=_get_relative_path(path, ctx.root),
-                    category=FileCategory.UNKNOWN,
-                    reason_type=SkipReasonType.NOT_GEOSPATIAL,
-                    reason_message="JSON file does not contain GeoJSON content",
-                )
-            )
+        skipped = _json_skip(path, name, ctx.root)
+        if skipped is not None:
+            ctx.skipped.append(skipped)
             return
         # It's GeoJSON in a .json file - treat as vector format
         format_type = VECTOR

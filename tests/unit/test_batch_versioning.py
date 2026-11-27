@@ -64,7 +64,7 @@ class TestPreparedItem:
         metadata = GeoParquetMetadata(
             bbox=(0, 0, 1, 1),
             crs="EPSG:4326",
-            geometry_type="Polygon",
+            geometry_type=["Polygon"],
             geometry_column="geometry",
             feature_count=100,
             schema={"id": "int64", "geometry": "binary"},
@@ -80,7 +80,7 @@ class TestPreparedItem:
             metadata=metadata,
         )
 
-        assert prepared.metadata is not None
+        assert isinstance(prepared.metadata, GeoParquetMetadata)
         assert prepared.metadata.feature_count == 100
         assert prepared.metadata.geometry_column == "geometry"
 

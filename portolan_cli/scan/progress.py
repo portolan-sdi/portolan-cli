@@ -28,6 +28,19 @@ if TYPE_CHECKING:
     from rich.progress import Progress, TaskID
 
 
+def _first_visit(entry: os.DirEntry[str], visited: set[tuple[int, int]]) -> bool:
+    """Record the directory of ``entry`` and return False when it was seen or cannot be read."""
+    try:
+        entry_stat = entry.stat(follow_symlinks=True)
+    except OSError:
+        return False  # Skip inaccessible entries
+    inode_key = (entry_stat.st_dev, entry_stat.st_ino)
+    if inode_key in visited:
+        return False  # Skip already-visited directory
+    visited.add(inode_key)
+    return True
+
+
 def count_directories(
     root: Path,
     *,
@@ -91,20 +104,14 @@ def count_directories(
                         continue
 
                     try:
-                        if entry.is_dir(follow_symlinks=follow_symlinks):
-                            # Check for symlink loops when following symlinks
-                            if follow_symlinks:
-                                try:
-                                    entry_stat = entry.stat(follow_symlinks=True)
-                                    inode_key = (entry_stat.st_dev, entry_stat.st_ino)
-                                    if inode_key in visited:
-                                        continue  # Skip already-visited directory
-                                    visited.add(inode_key)
-                                except OSError:
-                                    continue  # Skip inaccessible entries
+                        if not entry.is_dir(follow_symlinks=follow_symlinks):
+                            continue
+                        # Check for symlink loops when following symlinks
+                        if follow_symlinks and not _first_visit(entry, visited):
+                            continue
 
-                            count += 1
-                            _count_recursive(Path(entry.path), current_depth + 1)
+                        count += 1
+                        _count_recursive(Path(entry.path), current_depth + 1)
                     except (PermissionError, OSError):
                         # Skip inaccessible directories
                         continue

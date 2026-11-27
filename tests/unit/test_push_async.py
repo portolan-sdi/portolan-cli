@@ -111,7 +111,7 @@ def async_catalog(tmp_path: Path) -> Path:
         (item_dir / f"file{i}.parquet").write_bytes(b"x" * 1024)
 
     # Create item STAC file
-    item_data = {
+    item_data: dict[str, Any] = {
         "type": "Feature",
         "stac_version": "1.0.0",
         "id": "data",
@@ -189,7 +189,7 @@ def many_files_catalog(tmp_path: Path) -> Path:
         (item_dir / f"file{i}.parquet").write_bytes(b"x" * 512)
 
     # Create item STAC file
-    item_data = {
+    item_data: dict[str, Any] = {
         "type": "Feature",
         "stac_version": "1.0.0",
         "id": "data",

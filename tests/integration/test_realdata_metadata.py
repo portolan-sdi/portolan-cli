@@ -8,6 +8,7 @@ tests/fixtures/realdata/README.md records the source of each fixture.
 
 from __future__ import annotations
 
+import math
 from typing import TYPE_CHECKING
 
 import pytest
@@ -45,7 +46,7 @@ class TestAntimeridian:
 
         # Coordinates are valid numbers (not NaN, not inf)
         assert all(isinstance(c, (int, float)) for c in metadata.bbox)
-        assert all(c == c for c in metadata.bbox)  # NaN check (NaN != NaN)
+        assert all(not math.isnan(c) for c in metadata.bbox)  # NaN check (NaN != NaN)
 
         # Latitude is valid
         assert -90 <= miny <= 90

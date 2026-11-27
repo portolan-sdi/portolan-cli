@@ -105,7 +105,7 @@ def _write_overview(scene: Path, output: Path) -> None:
     cog_translate(
         str(plain),
         str(output),
-        cog_profiles.get("deflate"),  # type: ignore[no-untyped-call]
+        cog_profiles.get("deflate"),
         overview_level=2,
         forward_band_tags=True,
         quiet=True,

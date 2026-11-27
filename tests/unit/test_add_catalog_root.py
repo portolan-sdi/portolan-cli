@@ -19,8 +19,8 @@ from unittest.mock import patch
 import pytest
 from click.testing import CliRunner
 
-from portolan_cli.add import ItemInfo
 from portolan_cli.cli import cli
+from portolan_core.query import ItemInfo
 
 
 @pytest.fixture

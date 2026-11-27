@@ -6,6 +6,7 @@ Tests the version_ops module that bridges CLI commands and versioning backends.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -17,6 +18,9 @@ from portolan_cli.version_ops import (
     list_versions,
     publish_version,
 )
+
+if TYPE_CHECKING:
+    from portolan_cli.backends.protocol import SchemaFingerprint
 
 
 class TestResolveBackendName:
@@ -85,7 +89,7 @@ class TestPublishVersion:
         mock_backend = MagicMock()
         mock_backend.publish.return_value = mock_version
 
-        schema = {"columns": [], "types": {}, "hash": "h"}
+        schema: SchemaFingerprint = {"columns": [], "types": {}, "hash": "h"}
 
         with patch("portolan_cli.backends.get_backend", return_value=mock_backend):
             result = publish_version("col", assets={"a": "/path"}, schema=schema, message="test")
@@ -99,7 +103,7 @@ class TestPublishVersion:
     def test_passes_removed_parameter(self) -> None:
         mock_backend = MagicMock()
 
-        schema = {"columns": [], "types": {}, "hash": "h"}
+        schema: SchemaFingerprint = {"columns": [], "types": {}, "hash": "h"}
 
         with patch("portolan_cli.backends.get_backend", return_value=mock_backend):
             publish_version(

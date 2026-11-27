@@ -26,13 +26,15 @@ CORRUPTED = "⚠ Catalog versions.json is corrupted: "
 
 def test_the_check_step_of_sync_reports_each_conversion_notice(tmp_path: Path) -> None:
     """The sidecar notice of the conversion reaches the report of sync."""
-    import geopandas as gpd
+    import geopandas
     from shapely.geometry import Point
 
     from portolan_cli.sync.core import _step_check
 
     shp = tmp_path / "roads.shp"
-    frame = gpd.GeoDataFrame({"name": ["Zürich"]}, geometry=[Point(8.5, 47.4)], crs="EPSG:4326")
+    frame = geopandas.GeoDataFrame(
+        {"name": ["Zürich"]}, geometry=[Point(8.5, 47.4)], crs="EPSG:4326"
+    )
     frame.to_file(shp, encoding="latin1")
     shp.with_suffix(".cpg").unlink(missing_ok=True)
     lines: list[tuple[str, str]] = []

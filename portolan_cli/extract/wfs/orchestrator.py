@@ -217,7 +217,7 @@ class WFSLayerSource:
         geoparquet-io raises a WFS error for a layer with no features. That
         error becomes ``EmptyLayerError`` (issue #450).
         """
-        from geoparquet_io.core.wfs import convert_wfs_to_geoparquet  # type: ignore[import-untyped]
+        from geoparquet_io.core.wfs import convert_wfs_to_geoparquet
 
         wfs_layer: WFSLayer = layer.data
         options = self.options

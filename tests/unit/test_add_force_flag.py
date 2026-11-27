@@ -19,8 +19,8 @@ from unittest.mock import patch
 import pytest
 from click.testing import CliRunner
 
-from portolan_cli.add import ItemInfo
 from portolan_cli.cli import cli
+from portolan_core import query
 
 
 @pytest.fixture
@@ -129,7 +129,7 @@ class TestForceBypassesChangeDetection:
             with patch("portolan_cli.add.add_files") as mock_add:
                 mock_add.return_value = (
                     [
-                        ItemInfo(
+                        query.ItemInfo(
                             item_id="test",
                             collection_id="data",
                             format_type="vector",

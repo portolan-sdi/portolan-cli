@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import Any, Self
+from typing import Any, ClassVar, Literal, Self
 
 import pytest
 
@@ -87,7 +87,8 @@ class TestConversionStatus:
         from portolan_cli.convert import ConversionStatus
 
         assert ConversionStatus.SUCCESS == ConversionStatus.SUCCESS
-        assert ConversionStatus.SUCCESS != ConversionStatus.FAILED
+        # The test compares two distinct members on purpose.
+        assert ConversionStatus.SUCCESS != ConversionStatus.FAILED  # type: ignore[comparison-overlap]
 
     @pytest.mark.unit
     def test_can_use_as_dict_key(self) -> None:
@@ -476,7 +477,7 @@ class TestClaimOutput:
         (tmp_path / "a.parquet").write_bytes(b"operator data")
         (tmp_path / "a-csv.parquet").write_bytes(b"more operator data")
 
-        with pytest.raises(OutputExistsError, match="would replace a.parquet"):
+        with pytest.raises(OutputExistsError, match=r"would replace a.parquet"):
             claim_output(tmp_path / "a.csv", tmp_path / "a.parquet")
 
 
@@ -1162,7 +1163,7 @@ class TestConvertDirectoryPoolFallback:
             def __enter__(self) -> Self:
                 return self
 
-            def __exit__(self, *args: object) -> bool:
+            def __exit__(self, *args: object) -> Literal[False]:
                 return False
 
             def submit(self, *args: object, **kwargs: object) -> object:
@@ -1230,7 +1231,7 @@ class TestConvertDirectoryPoolFallback:
             def __enter__(self) -> Self:
                 return self
 
-            def __exit__(self, *args: object) -> bool:
+            def __exit__(self, *args: object) -> Literal[False]:
                 return False
 
             def submit(self, _fn: object, source: Path, **_kw: object) -> _Future:
@@ -1239,7 +1240,7 @@ class TestConvertDirectoryPoolFallback:
 
         monkeypatch.setattr(concurrent.futures, "ProcessPoolExecutor", _PartialPool)
         # as_completed must yield the futures; identity keeps submission order.
-        monkeypatch.setattr(concurrent.futures, "as_completed", lambda fs: list(fs))
+        monkeypatch.setattr(concurrent.futures, "as_completed", list)
 
         progressed: list[Path] = []
         report = convert_directory(
@@ -1657,10 +1658,7 @@ class TestConvertFileEdgeCases:
 
         for name, content in files:
             file_path = tmp_path / name
-            if isinstance(content, str):
-                file_path.write_text(content)
-            else:
-                file_path.write_bytes(content.encode() if isinstance(content, str) else content)
+            file_path.write_text(content)
 
             result = convert_file(file_path, output_dir=tmp_path)
 
@@ -2368,7 +2366,7 @@ class TestVectorConversionRetriesTransientInterrupt:
                 return self
 
             def write(self, path: str) -> None:
-                Path(path).write_text("parquet-bytes")
+                Path(path).write_text("parquet-bytes", encoding="utf-8")
 
         calls = {"n": 0}
 
@@ -2659,7 +2657,7 @@ class TestPartitionedOutputWithGeoparquetIO:
     library. These tests write real partitions.
     """
 
-    _COLUMNS = {
+    _COLUMNS: ClassVar[dict[str, str]] = {
         "h3": "h3_cell",
         "s2": "s2_cell",
         "quadkey": "quadkey_prefix",
@@ -2668,7 +2666,7 @@ class TestPartitionedOutputWithGeoparquetIO:
     }
     # Coarse cells over a small cluster keep every partition above the
     # 100-row floor that geoparquet-io enforces ("Tiny partitions").
-    _EXPLICIT = {"h3": 3, "s2": 5, "quadkey": 6, "a5": 3, "kdtree": 1}
+    _EXPLICIT: ClassVar[dict[str, int]] = {"h3": 3, "s2": 5, "quadkey": 6, "a5": 3, "kdtree": 1}
 
     @staticmethod
     def _points(tmp_path: Path) -> Path:
@@ -2818,9 +2816,12 @@ class TestPartitionedOutputWithGeoparquetIO:
         converted.write_bytes(b"PAR1")
         called: list[str] = []
         monkeypatch.setattr(partitioning, "partition_strategy", lambda *_, **__: "kdtree")
-        monkeypatch.setattr(
-            partitioning, "partition_geoparquet", lambda **_: called.append("write") or []
-        )
+
+        def _partition(**_: object) -> list[Path]:
+            called.append("write")
+            return []
+
+        monkeypatch.setattr(partitioning, "partition_geoparquet", _partition)
 
         with pytest.raises(PartitionCollisionError, match="kdtree_cell=0000"):
             partitioning.partition_vector_file(converted, tmp_path)
@@ -2999,7 +3000,7 @@ class TestPartitionedOutputWithGeoparquetIO:
         """`created_output` is True for a new conversion and False for a kept output."""
         from portolan_cli.preparation import prepare_item
 
-        coll, source = self._points_catalog(tmp_path)
+        _coll, source = self._points_catalog(tmp_path)
 
         first = prepare_item(path=source, catalog_root=tmp_path, collection_id="coll")
         kept = prepare_item(path=source, catalog_root=tmp_path, collection_id="coll", force=True)

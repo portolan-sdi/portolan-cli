@@ -67,7 +67,7 @@ class TestCliInit:
         """portolan init should fail if unmanaged STAC catalog exists."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
             # Create unmanaged STAC catalog
-            Path("catalog.json").write_text('{"type": "Catalog"}')
+            Path("catalog.json").write_text('{"type": "Catalog"}', encoding="utf-8")
 
             # Use --auto to skip interactive prompts and test error path
             result = runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
@@ -100,7 +100,7 @@ class TestCliInit:
             )
 
             assert result.exit_code == 0
-            data = json.loads(Path("catalog.json").read_text())
+            data = json.loads(Path("catalog.json").read_text(encoding="utf-8"))
             assert data.get("title") == "My Test Catalog"
 
     @pytest.mark.unit
@@ -115,7 +115,7 @@ class TestCliInit:
             )
 
             assert result.exit_code == 0
-            data = json.loads(Path("catalog.json").read_text())
+            data = json.loads(Path("catalog.json").read_text(encoding="utf-8"))
             assert data.get("description") == "Test description"
 
     @pytest.mark.unit
@@ -129,7 +129,7 @@ class TestCliInit:
             )
 
             assert result.exit_code == 0
-            data = json.loads(Path("catalog.json").read_text())
+            data = json.loads(Path("catalog.json").read_text(encoding="utf-8"))
             assert data.get("id") == "phl-housing"
 
     @pytest.mark.unit
@@ -233,7 +233,7 @@ class TestCliInitInteractive:
             )
 
             assert result.exit_code == 0, f"Failed: {result.output}"
-            data = json.loads(Path("catalog.json").read_text())
+            data = json.loads(Path("catalog.json").read_text(encoding="utf-8"))
             assert data.get("title") == "Interactive Title"
             assert data.get("description") == "Interactive Description"
 
@@ -257,7 +257,7 @@ class TestCliInitInteractive:
             )
 
             assert result.exit_code == 0, f"Failed: {result.output}"
-            data = json.loads(Path("catalog.json").read_text())
+            data = json.loads(Path("catalog.json").read_text(encoding="utf-8"))
             # Title is mandatory and must be present + human-readable.
             title = data.get("title")
             assert title, "Expected a derived title, got falsy value"
@@ -278,7 +278,7 @@ class TestCliInitInteractive:
             )
 
             assert result.exit_code == 0, f"Failed: {result.output}"
-            data = json.loads(Path("catalog.json").read_text())
+            data = json.loads(Path("catalog.json").read_text(encoding="utf-8"))
             assert data.get("description") == "A Portolan-managed STAC catalog"
 
     @pytest.mark.unit

@@ -92,7 +92,9 @@ class TestAddAssetToCollectionMerge:
 
         add_asset_to_collection(collection, "data", new_asset, merge_strategy=MergeStrategy.SMART)
 
-        assert "census data with population" in collection.assets["data"].description
+        description = collection.assets["data"].description
+        assert description is not None
+        assert "census data with population" in description
 
     @pytest.mark.unit
     def test_smart_strategy_updates_href(self) -> None:
@@ -521,7 +523,7 @@ class TestAddTableExtensionMerge:
         metadata = GeoParquetMetadata(
             bbox=(-180, -90, 180, 90),
             crs="EPSG:4326",
-            geometry_type="Polygon",
+            geometry_type=["Polygon"],
             geometry_column="geometry",
             feature_count=1500,  # Updated row count
             schema={"id": "int64", "population": "int64", "geometry": "binary"},
@@ -544,7 +546,7 @@ class TestAddTableExtensionMerge:
         metadata = GeoParquetMetadata(
             bbox=(-180, -90, 180, 90),
             crs="EPSG:4326",
-            geometry_type="Polygon",
+            geometry_type=["Polygon"],
             geometry_column="geometry",
             feature_count=2000,
             schema={"id": "int64", "population": "int64", "geometry": "binary"},
@@ -562,7 +564,7 @@ class TestAddTableExtensionMerge:
         metadata = GeoParquetMetadata(
             bbox=(-180, -90, 180, 90),
             crs="EPSG:4326",
-            geometry_type="Polygon",
+            geometry_type=["Polygon"],
             geometry_column="geometry",
             feature_count=1000,
             schema={
@@ -591,7 +593,7 @@ class TestAddTableExtensionMerge:
         metadata = GeoParquetMetadata(
             bbox=(-180, -90, 180, 90),
             crs="EPSG:4326",
-            geometry_type="Polygon",
+            geometry_type=["Polygon"],
             geometry_column="geometry",
             feature_count=1000,
             schema={
@@ -619,7 +621,7 @@ class TestAddTableExtensionMerge:
         metadata = GeoParquetMetadata(
             bbox=(-180, -90, 180, 90),
             crs="EPSG:4326",
-            geometry_type="Polygon",
+            geometry_type=["Polygon"],
             geometry_column="geometry",
             feature_count=1000,
             schema={
@@ -649,7 +651,7 @@ class TestAddTableExtensionMerge:
         metadata = GeoParquetMetadata(
             bbox=(-180, -90, 180, 90),
             crs="EPSG:4326",
-            geometry_type="Polygon",
+            geometry_type=["Polygon"],
             geometry_column="geometry",
             feature_count=9999,
             schema={"population": "float64", "geometry": "binary"},
@@ -679,7 +681,7 @@ class TestAddTableExtensionMerge:
         metadata = GeoParquetMetadata(
             bbox=(-180, -90, 180, 90),
             crs="EPSG:4326",
-            geometry_type="Polygon",
+            geometry_type=["Polygon"],
             geometry_column="geometry",
             feature_count=500,
             schema={"id": "int64", "geometry": "binary"},

@@ -479,7 +479,7 @@ def _pop_path(target: dict[str, Any], path: tuple[str, ...]) -> bool:
     return True
 
 
-def _fold_dotted_keys(mapping: dict[str, Any]) -> dict[str, Any]:
+def _fold_dotted_keys(mapping: dict[Any, Any]) -> dict[str, Any]:
     """Move the flat dotted keys that ``config set`` wrote before #1020 into nested form.
 
     Such a key wins over the nested value, as it did when ``get_setting`` read

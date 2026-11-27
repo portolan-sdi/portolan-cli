@@ -210,7 +210,7 @@ def _local(node: _Node, href: str) -> Path | None:
     """Resolve a relative href against the JSON file's directory."""
     if _has_scheme(href) or LOCAL_PATH.match(href):
         return None
-    return (node.path.parent / href.split("#")[0].split("?")[0]).resolve()
+    return (node.path.parent / href.split("#", maxsplit=1)[0].split("?", maxsplit=1)[0]).resolve()
 
 
 def _assets(node: _Node) -> dict[str, dict[str, Any]]:
@@ -876,9 +876,9 @@ def main(argv: list[str]) -> int:
         violations = check_catalog_invariants(root)
         if violations:
             failed = True
-            print(format_violations(root, violations))  # noqa: T201 - command-line entry point
+            print(format_violations(root, violations))  # command-line entry point
         else:
-            print(f"{root}: no catalog invariant violations")  # noqa: T201
+            print(f"{root}: no catalog invariant violations")
     return 1 if failed else 0
 
 

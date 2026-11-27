@@ -61,14 +61,14 @@ from portolan_cli.validation.report import (
 from portolan_cli.validation.runner import CheckOutcome, LiveHint, run_check
 
 __all__ = [
+    "DEFAULT_REMEDIATION",
+    "FIXERS",
+    "RULE_REMEDIATION",
     "Bucket",
     "CheckOutcome",
-    "DEFAULT_REMEDIATION",
     "InputValidationError",
     "LiveHint",
-    "RULE_REMEDIATION",
     "Remediation",
-    "FIXERS",
     "annotate_survivors",
     "apply_fixers",
     "auto_fixer_keys",

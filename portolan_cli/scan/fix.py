@@ -304,7 +304,7 @@ def _find_sidecars(shp_path: Path) -> list[Path]:
 # =============================================================================
 
 
-def _compute_safe_rename(path: Path) -> tuple[Path, str] | None:
+def _compute_safe_rename(path: Path) -> tuple[Path, str] | None:  # noqa: PLR0914 - each name transform of the path is a local
     """Compute safe rename for a file with normalization issues.
 
     Handles four types of issues:
@@ -374,8 +374,7 @@ def _compute_safe_rename(path: Path) -> tuple[Path, str] | None:
         if excess > 0:
             # Calculate max stem length
             max_stem_len = len(new_stem) - excess - len(hash_suffix)
-            if max_stem_len < 1:
-                max_stem_len = 1
+            max_stem_len = max(max_stem_len, 1)
             new_stem = new_stem[:max_stem_len] + hash_suffix
 
     new_name = f"{new_stem}{new_suffix}"

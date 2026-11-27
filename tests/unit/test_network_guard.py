@@ -84,7 +84,7 @@ def test_a_python_client_that_reads_the_proxy_variables_is_recorded(
     import urllib.request
 
     with pytest.raises(OSError, match="403"):
-        urllib.request.urlopen("https://example.com/", timeout=2)  # noqa: S310
+        urllib.request.urlopen("https://example.com/", timeout=2)
 
     assert network_guard.collect() == ["example.com:443"]
     network_guard.attempts.clear()
@@ -132,7 +132,7 @@ def test_a_refused_host_does_not_fail_the_test(network_guard: NetworkGuard) -> N
     import urllib.request
 
     with pytest.raises(OSError, match="403"):
-        urllib.request.urlopen("https://example.com/", timeout=2)  # noqa: S310
+        urllib.request.urlopen("https://example.com/", timeout=2)
 
     assert network_guard.unexpected(["example.com"]) == []
     assert network_guard.unexpected([]) == ["example.com:443"]

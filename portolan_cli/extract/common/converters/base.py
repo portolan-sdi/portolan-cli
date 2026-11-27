@@ -15,6 +15,8 @@ from __future__ import annotations
 
 from typing import Any
 
+_RGBA_LEN = 4
+
 # Type alias for Mapbox GL expressions
 Expression = list[Any]
 ColorValue = str | Expression
@@ -50,7 +52,7 @@ def esri_color_to_opacity(color: list[int] | None) -> float:
     """
     if color is None:
         return 1.0
-    if len(color) < 4:
+    if len(color) < _RGBA_LEN:
         return 1.0
     return color[3] / 255.0
 
@@ -242,7 +244,7 @@ def make_line_layer(
     }
 
 
-def make_symbol_layer(
+def make_symbol_layer(  # noqa: PLR0917 - one argument per Mapbox layer property
     layer_id: str,
     source_layer: str,
     text_field: str | Expression,

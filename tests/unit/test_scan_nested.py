@@ -342,7 +342,7 @@ try:
         @given(
             depth=st.integers(min_value=1, max_value=20),
             segment_name=st.text(
-                alphabet=st.characters(whitelist_categories=("L",)),
+                alphabet=st.characters(categories=["L"]),
                 min_size=1,
                 max_size=10,
             ),

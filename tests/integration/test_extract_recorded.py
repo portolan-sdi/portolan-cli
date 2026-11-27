@@ -77,10 +77,10 @@ EXTRACTIONS = {
     "token_gated-data": Extraction("arcgis/token_gated", "arcgis", PUBLIC, ("--retries", "3")),
     "layer_gone": Extraction("arcgis/transient_error", "arcgis", CLOSED, ("--retries", "3")),
     "workspace_layer-exclude": Extraction(
-        "wfs/workspace_layer", "wfs", "/geoserver/wfs", ("--exclude-layers", "states")
+        "wfs/workspace_layer", "wfs", "/geoserver/wfs", ("--exclude-layers", "us_states")
     ),
     "workspace_layer-layers": Extraction(
-        "wfs/workspace_layer", "wfs", "/geoserver/wfs", ("--layers", "topp:states")
+        "wfs/workspace_layer", "wfs", "/geoserver/wfs", ("--layers", "gs:us_states")
     ),
     "empty_collection": Extraction(
         "wfs/empty_collection",
@@ -296,7 +296,7 @@ def test_permanent_error_is_not_retried(
 
 @GPIO_WFS_OOM
 def test_wfs_exclude_layers_matches_the_leaf_name(tmp_path: Path, run_cli: RunCli) -> None:
-    """``--exclude-layers states`` excludes ``topp:states``."""
+    """``--exclude-layers us_states`` excludes ``gs:us_states``."""
     result, server, out = _run("workspace_layer-exclude", tmp_path, run_cli)
 
     assert server.unmatched == []
@@ -306,12 +306,12 @@ def test_wfs_exclude_layers_matches_the_leaf_name(tmp_path: Path, run_cli: RunCl
 
 @GPIO_WFS_OOM
 def test_wfs_layers_matches_the_qualified_name(tmp_path: Path, run_cli: RunCli) -> None:
-    """``--layers topp:states`` extracts that layer only. This is the control for #768."""
+    """``--layers gs:us_states`` extracts that layer only. This is the control for #768."""
     result, server, out = _run("workspace_layer-layers", tmp_path, run_cli)
 
     assert server.unmatched == []
     assert result.exit_code == 0, result.output
-    assert _wfs_layers(out) == [("topp:states", "success", 2)]
+    assert _wfs_layers(out) == [("gs:us_states", "success", 2)]
 
 
 def _index_mismatches(out: Path) -> dict[str, tuple[Any, Any]]:
@@ -413,14 +413,14 @@ def test_wfs_layer_that_add_skips_is_named(tmp_path: Path, run_cli: RunCli) -> N
     from portolan_core.config import set_setting
 
     init_catalog(tmp_path / "out", catalog_id="recorded", license_id="CC-BY-4.0")
-    set_setting(tmp_path / "out", "ignored_files", ["topp_states*"])
+    set_setting(tmp_path / "out", "ignored_files", ["gs_us_states*"])
     result, server, out = _run("workspace_layer-layers", tmp_path, run_cli)
 
     assert server.unmatched == []
     assert result.exit_code == 0, result.output
-    assert not (out / "topp_states" / "collection.json").exists()
+    assert not (out / "gs_us_states" / "collection.json").exists()
     assert (
-        "Skipping topp_states.parquet: it matches ignored_files pattern 'topp_states*'"
+        "Skipping gs_us_states.parquet: it matches ignored_files pattern 'gs_us_states*'"
         in result.output
     )
 

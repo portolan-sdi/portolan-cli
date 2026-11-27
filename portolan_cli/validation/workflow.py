@@ -8,6 +8,7 @@ from the result and decides the exit code from it.
 
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -19,6 +20,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
+    from portolan_cli.conversion_config import CogSettings, VectorSettings
     from portolan_cli.convert import ConversionResult
     from portolan_cli.metadata.fix import FixReport
     from portolan_cli.scan.check import FixWorkflowOutcome
@@ -347,6 +349,7 @@ def _run_fix_and_repairs(
         state=state,
     )
 
+    rewrites, mirrors = _reoptimize_targets(state.catalog_root, findings, state)
     with span("check.fix.freshness"):
         outcome = run_fix_workflow(
             path=path,
@@ -355,11 +358,14 @@ def _run_fix_and_repairs(
             dry_run=dry_run,
             remove_legacy=remove_legacy,
             force=force,
+            reoptimize=rewrites,
             workers=workers,
             on_progress=on_progress,
             state=state,
         )
         legacy_data, legacy_failed, written_items = _legacy_fix_result(outcome, on_fix_report)
+    # The mirror writer rebuilds a named items.parquet, under the mirror rules.
+    written_items.extend(mirrors)
 
     # The registry above ran against findings from the pre-fix check, so it
     # never saw an item the freshness pass has only just written. Repair
@@ -388,6 +394,72 @@ def _run_fix_and_repairs(
         dry_run=dry_run,
     )
     return fix_data, legacy_failed or fixer_report.failure_count > 0
+
+
+#: The largest internal COG tile that PTL-DAT-013 allows.
+_MAX_TILE = 512
+
+#: What each rewrite rule needs of the conversion settings, as a hint and a test.
+_REWRITE_NEEDS: dict[str, tuple[str, Callable[[VectorSettings, CogSettings], bool]]] = {
+    "PTL-DAT-006": (
+        "conversion.vector.sort set to hilbert or quadkey",
+        lambda vector, _cog: vector.sort != "none",
+    ),
+    "PTL-DAT-007": ("conversion.vector.add_bbox set to true", lambda vector, _cog: vector.add_bbox),
+    "PTL-DAT-013": (
+        "conversion.cog.tile_size of 512 or less",
+        lambda _vector, cog: cog.tile_size <= _MAX_TILE,
+    ),
+}
+
+
+def _reoptimize_targets(
+    root: Path, findings: list[Any], state: RunState | None = None
+) -> tuple[frozenset[Path], frozenset[Path]]:
+    """The files that AUTO ``convert`` findings name, then the mirrors. Settings that cannot help warn."""
+    from rashid_core.api import is_absolute_href
+
+    from portolan_cli.conversion_config import get_cog_settings, get_vector_settings
+    from portolan_cli.report import emit
+    from portolan_cli.stac_parquet import PARQUET_FILENAME
+    from portolan_cli.validation.remediation import Bucket, remediation_of
+
+    named: dict[Path, set[str]] = {}
+    for finding in findings:
+        remediation = remediation_of(finding)
+        if remediation.bucket is not Bucket.AUTO or remediation.fixer != "convert":
+            continue
+        match (finding.json_pointer or "").split("/"):
+            case ["", "assets", key, *_]:
+                key = key.replace("~1", "/").replace("~0", "~")
+            case _:
+                continue
+        node = root / finding.path
+        try:
+            href = json.loads(node.read_text(encoding="utf-8"))["assets"][key]["href"]
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+        if isinstance(href, str) and not is_absolute_href(href):
+            named.setdefault((node.parent / href).resolve(), set()).add(finding.rule_id)
+
+    vector, cog = get_vector_settings(root, state=state), get_cog_settings(root, state=state)
+    targets: set[Path] = set()
+    mirrors: set[Path] = set()
+    for path, rules in named.items():
+        if path.name == PARQUET_FILENAME and (path.parent / "collection.json").is_file():
+            mirrors.add(path)
+            continue
+        unmet = {
+            rule: _REWRITE_NEEDS[rule][0]
+            for rule in rules
+            if rule in _REWRITE_NEEDS and not _REWRITE_NEEDS[rule][1](vector, cog)
+        }
+        if unmet.keys() < rules:
+            targets.add(path)
+            continue
+        needs = "; ".join(f"{rule} needs {need}" for rule, need in sorted(unmet.items()))
+        emit("warn", f"Kept {path.name}: {needs} in .portolan/config.yaml")
+    return frozenset(targets), frozenset(mirrors)
 
 
 def _run_fixer_registry(
@@ -447,12 +519,14 @@ def _legacy_fix_result(
 
     Returns:
         The fix reports as JSON data, whether a fix failed, and the data files
-        whose items the freshness pass updated. The caller repairs those items,
-        which the finding-driven registry ran too early to see (#709).
+        whose items the freshness pass updated or whose bytes a conversion
+        rewrote. The caller repairs those items, which the finding-driven
+        registry ran too early to see (#709).
 
     Raises:
         NotACatalogError: A metadata-only fix found no catalog root (issue #384).
     """
+    from portolan_cli.convert import ConversionStatus
     from portolan_cli.metadata.fix import FixAction
 
     if outcome.fatal_error is not None:
@@ -478,6 +552,15 @@ def _legacy_fix_result(
         for result in (metadata_fix_report.results if metadata_fix_report else [])
         if result.success and result.action is FixAction.UPDATED
     ]
+    # A conversion rewrites the bytes after the checksum fixer recorded them.
+    # Without a repair the asset keeps a stale file:size and file:checksum, and
+    # only a second --fix records the new bytes.
+    conversion_report = format_fix_report.conversion_report if format_fix_report else None
+    written_items.extend(
+        result.output
+        for result in (conversion_report.results if conversion_report else [])
+        if result.status is ConversionStatus.SUCCESS and result.output is not None
+    )
 
     return (
         _fix_json_section(

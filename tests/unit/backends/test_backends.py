@@ -134,7 +134,7 @@ class TestGetBackend:
     @pytest.mark.unit
     def test_get_backend_error_lists_available_backends(self) -> None:
         """ValueError message includes list of available backends."""
-        with pytest.raises(ValueError) as exc_info:
+        with pytest.raises(ValueError, match=r"Unknown backend: nonexistent") as exc_info:
             get_backend("nonexistent")
         # Should mention 'file' as available
         assert "file" in str(exc_info.value)
@@ -447,7 +447,7 @@ class TestJsonFileBackendIntegration:
         collection_dir = catalog_root / "test"
         collection_dir.mkdir(parents=True)
 
-        versions_data = {
+        versions_data: dict[str, Any] = {
             "spec_version": "1.0.0",
             "current_version": None,
             "versions": [],

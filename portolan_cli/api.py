@@ -118,6 +118,8 @@ if TYPE_CHECKING:
     from portolan_core.versions import Asset, SchemaInfo, Version, parse_version
 
 __all__ = [
+    "RASTER_EXTENSIONS",
+    "VECTOR_EXTENSIONS",
     "Asset",
     "Discovery",
     "DriftReport",
@@ -140,11 +142,9 @@ __all__ = [
     "PostAddContext",
     "PostAddItemContext",
     "PullResult",
-    "RASTER_EXTENSIONS",
     "SchemaFingerprint",
     "SchemaInfo",
     "SourceLink",
-    "VECTOR_EXTENSIONS",
     "Version",
     "VersioningBackend",
     "add_projection_extension",
