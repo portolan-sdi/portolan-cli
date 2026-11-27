@@ -1,16 +1,4 @@
-"""Regression tests for pystac normalize_hrefs dot-in-path bug (issue #401).
-
-pystac's normalize_hrefs() uses a heuristic: paths with dots in the final
-component are treated as files, not directories. This causes catalog.json
-and collection.json to be written to the PARENT directory when the path
-contains a dot (e.g., /tmp/tmp.XXXXXX from mktemp -d).
-
-These tests verify the fix works across all affected workflows.
-
-Issue #731 is the same bug reached through the default path argument. Passing
-"." leaves the dotted component in the working directory rather than the
-argument, so absolutizing before the heuristic runs is what keeps it away.
-"""
+"""Regression tests for pystac normalize_hrefs dot-in-path bug."""
 
 from __future__ import annotations
 
@@ -58,11 +46,7 @@ class TestDottedPathRegression:
     def test_add_in_dotted_catalog_path(
         self, runner: CliRunner, tmp_path: Path, simple_geojson: Path
     ) -> None:
-        """Adding files to a catalog with dotted path should not leak to parent.
-
-        Regression test for issue #401: collection.json must be written to the
-        collection directory, not to the catalog root or its parent.
-        """
+        """Adding files to a catalog with dotted path should not leak to parent."""
         # Create catalog with dotted path (like mktemp -d produces)
         catalog_root = tmp_path / "my.catalog"
         catalog_root.mkdir()
@@ -88,10 +72,8 @@ class TestDottedPathRegression:
         )
         (portolan_dir / "metadata.yaml").write_text('license: "CC-BY-4.0"\n')
 
-        # Create collection directory with file directly in it
-        # (portolan infers collection from directory structure)
-        # Note: collection name must NOT have dots (portolan rejects them)
-        # The BUG is about catalog_root having dots, not collection names
+        # The collection name has no dots (portolan rejects them).
+        # The defect is a dotted catalog_root, not a dotted collection name.
         collection_dir = catalog_root / "test-collection"
         collection_dir.mkdir()
 
@@ -181,9 +163,8 @@ class TestDottedPathRegression:
             )
         )
 
-        # Create NEW collection directory with file
-        # Note: collection name must NOT have dots (portolan rejects them)
-        # The BUG is about catalog_root having dots, not collection names
+        # The collection name has no dots (portolan rejects them).
+        # The defect is a dotted catalog_root, not a dotted collection name.
         new_collection_dir = catalog_root / "new-collection"
         new_collection_dir.mkdir()
         new_collection_geojson = new_collection_dir / "data.geojson"
@@ -215,21 +196,13 @@ class TestDottedPathRegression:
 
 
 class TestDefaultPathRegression:
-    """Regression tests for `init` with no path argument (issue #731)."""
+    """Regression tests for `init` with no path argument."""
 
     @pytest.mark.integration
     def test_init_no_path_argument_in_dotted_working_directory(
         self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """`portolan init` with no path writes catalog.json to the working directory.
-
-        Regression test for issue #731. The path argument defaults to ".", which
-        pystac absolutizes against the working directory. A dotted working
-        directory name, which `mktemp -d` produces, then trips the same
-        file-versus-directory heuristic as issue #401, and catalog.json lands in
-        the parent. `init` went on to read the file back through the same
-        relative path and raised FileNotFoundError instead of a PortolanError.
-        """
+        """`portolan init` with no path writes catalog.json to the working directory."""
         working_dir = tmp_path / "tmp.ckdIXs70TT"
         working_dir.mkdir()
         monkeypatch.chdir(working_dir)
@@ -259,11 +232,7 @@ class TestDefaultPathRegression:
     def test_init_no_path_reports_catalog_id_as_json(
         self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """The JSON envelope holds for `init` with no path (issue #731).
-
-        The crash escaped as a traceback rather than a PortolanError, so the
-        envelope contract in .claude/rules/cli-and-output.md did not hold.
-        """
+        """The JSON envelope holds for `init` with no path."""
         working_dir = tmp_path / "tmp.9Qz.Wm"
         working_dir.mkdir()
         monkeypatch.chdir(working_dir)
@@ -279,18 +248,13 @@ class TestDefaultPathRegression:
 
 
 class TestInitCatalogReturnValue:
-    """`init_catalog` must return a path its caller can read (issue #731)."""
+    """`init_catalog` must return a path its caller can read."""
 
     @pytest.mark.integration
     def test_returned_catalog_file_is_absolute(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """The returned catalog_file resolves without depending on the caller's cwd.
-
-        `init_catalog` returned `path / "catalog.json"`, so a relative path in
-        gave a relative path out. cli.py read it back against whatever working
-        directory it happened to have.
-        """
+        """The returned catalog_file resolves without depending on the caller's cwd."""
         from portolan_cli.catalog import init_catalog
 
         working_dir = tmp_path / "tmp.relative"

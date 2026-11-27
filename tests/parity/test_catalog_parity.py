@@ -52,14 +52,8 @@ def _both_sides(
     args: list[str],
     call: Callable[[Path], Any],
 ) -> Iterator[tuple[Path, dict[str, bytes], dict[str, Any]]]:
-    """Run the command and the library call, each on its own fresh catalog.
-
-    The parity harness deletes each catalog before the test can look at it.
-    This helper keeps both, so a test can assert the effect of a mutating
-    command on each side.
-
-    Yields:
-        The catalog root, its files before the run, and the result data.
+    """Run the command and the library call on fresh catalogs, and keep both catalogs.
+    Yield the catalog root, its files before the run, and the result data.
     """
     for side in ("command", "library"):
         root = base / side

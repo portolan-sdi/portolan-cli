@@ -1,24 +1,4 @@
-"""Compatibility guard for the CLI-owned ``versions.json`` manifest.
-
-``versions.json`` is the CLI's single source of truth for version history,
-checksums, and sync state. It is CLI-internal, not part of the published
-Portolan specification, so rashid says nothing about it — the schemas in
-``tests/fixtures/versions-manifest/`` and these tests are its only guard. A
-catalog written by an older CLI must stay readable by a newer one; a failure
-here is a compatibility break, not a style problem.
-
-There are TWO different versions.json structures:
-
-- Catalog-level (root): ``schema_version``, ``catalog_id``, ``created``,
-  ``collections`` — described by ``catalog-versions.schema.json``.
-- Collection-level: ``spec_version``, ``current_version``, ``versions`` —
-  described by ``versions.schema.json``.
-
-The semantic invariants a JSON Schema cannot express (current-version
-consistency, change references, version uniqueness) are validated by the
-helpers below, and the negative tests keep both directions non-tautological.
-The format is documented in ``docs/reference/versions-manifest.md``.
-"""
+"""Compatibility guard for the CLI-owned ``versions.json`` manifest."""
 
 from __future__ import annotations
 
@@ -37,9 +17,7 @@ pytestmark = pytest.mark.integration
 _SCHEMAS_DIR = Path(__file__).resolve().parents[1] / "fixtures" / "versions-manifest"
 
 
-# =============================================================================
 # Fixtures
-# =============================================================================
 
 
 @pytest.fixture
@@ -72,9 +50,7 @@ def _validate(data: dict[str, Any], schema: dict[str, Any]) -> list[str]:
     return [f"{e.json_path}: {e.message}" for e in validator.iter_errors(data)]
 
 
-# =============================================================================
 # Semantic invariants a JSON Schema cannot express
-# =============================================================================
 
 
 def _check_current_version_consistency(versions_data: dict[str, Any]) -> list[str]:
@@ -134,9 +110,7 @@ def _add_points_collection(runner: CliRunner, fixture: Path, name: str = "points
     return collection_dir
 
 
-# =============================================================================
 # CLI output conforms to the schemas
-# =============================================================================
 
 
 class TestCatalogVersionsSchemaCompliance:
@@ -163,8 +137,6 @@ class TestCatalogVersionsSchemaCompliance:
         valid_points_geojson: Path,
         catalog_versions_schema: dict[str, Any],
     ) -> None:
-        """Regression for #561: the catalog index writer wrote keys the
-        schema rejected; ``init`` alone never exercised this write path."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
             _add_points_collection(runner, valid_points_geojson)
 
@@ -226,9 +198,7 @@ class TestVersionsSemanticInvariants:
             assert not errors, "Invariant validation failed:\n" + "\n".join(errors)
 
 
-# =============================================================================
 # Negative tests: the guard itself rejects invalid data (never tautological)
-# =============================================================================
 
 
 class TestSchemaRejectsInvalid:

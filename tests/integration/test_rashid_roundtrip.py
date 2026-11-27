@@ -1,18 +1,4 @@
-"""check → fix → re-check, end to end, on a catalog Portolan generated itself.
-
-The acceptance test for the remediation engine. It builds a real catalog, breaks
-six things a fixer owns plus one it does not, and asserts three properties in
-order:
-
-1. ``check --json`` names the exact ``PTL-*`` ids for the damage, each in the
-   AUTO bucket.
-2. ``check --fix`` resolves every one of them.
-3. What survives is exactly the damage no fixer owns, and the human output
-   lists it under "Action required" with its requirement sentence.
-
-Property 3 is the loop-termination guarantee: an agent reading the output learns
-which findings are worth another ``--fix`` (none) and which need it to act.
-"""
+"""check → fix → re-check, end to end, on a catalog Portolan generated itself."""
 
 from __future__ import annotations
 
@@ -32,14 +18,8 @@ pytestmark = pytest.mark.integration
 
 FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "simple.parquet"
 
-# Damage no fixer can repair. `_corrupt` strips the bbox covering column off the
-# GeoParquet, which is the shape every catalog written before #805 has. The rule
-# is AUTO and selects the `convert` fixer, but that fixer declines, so this id is
-# the honest survivor of `--fix` and the one entry under "Action required".
-#
-# Generation itself carries no error: since #805 `add` writes a sorted file with
-# a covering column, so this list holds damage, not a generation gap. PTL-VIZ-001
-# left it in #683, when `add` started emitting a collection-level thumbnail.
+# Damage no fixer can repair: `_corrupt` strips the bbox covering column. The rule
+# is AUTO, but the `convert` fixer declines, so this id survives `--fix`.
 UNFIXABLE_DAMAGE = frozenset({"PTL-DAT-007"})
 
 # What the corruptions below must produce, and nothing else.
@@ -69,10 +49,8 @@ def _build_catalog(root: Path) -> None:
                 "license": "CC-BY-4.0",
                 "contact": "data@example.org",
                 "source": "Example municipal open-data portal",
-                # Official: one organization both produced the roads and hosts
-                # them, so the collection is the data's canonical home and
-                # carries no upstream links (PTL-PRO-004). The mirror shape is
-                # covered by the conformance gate and test_provider_generation.
+                # Official: one organization produces and hosts the roads, so the
+                # collection carries no upstream links (PTL-PRO-004).
                 "providers": [
                     {
                         "name": "Example Municipal GIS",
@@ -147,17 +125,14 @@ def _corrupt(root: Path) -> None:
         if isinstance(asset.get("file:checksum"), str):
             asset["file:checksum"] = "1220" + "0" * 64
 
-    # 6. thumbnail: a media type outside png/jpeg/webp. Generation now satisfies
-    #    the missing-thumbnail branch of PTL-VIZ-001 (#683), so damage the branch
-    #    it cannot satisfy away, and the rule stays exercised end to end.
+    # 6. thumbnail: a media type outside png/jpeg/webp, the PTL-VIZ-001 branch
+    #    that generation cannot satisfy.
     for asset in data["assets"].values():
         if "thumbnail" in asset.get("roles", []):
             asset["type"] = "image/gif"
 
-    # 7. convert: strip the bbox covering column, leaving the file with no
-    #    per-row-group spatial statistics. This is what every GeoParquet written
-    #    before #805 looks like. `file:size` is restamped from the shortened
-    #    file, so PTL-DAT-002 stays quiet and PTL-DAT-007 is the only new id.
+    # 7. convert: strip the bbox covering column. `file:size` is restamped, so
+    #    PTL-DAT-002 stays quiet and PTL-DAT-007 is the only new id.
     parquet = root / "roads" / "roads.parquet"
     _strip_bbox_covering_column(parquet)
     for asset in data["assets"].values():
@@ -209,7 +184,7 @@ def catalog(tmp_path: Path) -> Path:
 
 class TestRashidRoundtrip:
     def test_generated_catalog_carries_no_errors(self, catalog: Path) -> None:
-        """Before any damage, a generated catalog is clean (issue #805)."""
+        """Before any damage, a generated catalog is clean."""
         data = _check_json(catalog)
         fired = {f["rule_id"] for f in data["findings"] if f["severity"] == "error"}
         assert fired == set()
@@ -283,9 +258,8 @@ class TestRashidRoundtrip:
 
         assert "Fixed automatically (" in result.output
         assert "Action required (" in result.output
-        # Every surviving finding carries its requirement sentence, and the AUTO
-        # survivor says the automatic fix did not settle it. PTL-DAT-007 is the
-        # survivor because `_corrupt` strips the bbox covering column.
+        # Each survivor carries its requirement sentence. The AUTO survivor
+        # PTL-DAT-007 says the automatic fix did not settle it.
         assert "Rewrite the GeoParquet so every row group carries statistics." in result.output
         assert "the automatic fix did not resolve this" in result.output
 
@@ -325,13 +299,7 @@ class TestRashidRoundtrip:
         assert data["fix"]["applied"] != []
 
     def test_dry_run_does_not_claim_every_finding_survived(self, catalog: Path) -> None:
-        """A dry run never re-checks, so it must not report survivors at all.
-
-        The re-check is what makes a survivor knowable. Reusing the pre-fix
-        result as the post-fix one made every AUTO finding "survive" and drove
-        ``fixed_count`` to 0 — the exact inverse of what the same fixers achieve
-        for real, and a reading that tells an agent repair is pointless.
-        """
+        """A dry run never re-checks, so it must not report survivors at all."""
         _corrupt(catalog)
 
         dry = _check_json(catalog, "--fix", "--dry-run")["fix"]
@@ -433,12 +401,7 @@ class TestWorkflowNotice:
         assert _invoke(catalog, "--strict").exit_code == 1
 
     def test_fix_leaves_the_notice_standing_and_says_why(self, catalog: Path) -> None:
-        """An orphan is not auto-fixable, so --fix must not claim it.
-
-        The notice survives the repair pass on purpose: `--fix` records a skip
-        naming the two things that *would* settle it, and the next `check` says
-        the same thing again rather than going quiet on an unpublished file.
-        """
+        """An orphan is not auto-fixable, so --fix must not claim it."""
         _disable_generation_gaps(catalog)
         _stray_file(catalog)
 
@@ -523,11 +486,7 @@ class TestHonestFixAccounting:
         assert "readme" not in fix["selected"]
 
     def test_human_output_matches_the_payload_it_renders(self, tmp_path: Path) -> None:
-        """The old bug: "Applied:" listed the *selection*, defects and all.
-
-        Two identical catalogs, because ``--fix`` repairs what it reports: the
-        second run on one catalog would have nothing left to say.
-        """
+        """The "Applied:" line lists what the payload records, not the selection."""
         rendered, emitted = tmp_path / "rendered", tmp_path / "emitted"
         for root in (rendered, emitted):
             _build_catalog(root)

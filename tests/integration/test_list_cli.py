@@ -1,10 +1,4 @@
-"""Integration tests for ``portolan list`` showing all assets grouped by item.
-
-Verifies the CLI output through Click's CliRunner with a realistic STAC catalog
-structure on the filesystem.  Tests that all assets appear in hierarchical output.
-
-Fixes: https://github.com/portolan-sdi/portolan-cli/issues/196
-"""
+"""Integration tests for ``portolan list`` showing all assets grouped by item."""
 
 from __future__ import annotations
 
@@ -77,14 +71,7 @@ def _create_item(
     item_id: str,
     asset_files: dict[str, str],
 ) -> None:
-    """Create an item directory with item.json and actual asset files.
-
-    Args:
-        root: Catalog root directory.
-        collection_id: Collection ID.
-        item_id: Item ID.
-        asset_files: Mapping of asset_key -> filename (e.g., {"data": "data.parquet"}).
-    """
+    """Create an item directory with item.json and actual asset files."""
     item_dir = root / collection_id / item_id
     item_dir.mkdir(parents=True, exist_ok=True)
 
@@ -114,15 +101,7 @@ def _create_item(
 
 @pytest.fixture
 def multi_asset_catalog(tmp_path: Path) -> Path:
-    """Create a catalog with multiple collections, items, and assets.
-
-    Structure mirrors the censo-argentino test data from issue #196:
-      censo-2010/
-        data/  -> metadata.parquet, census.parquet, overview.pmtiles
-        radios/ -> radios.parquet
-      censo-2022/
-        data/  -> data.parquet, summary.pmtiles
-    """
+    """Create a catalog with multiple collections, items, and assets."""
     _create_stac_catalog(tmp_path)
 
     # censo-2010 with 2 items
@@ -156,9 +135,7 @@ def multi_asset_catalog(tmp_path: Path) -> Path:
     return tmp_path
 
 
-# =============================================================================
-# Core: All assets displayed through CLI
-# =============================================================================
+# Core: all assets displayed through CLI
 
 
 @pytest.mark.integration
@@ -179,7 +156,7 @@ class TestListAllAssets:
         assert "summary.pmtiles" in result.output
 
     def test_second_asset_not_hidden(self, runner: CliRunner, multi_asset_catalog: Path) -> None:
-        """Regression test: assets beyond the first one are NOT hidden (#196)."""
+        """Regression test: assets beyond the first one are NOT hidden."""
         result = runner.invoke(cli, ["list", "--catalog", str(multi_asset_catalog)])
 
         assert result.exit_code == 0
@@ -208,14 +185,11 @@ class TestListAllAssets:
     def test_asset_counts_in_item_headers(
         self, runner: CliRunner, multi_asset_catalog: Path
     ) -> None:
-        """Item headers show correct asset counts.
-
-        Note: Per issue #210, counts now show status (e.g., "3 untracked").
-        """
+        """Item headers show correct asset counts."""
         result = runner.invoke(cli, ["list", "--catalog", str(multi_asset_catalog)])
 
         assert result.exit_code == 0
-        # Updated for #210: counts show status, not just "assets"
+        # Counts show status, not just "assets"
         assert "3 untracked" in result.output  # censo-2010/data
         assert "1 untracked" in result.output  # censo-2010/radios
         assert "2 untracked" in result.output  # censo-2022/data
@@ -254,9 +228,7 @@ class TestListAllAssets:
         assert "radios.parquet" not in result.output
 
 
-# =============================================================================
 # Edge cases
-# =============================================================================
 
 
 @pytest.mark.integration
@@ -286,14 +258,11 @@ class TestListEdgeCases:
         assert "boundaries/" in result.output
         assert "regions/" in result.output
         assert "regions.parquet" in result.output
-        # Updated for #210: counts now show status
+        # Counts show status
         assert "1 untracked" in result.output
 
     def test_json_output_still_works(self, runner: CliRunner, multi_asset_catalog: Path) -> None:
-        """JSON output mode is unaffected by the tree output changes.
-
-        Note: Per issue #210, JSON structure changed to collections with nested items.
-        """
+        """JSON output mode is unaffected by the tree output changes."""
         result = runner.invoke(
             cli,
             ["list", "--catalog", str(multi_asset_catalog), "--json"],
@@ -304,7 +273,7 @@ class TestListEdgeCases:
         assert data["success"] is True
         assert data["command"] == "list"
 
-        # Updated for #210: collections with nested items
+        # Collections with nested items
         collections = data["data"]["collections"]
         assert len(collections) == 2  # censo-2010, censo-2022
 

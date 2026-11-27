@@ -1,28 +1,6 @@
-"""Whole-catalog invariants for every catalog the real CLI writes in a test.
+"""Whole-catalog invariants, computed from the bytes on disk, for catalogs the CLI writes.
 
-The ``run_cli`` fixture in ``tests/conftest.py`` records each catalog root a
-CLI invocation creates under ``tmp_path``. At teardown it calls
-:func:`check_catalog_invariants` on those roots. A hand-written fixture under
-``tests/fixtures/`` never reaches the checker, so the check is opt-in by
-construction.
-
-The checker computes every expected value from the bytes on disk with
-``hashlib``, ``pyarrow``, ``rasterio``, and ``json``. It imports nothing from
-``portolan_cli``, because it must not trust the code it checks.
-
-The codes fall in two groups, each with its source:
-
-- ``P-*`` rules come from portolan-spec and the rashid ``PTL-*`` rules.
-- ``S-*`` rules come from STAC 1.1.0 and its extensions.
-
-Each code names the open issues it catches in its docstring.
-``KNOWN_INVARIANT_GAPS`` lists the codes that still fire on ``main``. The
-fixture drops those codes, and ``TestKnownGapsStillFire`` in
-``tests/integration/test_catalog_invariants.py`` proves each one still fires.
-A fix deletes its entry and its still-fires test in the same commit.
-
-Run ``python -m tests.catalog_invariants <root>`` to check one catalog by hand.
-The command exits 1 when it finds a violation.
+``P-*`` codes come from portolan-spec and rashid; ``S-*`` from STAC. Run as ``python -m``.
 """
 
 from __future__ import annotations
@@ -41,9 +19,8 @@ import yaml
 if TYPE_CHECKING:
     from click.testing import Result
 
-# Codes that fire on main, each keyed to the open issue that tracks it. The
-# fixture drops these codes, so a test that builds a catalog through run_cli
-# stays green while the bug is open.
+# Codes that fire on main, each keyed to its open issue. The run_cli check
+# drops them.
 KNOWN_INVARIANT_GAPS: dict[str, str] = {}
 
 COG_MEDIA_TYPE = "image/tiff; application=geotiff; profile=cloud-optimized"
@@ -101,11 +78,9 @@ EXEMPTIONS_FILE = Path(__file__).parent / "guardrail_exemptions.txt"
 
 
 def load_exemptions(kind: str) -> list[list[str]]:
-    """Return the tab-separated fields after ``kind`` for each line of that kind.
+    """Return the tab-separated fields after ``kind`` for each exemptions-file line of that kind.
 
-    ``tests/guardrail_exemptions.txt`` holds three kinds of line: ``xfail``
-    (issue, owner, where), ``invariant`` (a ``build_damaged_catalog`` reason),
-    and ``config-key`` (a key the reachability test cannot observe).
+    Kinds: ``xfail``, ``invariant`` and ``config-key``.
     """
     rows: list[list[str]] = []
     for line in EXEMPTIONS_FILE.read_text(encoding="utf-8").splitlines():
@@ -238,9 +213,7 @@ def _strings(value: Any) -> list[str]:
     return []
 
 
-# ---------------------------------------------------------------------------
 # Bbox geometry
-# ---------------------------------------------------------------------------
 
 
 def _as_bbox(raw: Any) -> Bbox | None:
@@ -315,15 +288,14 @@ def _footer_envelope(box: Bbox, crs: Any) -> Bbox | None:
 def _data_bbox(path: Path) -> tuple[Bbox, bool] | None:
     """Read the extent of one data file from its bytes, in EPSG:4326.
 
-    The flag is True for an exact extent. It is False for the reprojected
-    corner box of a projected GeoParquet footer, which only bounds the data.
+    The flag is False for a reprojected footer corner box, which only bounds the data.
     """
     suffix = path.suffix.lower()
     if suffix == ".parquet":
         import pyarrow.parquet as pq
 
         # The file metadata, not the Arrow schema: a writer that appends the
-        # geo key after it opened hides it from pq.read_schema (#864).
+        # geo key after it opened hides it from pq.read_schema.
         metadata = pq.read_metadata(path).metadata or {}
         if b"geo" not in metadata:
             return None
@@ -346,13 +318,11 @@ def _data_bbox(path: Path) -> tuple[Bbox, bool] | None:
     return None
 
 
-# ---------------------------------------------------------------------------
 # Portolan group (portolan-spec, rashid PTL-* rules)
-# ---------------------------------------------------------------------------
 
 
 def _check_size(cat: _Catalog, node: _Node, key: str, asset: dict[str, Any]) -> list[Violation]:
-    """P-SIZE (#930, #960): ``file:size`` equals the byte count of the file (PTL-AST-003)."""
+    """P-SIZE: ``file:size`` equals the byte count of the file (PTL-AST-003)."""
     target = _local(node, str(asset.get("href", "")))
     if "file:size" not in asset or target is None or not target.is_file():
         return []
@@ -369,7 +339,7 @@ def _check_size(cat: _Catalog, node: _Node, key: str, asset: dict[str, Any]) -> 
 
 
 def _check_checksum(cat: _Catalog, node: _Node, key: str, asset: dict[str, Any]) -> list[Violation]:
-    """P-CHECKSUM (#766 regression, #930): ``file:checksum`` is the sha2-256 multihash (PTL-AST-004)."""
+    """P-CHECKSUM: ``file:checksum`` is the sha2-256 multihash (PTL-AST-004)."""
     target = _local(node, str(asset.get("href", "")))
     if "file:checksum" not in asset or target is None or not target.is_file():
         return []
@@ -392,13 +362,9 @@ def _names(columns: Any) -> list[str] | None:
 
 
 def _check_columns(cat: _Catalog, node: _Node) -> list[Violation]:
-    """P-COLUMNS (#931, #813): ``table:columns`` names equal the Parquet schema names.
+    """P-COLUMNS: ``table:columns`` names equal the Parquet schema names, in order.
 
-    An asset that carries its own ``table:columns`` matches its file. The
-    ``table:columns`` of the item or collection matches the schema of its one
-    Parquet data asset, in order. For a collection of several files it holds
-    the union of their column names. ``add`` reads the files in directory
-    order, which differs between platforms, so the union compares as a set.
+    Several files compare as a set union, because directory order differs between platforms.
     """
     import pyarrow.parquet as pq
 
@@ -441,11 +407,9 @@ def _check_columns(cat: _Catalog, node: _Node) -> list[Violation]:
 def _check_data_role_type(
     cat: _Catalog, node: _Node, key: str, asset: dict[str, Any]
 ) -> list[Violation]:
-    """P-DATA-ROLE-TYPE (#960, #929): a ``data`` asset is a cloud-native format.
+    """P-DATA-ROLE-TYPE: a ``data`` asset is a cloud-native format.
 
-    One exception: with ``tabular.convert: false`` the user keeps a CSV or TSV
-    as the table itself. Such a file may carry the data role when no Parquet
-    asset of the same stem sits beside it.
+    A CSV or TSV may be data when no same-stem Parquet sits beside it (``tabular.convert: false``).
     """
     if "data" not in asset.get("roles", []):
         return []
@@ -469,10 +433,9 @@ def _check_data_role_type(
 
 
 def _check_strings(cat: _Catalog, node: _Node) -> list[Violation]:
-    """P-NO-LOCAL-PATH (#939, #840) and P-NO-CREDENTIAL (#981).
+    """P-NO-LOCAL-PATH and P-NO-CREDENTIAL: no absolute local path, no URL credential.
 
-    A published catalog holds no absolute local path and no URL that carries
-    a key, token, or signature query parameter.
+    A credential is a key, token, or signature query parameter.
     """
     found: list[Violation] = []
     where = _rel(cat.root, node.path)
@@ -489,15 +452,9 @@ def _check_strings(cat: _Catalog, node: _Node) -> list[Violation]:
 
 
 def _check_versions(cat: _Catalog, stac_targets: set[Path]) -> list[Violation]:
-    """P-VERSIONS-MATCH (#929, #960) and P-VERSIONS-KEY (#1053) on versions.json.
+    """P-VERSIONS-MATCH: each current asset has its file's sha256 and size, and a STAC asset.
 
-    P-VERSIONS-MATCH: each asset of the current snapshot carries the sha256
-    and the size of its file, and a STAC asset in the catalog has an href that
-    resolves to it.
-
-    P-VERSIONS-KEY: the key of each asset is the path of its file relative to
-    the collection directory, as ``add`` writes it. A second key for one file
-    fails.
+    P-VERSIONS-KEY: each key is the file path relative to the collection directory.
     """
     found: list[Violation] = []
     for node in cat.versions:
@@ -513,7 +470,7 @@ def _check_versions(cat: _Catalog, stac_targets: set[Path]) -> list[Violation]:
         for name, entry in (snapshot.get("assets") or {}).items():
             href = str(entry.get("href", name))
             target = (cat.root / href).resolve()
-            # P-VERSIONS-KEY (#1053): the key names the file relative to the
+            # P-VERSIONS-KEY: the key names the file relative to the
             # collection directory, so one file has one key.
             if (node.path.parent / name).resolve() != target:
                 found.append(
@@ -552,7 +509,7 @@ def _check_versions(cat: _Catalog, stac_targets: set[Path]) -> list[Violation]:
 
 
 def _check_summaries(cat: _Catalog, collection: _Node) -> list[Violation]:
-    """P-SUMMARY-FROM-ITEMS (#1023): each list summary value is a value some member item holds."""
+    """P-SUMMARY-FROM-ITEMS: each list summary value is a value some member item holds."""
     summaries = collection.data.get("summaries")
     members = cat.members(collection)
     if not isinstance(summaries, dict) or not members:
@@ -585,9 +542,7 @@ def _check_summaries(cat: _Catalog, collection: _Node) -> list[Violation]:
     return found
 
 
-# ---------------------------------------------------------------------------
 # STAC 1.1.0 group
-# ---------------------------------------------------------------------------
 
 
 def _collection_bboxes(node: _Node) -> Any:
@@ -595,12 +550,9 @@ def _collection_bboxes(node: _Node) -> Any:
 
 
 def _check_bbox_shape(cat: _Catalog, node: _Node) -> list[Violation]:
-    """S-BBOX-COUNT (#852) and S-BBOX-RANGE (#851 regression).
+    """S-BBOX-COUNT: a collection has 1 or 3+ bboxes, an item bbox 4 or 6 numbers.
 
-    STAC 1.1.0 allows a collection one bbox, or an overall bbox plus two or
-    more sub-bboxes, so a list of two is invalid. An item bbox has 4 or 6
-    numbers. Every longitude lies in [-180, 180] and every latitude in
-    [-90, 90] exactly. West greater than east marks an antimeridian crossing.
+    S-BBOX-RANGE: lon in [-180, 180], lat in [-90, 90]; west > east crosses the antimeridian.
     """
     found: list[Violation] = []
     where = _rel(cat.root, node.path)
@@ -631,7 +583,7 @@ def _check_bbox_shape(cat: _Catalog, node: _Node) -> list[Violation]:
 
 
 def _check_hrefs(cat: _Catalog, node: _Node) -> list[Violation]:
-    """S-HREF-RESOLVES (#840): every relative link and asset href names a file that exists."""
+    """S-HREF-RESOLVES: every relative link and asset href names a file that exists."""
     found: list[Violation] = []
     hrefs = [
         ("link", link.get("rel"), link.get("href"))
@@ -668,15 +620,9 @@ def _check_hrefs(cat: _Catalog, node: _Node) -> list[Violation]:
 
 
 def _check_extent(cat: _Catalog, collection: _Node) -> list[Violation]:
-    """S-EXTENT-CONTAINS (#932, #852) and S-EXTENT-NOT-STALE (#801).
+    """S-EXTENT-CONTAINS: the overall bbox contains every sub-bbox and member item bbox.
 
-    The overall bbox contains every sub-bbox and every member item bbox.
-
-    The overall bbox also equals the union of the extents read from the data
-    files. A collection-level ``.portolan/metadata.yaml`` may set
-    ``extent.spatial.bbox`` as a human override. The override must then equal
-    the stored bbox and contain the data. A stored bbox wider than the data
-    with no override is the #801 shrink bug.
+    S-EXTENT-NOT-STALE: it equals the data union, or a metadata.yaml override that holds the data.
     """
     raw = _collection_bboxes(collection)
     if not isinstance(raw, list) or not raw:
@@ -734,9 +680,8 @@ def _stale_extent(
             return f"bbox {list(overall)} vs override {list(override)} and data {list(data_union)}"
         return None
     if envelopes:
-        # The reprojected corner box of a projected footer over-approximates the
-        # geometry extent, so equality cannot hold. The stored extent must lie
-        # inside it, and it must cover the exact extents beside it.
+        # A reprojected footer box over-approximates the data, so the stored
+        # extent must lie inside it and cover the exact extents beside it.
         if not _contains(data_union, overall) or (exact and not _contains(overall, _union(exact))):
             return f"bbox {list(overall)} is not inside data envelope {list(data_union)}"
         return None
@@ -748,9 +693,9 @@ def _stale_extent(
 def _crossing_envelope(box: Bbox) -> Bbox:
     """The plain min/max envelope of a union that crosses the antimeridian.
 
-    The CLI writes it as bbox[0], followed by the two parts, because rashid's
-    PTL-DAT-005 compares bbox[0] with the plain min/max extent of the data (#852).
+    The CLI writes it as bbox[0], because PTL-DAT-005 compares bbox[0] with that envelope.
     """
+
     if box[0] <= box[2]:
         return box
     return (-180.0, box[1], 180.0, box[3])
@@ -822,9 +767,7 @@ def _check_extensions(cat: _Catalog, node: _Node) -> list[Violation]:
     return found
 
 
-# ---------------------------------------------------------------------------
 # Entry points
-# ---------------------------------------------------------------------------
 
 
 def check_catalog_invariants(root: Path) -> list[Violation]:

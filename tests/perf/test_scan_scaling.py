@@ -1,12 +1,5 @@
-"""``scan`` does linear work in the number of directories (#314).
-
-The old mixed-structure check compared every pair of directories, and a scan
-of 27,000 one-file directories took minutes. The check now walks the parent
-chain of each directory. This test counts the source lines that
-``portolan_cli.scan`` executes at 100, 200, and 400 directories. Linear work
-``a * n + b`` gives ``c(4n) - c(2n) == 2 * (c(2n) - c(n))`` exactly. Any loop
-over pairs of directories adds a term in n squared and breaks the equality.
-It replaces a 60 s wall-clock ceiling on 27,000 directories.
+"""``scan`` does linear work in the number of directories.
+Linear work gives ``c(4n) - c(2n) == 2 * (c(2n) - c(n))`` in executed lines; a loop over pairs breaks it.
 """
 
 from __future__ import annotations

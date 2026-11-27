@@ -1,13 +1,4 @@
-"""Integration tests for batched warning output in `portolan scan`.
-
-Verifies that the CLI collapses repeated IssueType warnings into batched groups
-rather than printing one line per issue.  Uses Click's CliRunner plus temporary
-filesystem fixtures.
-
-NOTE: INVALID_COLLECTION_ID warnings are only generated for directories that
-contain recognized geospatial files (*.geojson, *.shp, *.gpkg, *.fgb, *.tif,
-*.tiff, *.img).  Fixtures therefore use *.geojson files.
-"""
+"""Integration tests for batched warning output in `portolan scan`."""
 
 from __future__ import annotations
 
@@ -44,9 +35,7 @@ def many_uppercase_dirs(tmp_path: Path) -> Path:
     return tmp_path
 
 
-# =============================================================================
 # Batching behaviour verified through CLI output
-# =============================================================================
 
 
 @pytest.mark.integration
@@ -131,9 +120,8 @@ class TestScanBatching:
         result = runner.invoke(cli, ["scan", str(tmp_path)])
 
         assert result.exit_code == 0
-        # Both issue types should be referenced in output:
-        # - INVALID_COLLECTION_ID batch (USA/GBR)
-        # - INVALID_CHARACTERS warning for the space file
+        # Output names the INVALID_COLLECTION_ID batch (USA/GBR) and the
+        # INVALID_CHARACTERS warning for the space file.
         assert "invalid_collection_id" in result.output.lower() or (
             "USA" in result.output or "GBR" in result.output or "2" in result.output
         )

@@ -1,12 +1,4 @@
-"""Integration tests for `portolan clean` command.
-
-Tests for:
-- Full workflow: init -> add -> clean -> verify metadata gone, data preserved
-- Clean from subdirectory (should find catalog root)
-- Clean on empty catalog (just .portolan/)
-- Clean with --dry-run shows correct files
-- Clean removes empty directories
-"""
+"""Integration tests for `portolan clean` command."""
 
 from __future__ import annotations
 
@@ -305,7 +297,6 @@ class TestCleanDryRun:
             assert Path("versions.json").exists()
             assert Path(".portolan").exists()
             assert Path(".portolan/config.yaml").exists()
-            # state.json removed per issue #290
 
 
 class TestCleanEmptyDirectories:
@@ -435,7 +426,7 @@ class TestCleanFindCatalogRoot:
             result = runner.invoke(cli, ["clean"])
             assert result.exit_code == 0
 
-            # Verify catalog no longer detected
+            # The catalog is not detected after clean.
             root = find_catalog_root(Path.cwd())
             assert root is None
 
@@ -568,10 +559,8 @@ class TestCleanEdgeCases:
             # (e.g., a downloaded STAC item from another source)
             user_data = Path("downloads")
             user_data.mkdir()
-            # This is tricky - if it has type=Feature, we'd consider it STAC
-            # But if it's in a 'downloads' or similar directory, user might want to keep it
-            # For MVP, we'll still remove it if it matches STAC pattern
-            # Users should use exclude patterns in future versions
+            # A type=Feature JSON matches the STAC pattern, so clean removes it
+            # wherever it is.
             (user_data / "external-item.json").write_text(
                 json.dumps(
                     {

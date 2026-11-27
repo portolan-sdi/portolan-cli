@@ -1,15 +1,4 @@
-"""Integration tests for WFS extraction.
-
-Tests the full extraction workflow including:
-- Auto-init catalog creation
-- Via link provenance
-- Resume functionality
-- Raw mode (skip catalog)
-- Parallel workers
-- Version negotiation
-
-Uses REAL fixtures from tests/fixtures/ rather than mocks.
-"""
+"""Integration tests for WFS extraction."""
 
 from __future__ import annotations
 
@@ -60,17 +49,7 @@ FIXTURES_DIR = Path(__file__).parent.parent.parent.parent / "fixtures"
 def copy_fixture_fetch(
     rows: int, calls: list[Any] | None = None, *, names: bool = False
 ) -> Callable[[str, LayerRef, Path], int]:
-    """Build a WFSLayerSource.fetch fake that copies the fixture GeoParquet.
-
-    Args:
-        rows: Row count the fake reports.
-        calls: List that records each fetched layer, or its name when
-            ``names`` is True.
-        names: Record the layer name instead of the LayerRef.
-
-    Returns:
-        The fake fetch.
-    """
+    """Build a WFSLayerSource.fetch fake that copies the fixture GeoParquet."""
 
     def fetch(service_url: str, layer: LayerRef, output_path: Path) -> int:
         if calls is not None:
@@ -83,7 +62,7 @@ def copy_fixture_fetch(
 
 
 # Building the catalog directly skips the license resolution the driver does
-# before its download, so the license is passed in here (issue #686).
+# before its download, so the license is passed in here.
 TEST_LICENSE = ResolvedLicense(license_id="CC-BY-4.0", license_url=None)
 
 
@@ -93,11 +72,7 @@ def _auto_init_catalog(
     discovery: WFSDiscoveryResult | None,
     resolved_license: ResolvedLicense,
 ) -> None:
-    """Build the catalog for ``report`` through the shared driver seam.
-
-    The WFS discovery maps each report layer to its collection directory, as
-    a run of ``extract_wfs_catalog`` would.
-    """
+    """Build the catalog for ``report`` through the shared driver seam."""
     found = discovery or make_discovery_result(
         [make_layer_info(r.name, r.id) for r in report.layers], service_url=report.source_url
     )
@@ -475,12 +450,7 @@ class TestWFSResume:
 
 
 class TestWFSMetadataPropagation:
-    """Tests for Issue #369: Propagate rich WFS metadata to STAC files.
-
-    Verifies that WFS extraction --auto mode populates catalog.json and
-    collection.json with meaningful metadata from GetCapabilities and ISO 19139,
-    not generic placeholders like 'Collection: layer_name_abc123'.
-    """
+    """WFS extraction --auto puts GetCapabilities and ISO 19139 metadata in the STAC files."""
 
     def test_service_title_propagates_to_catalog(self, tmp_path: Path) -> None:
         """WFS service title from GetCapabilities populates catalog.json title."""
@@ -651,7 +621,7 @@ class TestWFSMetadataPropagation:
         _auto_init_catalog(output_dir, report, discovery, TEST_LICENSE)
 
         catalog_json = json.loads((output_dir / "catalog.json").read_text())
-        # Technical title should be filtered (Issue #369)
+        # Technical title should be filtered
         title = catalog_json.get("title")
         assert title is None or "wfs_service_internal_v2" not in title, (
             f"Technical service title leaked into catalog: {title}"
@@ -661,27 +631,13 @@ class TestWFSMetadataPropagation:
 
 
 class TestProjectedCRSBBoxRegression:
-    """Regression tests for Issue #377: bbox coordinate mixing.
+    """A projected-CRS extraction writes a pure WGS84 collection extent bbox.
 
-    When extracting WFS data in a projected CRS (e.g., EPSG:3035),
-    the collection.json extent.bbox must contain only WGS84 coordinates,
-    not a mix of WGS84 and projected values.
-
-    The actual fix is in geoparquet-io v1.1.1's WFS extraction code.
-    These tests verify portolan's CRS transformation handles projected data correctly.
+    Regression for https://github.com/portolan-sdi/portolan-cli/issues/377
     """
 
     def test_portolan_transforms_projected_bbox_to_wgs84(self, tmp_path: Path) -> None:
-        """Portolan's CRS module transforms projected bbox to WGS84.
-
-        Regression test for https://github.com/portolan-sdi/portolan-cli/issues/377
-
-        The bug was: minx/miny were WGS84 but maxx/maxy stayed in projected coords.
-        Example bad bbox: [2.84, 49.50, 4065342.57, 3100515.54]
-
-        This test verifies portolan's transform_bbox_to_wgs84 correctly handles
-        projected CRS coordinates.
-        """
+        """Portolan's CRS module transforms projected bbox to WGS84."""
         from portolan_cli.crs import transform_bbox_to_wgs84
 
         # Bbox in EPSG:3035 (European projected CRS) - roughly Belgium
@@ -721,15 +677,7 @@ class TestProjectedCRSBBoxRegression:
         assert abs(result[3] - 51.5) < 0.01, f"maxy {result[3]} drifted from 51.5"
 
     def test_mixed_coordinates_obviously_invalid(self) -> None:
-        """Mixed WGS84/projected coordinates are detected as invalid.
-
-        This is the exact bug pattern from issue #377:
-        [2.84, 49.50, 4065342.57, 3100515.54]
-
-        minx/miny are WGS84 but maxx/maxy are still in EPSG:3035.
-        The fix in geoparquet-io v1.1.1 ensures this never happens,
-        and our validation logic detects such invalid bboxes.
-        """
+        """Mixed WGS84/projected coordinates are detected as invalid."""
         from portolan_cli.crs import is_likely_wgs84_bbox
 
         # The bug produced this mixed bbox

@@ -1,17 +1,5 @@
-"""tracemalloc ceiling for the 100,000-feature thumbnail (#992).
-
-The test runs the scenario in a cold child process with
-``PORTOLAN_TIMINGS=mem``. The trace records the tracemalloc growth of each
-span over the traced memory at its entry. The ceiling is the measured growth
-plus 15%. Modules that load before the span do not count, so the ceiling does
-not move when an import moves from one stage to another. The thumbnail memory is Python and
-matplotlib memory, so tracemalloc sees it.
-
-The large-vector add has no ceiling here because tracemalloc misses Arrow and
-DuckDB, so tests/perf/bench.py gates its nightly RSS.
-
-The test takes more than five seconds, so it carries the ``slow`` marker and
-runs in the nightly slow job.
+"""tracemalloc ceiling, measured growth plus 15%, for the 100,000-feature thumbnail span.
+tracemalloc misses Arrow and DuckDB, so tests/perf/bench.py gates the large-vector RSS.
 """
 
 from __future__ import annotations

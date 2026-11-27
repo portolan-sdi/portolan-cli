@@ -1,15 +1,4 @@
-"""Integration tests for `portolan config` command group.
-
-Tests cover:
-- Full workflow: set -> get -> list -> unset
-- File creation and persistence
-- Precedence: env var overrides config file
-- Collection-level config
-
-Note: remote/profile/region are sensitive settings and cannot be set via config.yaml (Issue #356).
-These tests use non-sensitive settings like 'pmtiles.precision' and 'backend' to test config mechanics.
-Use PORTOLAN_* env vars for sensitive settings.
-"""
+"""Integration tests for `portolan config` command group."""
 
 from __future__ import annotations
 
@@ -36,11 +25,7 @@ class TestConfigWorkflow:
 
     @pytest.mark.integration
     def test_full_config_workflow(self, runner: CliRunner, tmp_path: Path) -> None:
-        """Test set -> get -> list -> unset workflow.
-
-        Note: Uses 'pmtiles.min_zoom' instead of 'remote' since remote is a sensitive setting
-        that cannot be set via config.yaml (Issue #356).
-        """
+        """Test set -> get -> list -> unset workflow."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
             # Initialize catalog
             runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
@@ -71,10 +56,7 @@ class TestConfigWorkflow:
 
     @pytest.mark.integration
     def test_config_persists_to_yaml_file(self, runner: CliRunner, tmp_path: Path) -> None:
-        """Config should persist to .portolan/config.yaml.
-
-        Note: Uses 'pmtiles.precision' instead of 'remote' since remote is a sensitive setting (Issue #356).
-        """
+        """Config should persist to .portolan/config.yaml."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
             runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             runner.invoke(cli, ["config", "set", "pmtiles.precision", "8"])
@@ -88,10 +70,7 @@ class TestConfigWorkflow:
 
     @pytest.mark.integration
     def test_config_survives_restart(self, runner: CliRunner, tmp_path: Path) -> None:
-        """Config should survive CLI restart (read from file).
-
-        Note: Uses 'pmtiles.precision' instead of 'remote' since remote is a sensitive setting (Issue #356).
-        """
+        """Config should survive CLI restart (read from file)."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
             runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
 
@@ -105,20 +84,11 @@ class TestConfigWorkflow:
 
 
 class TestConfigPrecedence:
-    """Integration tests for config precedence rules.
-
-    Note: remote/profile are sensitive settings (Issue #356). These tests verify
-    that env vars work correctly for sensitive settings, and that non-sensitive
-    settings can be set via config file.
-    """
+    """Integration tests for config precedence rules."""
 
     @pytest.mark.integration
     def test_env_var_overrides_config_file(self, runner: CliRunner, tmp_path: Path) -> None:
-        """Environment variable should override config file value.
-
-        Uses non-sensitive setting 'pmtiles.precision' for config file, since remote
-        cannot be set in config.yaml (Issue #356).
-        """
+        """Environment variable should override config file value."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
             runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             runner.invoke(cli, ["config", "set", "pmtiles.precision", "4"])
@@ -133,10 +103,7 @@ class TestConfigPrecedence:
 
     @pytest.mark.integration
     def test_env_var_shown_in_list(self, runner: CliRunner, tmp_path: Path) -> None:
-        """config list should show env var values with their source.
-
-        Note: Sensitive settings like aws_profile must use env vars (Issue #356).
-        """
+        """config list should show env var values with their source."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
             runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             runner.invoke(cli, ["config", "set", "pmtiles.precision", "4"])
@@ -151,11 +118,7 @@ class TestConfigPrecedence:
 
 
 class TestConfigCollection:
-    """Integration tests for collection-level config.
-
-    Note: Uses non-sensitive settings since remote/profile cannot be set
-    in config.yaml (Issue #356).
-    """
+    """Integration tests for collection-level config."""
 
     @pytest.mark.integration
     def test_get_collection_config(self, runner: CliRunner, tmp_path: Path) -> None:
@@ -196,11 +159,7 @@ class TestConfigCollection:
 
 
 class TestConfigErrors:
-    """Integration tests for config error handling.
-
-    Note: Uses non-sensitive settings since remote/profile cannot be set
-    in config.yaml (Issue #356).
-    """
+    """Integration tests for config error handling."""
 
     @pytest.mark.integration
     def test_config_fails_outside_catalog(self, runner: CliRunner, tmp_path: Path) -> None:
@@ -254,7 +213,7 @@ POINTS_GEOJSON = Path(__file__).parent.parent / "fixtures" / "vector" / "valid" 
 
 
 class TestDottedKeysReachTheReaders:
-    """`config set` writes what the readers read, and rejects what none reads (#1020)."""
+    """`config set` writes what the readers read, and rejects what none reads."""
 
     @pytest.fixture
     def catalog(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:

@@ -1,8 +1,4 @@
-"""Regression tests: every writer derives the collection fields from its members.
-
-Each test runs the real CLI on the data an issue reported, and asserts the
-exact value the issue expected. On origin/main at ff0c61b each one fails.
-"""
+"""Regression tests: every writer derives the collection fields from its members."""
 
 from __future__ import annotations
 
@@ -75,10 +71,10 @@ def _points(path: Path, coords: list[tuple[float, float]], **columns: list[Any])
 
 
 class TestExtentFollowsTheMembers:
-    """Issue #801: an extent can shrink, and a wrong one does not survive a rebuild."""
+    """an extent can shrink, and a wrong one does not survive a rebuild."""
 
     def test_add_force_replaces_a_widened_extent(self, tmp_path: Path) -> None:
-        """The issue's own procedure: widen the stored extent, then add --force."""
+        """Widen the stored extent, then add --force."""
         root = _catalog(tmp_path / "cat")
         collection_dir = root / "forestal" / "housing"
         collection_dir.mkdir(parents=True)
@@ -149,11 +145,7 @@ class TestExtentFollowsTheMembers:
         )
 
     def test_each_multi_file_asset_counts_once(self, tmp_path: Path) -> None:
-        """The philadelphia-housing pair: the extent is the union of both files.
-
-        Adding the second file alone must not drop the first file's coverage,
-        so the extent reads the first file from disk.
-        """
+        """The philadelphia-housing pair: the extent is the union of both files."""
         root = _catalog(tmp_path / "cat")
         collection_dir = root / "housing"
         collection_dir.mkdir()
@@ -173,7 +165,7 @@ class TestExtentFollowsTheMembers:
 
 
 class TestAntimeridianExtent:
-    """Issue #852: a crossing extent is one bbox or three, never two."""
+    """a crossing extent is one bbox or three, never two."""
 
     def test_measured_crossing_writes_three_bboxes(self, tmp_path: Path) -> None:
         """FieldMaps in EPSG:4269: add measures the extent, which crosses 180."""
@@ -196,7 +188,7 @@ class TestAntimeridianExtent:
 
 
 class TestRemovedColumns:
-    """Issue #931: a column the data lost leaves table:columns under every strategy."""
+    """a column the data lost leaves table:columns under every strategy."""
 
     @pytest.mark.parametrize("strategy", ["smart", "keep", "overwrite"])
     def test_force_drops_the_removed_column(self, tmp_path: Path, strategy: str) -> None:
@@ -234,7 +226,7 @@ _PROVIDERS = [
 
 
 class TestMetadataYamlOnForce:
-    """Issue #813: add --force applies metadata.yaml to every collection kind."""
+    """add --force applies metadata.yaml to every collection kind."""
 
     def test_tabular_collection_takes_the_providers(self, tmp_path: Path) -> None:
         root = _catalog(tmp_path / "cat")
@@ -280,7 +272,7 @@ class TestMetadataYamlOnForce:
 
 
 class TestRasterSummaries:
-    """Issue #1023: a grid field is never summarized as a set of numbers."""
+    """a grid field is never summarized as a set of numbers."""
 
     def test_proj_transform_is_not_flattened(self, tmp_path: Path) -> None:
         root = _catalog(tmp_path / "cat")
@@ -293,7 +285,7 @@ class TestRasterSummaries:
 
 
 class TestItemIdLayout:
-    """Issue #840: --item-id names the item, not a directory."""
+    """--item-id names the item, not a directory."""
 
     def test_versions_keys_follow_the_files(self, tmp_path: Path) -> None:
         root = _catalog(tmp_path / "cat")
@@ -312,14 +304,10 @@ class TestItemIdLayout:
 
 
 class TestCheckFixRecordsTheMirror:
-    """Issue #1046: check --fix records the items.parquet it rewrites."""
+    """check --fix records the items.parquet it rewrites."""
 
     def test_snapshot_matches_the_regenerated_mirror(self, tmp_path: Path) -> None:
-        """The issue's repro: delete the item, run check --fix, compare sizes.
-
-        The recreated item is compared field by field here. The byte
-        comparison with an added item is in test_check_fix_no_regression.py.
-        """
+        """Delete the item, run check --fix, compare sizes."""
         root = _catalog(tmp_path / "cat")
         item_dir = _added_raster(root, "imagery").parent
         mirror = root / "imagery" / "items.parquet"
@@ -373,16 +361,10 @@ class TestCheckFixRecordsTheMirror:
 
 
 class TestRasterFreshness:
-    """Issue #839: freshness never compares a native-CRS bbox with a WGS84 one."""
+    """freshness never compares a native-CRS bbox with a WGS84 one."""
 
     def test_touched_projected_raster_is_fresh(self, tmp_path: Path) -> None:
-        """The issue's own verification, with the hash fallback disabled.
-
-        The stored sha256 does not match and a pixel count and a schema
-        fingerprint are stored, so only the heuristics can decide.
-        On main the UTM bbox in metres never equals the item's WGS84 bbox, so
-        the touched raster read as changed content.
-        """
+        """Only the heuristics decide, because the hash fallback is disabled."""
         root = _catalog(tmp_path / "cat")
         tif = _added_raster(root, "imagery", "--no-thumbnails")
 

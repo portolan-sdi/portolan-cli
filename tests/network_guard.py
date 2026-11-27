@@ -1,31 +1,5 @@
-"""Stop a test without the network marker from reaching a remote host.
-
-tests/conftest.py applies the guard to each test through an autouse fixture.
-The guard has two layers, because Portolan reaches the network through two
-kinds of client:
-
-- Python clients call ``socket.connect``, or ``socket.sendto`` for UDP. The
-  guard replaces both. A remote address raises ``NetworkBlockedError`` at
-  once, with the test and the host.
-- Rust and C clients (obstore, GDAL through libcurl) open their own sockets.
-  The guard points the proxy variables at a sentinel proxy on the loopback
-  interface. The sentinel records the host that each request asks for and
-  refuses it. The client retries by its own policy and then fails. obstore
-  retries 10 times, for about 2 s a call. Python clients that read the proxy
-  variables (botocore, urllib, requests) also reach the sentinel.
-
-The guard records each attempt. The fixture fails the test at teardown when a
-record exists, because the code under test can catch the error. Before the
-guard, an unmocked obstore delete in a unit test waited 110 s on the real S3
-API and the test passed.
-
-A connection to the loopback interface goes through, so moto servers and the
-Docker e2e services keep working.
-
-A test can mark ``@pytest.mark.refused_hosts("host", ...)``. The guard still
-refuses those hosts, but the test does not fail for them. Use it only for a
-request from a child process that the test cannot patch, and that the test
-does not depend on.
+"""Stop a test without the network marker from reaching a remote host; loopback goes through.
+Python sockets raise at once; Rust and C clients hit a refusing sentinel proxy, and teardown fails the test.
 """
 
 from __future__ import annotations
@@ -176,11 +150,8 @@ class NetworkGuard:
             monkeypatch.setenv(key, NO_PROXY)
 
 
-# geoparquet-io installs DuckDB extensions on first use. The network guard
-# refuses that download, so a fresh CI runner could load none of them. Install
-# them once, before the guard starts. An installed extension costs no download.
-# Each entry is (name, repository). None is the core repository. geoparquet-io
-# loads h3, geography (s2), and a5 from the community repository.
+# geoparquet-io installs DuckDB extensions on first use, and the guard refuses that download.
+# Each entry is (name, repository); None is the core repository.
 _DUCKDB_EXTENSIONS: tuple[tuple[str, str | None], ...] = (
     ("spatial", None),
     ("httpfs", None),
@@ -193,9 +164,7 @@ _DUCKDB_EXTENSIONS: tuple[tuple[str, str | None], ...] = (
 
 def install_duckdb_extensions() -> None:
     """Install the DuckDB extensions that geoparquet-io loads, before the guard starts.
-
-    pytest calls this from tests/conftest.py. The perf scripts run outside
-    pytest, so ``tests.perf.bench`` and ``tests.perf.gates`` call it too.
+    The perf scripts run outside pytest, so they call it too.
     """
     import duckdb
 

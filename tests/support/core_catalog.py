@@ -1,13 +1,5 @@
 """The input of the golden catalog that the portolan-core writer tests share.
-
-``golden_documents`` and ``golden_documentation`` are what an application
-gives ``plan_catalog``. ``tests/fixtures/core/golden_catalog/`` holds the
-expected output, written by hand from the spec. The README in
-``tests/fixtures/core/`` says how each expected link follows from the spec.
-
-The input carries stale links on purpose: a ``child`` link to a removed
-collection and a ``describedby`` link with the wrong type. The writer replaces
-the first and repairs the second.
+It carries a stale ``child`` link and a mistyped ``describedby`` link on purpose.
 """
 
 from __future__ import annotations

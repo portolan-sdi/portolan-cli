@@ -1,16 +1,5 @@
-"""A rebuild after a data change equals a fresh build of the changed data (#801, #931, #813).
-
-Build A runs ``init`` and ``add`` on the original file, changes the file in
-place, and runs ``add --force``. Build B runs ``init`` and ``add`` on the
-changed file alone. Every field that ``add`` derives from the data must then
-agree: the extent, the bbox, ``table:columns``, ``table:row_count``, the
-summaries, the data assets, the item properties, and the declared
-extensions. Version history differs by design, so only the current snapshot
-counts.
-
-A rebuild that patches derived state in place, and does not compute it again
-from the data, fails here. The extent that never shrinks (#801) is that
-shape.
+"""A rebuild after a data change equals a fresh build of the changed data.
+Version history differs by design, so only the current snapshot counts.
 """
 
 from __future__ import annotations
@@ -63,10 +52,7 @@ def write_geoparquet(table: pa.Table, metadata: dict[bytes, bytes], path: Path) 
 
 def shrink_geoparquet(path: Path, *, drop: str | None = None) -> None:
     """Keep the south-west quadrant of the rows, and drop one column if named.
-
-    The file must carry a ``bbox`` covering column, as every file that
-    ``add`` rewrites does. The ``geo`` metadata gets the new bbox, so the
-    file tells the truth about its smaller extent.
+    The ``geo`` metadata gets the new bbox, so the file states its smaller extent.
     """
     table = pq.read_table(path)
     xmin, ymin, xmax, ymax = _bbox_of(table)

@@ -1,10 +1,4 @@
-"""Command parity for `push`: each push path against `run_push`.
-
-Push writes to an in-memory store. The catalog factory replaces the store, so
-the command and the library call each start from an empty remote. Each store
-records the keys of its puts in order, so a test can assert what each run
-published and that the manifest went last.
-"""
+"""Command parity for `push`: each push path against `run_push`, each on an empty in-memory remote."""
 
 from __future__ import annotations
 
@@ -267,12 +261,7 @@ def test_push_dry_run_constructs_no_backend(
     remotes: Remotes,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A library dry run never opens the backend, because that is catalog I/O.
-
-    An Iceberg backend opens its catalog and creates its namespace when it is
-    built. A dry run reads only the local versions.json. The command still
-    refuses the blocked collection with its own early check.
-    """
+    """A library dry run reads only the local versions.json and never builds the backend."""
     from portolan_cli import backends
 
     def get_backend(name: str, **_kwargs: Any) -> Any:

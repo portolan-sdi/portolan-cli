@@ -1,10 +1,4 @@
-"""The sync transport modules load without the scan and conversion stack.
-
-clone, remote listing, push, and pull move bytes. Only the sync orchestration
-in ``sync.core`` runs scan and check. A cold interpreter proves that the
-transport modules pull in no ``portolan_cli.scan`` or ``portolan_cli.convert``
-module, directly or through another import.
-"""
+"""The sync transport modules load without the scan and conversion stack."""
 
 from __future__ import annotations
 

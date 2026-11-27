@@ -1,10 +1,4 @@
-"""The shared catalog walker, and the commands that read through it (issue #944).
-
-Before the fix, each command found collections its own way. ``list`` read only
-top-level item subdirectories, ``status`` globbed for ``versions.json``, and
-``check`` walked the containment graph. A catalog with one unlinked
-collection directory made them disagree.
-"""
+"""The shared catalog walker, and the commands that read through it."""
 
 from __future__ import annotations
 
@@ -272,12 +266,7 @@ class TestCommandsAgree:
 
 
 class TestStatusMatchesPush:
-    """``status`` reports every collection ``check`` sees and every one ``push`` uploads.
-
-    ``push`` finds a collection by its ``versions.json``. ``check`` finds it by
-    its ``collection.json``. A collection that holds only one of the two must
-    still appear in ``status``, which previews ``push``.
-    """
+    """``status`` reports every collection ``check`` sees and every one ``push`` uploads."""
 
     @pytest.mark.unit
     def test_versioned_collections(self, tmp_path: Path) -> None:
@@ -363,11 +352,7 @@ _COG = "image/tiff; application=geotiff; profile=cloud-optimized"
 
 
 def _encoded_item_catalog(root: Path, *, item_link: bool) -> Path:
-    """A catalog whose one item and its COG sit in ``roads/été 2024/``.
-
-    The item asset href is percent-encoded. With ``item_link`` the collection
-    links the item by its encoded href too. Returns the collection directory.
-    """
+    """A catalog whose one item and its COG sit in ``roads/été 2024/``."""
     _stac(root / "catalog.json", "Catalog", "./roads/collection.json")
     links = [{"rel": "item", "href": f"./{_ENCODED}/{_ENCODED}.json"}] if item_link else []
     _stac(root / "roads" / "collection.json", "Collection", links=links)
@@ -390,13 +375,7 @@ def _encoded_item_catalog(root: Path, *, item_link: bool) -> Path:
 
 
 class TestEncodedItemHrefs:
-    """The walkers read the percent-encoded hrefs that the links fixer writes.
-
-    rashid's ``expected_links`` spells ``été 2024.json`` as
-    ``%C3%A9t%C3%A9%202024.json``. A walker that joined the href as a literal
-    filename found no file, so the mirror reported a stale link and push did not
-    publish the item or its assets.
-    """
+    """The walkers read the percent-encoded hrefs that the links fixer writes."""
 
     @pytest.mark.unit
     def test_owned_item_hrefs_finds_the_file(self, tmp_path: Path) -> None:

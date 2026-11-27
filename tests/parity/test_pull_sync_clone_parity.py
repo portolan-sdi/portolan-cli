@@ -1,14 +1,5 @@
 """Command parity for `pull`, `sync`, and `clone` against an in-memory remote.
-
-Each object-store setup returns one ``MemoryStore``. The fixture fills it from
-a local source catalog under the key prefix ``catalog``, so
-``s3://bucket/catalog`` resolves to that catalog. No test sends a network
-request. A ``LocalStore`` does not take the conditional puts of push, so the
-remote is in memory.
-
-Parity proves that the command and the library return the same data. Each test
-also pins that data and the files on disk after the library call, so an empty
-result on both sides cannot pass.
+A ``LocalStore`` does not take the conditional puts of push, so the remote is a ``MemoryStore``.
 """
 
 from __future__ import annotations

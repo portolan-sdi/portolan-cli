@@ -1,8 +1,4 @@
-"""Integration tests for `portolan add` with iceberg backend.
-
-Tests the full CLI pipeline: add_cmd -> add_files -> finalize_items ->
-IcebergBackend.publish(), using SQLite + local filesystem.
-"""
+"""Integration tests for `portolan add` with iceberg backend."""
 
 from __future__ import annotations
 

@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-# Set matplotlib backend to Agg BEFORE any matplotlib imports.
-# Required for headless CI environments (Windows/Linux without display).
-# Conditional: matplotlib is in the [thumbnails] extra, not needed for all tests.
+# Set the Agg backend before any matplotlib import, for headless CI.
+# matplotlib is in the optional [thumbnails] extra.
 try:
     import matplotlib as mpl
 
@@ -36,25 +35,18 @@ if TYPE_CHECKING:
     from click.testing import Result
 
 
-# =============================================================================
 # Environment Isolation
-# =============================================================================
 
-# botocore reads ~/.aws itself, so these point it at an empty directory. A test
-# that clears the environment must keep them, or the developer's real profiles
-# reach the code under test. It must also keep the IMDS switch, or botocore
-# asks 169.254.169.254 for instance credentials.
+# A cleared environment keeps these, so botocore reads neither the developer's
+# ~/.aws nor the IMDS endpoint 169.254.169.254.
 _AWS_ISOLATION_KEYS = (
     "AWS_CONFIG_FILE",
     "AWS_SHARED_CREDENTIALS_FILE",
     "AWS_EC2_METADATA_DISABLED",
 )
 
-# Windows needs its system variables to run. CPython 3.12.15 cannot build an
-# SSL context without them, and botocore builds one while it resolves
-# credentials. A cleared environment keeps these on Windows. It never keeps
-# HOME, USERPROFILE, HOMEDRIVE, or HOMEPATH, because botocore finds ~/.aws
-# through them. tests/unit/test_cleared_environ.py checks both rules.
+# A cleared environment keeps these on Windows, where CPython needs them for an
+# SSL context. It never keeps the HOME variables, which lead botocore to ~/.aws.
 _WINDOWS_SYSTEM_KEYS = (
     "SYSTEMROOT",
     "SYSTEMDRIVE",
@@ -77,11 +69,8 @@ _WINDOWS_SYSTEM_KEYS = (
 # them for every test.
 _AWS_SHELL_KEYS = ("AWS_PROFILE", "AWS_DEFAULT_PROFILE", "AWS_REGION", "AWS_DEFAULT_REGION")
 
-# CI selects a reduced, deterministic Hypothesis profile with
-# HYPOTHESIS_PROFILE=ci (set in .github/workflows/ci.yml). A PR run gets a fast
-# reproducible check. Nightly does not set the variable, so it keeps the
-# default profile with 100 randomized examples, and example exploration is not
-# lost. A test's own @settings(...) overrides these values.
+# HYPOTHESIS_PROFILE=ci gives PR runs a fast, deterministic profile. A test's
+# own @settings(...) overrides these values.
 if os.environ.get("HYPOTHESIS_PROFILE") == "ci":
     from hypothesis import settings as _ci_hypothesis_settings
 
@@ -104,10 +93,8 @@ if os.environ.get("HYPOTHESIS_PROFILE") == "nightly":
     )
     _nightly_hypothesis_settings.load_profile("nightly")
 
-# A Hypothesis deadline measures wall-clock time per example. Under xdist on a
-# loaded machine an I/O-bound example takes longer than the 200 ms default, and
-# Hypothesis then reports a flaky failure that no property caused. No profile
-# keeps a deadline, and this one covers a run that names no profile.
+# No profile keeps a deadline: under loaded xdist an I/O-bound example passes
+# the 200 ms default and reports a false flaky failure.
 if os.environ.get("HYPOTHESIS_PROFILE") not in {
     "ci",
     "nightly",
@@ -120,11 +107,7 @@ if os.environ.get("HYPOTHESIS_PROFILE") not in {
 
 @contextmanager
 def aws_files_environ(aws_dir: Path) -> Iterator[None]:
-    """Point the AWS readers at ``aws_dir`` instead of ~/.aws.
-
-    ``_aws_shared_file`` and botocore both read these variables, so a fixture
-    that writes profiles to a temporary directory must name them here.
-    """
+    """Point botocore and ``_aws_shared_file`` at ``aws_dir`` instead of ~/.aws."""
     with mock.patch.dict(
         os.environ,
         {
@@ -137,13 +120,9 @@ def aws_files_environ(aws_dir: Path) -> Iterator[None]:
 
 @contextmanager
 def cleared_environ(**overrides: str) -> Iterator[None]:
-    """Clear os.environ for the block, preserving the harness isolation vars.
+    """Clear os.environ for the block, but keep the AWS isolation and proxy guard vars.
 
-    Drop-in replacement for ``mock.patch.dict(os.environ, {}, clear=True)``. It
-    keeps the AWS isolation vars, so botocore cannot read the developer's real
-    profiles. It keeps the proxy vars of the network guard, so obstore and GDAL
-    cannot reach a remote host. Pass keyword ``overrides`` to seed specific
-    variables into the otherwise-empty environment.
+    Keyword ``overrides`` seed variables into the otherwise empty environment.
     """
     keep = (*_AWS_ISOLATION_KEYS, *PROXY_KEYS, *NO_PROXY_KEYS)
     if sys.platform == "win32":
@@ -154,10 +133,7 @@ def cleared_environ(**overrides: str) -> Iterator[None]:
         yield
 
 
-# A test writes only under tmp_path. The session guard below lists the
-# untracked and ignored entries of the repository root before and after the
-# run, and fails the run when a new one appears. These entries are outputs of
-# the tools, not of a test, so the guard ignores them.
+# Tool outputs that the repository-root guard below ignores.
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _TOOL_OUTPUTS = (
     ".venv/",
@@ -196,18 +172,12 @@ def _root_entries() -> frozenset[str] | None:
     )
 
 
-# trylast: pytest tears down the session fixtures in its own
-# pytest_sessionfinish. The guard lists the root after that, so a session
-# fixture that cleans up after itself, such as the per-worker site of
-# tests/docs/test_site_build.py, leaves no entry.
+# trylast: list the root after pytest tears down the session fixtures, so a
+# fixture that cleans up after itself leaves no entry.
 @pytest.hookimpl(trylast=True)
 def pytest_sessionfinish(session: pytest.Session) -> None:
-    """Fail the run when a test left a new file in the repository.
+    """Fail the run when a test left a new file in the repository root."""
 
-    A test that runs a command with the repository as its working directory
-    writes there. ``init --backend iceberg`` once left ``.portolan/iceberg.db``
-    in the root that way. pytest_configure takes the first listing.
-    """
     before = session.config.stash.get(_ROOT_ENTRIES_KEY, None)
     after = _root_entries() if before is not None else None
     if before is None or after is None or after <= before:
@@ -232,9 +202,7 @@ def pytest_configure(config: pytest.Config) -> None:
     install_duckdb_extensions()
 
 
-# =============================================================================
 # Fixture Directory Access
-# =============================================================================
 
 
 @pytest.fixture(scope="session")
@@ -243,9 +211,7 @@ def fixtures_dir() -> Path:
     return Path(__file__).parent / "fixtures"
 
 
-# =============================================================================
 # Vector Fixtures (GeoJSON, GeoParquet)
-# =============================================================================
 
 
 @pytest.fixture(scope="session")
@@ -280,11 +246,7 @@ def valid_large_properties_geojson(fixtures_dir: Path) -> Path:
 
 @pytest.fixture(scope="session")
 def valid_points_parquet(fixtures_dir: Path) -> Path:
-    """Path to valid GeoParquet fixture (real-world Open Buildings data).
-
-    This uses real-world data from Open Buildings (1000 building footprints).
-    Previously pointed to synthetic fixture at vector/valid/points.parquet.
-    """
+    """Path to valid GeoParquet fixture (1000 Open Buildings footprints)."""
     return fixtures_dir / "realdata" / "open-buildings.parquet"
 
 
@@ -292,9 +254,7 @@ def valid_points_parquet(fixtures_dir: Path) -> Path:
 def projected_parquet(fixtures_dir: Path) -> Path:
     """Path to GeoParquet with projected CRS (EPSG:32631 UTM Zone 31N).
 
-    The file is ``realdata/open-buildings.parquet`` reprojected with DuckDB
-    ``ST_Transform(geometry, 'EPSG:4326', 'EPSG:32631')``. DuckDB writes no
-    GeoParquet CRS, so the PROJJSON CRS was added with PyArrow after the write.
+    Open Buildings reprojected with DuckDB ST_Transform; PyArrow adds the PROJJSON CRS.
     """
     return fixtures_dir / "vector" / "open-buildings-utm31n.parquet"
 
@@ -326,18 +286,12 @@ def invalid_null_geometries_geojson(fixtures_dir: Path) -> Path:
     return fixtures_dir / "vector" / "invalid" / "null_geometries.geojson"
 
 
-# =============================================================================
 # Raster Fixtures (COG)
-# =============================================================================
 
 
 @pytest.fixture(scope="session")
 def valid_rgb_cog(fixtures_dir: Path) -> Path:
-    """Path to valid COG fixture (real-world RapidAI4EO satellite imagery).
-
-    This uses real-world data from ESA's RapidAI4EO program (100x100 Sentinel-2 sample).
-    Previously pointed to synthetic fixture at raster/valid/rgb.tif.
-    """
+    """Path to valid COG fixture (100x100 RapidAI4EO Sentinel-2 sample)."""
     return fixtures_dir / "realdata" / "rapidai4eo-sample.tif"
 
 
@@ -376,22 +330,14 @@ def invalid_truncated_tif(fixtures_dir: Path) -> Path:
 
 @pytest.fixture(scope="session")
 def non_cog_tif(fixtures_dir: Path) -> Path:
-    """Path to non-cloud-optimized GeoTIFF (Natural Earth data).
+    """Path to a non-COG GeoTIFF: an untiled 1000x1000 crop of Natural Earth SR_50M.
 
-    The source is Natural Earth 50m shaded relief (``SR_50M.zip`` from
-    naciscdn.org). It is a 1000x1000 crop with no tiles and overviews added
-    after the write, so ``rio cogeo validate`` rejects it::
-
-        gdal_translate -co TILED=NO -srcwin 0 0 1000 1000 \
-            SR_50M.tif natural-earth-non-cog.tif
-        gdaladdo -r average natural-earth-non-cog.tif 2 4 8
+    Built with ``gdal_translate -co TILED=NO``, then ``gdaladdo -r average`` 2 4 8.
     """
     return fixtures_dir / "raster" / "natural-earth-non-cog.tif"
 
 
-# =============================================================================
 # Edge Case Fixtures
-# =============================================================================
 
 
 @pytest.fixture(scope="session")
@@ -412,9 +358,7 @@ def edge_antimeridian_geojson(fixtures_dir: Path) -> Path:
     return fixtures_dir / "edge" / "antimeridian.geojson"
 
 
-# =============================================================================
 # Real-World Data Fixtures
-# =============================================================================
 
 
 @pytest.fixture(scope="session")
@@ -447,42 +391,23 @@ def rapidai4eo_path(fixtures_dir: Path) -> Path:
     return fixtures_dir / "realdata" / "rapidai4eo-sample.tif"
 
 
-# =============================================================================
 # Temporary Catalog Fixtures
-# =============================================================================
 
 
 @pytest.fixture
 def temp_catalog_dir(tmp_path: Path) -> Path:
-    """Create a temporary directory for catalog operations.
-
-    Yields the path to a clean temporary directory that will be
-    automatically cleaned up after the test.
-    """
+    """Create an empty temporary directory for catalog operations."""
     catalog_dir = tmp_path / "test-catalog"
     catalog_dir.mkdir()
     return catalog_dir
 
 
-# =============================================================================
 # Catalog State Fixtures (for push/pull/sync tests)
-# =============================================================================
 
 
 @pytest.fixture
 def catalog_with_versions_for_dry_run(tmp_path: Path) -> Path:
-    """Catalog with -compliant structure for dry-run tests.
-
-    This fixture is used by TestDryRunNetworkIsolation classes across
-    test_pull.py, test_push.py, and test_sync.py.
-
-    Structure:
-    - <catalog_root>/catalog.json
-    - <catalog_root>/.portolan/config.yaml
-    (Note: state.json removed per issue #290 - config.yaml alone is sufficient)
-    - <catalog_root>/<collection>/versions.json
-    - <catalog_root>/<collection>/data.parquet
-    """
+    """Catalog with one collection, one version and one asset, for dry-run tests."""
     import json
 
     catalog_dir = tmp_path / "catalog_dry_run"
@@ -498,7 +423,7 @@ def catalog_with_versions_for_dry_run(tmp_path: Path) -> Path:
     }
     (catalog_dir / "catalog.json").write_text(json.dumps(catalog_data, indent=2))
 
-    # .portolan sentinel: config.yaml alone is sufficient for MANAGED state (per issue #290)
+    # .portolan sentinel: config.yaml alone makes the catalog MANAGED.
     portolan_dir = catalog_dir / ".portolan"
     portolan_dir.mkdir()
     (portolan_dir / "config.yaml").write_text("{}\n")
@@ -535,11 +460,7 @@ def catalog_with_versions_for_dry_run(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def fresh_catalog_no_versions(tmp_path: Path) -> Path:
-    """Catalog WITHOUT versions.json (fresh state for initial pull/push).
-
-    This tests the edge case where dry-run is called on a catalog that
-    has never been versioned before.
-    """
+    """Catalog WITHOUT versions.json (fresh state for initial pull/push)."""
     import json
 
     catalog_dir = tmp_path / "catalog_fresh"
@@ -555,7 +476,7 @@ def fresh_catalog_no_versions(tmp_path: Path) -> Path:
     }
     (catalog_dir / "catalog.json").write_text(json.dumps(catalog_data, indent=2))
 
-    # .portolan sentinel: config.yaml alone is sufficient (per issue #290)
+    # .portolan sentinel: config.yaml alone is sufficient.
     portolan_dir = catalog_dir / ".portolan"
     portolan_dir.mkdir()
     (portolan_dir / "config.yaml").write_text("{}\n")
@@ -570,16 +491,11 @@ def fresh_catalog_no_versions(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def catalog_with_multiple_versions(tmp_path: Path) -> Path:
-    """Catalog with 3 versions for divergence and accumulation testing.
+    """Catalog with 3 versions, each adding one asset, with real SHA256 hashes.
 
-    Version history:
-    - v1.0.0: base.parquet (initial)
-    - v1.1.0: base.parquet + second.parquet (add)
-    - v1.2.0: base.parquet + second.parquet + third.parquet (add)
-
-    Useful for testing snapshot model accumulation.
-    Uses real SHA256 hashes computed from file content.
+    For divergence and snapshot accumulation tests.
     """
+
     import hashlib
     import json
 
@@ -685,19 +601,10 @@ def catalog_with_multiple_versions(tmp_path: Path) -> Path:
     return catalog_dir
 
 
-# =============================================================================
 # Conformant catalogs (rashid)
-# =============================================================================
 
-# `portolan check` validates against rashid's PTL-* rule set, so a hand-built
-# catalog.json is no longer a usable fixture: it trips PTL-CNF-001 (no schema
-# URI), PTL-FIL-001 (no README/AGENTS.md), PTL-TTL-001 (no title), and more,
-# and every test asserting on check output drowns in unrelated findings.
-#
-# `build_conformant_catalog` builds the catalog the way `portolan init` does:
-# through the real generator, so it stays conformant by construction as
-# generation changes (the same property the conformance gate in
-# tests/integration/test_generated_catalog_conformance.py locks down).
+# A hand-built catalog.json trips many rashid rules, so these fixtures build one
+# through `portolan init` and stay conformant as generation changes.
 
 
 def _init_catalog(
@@ -733,12 +640,7 @@ def _init_catalog(
 
 @pytest.fixture
 def build_conformant_catalog() -> Callable[..., Path]:
-    """Factory building a catalog that passes rashid's metadata pass.
-
-    Use this wherever a test needs a catalog to exist without being the subject
-    of the test. Findings the test asserts on should be ones it introduces
-    itself, by editing the generated tree.
-    """
+    """Factory building a catalog that passes rashid's metadata pass."""
     return _init_catalog
 
 
@@ -750,15 +652,9 @@ def conformant_catalog(tmp_path: Path) -> Path:
 
 @pytest.fixture(autouse=True)
 def isolate_aws_config(tmp_path_factory: pytest.TempPathFactory) -> Iterator[None]:
-    """Point botocore at an empty AWS config for every test.
+    """Point botocore at an empty AWS config for every test, so ~/.aws stays unread.
 
-    ``_resolve_credential_provider`` builds a botocore session. botocore reads
-    ~/.aws itself, so patching ``Path.home`` does not hide the developer's real
-    profiles from it. Without this fixture a machine with credentials and a
-    machine without them run different tests.
-
-    The fixture also clears the provider cache, because that cache keys on the
-    profile name alone and would otherwise cross a test boundary.
+    It clears the provider cache too, which keys on the profile name alone.
     """
     from portolan_cli.sync.upload import _boto3_credential_provider
 
@@ -769,15 +665,12 @@ def isolate_aws_config(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Non
         {
             "AWS_CONFIG_FILE": str(empty / "config"),
             "AWS_SHARED_CREDENTIALS_FILE": str(empty / "credentials"),
-            # botocore probes 169.254.169.254 when no profile supplies keys.
-            # The probe blocks for 2 seconds wherever that address drops the
-            # packet, once for every store the suite builds.
+            # Without this, botocore probes 169.254.169.254 and can block 2 seconds
+            # per store.
             "AWS_EC2_METADATA_DISABLED": "true",
         },
     ):
-        # A profile or region from the shell picks the developer's account and
-        # changes the region a store resolves, so a test sees neither. The
-        # patch restores them on exit.
+        # Hide the shell's profile and region; the patch restores them on exit.
         for name in _AWS_SHELL_KEYS:
             os.environ.pop(name, None)
         yield
@@ -796,8 +689,7 @@ def network_guard(
 ) -> Iterator[NetworkGuard]:
     """Fail a test without the network marker that connects to a remote host.
 
-    ``tests/network_guard.py`` describes the two layers. A test that expects a
-    block can read ``collect()`` and clear ``attempts``.
+    A test that expects a block can read ``collect()`` and clear ``attempts``.
     """
     guard = NetworkGuard(test=request.node.nodeid, sentinel=_sentinel_proxy)
     if request.node.get_closest_marker("network") is not None:
@@ -821,10 +713,7 @@ def network_guard(
 def no_basemap_tiles(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
     """Draw thumbnails without basemap tiles in a test without the network marker.
 
-    ``add_basemap`` fetches the tiles from the provider and logs a failure as a
-    warning, so about 170 tests fetched Carto tiles on each run without notice.
-    A test of the basemap code patches ``_ensure_contextily`` itself, and its
-    patch replaces this one.
+    ``add_basemap`` logs a fetch failure only as a warning, so tests fetched tiles unseen.
     """
     if request.node.get_closest_marker("network") is not None:
         return
@@ -839,9 +728,7 @@ def no_basemap_tiles(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyP
 def stub_basemap_tiles(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     """Serve every basemap tile from the perf runner's stub and return the tile URLs.
 
-    The stub replaces only the HTTP request (``tests/perf/runner.py``). This
-    fixture turns the basemap on again after ``no_basemap_tiles``, and it
-    empties the run memos.
+    It turns the basemap on again after ``no_basemap_tiles`` and empties the run memos.
     """
     from collections import OrderedDict
 
@@ -859,19 +746,9 @@ def stub_basemap_tiles(monkeypatch: pytest.MonkeyPatch) -> list[str]:
 
 @pytest.fixture
 def no_extract_side_requests(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Stub the requests the extract orchestrators make next to the feature requests.
+    """Stub the style, layer-detail and WFS-version requests that extract makes.
 
-    Each request logs a failure and goes on, so a test that mocks only the
-    feature requests still reaches the remote host:
-
-    - ``extract arcgis`` fetches the ESRI layer JSON for ``drawingInfo``.
-    - ``extract arcgis`` auto-init fetches the layer details for a description.
-    - ``extract wfs`` calls WMS GetStyles and GetLegendGraphic.
-    - ``extract wfs`` negotiates the WFS version with GetCapabilities.
-
-    Each stub returns the result that a failed request gives: no style, no
-    layer details, and WFS 1.1.0. A test of one of these requests patches it
-    itself, and its patch replaces this one.
+    Each stub returns what a failed request gives: no style, no details, and WFS 1.1.0.
     """
     from geoparquet_io.core import wfs as gpio_wfs
 
@@ -890,11 +767,9 @@ def no_extract_side_requests(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.fixture(autouse=True)
 def isolate_trace_and_logging(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
-    """Start each test with tracing off and no Portolan log handler (#991).
+    """Start each test with tracing off and no Portolan log handler.
 
-    The root ``cli`` group turns tracing on and installs log handlers for one
-    run. Both are process-wide, so a test that invokes the CLI would leak them
-    into the next test.
+    Both are process-wide, so a CLI run would leak them into the next test.
     """
     from portolan_cli import logging_setup
     from portolan_core import trace
@@ -918,13 +793,9 @@ def isolate_trace_and_logging(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]
 def isolate_installed_plugins(
     request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
 ) -> Iterator[None]:
-    """Load no outside plugin, except in tests marked ``plugin`` (#947).
+    """Load no outside plugin, except in tests marked ``plugin``.
 
-    The plugin docs install the example plugin into the project environment.
-    It then stays installed, and its hooks write fields into every STAC file
-    that `add` produces. Without this fixture a developer machine and CI run
-    different tests. The ``installed`` and ``register_plugin`` fixtures clear
-    the variable again for the tests that control the plugin set.
+    An installed example plugin would otherwise write fields into every STAC file.
     """
     from portolan_cli.plugins import manager
 
@@ -937,11 +808,7 @@ def isolate_installed_plugins(
 
 @pytest.fixture
 def register_plugin(monkeypatch: pytest.MonkeyPatch) -> Iterator[Callable[..., None]]:
-    """Register plugin objects on a fresh plugin manager (#947).
-
-    The manager sees no installed plugin, so only built-ins and the objects a
-    test registers take part.
-    """
+    """Register plugin objects on a fresh manager that sees no installed plugin."""
     from portolan_cli.plugins import manager
 
     monkeypatch.setattr(manager, "entry_points", lambda *, group: [])
@@ -955,18 +822,14 @@ def register_plugin(monkeypatch: pytest.MonkeyPatch) -> Iterator[Callable[..., N
     manager.reset_plugin_manager()
 
 
-# =============================================================================
 # Moto S3 server
-# =============================================================================
 
 
 @pytest.fixture(scope="session")
 def moto_server() -> Iterator[str]:
     """Start one moto server for the session and yield its endpoint URL.
 
-    obstore is a Rust client that makes its own HTTP calls, so boto3's
-    in-process patching cannot reach it. moto's server mode gives it a real
-    endpoint on the loopback interface, which the network guard allows.
+    obstore makes its own HTTP calls, so it needs a real loopback endpoint.
     """
     pytest.importorskip("moto")
     from moto.server import ThreadedMotoServer
@@ -1014,11 +877,9 @@ def _aws_env(s3_bucket: tuple[str, str], monkeypatch: pytest.MonkeyPatch) -> Non
 
 @pytest.fixture
 def arcgis_url(fixtures_dir: Path) -> Iterator[str]:
-    """Serve the recorded Philadelphia ArcGIS services on the loopback interface.
+    """Serve the recorded Philadelphia ArcGIS services and yield the services root URL.
 
-    Yields the services root URL for ``extract arcgis``. The scenario is
-    ``tests/fixtures/network/arcgis/philadelphia``. At teardown the fixture
-    asserts that the scenario answered every request.
+    At teardown it asserts that the scenario answered every request.
     """
     from tests.replay_server import ReplayServer
 
@@ -1028,9 +889,7 @@ def arcgis_url(fixtures_dir: Path) -> Iterator[str]:
     assert server.unmatched == []
 
 
-# =============================================================================
 # The real CLI, with catalog invariants at teardown
-# =============================================================================
 
 
 @contextmanager
@@ -1046,10 +905,7 @@ def _working_directory(path: Path) -> Iterator[None]:
 class CliHarness:
     """Invoke the real CLI and check every catalog it writes under ``base``.
 
-    ``tests/catalog_invariants.py`` gives the reason for the checks. The
-    harness records a directory as a catalog root when it holds both
-    ``catalog.json`` and ``.portolan/``. It checks only the roots that the
-    CLI wrote, so a hand-written fixture is never checked.
+    A root holds ``catalog.json`` and ``.portolan/``; hand-written fixtures are not checked.
     """
 
     def __init__(self, base: Path) -> None:
@@ -1085,13 +941,9 @@ class CliHarness:
 
     @contextmanager
     def _pyiceberg_isolated(self) -> Iterator[None]:
-        """Hide the developer's PyIceberg config from the command.
+        """Hide the developer's ``.pyiceberg.yaml`` and ``PYICEBERG_CATALOG__*`` vars.
 
-        PyIceberg reads the first ``.pyiceberg.yaml`` it finds, and it reads
-        ``PYICEBERG_CATALOG__*`` variables. Either one replaces the local
-        SQLite catalog that the Iceberg backend defaults to.
-        ``tests/iceberg/conftest.py`` gives the full reason. The stub file holds
-        one key that PyIceberg does not read.
+        Either one replaces the default local SQLite catalog.
         """
         stub = self.base / ".pyiceberg-home" / ".pyiceberg.yaml"
         stub.parent.mkdir(parents=True, exist_ok=True)
@@ -1104,9 +956,7 @@ class CliHarness:
     def violations(self) -> str:
         """Return the violations outside the known gaps, and each stale exemption, or ''.
 
-        An exemption is self-cleaning. A damaged root that breaks no invariant
-        outside the known gaps fails with "exemption no longer needed", so the
-        fix of a bug turns its exemption red.
+        A damaged root that breaks no invariant fails, so a fix turns its exemption red.
         """
         from tests.catalog_invariants import (
             KNOWN_INVARIANT_GAPS,
@@ -1139,11 +989,7 @@ class CliHarness:
 def run_cli(tmp_path: Path) -> Iterator[CliHarness]:
     """Invoke ``portolan`` in process and check each catalog it writes at teardown.
 
-    ``run_cli("add", "--portolan-dir", str(root), str(file))`` runs the real
-    command with ``catch_exceptions=False`` in ``cwd`` (default ``tmp_path``).
-    It asserts that the exit code equals ``expect`` (0 by default, None skips
-    the check). A test that damages a catalog on purpose registers the root
-    with ``build_damaged_catalog``.
+    It asserts the exit code equals ``expect`` (0 by default; None skips the check).
     """
     harness = CliHarness(tmp_path)
     yield harness
@@ -1154,8 +1000,7 @@ def run_cli(tmp_path: Path) -> Iterator[CliHarness]:
 def cli_harness() -> type[CliHarness]:
     """The ``run_cli`` class, for a module-scoped fixture that builds a catalog once.
 
-    The caller calls ``verify()`` after the build, because no teardown runs
-    the check for it.
+    The caller runs ``verify()`` after the build, because no teardown does.
     """
     return CliHarness
 
@@ -1164,9 +1009,9 @@ def cli_harness() -> type[CliHarness]:
 def build_damaged_catalog(run_cli: CliHarness) -> Callable[[Path, str], Path]:
     """Exempt one catalog root from the ``run_cli`` teardown check.
 
-    The reason must appear verbatim as an ``invariant`` line in
-    ``tests/guardrail_exemptions.txt``, so each exemption is counted.
+    The reason must be an ``invariant`` line in ``tests/guardrail_exemptions.txt``.
     """
+
     from tests.catalog_invariants import load_exemptions
 
     reasons = {row[0] for row in load_exemptions("invariant")}

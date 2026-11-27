@@ -1,10 +1,4 @@
-"""E2E tests for concurrent access via REST catalog.
-
-These tests verify that Iceberg's optimistic concurrency control works
-correctly when multiple threads publish simultaneously.
-
-Marked as e2e_slow -- runs only in nightly CI.
-"""
+"""E2E tests for concurrent access via REST catalog."""
 
 from __future__ import annotations
 

@@ -1,11 +1,4 @@
-"""Batch versioning writes versions.json once per collection (Issue #281).
-
-The add API, not only the CLI, must batch the writes. A per-file write made
-the old add O(n squared) in the size of versions.json. The scale gates in
-``test_scale_invariance.py`` hold the same property for the CLI at any size.
-This file once also compared the wall time of 10 and 20 files. That ratio
-measured the runner, so the counts below replace it.
-"""
+"""The add API writes versions.json once per collection, not once per file."""
 
 from __future__ import annotations
 
@@ -28,7 +21,7 @@ def benchmark_catalog(tmp_path: Path) -> Path:
     portolan_dir = tmp_path / ".portolan"
     portolan_dir.mkdir()
     (portolan_dir / "config.yaml").write_text("version: 1\n")
-    # add_files rejects a collection with no license (issue #842).
+    # add_files rejects a collection with no license.
     (portolan_dir / "metadata.yaml").write_text('license: "CC-BY-4.0"\n')
 
     catalog_data = {
@@ -84,11 +77,6 @@ class TestBatchVersioning:
         self,
         benchmark_catalog: Path,
     ) -> None:
-        """Verify batch approach writes versions.json once per collection.
-
-        This is the key metric: regardless of file count, we should only
-        write versions.json once per collection.
-        """
         from portolan_cli.add import add_files
 
         collection_dir = benchmark_catalog / "test-collection"

@@ -1,29 +1,5 @@
-"""Measure a scenario at two sizes and compare the counters with the recorded constants.
-
-The scale gate runs each scenario at size ``n`` and ``2n`` and derives, for
-each counter ``c``::
-
-    slope     = c(2n) - c(n)
-    intercept = 2 * c(n) - c(2n)
-
-For a cost that grows linearly, ``slope`` is the work per unit of size and
-``intercept`` is the fixed work per run. A per-file re-read raises the slope
-at any size, so a small scenario catches it. The pairs are exact integers,
-because a counter does not depend on machine load.
-
-Each counter has one owner file in ``tests/perf/expected/``. A lane that
-removes work lowers only the constants in its own file, so the diff of that
-file records each improvement. A pair that no file holds is ``(0, 0)``. The
-comment on each pair names the functions that made the counts at size 2n,
-with their number of calls.
-
-``checksum.bytes`` has no gate. It measures data volume, and the bytes of a
-converted file change with the geoparquet-io version.
-
-Print the measured pairs with the code that produced each count, or write
-them over the owner files (then commit only the file of your lane)::
-
-    uv run python -m tests.perf.gates --record [--write] [scenario ...]
+"""Measure a scenario at sizes n and 2n and compare the counter slope and intercept with the constants.
+Run ``uv run python -m tests.perf.gates --record [--write] [scenario ...]`` to print or write them.
 """
 
 from __future__ import annotations
@@ -163,11 +139,7 @@ _FMT_ON = "# fmt: on\n"
 
 
 def render(owner: str, lines: list[str], trailer: str = "") -> str:
-    """Return the text of ``expected/<owner>.py``.
-
-    ``lines`` are the entries. ``trailer`` is the text after the table, such
-    as a memory ceiling, which this tool does not measure.
-    """
+    """Return the text of ``expected/<owner>.py``; ``trailer`` is the text after the table."""
     body = "".join(sorted(lines))
     return (
         f'"""Scale-gate constants of {owner}: {OWNER_DOCS[owner]}. See gates.py."""\n\n'

@@ -1,14 +1,4 @@
-"""Regression tests for STAC v1.1.0 raster bands placement (issue #437).
-
-STAC v1.1.0 unified the bands model: ``bands`` is an **asset-level** field.
-The core item schema explicitly forbids ``bands`` on ``item.properties``, so
-raster items that put it there fail STAC schema validation.
-
-These tests lock in the fix: the unified ``bands`` array (carrying per-band
-``data_type``, ``nodata`` and ``statistics``) must live on the data asset, and
-a freshly added raster item must pass schema validation via the same engine
-``portolan check`` uses (``stac-check``).
-"""
+"""STAC v1.1.0 raster bands placement."""
 
 from __future__ import annotations
 
@@ -37,9 +27,8 @@ def raster_catalog(tmp_path: Path) -> Path:
                 "type": "Catalog",
                 "stac_version": "1.1.0",
                 "id": "test-catalog",
-                # A title is mandatory and `portolan init` always
-                # writes one; without it the catalog fails the Portolan profile
-                # schema that `add` now declares (issue #654).
+                # A title is mandatory: without it the catalog fails the
+                # Portolan profile schema that `add` declares.
                 "title": "Test Catalog",
                 "description": "Test catalog",
                 "links": [],

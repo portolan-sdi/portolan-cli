@@ -1,8 +1,4 @@
-"""E2E test fixtures for iceberg backend with Docker (REST catalog + RustFS).
-
-Session-scoped Docker lifecycle: starts docker-compose before tests,
-tears down after. Provides REST catalog and RustFS S3 client fixtures.
-"""
+"""E2E test fixtures for iceberg backend with Docker (REST catalog + RustFS)."""
 
 from __future__ import annotations
 
@@ -44,12 +40,7 @@ def _wait_for_service(url: str, timeout: int = 60) -> None:
 
 
 def require_docker() -> None:
-    """Skip the test when the docker binary is absent.
-
-    A machine without Docker raised FileNotFoundError from subprocess, which
-    reported each e2e test as an error. CI installs Docker, so the e2e jobs
-    still run these tests.
-    """
+    """Skip the test when the docker binary is absent."""
     if shutil.which("docker") is None:
         pytest.skip("the e2e tests need the docker binary on PATH")
 

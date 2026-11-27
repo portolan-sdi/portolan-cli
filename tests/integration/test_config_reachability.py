@@ -1,21 +1,5 @@
-"""Each documented setting reaches the code that it controls (#1020, #834).
-
-A test sets one key, runs the command that reads it, and reads the effect
-from the output files. It sets the key in three forms:
-
-- ``config-set``: ``portolan config set <key> <value>``, the documented command.
-- ``yaml``: the nested block in ``.portolan/config.yaml``, the documented file form.
-- ``env``: the ``PORTOLAN_<KEY>`` environment variable, which overrides the file.
-
-The forms separate three defects. A setting that works in the ``yaml``
-form and fails in the ``config-set`` form has a broken ``config set``. A
-setting that fails in the ``env`` form has a reader that skips the
-environment. A setting that fails in every form has a reader that ignores it.
-
-Every key in ``KNOWN_SETTINGS`` is tested here or listed as a
-``config-key`` line in ``tests/guardrail_exemptions.txt`` with the reason
-that no output shows it. ``test_every_known_setting_is_covered`` enforces it.
-"""
+"""Each documented setting reaches its code in the config-set, yaml, and env forms.
+Each KNOWN_SETTINGS key is tested here or has a config-key line in guardrail_exemptions.txt."""
 
 from __future__ import annotations
 
@@ -138,9 +122,7 @@ def _band_statistics(item: Path) -> list[Any]:
     return [band.get("statistics") for band in _load(item)["assets"]["data"]["bands"]]
 
 
-# ---------------------------------------------------------------------------
 # statistics.*
-# ---------------------------------------------------------------------------
 
 
 @_tests("statistics.enabled")
@@ -172,12 +154,7 @@ def test_statistics_raster_mode_exact_reads_every_pixel(
 
 def _lossy_cog(dest: Path) -> Path:
     """Write natural-earth-non-cog.tif as a JPEG COG at ``dest``.
-
-    add embeds exact statistics in each COG it writes, and the approximate mode
-    reads them as they are (issue #748). A lossy COG keeps no embedded
-    statistics, because a rewrite would re-encode it. So only on a lossy COG
-    does the mode decide what the item gets.
-    """
+    A lossy COG keeps no embedded statistics, so only there does the approximate mode decide."""
     from rio_cogeo.cogeo import cog_translate
     from rio_cogeo.profiles import cog_profiles
 
@@ -186,10 +163,8 @@ def _lossy_cog(dest: Path) -> Path:
     return dest
 
 
-# Measured on the JPEG COG of _lossy_cog, one band. The approximate mode reads
-# an overview, so its minimum, mean and stddev differ from the full read. The
-# relative tolerance absorbs float noise across GDAL builds and stays far below
-# that gap.
+# Measured on the JPEG COG of _lossy_cog, one band. The approximate mode reads an overview.
+# The relative tolerance absorbs float noise across GDAL builds and stays below that gap.
 EXACT_STATISTICS = [
     {
         "minimum": 40.0,
@@ -217,9 +192,7 @@ def test_the_default_raster_mode_is_approximate(catalog: Path, run_cli: RunCli) 
     assert _band_statistics(catalog / "imagery" / "scene" / "scene.json") == APPROX_STATISTICS
 
 
-# ---------------------------------------------------------------------------
 # parquet.enabled
-# ---------------------------------------------------------------------------
 
 
 @_tests("parquet.enabled")
@@ -238,9 +211,7 @@ def test_parquet_enabled_false_writes_no_item_mirror(
     assert "geoparquet-items" not in _load(catalog / "imagery" / "collection.json")["assets"]
 
 
-# ---------------------------------------------------------------------------
 # partitioning.*
-# ---------------------------------------------------------------------------
 
 PARTITION_SETTINGS: dict[str, tuple[str, Any]] = {
     "partitioning.enabled": ("true", True),
@@ -308,9 +279,7 @@ def test_partitioning_stays_off_below_the_default_threshold(catalog: Path, run_c
     assert list((catalog / "buildings").glob("*=*")) == []
 
 
-# ---------------------------------------------------------------------------
 # pmtiles.*
-# ---------------------------------------------------------------------------
 
 needs_tippecanoe = pytest.mark.skipif(
     shutil.which("tippecanoe") is None,
@@ -355,9 +324,7 @@ def test_pmtiles_settings_reach_the_tiles(form: str, catalog: Path, run_cli: Run
     assert metadata["attribution"] == "Example Agency"
 
 
-# ---------------------------------------------------------------------------
 # push.exclude
-# ---------------------------------------------------------------------------
 
 
 def _push_and_list(run_cli: RunCli, catalog: Path, s3_bucket: tuple[str, str]) -> list[str]:
@@ -371,11 +338,7 @@ def _push_and_list(run_cli: RunCli, catalog: Path, s3_bucket: tuple[str, str]) -
 
 def _catalog_with_notes(run_cli: RunCli, catalog: Path) -> None:
     """Add one collection, then put two untracked notes beside it.
-
-    ``push`` uploads README.md in its own phase, whatever the patterns say.
-    No STAC document names the notes, so they stay local. The pattern is
-    measured on AGENTS.md.
-    """
+    ``push`` uploads README.md in its own phase, so the pattern is measured on AGENTS.md."""
     source = _copy(POINTS_PARQUET, catalog / "places" / "places.parquet")
     _add(run_cli, catalog, source)
     (catalog / "places" / "notes.md").write_text("# Notes\n", encoding="utf-8")
@@ -424,9 +387,7 @@ def test_push_uploads_agents_md_and_no_untracked_notes_by_default(
     assert _push_and_list(run_cli, catalog, s3_bucket) == PUSHED
 
 
-# ---------------------------------------------------------------------------
 # tabular.*
-# ---------------------------------------------------------------------------
 
 
 def _write_csv(path: Path) -> Path:
@@ -493,9 +454,7 @@ def test_tabular_convert_defaults_to_parquet(catalog: Path, run_cli: RunCli) -> 
     ]
 
 
-# ---------------------------------------------------------------------------
 # ignored_files
-# ---------------------------------------------------------------------------
 
 
 @_tests("ignored_files")
@@ -520,9 +479,7 @@ def test_without_ignored_files_the_geojson_is_added(catalog: Path, run_cli: RunC
     assert (catalog / "places" / "collection.json").is_file()
 
 
-# ---------------------------------------------------------------------------
 # backend
-# ---------------------------------------------------------------------------
 
 
 @_tests("backend")
@@ -544,7 +501,7 @@ def test_backend_iceberg_writes_the_iceberg_fields(
 
 
 # The default SQLite catalog URI is a local path, so the collection omits
-# iceberg:catalog_uri (#939).
+# iceberg:catalog_uri.
 ICEBERG_FIELDS = [
     "iceberg:catalog_type",
     "iceberg:current_snapshot_id",
@@ -553,9 +510,7 @@ ICEBERG_FIELDS = [
 ]
 
 
-# ---------------------------------------------------------------------------
 # conversion.vector.*
-# ---------------------------------------------------------------------------
 
 
 def _converted_columns(path: Path) -> list[str]:
@@ -671,9 +626,7 @@ def test_check_fix_converts_the_geojson_by_default(catalog: Path, run_cli: RunCl
     assert (catalog / "places" / "places.parquet").is_file()
 
 
-# ---------------------------------------------------------------------------
 # conversion.extensions.*, conversion.paths.*, conversion.handlers.*
-# ---------------------------------------------------------------------------
 
 # `add` does not read the extension and path overrides. Only check --fix
 # --geo-assets applies them, so these tests observe them through check.
@@ -750,9 +703,7 @@ def test_extract_arcgis_reads_conversion_vector(
     assert {"bbox" in _converted_columns(path) for path in outputs} == {False}
 
 
-# ---------------------------------------------------------------------------
 # conversion.cog.*
-# ---------------------------------------------------------------------------
 
 
 def _cog_profile(path: Path) -> tuple[str, int, int]:
@@ -765,7 +716,6 @@ def _cog_profile(path: Path) -> tuple[str, int, int]:
 @_tests("conversion.cog.compression", "conversion.cog.tile_size")
 @_forms()
 def test_conversion_cog_settings_reach_the_cog(form: str, catalog: Path, run_cli: RunCli) -> None:
-    """#774 is closed. This is its regression check on the yaml form."""
     scene = _copy(NON_COG, catalog / "imagery" / "scene" / "scene.tif")
     configure(
         run_cli,
@@ -926,9 +876,7 @@ def test_conversion_cog_generate_thumbnail_false_writes_no_thumbnail(
     assert "thumbnail" not in _load(catalog / "imagery" / "scene" / "scene.json")["assets"]
 
 
-# ---------------------------------------------------------------------------
 # styles.*
-# ---------------------------------------------------------------------------
 
 
 def _render_fields(item: Path) -> dict[str, Any]:
@@ -1012,9 +960,7 @@ def test_styles_vector_settings_reach_the_default_style(
     assert style["layers"][0]["paint"] == paint
 
 
-# ---------------------------------------------------------------------------
 # thumbnails.*
-# ---------------------------------------------------------------------------
 
 
 @_tests("thumbnails.enabled")
@@ -1146,9 +1092,7 @@ def test_the_default_vector_thumbnail_is_over_128_at_quality_75(
     assert _jpeg_quality(thumbnail) == [75]
 
 
-# ---------------------------------------------------------------------------
 # check.*, publish.*
-# ---------------------------------------------------------------------------
 
 
 #: The two rules the check.* settings act on. The tests read only these, so a
@@ -1217,9 +1161,7 @@ def test_check_live_needs_no_url_without_the_setting(catalog: Path, run_cli: Run
     assert "[PRTLN-VAL005]" not in result.output
 
 
-# ---------------------------------------------------------------------------
 # A collection config.yaml
-# ---------------------------------------------------------------------------
 
 
 def test_a_catalog_only_key_in_a_collection_config_warns(
@@ -1247,9 +1189,7 @@ def test_a_catalog_only_key_in_a_collection_config_warns(
     assert (catalog / "imagery" / "scene" / "scene.json").is_file()
 
 
-# ---------------------------------------------------------------------------
 # Coverage of KNOWN_SETTINGS
-# ---------------------------------------------------------------------------
 
 
 def test_every_known_setting_is_covered() -> None:

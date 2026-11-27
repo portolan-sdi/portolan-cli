@@ -33,7 +33,7 @@ def test_default_properties_with_catalog_root(tmp_path):
 
 @pytest.mark.unit
 def test_the_sqlite_catalog_needs_a_catalog_root(tmp_path, monkeypatch):
-    """#1056: no catalog root raises, and nothing lands in the current directory."""
+    """No catalog root raises, and nothing lands in the current directory."""
     cwd = tmp_path / "cwd"
     cwd.mkdir()
     monkeypatch.chdir(cwd)
@@ -45,11 +45,7 @@ def test_the_sqlite_catalog_needs_a_catalog_root(tmp_path, monkeypatch):
 @_skip_windows_sqlite
 @pytest.mark.integration
 def test_init_writes_nothing_in_the_current_directory(tmp_path, monkeypatch):
-    """#1056: `init <path> --backend iceberg` writes under <path> only.
-
-    On main init checked the backend with no catalog root, so the SQLite
-    catalog appeared at <cwd>/.portolan/iceberg.db.
-    """
+    """`init <path> --backend iceberg` writes under <path> only."""
     from click.testing import CliRunner
 
     from portolan_cli.cli import cli

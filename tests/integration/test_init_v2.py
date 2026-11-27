@@ -1,16 +1,4 @@
-"""Integration tests for `portolan init` command with new file structure.
-
-The new init command creates (updated by issue #290):
-- catalog.json at ROOT level (valid STAC catalog via pystac)
-- versions.json at ROOT level (consumer-visible catalog-level versioning)
-- .portolan/config.yaml -- sentinel file and user config
-
-Note: state.json was removed per issue #290 (config.yaml alone is sufficient).
-
-Error cases:
-- MANAGED state: abort with "already a Portolan catalog"
-- UNMANAGED_STAC state: abort with "existing STAC catalog found"
-"""
+"""Integration tests for `portolan init` command with new file structure."""
 
 from __future__ import annotations
 
@@ -56,16 +44,9 @@ class TestInitCreatesRequiredFiles:
             content = yaml.safe_load(config_file.read_text(encoding="utf-8"))
             assert content is None or content == {}  # Empty YAML or comment-only
 
-    # Note: test_init_creates_portolan_state removed per issue #290
-    # state.json is no longer created during init
-
     @pytest.mark.integration
     def test_init_creates_portolan_versions(self, runner: CliRunner, tmp_path: Path) -> None:
-        """Init should create versions.json at catalog ROOT with minimal versioning.
-
-        Versions.json is consumer-visible metadata and must live
-        at the catalog root alongside STAC files, not inside .portolan/.
-        """
+        """Init should create versions.json at catalog ROOT with minimal versioning."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
             result = runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
 
@@ -82,17 +63,7 @@ class TestInitCreatesRequiredFiles:
 
     @pytest.mark.integration
     def test_init_creates_all_four_files(self, runner: CliRunner, tmp_path: Path) -> None:
-        """Init should create all 4 required files in correct locations.
-
-        Root level (user-visible STAC + versioning):
-          - catalog.json
-          - versions.json
-
-        .portolan/ (internal tooling state only):
-          - config.yaml
-
-        Note: state.json was removed per issue #290.
-        """
+        """Init should create all 4 required files in correct locations."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
             result = runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
 
@@ -100,24 +71,15 @@ class TestInitCreatesRequiredFiles:
             # Root level: STAC catalog + consumer-visible versioning
             assert Path("catalog.json").exists()
             assert Path("versions.json").exists()
-            # .portolan/ directory: config.yaml as sentinel (per issue #290)
+            # .portolan/ directory: config.yaml as sentinel
             assert Path(".portolan/config.yaml").exists()
-            # state.json removed per issue #290
             assert not Path(".portolan/state.json").exists()
             # versions.json must NOT be inside .portolan/
             assert not Path(".portolan/versions.json").exists()
 
     @pytest.mark.integration
     def test_init_with_explicit_absolute_path(self, runner: CliRunner, tmp_path: Path) -> None:
-        """Init with explicit absolute path should create catalog.json in that directory.
-
-        Regression test for issue #401: pystac normalize_hrefs treats paths with dots
-        (like /tmp/tmp.XXXXXX from mktemp -d) as files, causing catalog.json to be
-        written to parent directory.
-
-        This test uses a path WITH A DOT to trigger the bug. Paths without dots
-        (like pytest's tmp_path) don't trigger it.
-        """
+        """Init with explicit absolute path should create catalog.json in that directory."""
         # Use dotted path like shell's mktemp -d produces (e.g., tmp.XXXXXX)
         target_dir = tmp_path / "my.catalog"
         target_dir.mkdir()
@@ -227,11 +189,7 @@ class TestInitPartialState:
 
     @pytest.mark.integration
     def test_init_succeeds_with_empty_portolan_dir(self, runner: CliRunner, tmp_path: Path) -> None:
-        """Empty .portolan directory (no config/state) should allow init.
-
-        This is considered FRESH state - someone created .portolan but never
-        completed initialization.
-        """
+        """Empty .portolan directory (no config/state) should allow init."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
             Path(".portolan").mkdir()
 
@@ -242,10 +200,7 @@ class TestInitPartialState:
 
     @pytest.mark.integration
     def test_init_fails_with_config_yaml_only(self, runner: CliRunner, tmp_path: Path) -> None:
-        """config.yaml alone is now MANAGED state, so init should fail.
-
-        Per issue #290, config.yaml alone is sufficient for MANAGED state.
-        """
+        """config.yaml alone is now MANAGED state, so init should fail."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
             portolan = Path(".portolan")
             portolan.mkdir()

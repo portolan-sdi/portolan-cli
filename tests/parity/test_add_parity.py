@@ -1,7 +1,5 @@
 """Command parity for `add` and `add-external`.
-
-Each library call also checks what it returned and wrote against values this
-module states, so a `to_dict()` that drops a field cannot pass on equality alone.
+Each library call also checks its result against stated values, so a dropped field cannot pass.
 """
 
 from __future__ import annotations

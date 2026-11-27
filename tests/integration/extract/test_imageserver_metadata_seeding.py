@@ -1,8 +1,4 @@
-"""Integration tests for ImageServer metadata seeding.
-
-Tests that ImageServer extraction automatically seeds metadata.yaml
-with harvested service metadata (Wave 3B).
-"""
+"""Integration tests for ImageServer metadata seeding."""
 
 from __future__ import annotations
 
@@ -215,7 +211,6 @@ class TestSeedMetadataYaml:
         assert content["source_url"] == "https://services.arcgis.com/test/ImageServer"
 
     def test_seed_drops_a_token_from_the_source_url(self, tmp_path: Path) -> None:
-        """#981: an ImageServer URL with a token seeds the URL without the token."""
         from portolan_cli.metadata_seeding import seed_metadata_yaml
 
         metadata = make_imageserver_metadata_extracted(

@@ -1,12 +1,4 @@
-"""Integration tests for 'portolan add .' at catalog root (Issue #137).
-
-These tests exercise the full add workflow when the user runs `add .` from the
-catalog root directory. They verify:
-- Collection is correctly inferred from subdirectory structure
-- All geo-assets are discovered recursively
-- No "Cannot determine collection from path" error is raised
-- Output correctly attributes files to their collections
-"""
+"""Integration tests for 'portolan add .' at catalog root."""
 
 from __future__ import annotations
 

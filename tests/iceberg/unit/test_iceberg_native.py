@@ -1,8 +1,4 @@
-"""Tests for Iceberg-native data storage (Phase 1).
-
-These tests verify that publish() writes actual Parquet data into Iceberg tables,
-not just metadata. The Iceberg table schema is dynamic (inferred from the data).
-"""
+"""Tests for Iceberg-native data storage (Phase 1)."""
 
 from __future__ import annotations
 

@@ -1,8 +1,5 @@
-"""S7 constants: the heavy modules that each help command loads (#994).
-
-Lane F owns this file. ``cli.py`` imports the add, fix, and check stacks
-inside the commands that use them, and the metadata package loads each
-export on first access. A help command loads none of the heavy modules.
+"""S7 constants: the heavy modules that each help command loads.
+``cli.py`` imports each stack inside the command that uses it, so the set is empty.
 """
 
 from __future__ import annotations

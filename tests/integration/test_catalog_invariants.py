@@ -1,13 +1,4 @@
-"""Prove that each catalog invariant can fail, and that each known gap still fires.
-
-``TestEachCodeFires`` builds a small catalog by hand that breaks no
-invariant, changes one field, and asserts that exactly one code fires. A
-code with no such test could be vacuous.
-
-``TestKnownGapsStillFire`` reproduces each open bug in
-``KNOWN_INVARIANT_GAPS`` through the real CLI and asserts that its code
-fires. A fix deletes the entry and its test in the same commit.
-"""
+"""Prove that each catalog invariant can fail, and that each known gap still fires."""
 
 from __future__ import annotations
 
@@ -65,12 +56,7 @@ def _parse(path: Path) -> dict[str, Any]:
 
 
 def _write_geoparquet(path: Path, bbox: list[float], *, appended: bool = False) -> None:
-    """Write a two-column Parquet whose ``geo`` metadata declares ``bbox``.
-
-    With ``appended``, the ``geo`` key lands after the writer opened, as
-    geoparquet-io writes it. ``pq.read_schema`` then hides the key, and only
-    the file metadata shows it (#864).
-    """
+    """Write a two-column Parquet whose ``geo`` metadata declares ``bbox``."""
     geo = {
         "version": "1.1.0",
         "primary_column": "geometry",
@@ -92,12 +78,7 @@ def _sha256(path: Path) -> str:
 
 
 def build_clean_catalog(root: Path, *, appended_footer: bool = False) -> Path:
-    """Build a catalog that breaks no invariant: one collection, one item.
-
-    The collection holds one collection-level GeoParquet asset with the bbox
-    [0, 0, 2, 2]. The item holds a text asset and the bbox [0, 0, 1, 1].
-    ``appended_footer`` writes the GeoParquet with its ``geo`` key appended.
-    """
+    """Build a catalog that breaks no invariant: one collection, one item."""
     (root / ".portolan").mkdir(parents=True)
     _dump(
         root / "catalog.json",
@@ -240,7 +221,7 @@ def _versions_size(data: dict[str, Any]) -> None:
 
 
 def _versions_second_key(data: dict[str, Any]) -> None:
-    """Key the one data file a second time, as the #1053 thumbnail is."""
+    """Key the one data file a second time, as a derived thumbnail is keyed."""
     assets = data["versions"][0]["assets"]
     assets["other.parquet"] = dict(assets["roads.parquet"])
 
@@ -254,7 +235,7 @@ TAMPERS: dict[str, Tamper] = {
         ),
     )(root),
     "P-COLUMNS": _edit(COLLECTION, lambda c: c.update({"table:columns": [{"name": "id"}]})),
-    # The #840 shape: an absolute self link from the machine that ran add.
+    # An absolute self link from the machine that ran add.
     "P-NO-LOCAL-PATH": _edit(
         COLLECTION,
         lambda c: c["links"].append(
@@ -308,11 +289,7 @@ class TestEachCodeFires:
         assert codes(check_catalog_invariants(root)) == {code}
 
     def test_the_extent_check_reads_an_appended_geo_footer(self, tmp_path: Path) -> None:
-        """A GeoParquet with an appended ``geo`` key gets the same extent check.
-
-        ``pq.read_schema`` hides an appended key. A checker that read the
-        schema skipped the file and passed a stale extent.
-        """
+        """``pq.read_schema`` hides an appended ``geo`` key."""
         root = build_clean_catalog(tmp_path / "clean", appended_footer=True)
         assert check_catalog_invariants(root) == []
         TAMPERS["S-EXTENT-NOT-STALE"](root)
@@ -357,7 +334,7 @@ class TestEachCodeFires:
 
         assert codes(check_catalog_invariants(root)) == {"S-EXTENT-NOT-STALE"}
 
-        # add --force derives the extent from the data again (#801).
+        # add --force derives the extent from the data again.
         run_cli("add", "--force", "--portolan-dir", str(root), str(root / "wetlands"))
         assert codes(check_catalog_invariants(root)) == set()
 
@@ -441,11 +418,7 @@ class TestAntimeridianGeometry:
 
 
 class TestKnownGapsStillFire:
-    """Each ``KNOWN_INVARIANT_GAPS`` code still fires through the real CLI.
-
-    The run_cli teardown drops these codes everywhere, so these tests are what
-    keep the list honest. A fix deletes the entry and its test together.
-    """
+    """Each ``KNOWN_INVARIANT_GAPS`` code still fires through the real CLI."""
 
     def test_every_known_gap_has_a_test_here(self) -> None:
         assert set(KNOWN_INVARIANT_GAPS) == set(GAP_TESTS)

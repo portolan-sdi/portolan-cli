@@ -1,9 +1,5 @@
-"""``portolan --help`` scans each entry point group once per process (#947).
-
-Each scan reads every installed distribution, so the cost grows with the
-environment. ``plugins.manager._scan`` caches one scan per group. This test
-counts the scans in a cold process with 300 extra distributions installed. It
-replaces a 0.25 s wall-clock ceiling that measured the runner, not the code.
+"""``portolan --help`` scans each entry point group once per process.
+The test counts scans in a cold process with 300 extra distributions installed.
 """
 
 from __future__ import annotations

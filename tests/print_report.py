@@ -1,9 +1,5 @@
 """Print the lines of a push or an upload, as the CLI does.
-
-Push and upload print nothing. They send each line to the ``report`` callback
-that the caller passes (``portolan_cli.sync.report``). A test that calls them
-directly and reads the lines with ``capsys`` passes the ``print_report``
-fixture as ``report``.
+Pass the ``print_report`` fixture as ``report`` and read the lines with ``capsys``.
 """
 
 from __future__ import annotations

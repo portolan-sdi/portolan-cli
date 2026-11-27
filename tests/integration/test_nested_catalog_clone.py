@@ -1,8 +1,4 @@
-"""Integration tests for nested catalog clone (Issue #324).
-
-These tests verify that the full clone workflow correctly handles
-nested catalog structures where collections are organized under subcatalogs.
-"""
+"""Integration tests for clone of a catalog with nested subcatalogs."""
 
 from __future__ import annotations
 
@@ -19,29 +15,10 @@ if TYPE_CHECKING:
 
 
 class TestNestedCatalogCloneIntegration:
-    """Integration tests for cloning catalogs with nested subcatalogs.
-
-    Issue #324: clone fails on nested catalog structures because
-    list_remote_collections() only looks one level deep.
-
-    These tests verify the end-to-end clone workflow.
-    """
+    """Integration tests for cloning catalogs with nested subcatalogs."""
 
     @pytest.mark.integration
     def test_clone_nested_catalog_end_to_end(self, tmp_path: Path) -> None:
-        """Full end-to-end test: clone discovers and pulls nested collections.
-
-        Structure:
-            root/
-            ├── catalog.json
-            └── climate/
-                ├── catalog.json (subcatalog)
-                └── hittekaart/
-                    ├── collection.json
-                    └── versions.json
-
-        Expected: clone should find 'climate/hittekaart' and pull it correctly.
-        """
         from portolan_cli.sync.transport import clone
 
         # Root catalog pointing to subcatalog
@@ -108,8 +85,7 @@ class TestNestedCatalogCloneIntegration:
         # Verify clone succeeded
         assert result.success is True
 
-        # Verify the FULL path was used for pull (not just 'hittekaart')
-        # This is the key fix for Issue #324
+        # Pull uses the full path, not just 'hittekaart'.
         assert "climate/hittekaart" in pulled_collections, (
             f"Expected 'climate/hittekaart' in pulled collections, got: {pulled_collections}. "
             "This means clone would try to pull from the wrong URL!"
@@ -117,15 +93,6 @@ class TestNestedCatalogCloneIntegration:
 
     @pytest.mark.integration
     def test_clone_deeply_nested_catalog(self, tmp_path: Path) -> None:
-        """Test cloning a deeply nested catalog (3+ levels).
-
-        Structure:
-            root/
-            └── europe/
-                └── netherlands/
-                    └── amsterdam/
-                        └── demographics/collection.json
-        """
         root_catalog = {
             "type": "Catalog",
             "id": "root",
@@ -164,15 +131,6 @@ class TestNestedCatalogCloneIntegration:
 
     @pytest.mark.integration
     def test_clone_mixed_direct_and_nested_collections(self, tmp_path: Path) -> None:
-        """Test catalog with both direct links and nested subcatalogs.
-
-        Structure:
-            root/
-            ├── quick-data/collection.json  (direct link)
-            └── organized/
-                └── catalog.json (subcatalog)
-                    └── nested-data/collection.json
-        """
         root_catalog = {
             "type": "Catalog",
             "id": "root",

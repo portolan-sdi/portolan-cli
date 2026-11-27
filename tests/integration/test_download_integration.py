@@ -1,12 +1,4 @@
-"""Integration tests for download module.
-
-Tests for real filesystem operations without mocking obstore.
-These tests verify:
-- Directory structure preservation
-- Pattern filtering works correctly
-- Empty directory handling
-- Path building correctness
-"""
+"""Integration tests for download module."""
 
 from __future__ import annotations
 
@@ -14,9 +6,7 @@ from pathlib import Path
 
 import pytest
 
-# =============================================================================
 # Test Fixtures
-# =============================================================================
 
 
 @pytest.fixture
@@ -27,9 +17,7 @@ def download_test_dir(tmp_path: Path) -> Path:
     return download_dir
 
 
-# =============================================================================
 # Directory Structure Preservation Tests
-# =============================================================================
 
 
 class TestDirectoryStructurePreservation:
@@ -90,9 +78,7 @@ class TestDirectoryStructurePreservation:
         assert local_path == download_test_dir / "file.parquet"
 
 
-# =============================================================================
 # Single File Path Tests
-# =============================================================================
 
 
 class TestSingleFilePath:
@@ -142,9 +128,7 @@ class TestSingleFilePath:
         assert local_path == download_test_dir / "file.parquet"
 
 
-# =============================================================================
 # Pattern Matching Tests
-# =============================================================================
 
 
 class TestPatternMatching:
@@ -185,9 +169,7 @@ class TestPatternMatching:
         assert all(f.endswith(".json") for f in filtered)
 
 
-# =============================================================================
 # Dry Run Tests
-# =============================================================================
 
 
 class TestDryRun:
@@ -242,9 +224,7 @@ class TestDryRun:
         assert not nested_dir.exists()
 
 
-# =============================================================================
 # Error Handling Tests
-# =============================================================================
 
 
 class TestErrorHandling:
@@ -296,9 +276,7 @@ class TestErrorHandling:
         assert result.files_failed == 0
 
 
-# =============================================================================
 # URL Parsing Integration Tests
-# =============================================================================
 
 
 class TestUrlParsing:

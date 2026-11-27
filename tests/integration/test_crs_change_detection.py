@@ -1,10 +1,4 @@
-"""Reproduction test for issue #388: CRS change not detected after reprojection.
-
-This test verifies that when a GeoParquet file is reprojected externally,
-`portolan add` detects the change and updates the collection metadata.
-
-See: https://github.com/portolan-sdi/portolan-cli/issues/388
-"""
+"""Integration tests: ``add`` detects a CRS change after an external reprojection."""
 
 from __future__ import annotations
 
@@ -30,13 +24,7 @@ def runner() -> CliRunner:
 
 @pytest.fixture
 def catalog_with_3857_geoparquet(tmp_path: Path) -> tuple[Path, Path, Path]:
-    """Create a catalog with a GeoParquet file in EPSG:3857.
-
-    Uses collection-level asset (file directly in collection dir).
-
-    Returns:
-        Tuple of (catalog_root, collection_dir, geoparquet_path).
-    """
+    """Create a catalog with a GeoParquet file in EPSG:3857."""
     catalog_root = tmp_path / "catalog"
     catalog_root.mkdir()
 
@@ -68,17 +56,12 @@ def catalog_with_3857_geoparquet(tmp_path: Path) -> tuple[Path, Path, Path]:
 
 
 class TestCRSChangeDetection:
-    """Tests for issue #388: CRS change detection after reprojection."""
+    """CRS change detection after reprojection."""
 
     @pytest.mark.integration
     def test_is_current_detects_reprojected_file(
         self, catalog_with_3857_geoparquet: tuple[Path, Path, Path]
     ) -> None:
-        """Verify is_current() returns False for a reprojected file.
-
-        This tests the detection layer: after reprojection, the file
-        should be detected as changed (not current).
-        """
         catalog_root, collection_dir, parquet_path = catalog_with_3857_geoparquet
 
         # Add the file initially
@@ -129,16 +112,6 @@ class TestCRSChangeDetection:
     def test_readd_reprocesses_reprojected_file(
         self, catalog_with_3857_geoparquet: tuple[Path, Path, Path]
     ) -> None:
-        """Verify re-adding a reprojected file reprocesses it (not skipped).
-
-        This is the core fix for issue #388: after external reprojection,
-        `portolan add` must detect the change and reprocess the file.
-
-        Note: CRS propagation to collection.json is a separate concern.
-        GeoParquetMetadata.to_stac_properties() currently doesn't include CRS,
-        so proj:epsg/proj:code won't appear in collection.json for collection-level
-        GeoParquet assets. That's a potential enhancement for a future issue.
-        """
         catalog_root, _collection_dir, parquet_path = catalog_with_3857_geoparquet
 
         # Add the collection-level file
@@ -161,7 +134,7 @@ class TestCRSChangeDetection:
             catalog_root=catalog_root,
         )
 
-        # THE KEY TEST: file should NOT be skipped (issue #388 fix)
+        # A reprojected file is not skipped.
         assert len(skipped2) == 0, (
             f"File should NOT be skipped after reprojection, but was: {skipped2}"
         )
@@ -172,11 +145,6 @@ class TestCRSChangeDetection:
     def test_versions_json_tracks_reprojection(
         self, catalog_with_3857_geoparquet: tuple[Path, Path, Path]
     ) -> None:
-        """Verify versions.json sha256 changes after reprojection.
-
-        This confirms the detection mechanism: sha256 should differ for
-        the reprojected file, triggering reprocessing on re-add.
-        """
         catalog_root, collection_dir, parquet_path = catalog_with_3857_geoparquet
 
         # Add the file

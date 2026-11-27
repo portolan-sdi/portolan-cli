@@ -1,9 +1,5 @@
 """Command parity for `metadata init`, `metadata validate`, and `readme`.
-
-Each success test starts from a catalog that needs work, and it checks the
-effect of that work after the parity comparison. A run that exits 1 with a
-result (a stale README in check mode, an invalid metadata.yaml) cannot use the
-`parity` fixture, which expects exit 0. `_exit_one` compares those runs.
+`_exit_one` compares the runs that exit 1 with a result.
 """
 
 from __future__ import annotations
@@ -40,7 +36,7 @@ pytestmark = pytest.mark.integration
 T = TypeVar("T")
 
 STALE = "stale\n"
-# The results hold str(Path), as the command output did before #1133: backslashes on Windows.
+# The results hold str(Path): backslashes on Windows.
 READMES = ["README.md", str(PurePath("points/README.md"))]
 ROOT_METADATA = str(PurePath(".portolan/metadata.yaml"))
 POINTS_METADATA = str(PurePath("points/.portolan/metadata.yaml"))
@@ -65,12 +61,7 @@ def _exit_one(
     check_tree: Callable[[Path], None],
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Run a command that exits 1 with a result, then its library call, on fresh catalogs.
-
-    Both sides use the same path, as in the `parity` fixture. ``check_tree``
-    checks the catalog after each side.
-
-    Returns:
-        The command envelope and the library ``to_dict()``.
+    Return the command envelope and the library ``to_dict()``.
     """
     build(root)
     envelope: dict[str, Any] = json.loads(run_cli(*args, "--json", cwd=root, expect=1).stdout)
@@ -89,11 +80,7 @@ def points_catalog(
     run_cli: RunCli,
     valid_points_geojson: Path,
 ) -> Callable[[Path], None]:
-    """Build a catalog with one collection, `points`, that holds one GeoParquet item.
-
-    The root holds a metadata.yaml template with a license. `points` holds no
-    metadata.yaml.
-    """
+    """Build a catalog with a licensed root template and one GeoParquet collection, `points`."""
 
     def build(root: Path) -> None:
         build_conformant_catalog(root)

@@ -1,13 +1,4 @@
-"""Integration tests for `portolan init` command.
-
-User Story 1: Initialize Catalog with Auto-Extracted Metadata
-
-Tests cover:
-- Full workflow: `portolan init --auto`
-- catalog.json structure verification (now at ROOT level)
-- Warning messages for missing fields
-- Error handling for existing catalog
-"""
+"""Integration tests for `portolan init` command."""
 
 from __future__ import annotations
 
@@ -64,7 +55,6 @@ class TestInitCommandAutoMode:
     def test_id_flag_writes_catalog_json_and_versions_json(
         self, runner: CliRunner, tmp_path: Path
     ) -> None:
-        """--id must reach both id write sites, so they cannot drift (issue #821)."""
         catalog_dir = tmp_path / "publish"
         catalog_dir.mkdir()
 
@@ -93,18 +83,13 @@ class TestInitCommandAutoMode:
 
     @pytest.mark.integration
     def test_init_creates_all_management_files(self, runner: CliRunner, tmp_path: Path) -> None:
-        """portolan init --auto should create management files in correct locations.
-
-        Versions.json is consumer-visible metadata at catalog root.
-        Per issue #290: config.yaml alone is sufficient (state.json removed).
-        """
         with runner.isolated_filesystem(temp_dir=tmp_path):
             result = runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
 
             assert result.exit_code == 0
             # Internal tooling state: lives in .portolan/
             assert Path(".portolan/config.yaml").exists()
-            # state.json removed per issue #290
+            # No state.json: config.yaml alone is enough.
             assert not Path(".portolan/state.json").exists()
             # Consumer-visible metadata: lives at catalog root
             assert Path("versions.json").exists()

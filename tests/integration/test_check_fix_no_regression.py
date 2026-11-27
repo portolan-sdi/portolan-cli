@@ -1,21 +1,4 @@
-"""`check --fix` must not make a catalog worse (issue #709).
-
-Two defects hid behind one command.
-
-`portolan add` records an item-level asset in versions.json under the key
-``{item_id}/{filename}``, while the freshness reader looked it up under
-``{filename}``. The lookup never matched, so every item-level asset read as
-STALE forever. `check --fix` then rewrote each item on every run, stamped
-``properties.datetime`` with the time of the run, and left items.parquet behind,
-which raised two PTL-DAT-016 errors.
-
-Separately, the scan asked only for ``{directory name}.json``. An item JSON
-named after a ``--item-id`` override does not answer to that name, so `--fix`
-created a second item for the same data file.
-
-The catalogs here come from the real `init` + `add` path. A hand-built tree
-would not carry the versions.json key that causes the bug.
-"""
+"""`check --fix` must not make a catalog worse."""
 
 from __future__ import annotations
 
@@ -37,9 +20,8 @@ if TYPE_CHECKING:
 
 pytestmark = [pytest.mark.integration, pytest.mark.realdata]
 
-# `add --item-id` writes asset hrefs relative to a directory that does not
-# exist, so run_cli must not check those catalogs at teardown.
-# The test deletes the item JSON and leaves the collection's item link dangling.
+# `add --item-id` writes hrefs relative to a missing directory, and the item
+# JSON is deleted, so run_cli must not check these catalogs at teardown.
 DELETED_ITEM_REASON = "check_fix: the test deletes the item JSON on purpose"
 
 
@@ -96,12 +78,7 @@ class TestFreshnessBaseline:
     def test_added_item_scans_as_fresh(
         self, run_cli: RunCli, tmp_path: Path, valid_rgb_cog: Path
     ) -> None:
-        """The scan resolves the ``{item_id}/{filename}`` versions.json key.
-
-        Before the fix the scan reported STALE with the reason
-        ``mtime, bbox, feature_count, schema``, because the lookup used the bare
-        file name and found no entry.
-        """
+        """The scan resolves the ``{item_id}/{filename}`` versions.json key."""
         root = _added_raster_catalog(run_cli, tmp_path / "cat", valid_rgb_cog)
 
         report = scan_catalog_metadata(root)
@@ -137,11 +114,7 @@ class TestFreshnessBaseline:
     def test_fix_does_not_raise_the_error_count(
         self, run_cli: RunCli, tmp_path: Path, valid_rgb_cog: Path
     ) -> None:
-        """The headline promise of #709.
-
-        Before the fix the count went from 3 to 5, because the rewritten item
-        no longer agreed with items.parquet.
-        """
+        """The error count does not rise from 3 to 5 after the repair."""
         root = _added_raster_catalog(run_cli, tmp_path / "cat", valid_rgb_cog)
         errors_before, warnings_before = _counts(run_cli, root)
 
@@ -154,11 +127,7 @@ class TestFreshnessBaseline:
     def test_fix_keeps_a_null_datetime(
         self, run_cli: RunCli, tmp_path: Path, valid_rgb_cog: Path
     ) -> None:
-        """`add` writes ``datetime: null`` without ``--datetime``.
-
-        The refresh must not invent an acquisition date. Before the fix it wrote
-        the wall-clock time of the run.
-        """
+        """`add` writes ``datetime: null`` without ``--datetime``."""
         root = _added_raster_catalog(run_cli, tmp_path / "cat", valid_rgb_cog)
         assert _item_json(root)["properties"]["datetime"] is None
 
@@ -176,11 +145,7 @@ class TestNoFabricatedItem:
         tmp_path: Path,
         valid_rgb_cog: Path,
     ) -> None:
-        """`add --item-id scene` writes ``scene.json`` in directory ``rapidai4eo``.
-
-        The scan asked only for ``rapidai4eo.json``, called the COG MISSING, and
-        `--fix` fabricated a second item beside ``scene.json``.
-        """
+        """`add --item-id scene` writes ``scene.json`` in directory ``rapidai4eo``."""
         root = _added_raster_catalog(
             run_cli,
             tmp_path / "cat",
@@ -200,13 +165,7 @@ class TestNoFabricatedItem:
         tmp_path: Path,
         valid_rgb_cog: Path,
     ) -> None:
-        """The renamed item covers its directory, so no data file needs one.
-
-        `add --item-id` also writes each asset href relative to a directory named
-        after the id, which does not exist. That is a separate defect (#840), and
-        the MISSING results it produces stay reported. This test pins only the
-        trigger #709 named: no data file may read as an item that needs a JSON.
-        """
+        """The renamed item covers its directory, so no data file needs one."""
         root = _added_raster_catalog(
             run_cli,
             tmp_path / "cat",
@@ -230,12 +189,7 @@ class TestNoFabricatedItem:
         valid_rgb_cog: Path,
         build_damaged_catalog: Callable[[Path, str], Path],
     ) -> None:
-        """A GeoJSON Feature is not a STAC Item, so it covers nothing.
-
-        Only `type: "Feature"` plus a string `stac_version` counts. Without the
-        second test a hand-dropped `footprint.json` would suppress the MISSING
-        result, and `--fix` would never create the item the data file needs.
-        """
+        """A GeoJSON Feature is not a STAC Item, so it covers nothing."""
         root = _added_raster_catalog(
             run_cli,
             build_damaged_catalog(tmp_path / "cat", DELETED_ITEM_REASON),
@@ -300,11 +254,7 @@ class TestCreatedItemConforms:
     def test_recreated_item_restores_the_original_error_count(
         self, run_cli: RunCli, stale_mirror_catalog: Path
     ) -> None:
-        """Delete the item JSON, run `--fix`, and land back where you started.
-
-        Before the fix the count went from 4 errors to 10, because
-        `create_missing_item` wrote an item with no links and no checksums.
-        """
+        """Delete the item JSON, run `--fix`, and land back where you started."""
         root = stale_mirror_catalog
         errors_before, warnings_before = _counts(run_cli, root)
 
@@ -359,13 +309,7 @@ class TestRecreatedItemEqualsAddedItem:
     def test_recreated_item_is_byte_identical_to_an_added_item(
         self, run_cli: RunCli, tmp_path: Path, valid_rgb_cog: Path
     ) -> None:
-        """The item JSON and the container links match `add --force` byte for byte.
-
-        Before the fix the recreated item skipped ``finalize_items``. It kept the
-        hrefs ``rapidai4eo.tif`` for ``./rapidai4eo.tif``, its links had no
-        titles, and the collection and the catalog listed their links in the
-        order of the links fixer, not the order of add.
-        """
+        """The item JSON and the container links match `add --force` byte for byte."""
         repaired = _added_raster_catalog(run_cli, tmp_path / "repaired", valid_rgb_cog)
         (repaired / "imagery" / "rapidai4eo" / "rapidai4eo.json").unlink()
         run_cli("check", str(repaired), "--fix", "--metadata", expect=None)
@@ -390,12 +334,7 @@ class TestRecreatedItemEqualsAddedItem:
     def test_the_repair_keeps_the_root_index_in_step(
         self, run_cli: RunCli, tmp_path: Path, valid_rgb_cog: Path
     ) -> None:
-        """The root versions.json counts the mirror the repair writes after finalize.
-
-        ``finalize_items`` writes the root counts, then the items.parquet mirror
-        changes the collection snapshot. Without a sync the root index records
-        the counts from before the mirror.
-        """
+        """The root versions.json counts the mirror the repair writes after finalize."""
         repaired = _added_raster_catalog(run_cli, tmp_path / "repaired", valid_rgb_cog)
         (repaired / "imagery" / "rapidai4eo" / "rapidai4eo.json").unlink()
         # A catalog from before the mirror: no items.parquet and no record of one.
@@ -431,11 +370,7 @@ class TestRecreatedItemEqualsAddedItem:
     def test_the_links_fixer_changes_nothing_that_add_wrote(
         self, run_cli: RunCli, tmp_path: Path, valid_rgb_cog: Path
     ) -> None:
-        """add and the links fixer write one link order.
-
-        Before the fix the fixer rebuilt catalog.json, collection.json, and the
-        item, so any repair that ran the fixer moved the links of every object.
-        """
+        """add and the links fixer write one link order."""
         from portolan_cli.validation.fixers import FIXERS
 
         root = _added_raster_catalog(run_cli, tmp_path / "cat", valid_rgb_cog)
@@ -444,16 +379,12 @@ class TestRecreatedItemEqualsAddedItem:
 
 
 class TestOneFixIsOneRun:
-    """`check --fix` shares one run state and commits it once (#995)."""
+    """`check --fix` shares one run state and commits it once."""
 
     def test_three_mirrored_collections_write_the_index_once(
         self, tmp_path: Path, fixtures_dir: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Each mirror refresh opened its own run, and each run wrote the index.
-
-        Each run also parsed config.yaml again. Three collections gave three
-        index writes and many parses.
-        """
+        """Three mirrored collections write the index once, in one run."""
         from click.testing import CliRunner
 
         from portolan_cli.cli import cli

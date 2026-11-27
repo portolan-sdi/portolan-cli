@@ -1,12 +1,4 @@
-"""Integration tests for check --fix --remove-legacy.
-
-Tests the full CLI workflow for removing legacy files after conversion.
-Per Issue #209:
-- Flag must be explicit (--remove-legacy)
-- Only delete after successful conversion
-- Handle shapefile sidecars
-- Handle FileGDB directories
-"""
+"""Integration tests for check --fix --remove-legacy."""
 
 from __future__ import annotations
 
@@ -20,9 +12,7 @@ from click.testing import CliRunner
 
 from portolan_cli.cli import cli
 
-# =============================================================================
 # Fixtures
-# =============================================================================
 
 
 @pytest.fixture
@@ -51,9 +41,7 @@ def valid_points_geojson(tmp_path: Path) -> Path:
     return geojson
 
 
-# =============================================================================
 # Tests: CLI Flag Integration
-# =============================================================================
 
 
 @pytest.mark.integration
@@ -79,9 +67,7 @@ class TestRemoveLegacyFlag:
         assert "--remove-legacy requires --fix" in result.output or result.exit_code != 0
 
 
-# =============================================================================
 # Tests: Conversion + Removal Workflow
-# =============================================================================
 
 
 @pytest.mark.integration
@@ -172,9 +158,7 @@ class TestRemoveLegacyConversion:
         assert not (input_dir / "points.parquet").exists()
 
 
-# =============================================================================
 # Tests: Shapefile Sidecars
-# =============================================================================
 
 
 @pytest.mark.integration
@@ -265,9 +249,7 @@ class TestRemoveLegacyShapefile:
             assert (parent / "test.parquet").exists()
 
 
-# =============================================================================
 # Tests: FileGDB Directory
-# =============================================================================
 
 
 @pytest.mark.integration
@@ -307,9 +289,7 @@ class TestRemoveLegacyFileGDB:
             assert not gdb.exists()
 
 
-# =============================================================================
 # Tests: JSON Output
-# =============================================================================
 
 
 @pytest.mark.integration
@@ -341,9 +321,7 @@ class TestRemoveLegacyJsonOutput:
         assert conversion["legacy_removed"]["summary"]["removed_count"] >= 1
 
 
-# =============================================================================
 # Tests: Edge Cases
-# =============================================================================
 
 
 @pytest.mark.integration

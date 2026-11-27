@@ -1,13 +1,4 @@
-"""Integration tests for `portolan info .` at catalog and subcatalog roots.
-
-Tests the fix for GitHub issues #291 and #292 where `portolan info .` failed
-with "Collection not found" instead of showing catalog-level information.
-
-These tests verify:
-1. Real directory structure creation and navigation
-2. Full CLI invocation with path resolution
-3. Both human-readable and JSON output modes
-"""
+"""Integration tests for `portolan info .` at catalog and subcatalog roots."""
 
 from __future__ import annotations
 
@@ -23,22 +14,7 @@ if TYPE_CHECKING:
 
 @pytest.fixture
 def nested_catalog_structure(tmp_path: Path) -> Path:
-    """Create a realistic nested catalog structure for integration testing.
-
-    Structure:
-        catalog/
-        ├── .portolan/
-        │   └── config.yaml
-        ├── catalog.json          (root catalog)
-        ├── climate/
-        │   ├── .portolan/
-        │   │   └── config.yaml
-        │   ├── catalog.json      (subcatalog)
-        │   └── temperature/
-        │       └── collection.json
-        └── demographics/
-            └── collection.json
-    """
+    """Create a realistic nested catalog structure for integration testing."""
     catalog_root = tmp_path / "catalog"
     catalog_root.mkdir()
 

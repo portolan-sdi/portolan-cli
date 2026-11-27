@@ -1,9 +1,5 @@
 """CodSpeed benchmarks for ``scan`` on a tree of about 1,900 files.
-
-CodSpeed counts CPU instructions in simulation mode, so a run on a shared
-runner gives the same number each time. ``tests/perf/test_scan_scaling.py``
-holds the linear-work property of #314. The old SC-001 and SC-002 tests
-asserted wall-clock limits on shared runners and are gone.
+tests/perf/test_scan_scaling.py holds the linear-work property.
 """
 
 from __future__ import annotations
@@ -26,21 +22,12 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
-# =============================================================================
-# Minimal Valid File Content (Issue #464)
-# =============================================================================
-# Fake file content (b"dummy content") causes rasterio/pyarrow to throw
-# exceptions during format validation. Exception handling is slower than
-# the happy path, causing flaky timing on CI. These minimal valid bytes
-# ensure format detection succeeds without triggering error paths.
+# Minimal valid file content. Invalid bytes make rasterio and pyarrow raise,
+# and the exception path is slow and noisy.
 
 
 def _create_minimal_tiff() -> bytes:
-    """Create minimal valid TIFF (1x1 pixel, ~370 bytes).
-
-    Not a COG, but valid enough for rasterio to open without error.
-    Will be classified as CONVERTIBLE (non-COG TIFF) quickly.
-    """
+    """Create a minimal valid 1x1 TIFF that is not a COG."""
     buf = io.BytesIO()
     profile = {
         "driver": "GTiff",
@@ -57,11 +44,7 @@ def _create_minimal_tiff() -> bytes:
 
 
 def _create_minimal_parquet() -> bytes:
-    """Create minimal valid Parquet (1 row, 1 column, ~490 bytes).
-
-    Plain Parquet without geo metadata. Will be classified as
-    CLOUD_NATIVE (plain Parquet) quickly by is_geoparquet() check.
-    """
+    """Create a minimal plain Parquet file with no geo metadata."""
     buf = io.BytesIO()
     table = pa.table({"id": pa.array([1], type=pa.int32())})
     pq.write_table(table, buf)
@@ -80,18 +63,12 @@ def _get_minimal_parquet() -> bytes:
     return _create_minimal_parquet()
 
 
-# =============================================================================
-# Benchmark Fixtures
-# =============================================================================
+# Benchmark fixtures
 
 
 @pytest.fixture(scope="session")
 def benchmark_dir_1k(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    """Create a directory with ~1000 files for benchmarking.
-
-    Structure: 100 directories with 10 files each = 1000 files.
-    Mix of formats: .parquet, .geojson, .shp (with sidecars), .tif
-    """
+    """Create 100 directories of 10 mixed-format files each."""
     base = tmp_path_factory.mktemp("benchmark_1k")
     _create_benchmark_structure(base, dirs=100, files_per_dir=10)
     return base
@@ -99,25 +76,15 @@ def benchmark_dir_1k(tmp_path_factory: pytest.TempPathFactory) -> Path:
 
 @pytest.fixture(scope="session")
 def benchmark_dir_deep(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    """Create a deeply nested directory structure.
-
-    Structure: 10 levels deep, 10 files at each level = 100 files.
-    Tests depth traversal performance.
-    """
+    """Create a tree 10 levels deep with 10 files at each level."""
     base = tmp_path_factory.mktemp("benchmark_deep")
     _create_deep_structure(base, depth=10, files_per_level=10)
     return base
 
 
 def _create_benchmark_structure(base: Path, dirs: int, files_per_dir: int) -> None:
-    """Create benchmark directory structure with mixed formats.
-
-    Note: Every 4th file adds 3 sidecar files (.shp, .dbf, .shx), so actual
-    file count = dirs × files_per_dir + dirs × (files_per_dir // 4) × 3.
-    For default 1K target (100 dirs × 10 files): ~1900 files total.
-
-    Uses minimal valid file content for formats requiring content inspection
-    (.tif, .parquet) to avoid slow exception handling paths. See issue #464.
+    """Create the benchmark tree; every 4th file adds 3 shapefile sidecars.
+    Formats that need content inspection get valid bytes, so detection takes no slow error path.
     """
     extensions = [".parquet", ".geojson", ".tif", ".gpkg"]
 
@@ -165,9 +132,7 @@ def _create_deep_structure(base: Path, depth: int, files_per_level: int) -> None
             (current / filename).write_bytes(parquet_bytes)
 
 
-# =============================================================================
 # Benchmarks
-# =============================================================================
 
 pytestmark = pytest.mark.benchmark
 

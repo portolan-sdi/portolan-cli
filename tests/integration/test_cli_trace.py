@@ -1,4 +1,4 @@
-"""Integration tests for the logging flags and the ``meta`` block (issue #991)."""
+"""Integration tests for the logging flags and the ``meta`` block."""
 
 from __future__ import annotations
 
@@ -39,11 +39,7 @@ SECTION_4_COUNTERS = {
 
 @pytest.fixture
 def catalog_with_data(conformant_catalog: Path) -> Path:
-    """A conformant catalog with one vector and one raster file to add.
-
-    The vector file already declares a bbox covering column. A file without
-    one makes ``add`` print a rewrite notice to stdout, also in JSON mode.
-    """
+    """A conformant catalog with one vector and one raster file to add."""
     vectors = conformant_catalog / "districts"
     vectors.mkdir()
     shutil.copy(
@@ -114,9 +110,8 @@ class TestTimings:
         assert counters["checksum.files"] > 0
         assert counters["checksum.bytes"] > 0
         assert counters["versions_json.reads"] > 0
-        # One parse per YAML file in the catalog: the root config.yaml and the
-        # root metadata.yaml. The add command opens one RunState, and every
-        # reader asks it, so each file parses once (issues #1006, #994).
+        # One parse per YAML file: add opens one RunState, and every reader
+        # asks it, so the root config.yaml and metadata.yaml parse once each.
         assert counters["config.yaml_parses"] == 2
         assert counters["parquet.opens"] > 0
         assert counters["raster.opens"] > 0

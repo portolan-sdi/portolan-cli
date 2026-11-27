@@ -1,1 +1,1 @@
-"""Performance harness: seeded scenarios, counter gates, and memory ceilings (#992)."""
+"""Performance harness: seeded scenarios, counter gates, and memory ceilings."""

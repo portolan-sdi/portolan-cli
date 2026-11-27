@@ -1,14 +1,4 @@
-"""Integration tests for parallel push functionality (issue #229).
-
-Tests for real filesystem operations and multi-collection parallel push.
-These tests verify:
-- Parallel execution with multiple collections
-- Result aggregation from concurrent operations
-- Error handling during parallel execution
-- CLI integration with --workers flag
-
-Note: remote is a sensitive setting and must be set via env var (Issue #356).
-"""
+"""Integration tests for parallel push."""
 
 from __future__ import annotations
 
@@ -34,21 +24,17 @@ from portolan_cli.sync.push import (
 if TYPE_CHECKING:
     from pathlib import Path
 
-# Remote URL for tests - set via env var (Issue #356: sensitive settings)
+# The remote is sensitive, so tests set it through an env var.
 TEST_REMOTE = "s3://test/catalog"
 
 
 @pytest.fixture
 def multi_collection_catalog(tmp_path: Path) -> Path:
-    """Create a catalog with multiple collections for parallel push testing.
-
-    Note: remote must be set via PORTOLAN_REMOTE env var (Issue #356).
-    """
+    """Create a catalog with multiple collections for parallel push testing."""
     catalog_dir = tmp_path / "catalog"
     catalog_dir.mkdir()
 
-    # Create .portolan/config.yaml (sentinel file)
-    # Note: remote set via env var, not config.yaml (Issue #356)
+    # Create .portolan/config.yaml (sentinel file). The remote comes from the env var.
     portolan_dir = catalog_dir / ".portolan"
     portolan_dir.mkdir()
     (portolan_dir / "config.yaml").write_text("version: '1.0'\n")

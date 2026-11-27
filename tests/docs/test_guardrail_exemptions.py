@@ -1,18 +1,5 @@
-"""tests/guardrail_exemptions.txt lists every exemption the guardrails grant (#1035).
-
-The file holds three kinds of line. This module keeps it equal to the code:
-
-- ``xfail``: one line per open issue that a strict xfail, a
-  ``KNOWN_INVARIANT_GAPS`` entry, a rashid scenario pin, or an ``invariant``
-  reason names. The set of
-  issue numbers in the code equals the set in the file, so a fix that deletes
-  its marker must delete its line, and a new marker must add one.
-- ``invariant``: each ``build_damaged_catalog`` reason. Each one is used by a
-  test.
-- ``config-key``: each setting that the reachability test cannot observe.
-
-The count of each kind is pinned. A change to a count is a reviewed change to
-this module.
+"""Keep tests/guardrail_exemptions.txt equal to the exemptions in the code.
+It holds ``xfail``, ``invariant`` and ``config-key`` lines, and the count of each kind is pinned.
 """
 
 from __future__ import annotations
@@ -81,11 +68,8 @@ def _docstrings(tree: ast.Module) -> set[int]:
 
 
 def xfail_reasons(tree: ast.Module) -> set[str]:
-    """Return the reasons of the xfail markers in one module.
-
-    A constant reason counts as written. A reason built from a name, such as a
-    dict of reasons per case, counts every ``#N: ...`` string of the module
-    that is not a docstring.
+    """Return the xfail reasons of one module.
+    A reason built from a name counts every ``#N: ...`` string of the module that is not a docstring.
     """
     reasons: set[str] = set()
     indirect = False
@@ -195,12 +179,7 @@ def test_every_invariant_reason_is_used() -> None:
 
 
 def test_the_scan_sees_the_markers_it_counts() -> None:
-    """Guard the scan: it reads the reason of a strict xfail marker.
-
-    geoparquet-io 1.7.0 fixed gpio#1222, the marker this guard read. The guard
-    now reads a module written here, so it does not depend on a marker in the
-    tree.
-    """
+    """The scan reads the reason of a strict xfail marker in a module written here."""
     tree = ast.parse(
         "import pytest\n"
         "@pytest.mark.xfail(strict=True, reason='https://example.org/issues/1: kept')\n"

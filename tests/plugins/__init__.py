@@ -1,1 +1,1 @@
-"""Tests that need the example plugin installed (#947)."""
+"""Tests that need the example plugin installed."""

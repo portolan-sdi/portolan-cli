@@ -1,7 +1,5 @@
-"""An in-memory remote for push tests.
-
-push writes to an obstore ``MemoryStore``, and the test reads the store back.
-A test then asserts what the bucket holds, not which push function ran.
+"""An in-memory obstore ``MemoryStore`` remote for push tests.
+A test asserts what the bucket holds, not which push function ran.
 """
 
 from __future__ import annotations

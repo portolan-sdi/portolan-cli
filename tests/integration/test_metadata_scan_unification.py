@@ -1,21 +1,6 @@
-"""Integration tests for unified metadata scanner (#345 + #384).
+"""Integration tests for the manifest-driven metadata scanner and its ``check --fix`` contract.
 
-These tests pin the manifest-driven scanning contract introduced in
-:
-
-- Issue #345: collection-level assets registered in collection.json (e.g.,
-  items.parquet from `add --stac-geoparquet`) must NOT be reported as MISSING
-  by metadata_fresh.
-
-- Issue #384: every status that `check` reports must be actionable by
-  `check --fix` — either fixed or explained as cannot-fix. No silent skips.
-
-- Orphans: parquet/tif files under a collection that are not registered in
-  any STAC manifest are reported as ORPHANED with a register-or-delete hint.
-
-- Genuine MISSING: an item directory containing a data file but lacking
-  item.json is detected by `check` and `--fix` creates the item.json at the
-  hierarchical location matching what `add` produces.
+Registered assets are not MISSING, unregistered files are ORPHANED, and --fix acts on each status.
 """
 
 from __future__ import annotations
@@ -99,11 +84,7 @@ def _write_item_json(
     asset_href: str,
     media_type: str,
 ) -> None:
-    """Write a minimal valid item.json at hierarchical location.
-
-    Convention matches `_create_and_save_item` in add.py:
-    {item_dir}/{item_id}.json with assets resolved relative to item_dir.
-    """
+    """Write ``{item_dir}/{item_id}.json`` as `add` does, with assets relative to item_dir."""
     data = {
         "type": "Feature",
         "stac_version": "1.1.0",
@@ -209,13 +190,9 @@ def _make_raster_collection_with_items_parquet(
     catalog_dir: Path,
     valid_singleband_cog: Path,
 ) -> Path:
-    """Build a raster collection with N items + items.parquet rollup at root.
+    """Build a raster collection with two items and a registered items.parquet rollup.
 
-    Mirrors `add --stac-geoparquet` output: per-tile item subdirs each with
-    item.json + .tif, plus collection-level items.parquet asset registered
-    in collection.json under key 'geoparquet-items'.
-
-    Returns the collection directory path.
+    Return the collection directory.
     """
     _write_catalog_json(catalog_dir)
     collection_dir = catalog_dir / "rasters"
@@ -253,22 +230,18 @@ def _make_raster_collection_with_items_parquet(
     return collection_dir
 
 
-# =============================================================================
-# Issue #345: collection-level items.parquet must not trip metadata_fresh
-# =============================================================================
+# A collection-level items.parquet must not trip metadata_fresh
 
 
 @pytest.mark.integration
 class TestIssue345CollectionLevelAssetsNotMissing:
-    """Bug #345: items.parquet at collection root flagged as MISSING."""
+    """A registered items.parquet at the collection root is not MISSING."""
 
     def test_scanner_does_not_flag_registered_items_parquet_as_missing(
         self,
         tmp_path: Path,
         valid_singleband_cog: Path,
     ) -> None:
-        """Manifest-driven scanner: items.parquet is a registered collection
-        asset, not an item-needing-JSON, so MISSING count must be 0."""
         catalog_dir = tmp_path / "catalog"
         catalog_dir.mkdir()
         _make_raster_collection_with_items_parquet(catalog_dir, valid_singleband_cog)
@@ -286,12 +259,7 @@ class TestIssue345CollectionLevelAssetsNotMissing:
         tmp_path: Path,
         valid_singleband_cog: Path,
     ) -> None:
-        """End-to-end: `check` reports no defect against the items.parquet rollup.
-
-        The catalog is hand-built and trips plenty of unrelated PTL-* rules, so
-        the guard is targeted: no finding may name items.parquet. Before #345,
-        the rollup was treated as a file needing its own item.json.
-        """
+        """The hand-built catalog trips unrelated rules, so only items.parquet findings count."""
         catalog_dir = tmp_path / "catalog"
         catalog_dir.mkdir()
         # .portolan sentinel makes catalog discoverable
@@ -306,22 +274,18 @@ class TestIssue345CollectionLevelAssetsNotMissing:
         assert offending == [], f"items.parquet flagged as a defect: {offending}"
 
 
-# =============================================================================
-# Issue #384: check ↔ --fix symmetry
-# =============================================================================
+# check and --fix symmetry
 
 
 @pytest.mark.integration
 class TestIssue384CheckFixSymmetry:
-    """Bug #384: every status check reports, --fix must address."""
+    """--fix addresses every status that check reports."""
 
     def test_missing_reported_by_check_is_actionable_by_fix(
         self,
         tmp_path: Path,
         valid_singleband_cog: Path,
     ) -> None:
-        """Item dir on disk with data but no item.json → MISSING from check
-        AND --fix successfully creates the item.json."""
         from portolan_cli.metadata.fix import FixAction, fix_metadata
 
         catalog_dir = tmp_path / "catalog"
@@ -356,8 +320,6 @@ class TestIssue384CheckFixSymmetry:
         tmp_path: Path,
         valid_singleband_cog: Path,
     ) -> None:
-        """No status appears in check that --fix doesn't see. The shared
-        scanner guarantees this by construction."""
         from portolan_cli.metadata.fix import fix_metadata
 
         catalog_dir = tmp_path / "catalog"
@@ -396,9 +358,7 @@ class TestIssue384CheckFixSymmetry:
         )
 
 
-# =============================================================================
-# Orphan detection (#384 expected behavior #3)
-# =============================================================================
+# Orphan detection
 
 
 @pytest.mark.integration
@@ -409,8 +369,6 @@ class TestOrphanFiles:
         self,
         tmp_path: Path,
     ) -> None:
-        """Parquet at collection root not in collection.json.assets and not
-        in any item.json → ORPHANED, not MISSING."""
         catalog_dir = tmp_path / "catalog"
         catalog_dir.mkdir()
         _write_catalog_json(catalog_dir)
@@ -458,14 +416,12 @@ class TestOrphanFiles:
         assert (collection_dir / "stray.parquet").exists()
 
 
-# =============================================================================
 # Vector single-file collection-level: no false MISSING
-# =============================================================================
 
 
 @pytest.mark.integration
 class TestVectorCollectionLevelAsset:
-    """Vector single-file pattern from: no item.json expected."""
+    """A single-file vector collection expects no item.json."""
 
     def test_collection_level_vector_asset_not_missing(
         self,
@@ -512,13 +468,7 @@ class TestVectorCollectionLevelAsset:
         tmp_path: Path,
         href: str,
     ) -> None:
-        """An asset whose href is a scheme-qualified URI (file://, gs://,
-        s3://, https://) must not be path-joined to the collection dir and
-        reported MISSING. The iceberg backend writes ``file:///abs/path``
-        for its table-location asset; remote-hosted STAC assets use other
-        schemes. The scanner only owns the local filesystem — non-local
-        hrefs are out of scope.
-        """
+        """The scanner owns only the local filesystem, so a non-local href is out of scope."""
         catalog_dir = tmp_path / "catalog"
         _write_catalog_with_iceberg_asset(catalog_dir, href=href)
 
@@ -530,9 +480,8 @@ class TestVectorCollectionLevelAsset:
     @pytest.mark.parametrize(
         "href",
         [
-            # Relative, scheme-less warehouse paths — the case the scheme
-            # check alone misses. Must be recognized as non-local via the
-            # application/x-iceberg media type, not path-joined to disk.
+            # Relative warehouse paths: only the application/x-iceberg media
+            # type marks them as non-local.
             "data/v3/statfi_paavo",
             "./warehouse/portolake/agriculture",
             "../shared/warehouse/agriculture",
@@ -543,17 +492,7 @@ class TestVectorCollectionLevelAsset:
         tmp_path: Path,
         href: str,
     ) -> None:
-        """An Iceberg asset (``application/x-iceberg``) whose href is a
-        relative, scheme-less warehouse path must NOT be treated as a local
-        file and reported MISSING.
-
-        The scheme check (``_is_scheme_qualified``) only catches absolute
-        URIs; an Iceberg table location can serialize to a relative path, so
-        the scanner relies on the extension media type to know the asset is
-        backend-managed and out of the local-filesystem scope. Without this
-        guard, ``check --fix`` tries to open the assembled local path and
-        errors with "Data file not found".
-        """
+        """Otherwise ``check --fix`` opens the joined local path and fails "Data file not found"."""
         catalog_dir = tmp_path / "catalog"
         _write_catalog_with_iceberg_asset(catalog_dir, href=href)
 
@@ -566,14 +505,7 @@ class TestVectorCollectionLevelAsset:
         self,
         tmp_path: Path,
     ) -> None:
-        """Data files inside an in-collection Iceberg warehouse aren't ORPHANED.
-
-        When the warehouse href resolves under the collection dir, the table's
-        own ``.parquet`` data files sit on disk but belong to the Iceberg
-        backend, not the STAC manifest. They must not be reported as orphans.
-        This pins the (non-obvious) invariant that the scanner does not sweep
-        nested warehouse contents.
-        """
+        """The warehouse's own ``.parquet`` files belong to the Iceberg backend, not STAC."""
         catalog_dir = tmp_path / "catalog"
         collection_dir = _write_catalog_with_iceberg_asset(catalog_dir, href="data/v3/statfi_paavo")
         # Materialize the warehouse with real Iceberg-style data + metadata.
@@ -590,7 +522,7 @@ class TestVectorCollectionLevelAsset:
         )
 
 
-# Helpers shared by F1/F3/F4 tests below.
+# Helpers shared by the freshness and layout tests below.
 
 
 def _write_versions_json_for(
@@ -599,12 +531,9 @@ def _write_versions_json_for(
     asset_filename: str,
     file_path: Path,
 ) -> None:
-    """Write a versions.json recording `file_path` as a tracked asset.
+    """Write a versions.json that tracks `file_path` in its current state, so a scan is FRESH.
 
-    Captures source_mtime, sha256, feature_count, and schema_fingerprint
-    from the file's *current* state so a subsequent scanner call returns
-    FRESH. Tests then mutate the file (and bump mtime) to force STALE,
-    avoiding the BREAKING-on-None-fingerprint trap that bit me earlier.
+    It records the schema fingerprint too, because a None fingerprint reads as BREAKING.
     """
     import hashlib
 
@@ -650,26 +579,18 @@ def _bump_mtime(path: Path, delta: float = 60.0) -> None:
     os.utime(path, (new_mtime, new_mtime))
 
 
-# =============================================================================
-# F1: collection-level registered assets get FRESH/STALE/BREAKING checks
-# =============================================================================
+# Collection-level registered assets get FRESH/STALE/BREAKING checks
 
 
 @pytest.mark.integration
 class TestCollectionLevelFreshness:
-    """#350: collection-level data assets must be freshness-checked.
-
-    Before this fix, the scanner registered collection-level assets but never
-    called `check_file_metadata` on them, so STALE/BREAKING were silently
-    undetectable for the exact layout #350 mandates.
-    """
+    """Collection-level data assets are freshness-checked."""
 
     def test_collection_level_vector_asset_reports_fresh(
         self,
         tmp_path: Path,
         valid_points_parquet: Path,
     ) -> None:
-        """data.parquet registered + tracked in versions.json → FRESH."""
         catalog_dir = tmp_path / "catalog"
         collection_dir, data_path = _write_catalog_with_data_asset(
             catalog_dir, valid_points_parquet, collection_id="boundaries", filename="data.parquet"
@@ -694,15 +615,6 @@ class TestCollectionLevelFreshness:
         tmp_path: Path,
         valid_points_parquet: Path,
     ) -> None:
-        """Replacing data.parquet with a row-different file after the
-        versions.json snapshot must surface as STALE.
-
-        Regression test for the F1 blind spot (prior code never called any
-        freshness check on collection-level assets) AND for the bbox-None
-        heuristic guard: a touch-only mtime bump should NOT be STALE; only
-        a real content/schema change should. We exercise the latter here
-        by writing a parquet file with a different feature count.
-        """
         import pyarrow as pa
         import pyarrow.parquet as pq
 
@@ -737,9 +649,7 @@ class TestCollectionLevelFreshness:
         tmp_path: Path,
         valid_points_parquet: Path,
     ) -> None:
-        """Bumping mtime alone (no content change) must NOT mark the
-        collection asset stale. Tests the heuristics_changed guard for
-        the both-bboxes-None case."""
+        """Covers the heuristics_changed guard when both bboxes are None."""
         catalog_dir = tmp_path / "catalog"
         collection_dir, data_path = _write_catalog_with_data_asset(
             catalog_dir, valid_points_parquet, collection_id="boundaries", filename="data.parquet"
@@ -764,17 +674,12 @@ class TestCollectionLevelFreshness:
         )
 
 
-# =============================================================================
-# F3: legacy flat layout is ORPHANED, not silently freshness-checked
-# =============================================================================
+# A flat layout is ORPHANED, not freshness-checked
 
 
 @pytest.mark.integration
 class TestLegacyFlatLayoutIsOrphaned:
-    """a single layout (hierarchical). Flat sibling JSON is no
-    longer treated as a valid item by the scanner — the data file is
-    reported as ORPHANED so users migrate via `portolan add`.
-    """
+    """A data file with a flat sibling JSON is ORPHANED, so users move it with `portolan add`."""
 
     def test_flat_sibling_json_data_file_reported_orphaned(
         self,
@@ -826,18 +731,14 @@ class TestLegacyFlatLayoutIsOrphaned:
                 assert r.status == MetadataStatus.ORPHANED
 
 
-# =============================================================================
-# F4: nested catalogs (Pattern 1 + Pattern 2)
-# =============================================================================
+# Nested catalogs (Pattern 1 + Pattern 2)
 
 
 @pytest.mark.integration
 class TestNestedCatalogPatterns:
-    """nested catalog shapes must be walked correctly.
+    """Pattern 1: catalog → sub-catalog → collection → item.
 
-    Pattern 1: catalog → sub-catalog → collection → item.
-    Pattern 2: collection → year-subcatalog → item (collection still owns
-               versions.json + data context).
+    Pattern 2: collection → year sub-catalog → item; the collection owns versions.json.
     """
 
     def test_pattern1_subcatalog_with_collection(
@@ -845,7 +746,6 @@ class TestNestedCatalogPatterns:
         tmp_path: Path,
         valid_singleband_cog: Path,
     ) -> None:
-        """Sub-catalog containing a collection: items inside are scanned."""
         catalog_dir = tmp_path / "catalog"
         catalog_dir.mkdir()
         _write_catalog_json(catalog_dir)
@@ -878,9 +778,7 @@ class TestNestedCatalogPatterns:
         )
 
         report = scan_catalog_metadata(catalog_dir)
-        # The item is NOT tracked in versions.json so it's MISSING-stored ⇒
-        # scanner reports STALE (no stored mtime). The point is: it WAS
-        # found at all, proving pattern-1 traversal works.
+        # The untracked item reads STALE; the test only proves the scan finds it.
         scanned = [r.file_path.name for r in report.results]
         assert "scene-001.tif" in scanned, (
             f"pattern-1 sub-catalog item not reached by scanner. results={scanned}"
@@ -891,10 +789,6 @@ class TestNestedCatalogPatterns:
         tmp_path: Path,
         valid_singleband_cog: Path,
     ) -> None:
-        """Pattern 2: items live under a sub-catalog *within* a collection.
-        versions.json sits at the collection root; the scanner must resolve
-        item assets against the collection, not the sub-catalog.
-        """
         catalog_dir = tmp_path / "catalog"
         catalog_dir.mkdir()
         _write_catalog_json(catalog_dir)
@@ -926,9 +820,7 @@ class TestNestedCatalogPatterns:
         tmp_path: Path,
         valid_singleband_cog: Path,
     ) -> None:
-        """STALE on a Pattern-2 nested item must be fixable: --fix walks
-        ancestors to find the collection and updates the right versions.json.
-        """
+        """--fix walks up to the collection and updates its versions.json."""
         from portolan_cli.metadata.fix import FixAction, fix_metadata
 
         catalog_dir = tmp_path / "catalog"
@@ -960,16 +852,12 @@ class TestNestedCatalogPatterns:
         )
 
 
-# =============================================================================
-# F5: stray subdir without {dir_name}.{ext} → ORPHANED, not MISSING
-# =============================================================================
+# A stray subdir without {dir_name}.{ext} → ORPHANED, not MISSING
 
 
 @pytest.mark.integration
 class TestStraySubdirIsOrphaned:
-    """A non-item subdir (no `{name}.{ext}` data file) must not be coerced
-    into being treated as an item-needing-JSON. Its files are ORPHANED.
-    """
+    """The files of a subdir with no `{name}.{ext}` data file are ORPHANED, not an item."""
 
     def test_random_subdir_files_are_orphaned_not_missing(
         self,
@@ -1006,10 +894,6 @@ class TestStraySubdirIsOrphaned:
         tmp_path: Path,
         valid_singleband_cog: Path,
     ) -> None:
-        """Sanity check: legitimate item dir (`scene-001/scene-001.tif`)
-        without item.json still emits MISSING. The F5 heuristic must not
-        regress the genuine MISSING shape #384 covers.
-        """
         catalog_dir = tmp_path / "catalog"
         catalog_dir.mkdir()
         _write_catalog_json(catalog_dir)
@@ -1028,19 +912,12 @@ class TestStraySubdirIsOrphaned:
         )
 
 
-# =============================================================================
 # CLI: catalog-root resolution for `check --metadata --fix`
-# =============================================================================
 
 
 @pytest.mark.integration
 class TestCheckResolvesCatalogRoot:
-    """Reviewer concern: `check --metadata --fix` passed `path` straight to
-    the scanner, so running from a subdir without catalog.json silently
-    produced an empty report. The fix workflow must resolve the catalog
-    root via the existing find_catalog_root sentinel walk and fail
-    explicitly when no catalog can be found.
-    """
+    """`check --metadata --fix` finds the catalog root from a subdir, or fails without one."""
 
     def _make_catalog(self, root: Path, valid_singleband_cog: Path) -> Path:
         root.mkdir()
@@ -1061,10 +938,6 @@ class TestCheckResolvesCatalogRoot:
         tmp_path: Path,
         valid_singleband_cog: Path,
     ) -> None:
-        """Running `check --metadata --fix` from a collection subdir must
-        find the catalog root and act on it (creating the missing item.json),
-        not silently skip with an empty report.
-        """
         catalog_dir = tmp_path / "catalog"
         collection_dir = self._make_catalog(catalog_dir, valid_singleband_cog)
 
@@ -1072,10 +945,8 @@ class TestCheckResolvesCatalogRoot:
             cli,
             ["check", str(collection_dir), "--metadata", "--fix", "--json"],
         )
-        # The catalog is hand-built and does not conform, so the post-fix
-        # re-check reports findings and the run exits 1. What this test is
-        # about is where the fix landed, which the `fix` section records.
-        # The JSON envelope is on stdout. GDAL logs a thumbnail warning to stderr.
+        # The hand-built catalog exits 1 on re-check; only the `fix` section
+        # matters. GDAL warns on stderr, so read stdout.
         payload = json.loads(result.stdout)
         metadata_fix = payload.get("data", {}).get("fix", {}).get("metadata_fix")
         assert metadata_fix is not None
@@ -1091,10 +962,6 @@ class TestCheckResolvesCatalogRoot:
         runner: CliRunner,
         tmp_path: Path,
     ) -> None:
-        """If no catalog root is found, `--fix` must fail loudly rather
-        than reporting an empty success — matches `find_catalog_root`'s
-        git-style contract used elsewhere in the CLI.
-        """
         non_catalog = tmp_path / "scratch"
         non_catalog.mkdir()
 
@@ -1107,11 +974,8 @@ class TestCheckResolvesCatalogRoot:
         )
 
 
-# =============================================================================
-# scan_catalog_metadata library contract: missing catalog.json is an error,
-# not a vacuous success. Vacuous-pass would let library callers treat any
-# random directory as a fresh catalog.
-# =============================================================================
+# scan_catalog_metadata raises on a missing catalog.json, so a random
+# directory never passes as a fresh catalog.
 
 
 @pytest.mark.integration
@@ -1127,12 +991,8 @@ class TestScannerRejectsMissingCatalog:
             scan_catalog_metadata(non_catalog)
 
 
-# =============================================================================
-# Vector-format orphan detection (accepts non-cloud-native formats).
-# Stray .gpkg/.shp/.geojson at collection root must surface as ORPHANED so
-# users see them, mirroring the .pmtiles contract (orphan-checked but not
-# freshness-checked since no extractor exists for those formats).
-# =============================================================================
+# A stray non-cloud-native vector file is ORPHANED but not freshness-checked,
+# like .pmtiles, because no extractor reads it.
 
 
 @pytest.mark.integration
@@ -1160,9 +1020,7 @@ class TestVectorFormatOrphans:
         )
 
 
-# =============================================================================
-# #512: collection-level vector assets must not be perpetually STALE
-# =============================================================================
+# Collection-level vector assets must not be perpetually STALE
 
 
 def _write_versions_json_mtime_only(
@@ -1171,14 +1029,7 @@ def _write_versions_json_mtime_only(
     asset_filename: str,
     file_path: Path,
 ) -> None:
-    """Write a versions.json in the exact shape real ``add`` produces today.
-
-    Crucially this records ONLY the ``mtime`` field (the asset file's own
-    mtime) — no ``source_mtime`` and no ``feature_count`` /
-    ``schema_fingerprint`` heuristics. This is what
-    the version that ``add`` stages holds and what pre-fix / dogfooded catalogs
-    (e.g. the IGN Argentina port) contain on disk.
-    """
+    """Write a versions.json in the shape ``add`` writes: ``mtime`` only, no heuristics."""
     import hashlib
 
     sha = hashlib.sha256(file_path.read_bytes()).hexdigest()
@@ -1207,24 +1058,13 @@ def _write_versions_json_mtime_only(
 
 @pytest.mark.integration
 class TestIssue512CollectionFreshnessAfterAdd:
-    """#512: a collection-level vector asset added by `portolan add` must read
-    FRESH on the next scan.
-
-    Regression: `add` records only `mtime`, but the freshness check read
-    `source_mtime` (never written) → perpetual STALE that neither `--fix`
-    nor re-`add` could clear.
-    """
+    """A collection-level vector asset that `add` records with only `mtime` reads FRESH."""
 
     def test_add_then_scan_reports_fresh(
         self,
         fresh_catalog_no_versions: Path,
         fixtures_dir: Path,
     ) -> None:
-        """The true end-to-end #512 guard: real add → scan → FRESH.
-
-        Pre-fix this yields a STALE result for census.parquet because the
-        real `add` write path never records `source_mtime`.
-        """
         from portolan_cli.add import add
 
         collection_dir = fresh_catalog_no_versions / "demographics"
@@ -1255,10 +1095,6 @@ class TestIssue512CollectionFreshnessAfterAdd:
         tmp_path: Path,
         valid_points_parquet: Path,
     ) -> None:
-        """An existing catalog whose versions.json has only `mtime` (no
-        `source_mtime`, no heuristics) reads FRESH when the file is
-        unchanged — heals the reporter's on-disk catalogs without re-add.
-        """
         catalog_dir = tmp_path / "catalog"
         collection_dir, data_path = _write_catalog_with_data_asset(
             catalog_dir, valid_points_parquet, collection_id="boundaries", filename="data.parquet"
@@ -1281,10 +1117,7 @@ class TestIssue512CollectionFreshnessAfterAdd:
         tmp_path: Path,
         valid_points_parquet: Path,
     ) -> None:
-        """Without a stored `schema_fingerprint` we cannot prove a schema
-        break, so an mtime change on a heuristic-less entry must degrade to
-        STALE at worst — never a (blocking) BREAKING error.
-        """
+        """Without a stored `schema_fingerprint`, no schema break is provable."""
         import pyarrow as pa
         import pyarrow.parquet as pq
 
@@ -1314,18 +1147,7 @@ class TestIssue512CollectionFreshnessAfterAdd:
         tmp_path: Path,
         valid_points_parquet: Path,
     ) -> None:
-        """A heuristic-less entry whose asset was touched (mtime moved) but is
-        byte-identical must read FRESH — the `git clone` case.
-
-        Cloning/copying a catalog resets asset mtimes, so a pre-fix (mtime-only)
-        entry's stored mtime no longer matches the file. Without a stored
-        schema-fingerprint baseline, `is_stale` cannot prove the change and
-        forces STALE — a perpetual STALE that `--fix` skips and a plain `add`
-        skips too (its content hash is unchanged). The content-hash fallback
-        must recognise the file as unchanged.
-
-        Regression: RED before the sha256 fallback (STALE), GREEN after.
-        """
+        """A clone resets mtimes; the sha256 fallback keeps a byte-identical asset FRESH."""
         catalog_dir = tmp_path / "catalog"
         collection_dir, data_path = _write_catalog_with_data_asset(
             catalog_dir, valid_points_parquet, collection_id="boundaries", filename="data.parquet"
@@ -1352,11 +1174,8 @@ class TestIssue512CollectionFreshnessAfterAdd:
         tmp_path: Path,
         valid_points_parquet: Path,
     ) -> None:
-        """The content-hash fallback must not mask a genuine change: an entry
-        whose asset actually changed (different bytes) must not read FRESH.
+        """The content-hash fallback must not mask a genuine change."""
 
-        Guards against the fallback degenerating into an always-FRESH shortcut.
-        """
         import pyarrow as pa
         import pyarrow.parquet as pq
 

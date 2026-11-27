@@ -1,23 +1,5 @@
-"""Nightly scenario job: wall time and peak RSS against a committed baseline (#992).
-
-The job runs five scenarios at full size, each in a cold child process
-through ``runner.py``. It records the wall time of the command, the peak RSS
-of the process, the counters, and the stage times::
-
-    uv run python -m tests.perf.bench --out scenario-results.json \\
-        --compare .benchmarks/scenarios.json
-
-A scenario fails the run when its wall time doubles or its peak RSS grows by
-more than 15% over the baseline. The wall limit scales by the runner speed
-that ``calibrate`` measures. ``WALL_THRESHOLD`` gives the measured variance. A missing baseline, a baseline from another
-machine type, or a baseline at other sizes also fails the run, so the gate
-cannot pass without a comparison.
-
-Without ``--compare`` the job only records. A maintainer commits the
-``scenario-results.json`` of a ``record-baseline`` run as
-``.benchmarks/scenarios.json``. The baseline comes from the CI runner type and
-never from a dev machine. ``--scale`` shrinks every size, for a local check of
-the job itself.
+"""Nightly scenario job: wall time and peak RSS against a committed baseline.
+A missing or mismatched baseline fails the run; without ``--compare`` the job only records.
 """
 
 from __future__ import annotations
@@ -43,14 +25,11 @@ FULL_SIZES: dict[str, int] = {
     "add-large-vector": 1_000_000,  # S2: one file of 1M polygons
     "re-add-unchanged": 5_000,  # S3: 5,000 raster items, 50 versions, no-op add
     "check-metadata": 25_000,  # S4: check --metadata on 25,000 raster items
-    "add-rasters": 3_984,  # S8: the GHSL item count of #775
+    "add-rasters": 3_984,  # S8: the GHSL item count
 }
 FULL_HISTORY = 50
-#: Shared runners of one type differ. After the calibration scale, the same code
-#: still ran up to 1.33x slower (2026-10-28 nightlies). add-rasters alone moved
-#: 37% between two fast runners. So the wall limit catches a doubling, such as
-#: the quadratic check of ca668f9 (35x), and the counter gates and CodSpeed
-#: catch the smaller costs. Peak RSS held within 1% on every runner.
+#: Runners of one type differ up to 1.33x after calibration, so the wall limit catches a doubling.
+#: The counter gates and CodSpeed catch smaller costs. Peak RSS holds within 1%.
 WALL_THRESHOLD = 1.00
 RSS_THRESHOLD = 0.15
 
@@ -90,11 +69,7 @@ def run_all(scale: float, workdir: Path) -> dict[str, Any]:
 
 def calibrate(rounds: int = 3) -> float:
     """Time a fixed workload of Python, hashing, and file I/O. Return the fastest round.
-
-    Two runners of one type differ in speed. The nightly of 2026-10-28 ran the
-    baseline code 1.5x to 2x slower than the recording run. The compare scales
-    the baseline wall time by the ratio of the two calibrations, so it
-    measures the code and not the runner.
+    The compare scales the baseline wall time by the calibration ratio, so it measures the code.
     """
     record = {f"key{i}": [i, str(i), {"value": float(i)}] for i in range(100_000)}
     block = bytes(range(256)) * 4096
@@ -116,9 +91,7 @@ def calibrate(rounds: int = 3) -> float:
 
 def compare(results: dict[str, Any], baseline: dict[str, Any]) -> list[str]:
     """Return one line per regression of ``results`` over ``baseline``.
-
-    The wall-time limit scales with the calibration ratio of the two runs.
-    The peak RSS limit does not scale, because a slower runner uses the same memory.
+    Only the wall-time limit scales with calibration; memory does not depend on runner speed.
     """
     if baseline["machine"] != results["machine"]:
         return [f"baseline machine {baseline['machine']} is not {results['machine']}"]

@@ -1,37 +1,5 @@
-"""Replay recorded HTTP responses on the loopback interface.
-
-The extractors reach a service through three clients: ``httpx`` (ArcGIS),
-``requests`` (WFS and CARTO discovery), and geoparquet-io, which makes its own
-requests for WFS and CARTO data. A patch on one client cannot reach the
-others. A server on the loopback interface reaches all of them, and
-``tests/network_guard.py`` lets loopback connections through.
-
-A scenario is a directory under ``tests/fixtures/network/<kind>/<scenario>/``.
-It holds ``routes.json``, the body files, and a README that names the issue and
-the source of the recording. ``routes.json`` is a list of routes. The server
-answers a request with the first route that matches it:
-
-- ``method`` and ``path``: the HTTP method, and an ``fnmatch`` pattern on the
-  URL path.
-- ``query_subset``: parameters that the request must carry with these values.
-  Names match without case, as OGC servers read them.
-- ``requires_query``: parameter names that the request must carry with any
-  value. A gated service is two routes on one path: the first requires the
-  credential, and the second answers a request without it.
-- ``times``: the route answers this many requests and then stops matching. A
-  transient error is a route with ``times: 1`` before the good route.
-- A HEAD request gets the status and headers of the GET route, with no body.
-- ``status``, ``content_type``, ``body_file``: the response. The server
-  replaces ``{{base_url}}`` in a text body with its own address, so that a
-  capabilities document points the client back at the replay.
-- ``pages_from``: a GeoParquet file under ``tests/fixtures``. The server
-  answers with the ArcGIS GeoJSON page that ``resultOffset`` and
-  ``resultRecordCount`` select. A recording of 500 features then needs no
-  copy of them in JSON.
-
-The server answers a request that no route matches with 404 and appends it to
-``unmatched``. Every test asserts ``server.unmatched == []``. That proves the
-recording covers each request, including the requests of geoparquet-io.
+"""Replay the recorded HTTP routes of ``tests/fixtures/network/<kind>/<scenario>/`` on loopback.
+Loopback reaches httpx, requests and geoparquet-io alike; an unmatched request gets 404 and goes in ``unmatched``.
 """
 
 from __future__ import annotations
@@ -143,13 +111,7 @@ class _Handler(BaseHTTPRequestHandler):
         """Keep stderr quiet. ``ReplayServer.requests`` is the log."""
 
     def __getattr__(self, name: str) -> Callable[[], None]:
-        """Answer every HTTP method through ``_answer``.
-
-        BaseHTTPRequestHandler looks up ``do_<METHOD>``. This lookup serves
-        GET, POST, and every other method. So a request with a method that no
-        route expects gets a 404 and lands in ``unmatched``, not a bare 501.
-        A POST form body counts as query parameters.
-        """
+        """Answer every HTTP method through ``_answer``, so an unexpected method gets 404, not 501."""
         if name.startswith("do_"):
             method = name.removeprefix("do_")
             return lambda: self._answer(method)
@@ -175,11 +137,7 @@ class _Handler(BaseHTTPRequestHandler):
 
 
 class ReplayServer:
-    """Serve one recorded scenario on the loopback interface.
-
-    Use it as a context manager. ``with ReplayServer(path) as base_url:``
-    yields the base URL, such as ``http://127.0.0.1:43123``.
-    """
+    """Serve one recorded scenario; ``with ReplayServer(path) as base_url:`` yields the base URL."""
 
     def __init__(self, fixture_dir: Path) -> None:
         self.fixture_dir = fixture_dir
@@ -201,9 +159,8 @@ class ReplayServer:
         self, method: str, path: str, query: dict[str, list[str]]
     ) -> tuple[int, str, bytes]:
         """Return the status, the content type, and the body for one request."""
-        # A HEAD request gets the headers of the GET route, as from a real
-        # server. DuckDB, under geoparquet-io, sends one before each GET. It
-        # does not use up a ``times`` route, so a recorded error hits the GET.
+        # A HEAD request gets the headers of the GET route. DuckDB sends one before each GET,
+        # so it does not use up a ``times`` route.
         lookup = "GET" if method == "HEAD" else method
         with self._lock:
             route = next((r for r in self.routes if r.matches(lookup, path, query)), None)

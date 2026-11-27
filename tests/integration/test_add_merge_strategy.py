@@ -1,12 +1,4 @@
-"""Integration tests for --merge-strategy flag in portolan add.
-
-Issue #446: portolan add strips human-authored asset and column metadata.
-
-These tests verify the CLI flag works end-to-end:
-1. smart (default): Preserves human-enrichable fields, updates machine-derivable
-2. keep: Preserves all existing fields
-3. overwrite: Replaces everything with auto-detected values
-"""
+"""Integration tests for --merge-strategy flag in portolan add."""
 
 from __future__ import annotations
 

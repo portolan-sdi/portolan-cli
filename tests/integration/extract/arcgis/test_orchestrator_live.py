@@ -1,10 +1,4 @@
-"""Integration tests for ArcGIS extraction orchestrator.
-
-These tests hit real ArcGIS endpoints to verify the full extraction flow.
-They require network access and use Philadelphia's stable public endpoints.
-
-Run with: uv run pytest tests/integration/extract/arcgis/ -m network
-"""
+"""Integration tests for ArcGIS extraction orchestrator."""
 
 from __future__ import annotations
 
@@ -155,30 +149,14 @@ class TestLiveMetadataExtraction:
 # South African national data portal — services live in a NationalDatasets folder.
 SA_ROOT = "https://nspdr.dlrrd.gov.za/server/rest/services"
 # US Census Bureau TIGERweb: zero top-level services, every service in a public
-# folder, no token. It replaced the JRC federated server, which gained a
-# top-level service and token-protected folders in November 2026.
+# folder, no token.
 TIGERWEB_ROOT = "https://tigerweb.geo.census.gov/arcgis/rest/services"
 # The current TIGER/Line map service. TIGERweb has published it for years.
 TIGERWEB_CURRENT = "TIGERweb/tigerWMS_Current"
 
 
 def _list_services_or_skip(root: str, *, timeout: float = 60.0) -> ServicesRootDiscoveryResult:
-    """Call ``list_services``, skipping only on a genuine connectivity outage.
-
-    The folder-traversal tests below point at third-party government / EU ArcGIS
-    servers that periodically go offline. A live external-dependency outage must
-    not hard-fail the suite, but a *real* failure a live-up server can surface
-    (an HTTP error, invalid JSON, or an embedded ArcGIS error payload) must still
-    fail loudly so regressions are caught.
-
-    ``ArcGISDiscoveryError`` is a flat type with no connectivity/HTTP subclass or
-    error-code attribute, so we discriminate via the cause chain: ``_fetch_json``
-    wraps transport failures as ``... from <httpx.RequestError>`` (connection
-    refused, DNS failure, timeout), whereas HTTP-status (>=400, incl. 499),
-    invalid-JSON, and embedded-error cases carry no ``httpx.RequestError`` cause.
-    Only the transport case is treated as an unreachable endpoint and skipped;
-    everything else is re-raised.
-    """
+    """Call ``list_services``, skipping only on a genuine connectivity outage."""
     try:
         return list_services(root, timeout=timeout)
     except ArcGISDiscoveryError as exc:
@@ -191,12 +169,8 @@ def _list_services_or_skip(root: str, *, timeout: float = 60.0) -> ServicesRootD
 @pytest.mark.slow
 def test_sa_root_traverses_folders() -> None:
     result = _list_services_or_skip(SA_ROOT, timeout=60.0)
-    # This test asserts the NationalDatasets folder's services are surfaced, so
-    # it can only run if that folder was actually traversed. Folder-level fetch
-    # errors are recorded (never raised) in coverage.folders_skipped; when the
-    # live server leaves NationalDatasets un-traversed the run is an outage, not
-    # a recursion regression, so skip before asserting. A healthy server
-    # traverses it and the assertions run.
+    # An un-traversed NationalDatasets folder is an outage, not a recursion
+    # regression, so skip before asserting.
     if result.coverage is not None and "NationalDatasets" in {
         folder for folder, _reason in result.coverage.folders_skipped
     }:
@@ -213,10 +187,8 @@ def test_sa_root_traverses_folders() -> None:
 def test_folder_only_root_surfaces_every_service_through_folders() -> None:
     # The TIGERweb root lists ZERO top-level services; every service is in a folder.
     result = _list_services_or_skip(TIGERWEB_ROOT, timeout=60.0)
-    # A total outage can leave the root reachable but every folder un-traversed,
-    # yielding zero services (an outage, not a regression). Gate on "nothing
-    # surfaced": one failed folder lands in folders_skipped and must NOT skip
-    # this test, so a non-empty folders_skipped alone is not enough.
+    # Zero services is an outage. One failed folder in folders_skipped
+    # must NOT skip this test.
     if not result.services and result.coverage is not None and result.coverage.folders_skipped:
         pytest.skip("live TIGERweb endpoint degraded; no services surfaced")
     assert len(result.services) > 0

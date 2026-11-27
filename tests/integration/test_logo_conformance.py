@@ -1,10 +1,4 @@
-"""A catalog carrying a logo still passes rashid (issue #654, PORTO-CORE-074..077).
-
-The link is optional, so nothing else in the suite exercises it against the
-validator. This builds the smallest catalog that has one and runs rashid's
-metadata and structural passes over it: a malformed ``rel="icon"`` link — an
-absolute href, a missing ``type`` — would surface here.
-"""
+"""A catalog carrying a logo still passes rashid (PORTO-CORE-074..077)."""
 
 from __future__ import annotations
 

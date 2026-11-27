@@ -1,7 +1,4 @@
-"""Integration tests for CLI progress output.
-
-Issue #203: Add progress printing for file-level operations.
-"""
+"""Integration tests for CLI progress output."""
 
 from __future__ import annotations
 
