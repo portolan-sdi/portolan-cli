@@ -75,9 +75,9 @@ AI agents will write most of the code. Human review does not scale to match AI o
 | **Roadmap** | [GitHub Issues](https://github.com/portolan-sdi/portolan-cli/issues?q=label%3Aroadmap%3Amvp%2Croadmap%3Anext%2Croadmap%3Afuture) |
 | Contributing guide | `docs/contributing.md` |
 | Architecture | `pyproject.toml` [tool.importlinter] + `.claude/rules/architecture.md` |
-| CI/CD | `.github/workflows/` and `prek.toml`, with rationale in comments |
+| CI/CD | `.github/workflows/` and `prek.toml` |
 | **Real-world test fixtures** | `tests/fixtures/realdata/README.md` |
-| Maintainer rationale | Module docstrings and comments at the enforcing site |
+| Maintainer rationale | Commit and PR bodies (`git log` for the file) |
 
 **Target Python version:** 3.11+
 
@@ -153,9 +153,8 @@ The repo is a uv workspace with two distributions. The root `pyproject.toml` is
 must not import `portolan_cli`, Click, or the geospatial stack (import-linter
 contracts `core-no-cli` and `core-no-heavy`).
 
-`docs/` is public (Zensical). Docstrings and comments next to the code record
-the internal rationale. See `.claude/rules/documentation.md` for
-where to file things.
+`docs/` is public (Zensical). Commit and PR bodies record the rationale. See
+`.claude/rules/documentation.md` for where to file things.
 
 ## Synced brand files
 
@@ -169,9 +168,6 @@ let the sync run.
 - `docs/assets/images/portolan-logomark-fcfcfa.svg`
 - `docs/assets/images/portolan-logo-horizontal-light.svg`
 
-Comments in `mkdocs.yml` and `docs/assets/stylesheets/extra.css` record how
-the site applies them.
-
 ## Before Writing Code
 
 Always research before implementing:
@@ -180,8 +176,8 @@ Always research before implementing:
 2. **Search for patterns** — Check if similar functionality exists
 3. **Check utilities** — Review `portolan_cli/` and `packages/portolan-core/src/` first
 4. **Review existing tests** — Look at tests for the area you're modifying
-5. **Check the rationale** — Read the module docstrings and the relevant
-   `.claude/rules/*.md` to understand past decisions
+5. **Check the rationale** — Read `git log` for the file and the relevant
+   `.claude/rules/*.md`
 
 ## Testing
 
@@ -207,7 +203,7 @@ Always research before implementing:
 
 - **ALL** code must have type annotations (`mypy --strict`)
 - **ALL** new features require tests FIRST (TDD)
-- **ALL** non-obvious decisions are recorded where they apply (see `.claude/rules/documentation.md`)
+- **ALL** docstrings and comment blocks have at most 2 lines, with no history (issue numbers, dates, "used to"). `scripts/check_comments.py` enforces it
 - **NO** new dependencies without discussion
 
 ## Design Principles
@@ -223,12 +219,9 @@ Always research before implementing:
 
 ## Known Issues
 
-Each upstream bug and accepted limit is recorded at its workaround, with the
-upstream issue URL where one exists. The record is a dependency pin comment in
-`pyproject.toml`, a comment or docstring at the workaround in `portolan_cli/` or
-`packages/portolan-core/src/`, a
-`skipif` reason, or an `xfail(strict=True)` reason. A strict `xfail` fails CI once
-upstream fixes the bug. List them with:
+Record each upstream bug and accepted limit at its workaround: a one-line
+comment with the upstream URL, or a strict `xfail` or `skipif` reason. A strict
+`xfail` fails CI once upstream fixes the bug. List them with:
 
 ```bash
 git grep -nE "xfail\(|skipif\(|upstream" -- \

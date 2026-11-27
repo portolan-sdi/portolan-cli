@@ -10,12 +10,34 @@ paths:
   - "tests/unit/plugins/**"
 ---
 
-# Plugin system (#947)
+# Plugin system
 
-The module docstrings in `plugins/manager.py`, `plugins/commands.py`,
-`plugins/formats.py`, `stac_enrich.py`, and `extract/common/source.py` record
-how the plugin system works and why. Read them before you change the plugin
-code. `docs/guides/plugins.md` is the author guide.
+`docs/guides/plugins.md` is the author guide.
+
+## How it works
+
+- `PORTOLAN_PLUGINS` controls discovery of outside plugins: unset loads all,
+  `none` loads none, and `a,b` loads only those entry point names. Built-in
+  plugins always load. A plugin that fails to load gives a
+  `PluginLoadWarning`, and the CLI keeps running.
+- Call hooks through `hook_calls` or `call_each`, which put the built-ins
+  first. Do not call `PluginManager.hook.<name>()`: pluggy calls the plugin
+  registered last first. The manager reads entry points itself, because
+  `load_setuptools_entrypoints` stops at the first import error and has no filter.
+- A dotted command name attaches to a built-in group: `version.rollback` is
+  `portolan version rollback`. A plugin command never replaces a built-in
+  command, and help warns about the collision.
+- Format handler precedence, first match wins: a `conversion.handlers` pin in
+  `.portolan/config.yaml`, then a plugin handler that claims the file, then a
+  built-in handler. Two plugin handlers that claim one file raise
+  `AmbiguousFormatError` until a pin decides.
+- An enrichment hook may add fields. Portolan restores `id`, `type`,
+  `stac_version`, and `links` after each hook and warns. A hook that raises
+  leaves no partial change.
+- A `LayerSource` serves named layers. `discover` does the once-per-run work
+  and returns a `Discovery`. Each `LayerRef` carries the collection path and
+  the source's own `data`. `run_layer_extraction` runs the lifecycle, and
+  `extractor_from` wraps the source as `portolan extract <name>`.
 
 ## The public surface is a contract
 

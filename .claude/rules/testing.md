@@ -78,7 +78,13 @@ it against the assertions below.
 - Assert exact strings/counts, not substrings of a substring. `"0"` and
   `"0 assets"` are different assertions.
 
+### Test docstrings are optional
+
+The test name carries the description. A test docstring is optional and has
+one line.
+
 ### Every new test needs a marker
+
 
 Marker-based CI selection (`uv run pytest -m unit`) silently skips unmarked
 tests, so an unmarked test never runs in the fast tier. Add `pytestmark` (or
@@ -93,15 +99,56 @@ per-test decorators) to every new test file, and confirm it is collected:
 - Do not add `# type: ignore` to test helpers, annotate them, `mypy --strict`
   applies to tests too.
 
-## Command parity (issue #1133)
+## Command parity
 
-Each CLI command delegates to one library function whose result has
-`to_dict()`, and the command emits exactly that dict as the envelope `data`.
-A parity test in `tests/parity/` proves it with the `parity` fixture. The
-module docstring of `tests/parity/harness.py` gives the convention: how to add
-a test, the conversion rule, the ignore paths, and the failure path. When a
-command gets a parity test, remove it from `PARITY_PENDING` in
-`tests/parity/test_parity_harness.py`. That list only shrinks.
+Each CLI command delegates to one library function. The function takes the same
+options and returns a result without printing. A parity test in
+`tests/parity/` proves it for one command.
+
+**Add a parity test:**
+
+1. Put it in `tests/parity/test_<family>_parity.py` with
+   `pytestmark = pytest.mark.integration`.
+2. Call the `parity` fixture with the command path as a string literal, the
+   arguments without `--json`, a catalog factory, and the library call:
+
+   ```python
+   parity(
+       "info",
+       ["points"],
+       catalog=points_catalog,
+       call=lambda root: inspect_collection(Path("points")),
+   )
+   ```
+
+   `call` receives the catalog root, and the working directory is that root.
+   `tests/parity/test_info_parity.py` is a full example.
+3. Remove the command from `PARITY_PENDING` in
+   `tests/parity/test_parity_harness.py`. That list only shrinks. The test
+   fails while a covered command stays in it, and for a command that is
+   neither covered nor pending.
+
+**What one call does:** the harness builds the catalog at
+`tmp_path / "parity-catalog"` and runs `portolan <command> <args> --json`
+through `run_cli`. It checks the catalog invariants, builds a fresh catalog at
+the same path, and runs the library call there. The library call and its
+`to_dict()` must not write to stdout or stderr.
+
+**Conversion rule:** the command passes `result.to_dict()` to `emit_success`
+as the envelope `data` and changes nothing. The harness compares the two after
+one `json.dumps` and `json.loads`. Put each field in `to_dict()`, not in `cli.py`.
+
+**Ignore rule:** a field that differs between runs, such as a timestamp, goes
+in `ignore` as a dotted key path: `"created"`, `"summary.elapsed"`, or
+`"collections.*.updated"`. A number selects one list element and `*` selects
+each. The path must exist. Do not ignore a field to hide a real difference.
+
+**Failure path:** `parity.error(command, args, catalog=..., call=...,
+raises=SomeError)` runs both sides on a failing case. The library call must
+raise `raises`. The command must exit non-zero with `success: false` and
+exactly one error whose `type`, `message`, and `code` equal the `ErrorDetail`
+built from that exception. A failure case does not move a command out of
+`PARITY_PENDING`.
 
 ## Test Fixtures
 

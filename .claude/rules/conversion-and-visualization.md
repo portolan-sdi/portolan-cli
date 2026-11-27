@@ -35,7 +35,7 @@ reimplement geometry or raster math.
   upstream version, and put the upstream URL in a comment or `xfail` reason at
   the affected site. Do not patch around it in our layer.
 
-## Vector conversion writes conforming GeoParquet by default (#805)
+## Vector conversion writes conforming GeoParquet by default
 
 `VectorSettings` defaults to `sort="hilbert"` and `add_bbox=True`, and
 `convert.apply_vector_settings` is the one place that applies them. rashid reads
@@ -53,7 +53,7 @@ records and an ArcGIS **Table** layer both read as a table with
 `geometry_column = None`, and `add_bbox()` / `sort_hilbert()` raise a DuckDB
 binder error on one.
 
-A `.parquet` handed to `add` is no longer copied blindly.
+`add` does not copy a `.parquet` blindly.
 `preparation._needs_spatial_rewrite` reads the footer once through
 `metadata.read_spatial_layout` (O(1)) and rewrites the file only when it is
 GeoParquet **and** `add_bbox` is on **and** the file carries no covering
@@ -68,10 +68,8 @@ GeoParquet files that PTL-DAT-006, -007, and -008 name, through the handler's
 `reoptimize`, which is `reconvert`.
 
 **`--force` alone must still produce a conforming file.** `--force` skips
-conversion when the output exists (issue #386), and for a single-file
-collection the output *is* the source, so that skip once returned a file with
-no covering column and no warning — the exact failure #805 removes. The skip
-branch in `_convert_and_extract_metadata` now passes the existing output back
+conversion when the output exists, and for a single-file collection the output
+*is* the source. The skip branch in `_convert_and_extract_metadata` passes the existing output back
 through the handler's `convert` when the handler reads that format, and
 `preparation.convert_vector` runs the same footer test. If you add another
 early return there, keep that call.
@@ -94,15 +92,13 @@ the rewritten file on row count, column set, and declared CRS, and raises
 other rewrite failure, keeps the operator's file, and warns.
 
 **Keep the gate.** It guards a destructive in-place operation against any cause,
-and it is not a workaround for one dependency bug. geoparquet-io used to write
-**no `crs` key at all**, and the GeoParquet spec reads an absent `crs` as
-OGC:CRS84, so an ungated rewrite relabelled projected data as lon/lat. That is
-fixed in geoparquet-io 1.4.0 (geoparquet-io#625, `ff02db8`), so the gate is now
-silent on the normal path. Do **not** "fix" a future writer bug by writing the
-CRS back into gpio's output — that is the patch-around-upstream this repo
+and it is not a workaround for one dependency bug. The GeoParquet spec reads an
+absent `crs` as OGC:CRS84, so an ungated rewrite of a file with no `crs` key
+relabels projected data as lon/lat. The gate is silent on the normal path.
+Do **not** "fix" a future writer bug by writing the CRS back into gpio's output — that is the patch-around-upstream this repo
 refuses.
 
-The fix means gpio now hands Portolan the source CRS, including a PROJJSON dict
+gpio hands Portolan the source CRS, including a PROJJSON dict
 when the CRS carries no authority code (an ESRI `.prj` such as POSGAR 1994).
 `portolan_cli/crs.py` takes `str | dict | None` everywhere, and `describe_crs`
 labels a dict for a message. Do not convert PROJJSON to EPSG in Portolan: a CRS
@@ -138,11 +134,10 @@ change there reaches both paths. Do not add a second render function.
 
 - **Draw in EPSG:3857.** `_to_web_mercator` projects the sampled geometry and
   its bounds before the draw. Basemap tiles are in EPSG:3857, so no tile is
-  warped. Do not pass `crs=` to contextily: its tile warp took 17 s of a 36 s
-  100-collection add (#993). PMTiles coordinates are always EPSG:4326 (CRS84).
+  warped. Do not pass `crs=` to contextily: its tile warp is slow, a large part of
+  a 100-collection add. PMTiles coordinates are always EPSG:4326 (CRS84).
   The projection clips a valid latitude to the Web Mercator limit (85.05), so
-  polar data keeps its basemap. When the coordinates do not fit the CRS (#516
-  family) or the CRS is unknown, the render draws in the source CRS with no
+  polar data keeps its basemap. When the coordinates do not fit the CRS or the CRS is unknown, the render draws in the source CRS with no
   basemap. Every collection still gets a thumbnail.
 - **Frame before the basemap.** The frame comes from the **actual geometry
   bounds**: the GeoParquet footer bbox (O(1)), or the decoded PMTiles
@@ -184,8 +179,7 @@ change there reaches both paths. Do not add a second render function.
   row group, so a subset of groups draws strips.
 - `contextily` is an optional lazy import, guard for its absence. Basemaps are
   for **vector** thumbnails only; raster thumbnails get no basemap.
-- **The matplotlib floor is a punchy data-aware preset, NOT the extracted style**
-  (#518, Track 1). The WFS/Mapbox style is pale by design (`fill-opacity 0.2`,
+- **The matplotlib floor is a punchy data-aware preset, NOT the extracted style**. The WFS/Mapbox style is pale by design (`fill-opacity 0.2`,
   hairline outline) and washes out at 512 px, so do **not** read `fill_opacity`
   / `fill_outline_color` / the style's default fill into the thumbnail. Use
   `THUMB_FILL_COLOR` / `THUMB_EDGE_COLOR` and `_compute_render_params()` (scales
@@ -193,8 +187,8 @@ change there reaches both paths. Do not add a second render function.
   ≥ 0.5). Only the style's **categorical** color map is reused, via
   `resolve_color_for_properties` / `resolve_colors_for_gdf` with an explicit
   punchy `fallback`. The *real* style is rendered by the opt-in MapLibre-native
-  skill (Track 2), never here. Do not re-open fixed-preset tuning or
-  vision-in-the-loop (both rejected in #518).
+  skill, never here. Do not re-open fixed-preset tuning or
+  vision-in-the-loop.
 - **Frame the bbox before setting limits** with `_frame_bounds()` (margin +
   aspect-cap). Its real jobs are (1) adding a margin so geometry isn't flush to
   the edge and (2) giving degenerate extents — a single point, or a perfectly
@@ -222,10 +216,10 @@ change there reaches both paths. Do not add a second render function.
   `get_pmtiles_settings()` (in `pmtiles.py`) -> `generate_pmtiles_for_collection()`
   -> `geoparquet_io.api.ops.create_pmtiles`, which reprojects to WGS84 before
   tippecanoe. Dropping it breaks PMTiles for any projected source. The
-  deprecated `gpio-pmtiles` package is gone (#754); do not import it again.
+  deprecated `gpio-pmtiles` package is not a dependency. Do not import it.
 - `--force-pmtiles` implies `--pmtiles`. `generate_or_suggest_pmtiles` ORs the
   two into `requested`, which gates generation and decides whether a failure
-  exits non-zero (#760).
+  exits non-zero.
 - A generated `.pmtiles` MUST be a **collection-level** asset AND have a
   `rel: "pmtiles"` link (web-map-links extension). Item-level-only is
   non-conformant (rashid PTL-VIZ-003, an error). PMTiles discovery
@@ -242,9 +236,9 @@ change there reaches both paths. Do not add a second render function.
   `layers[].source` is always `"data"`.
 - **Roles carry the whole manifest.** A client finds the styles by filtering
   assets on `"style"` and the default by `"default"`, so exactly one style asset
-  carries `["style", "default"]` (rashid PTL-VIZ-006). The old
-  `portolan:styles` array is removed; `register_style_assets` strips it on
-  every run and `check` reports a collection that still has one (issue #739).
+  carries `["style", "default"]` (rashid PTL-VIZ-006). A
+  `portolan:styles` array is invalid: `register_style_assets` strips it on
+  every run and `check` reports a collection that has one.
 - `select_default_style_key` always names a default when styles exist, because
   PORTO-CORE-070 makes a collection with two styles and no `default` role
   nonconformant. Precedence: a mark a publisher already made wins, then
@@ -284,7 +278,7 @@ COG defaults are DEFLATE and 512x512 tiles. Predictor and overview resampling
 default to `auto`, meaning `derive_cog_defaults()` reads them off the source
 raster's dtype: floats get predictor 3 and `average`, integers get predictor 2
 and `nearest`, multi-band uint8 imagery gets no predictor. Call
-`resolve_cog_settings()` before handing a profile to rio-cogeo (Issue #690).
+`resolve_cog_settings()` before handing a profile to rio-cogeo.
 Conversion output goes **side-by-side for vectors, in-place for rasters**.
 Accept non-cloud-native formats with a warning, do not hard-fail.
 Raster band metadata lands on the data asset, see `.claude/rules/stac-assets.md`.
