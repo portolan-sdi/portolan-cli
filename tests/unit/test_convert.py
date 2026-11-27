@@ -2917,6 +2917,64 @@ class TestPartitionedOutputWithGeoparquetIO:
         assert skips == {}
         assert layer.exists() is existed
 
+    @pytest.mark.unit
+    def test_a_failed_layer_cleanup_keeps_the_other_layers(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An OSError on the removal of a failed layer file stops nothing (#928).
+
+        The add reports the real layer error and prepares the other layers.
+        """
+        from portolan_cli import add
+        from portolan_cli.convert import LayerConversionResult
+
+        coll = tmp_path / "coll"
+        coll.mkdir()
+        gpkg = coll / "multi.gpkg"
+        gpkg.write_bytes(b"x")
+        roads, rivers = coll / "roads.parquet", coll / "rivers.parquet"
+
+        def _convert(source: Path, out: Path, settings: Any = None, **_: Any) -> list[Any]:
+            roads.write_bytes(b"PAR1")
+            rivers.write_bytes(b"PAR1")
+            return [
+                LayerConversionResult(source, "roads", roads, True),
+                LayerConversionResult(source, "rivers", rivers, True),
+            ]
+
+        def _prepare(path: Path, **_: Any) -> Any:
+            if path == roads:
+                raise CRSTransformError("EPSG:999999", "crs not found")
+            return self._prepared(path, created_output=False)
+
+        def _locked(self: Path, *_args: Any, **_kwargs: Any) -> None:
+            raise PermissionError(13, "locked", str(self))
+
+        monkeypatch.setattr(add, "convert_multilayer_file", _convert)
+        monkeypatch.setattr(add, "prepare_item", _prepare)
+        monkeypatch.setattr(Path, "unlink", _locked)
+        opts = add._PrepareOptions(
+            catalog_root=tmp_path,
+            item_id=None,
+            item_datetime=None,
+            force=True,
+            reconvert=False,
+            skip_partitioning=True,
+            batch_exclude_names=frozenset(),
+        )
+
+        prepared, failures, skips = add._prepare_multilayer_file(gpkg, "coll", opts)
+
+        assert [p.item_id for p in prepared] == ["rivers"]
+        assert [(f.path, f.error) for f in failures] == [
+            (
+                roads,
+                "Layer roads: [PRTLN-CNV012] Cannot transform the bbox from EPSG:999999 "
+                "to WGS84: crs not found",
+            )
+        ]
+        assert skips == {}
+
     @pytest.mark.integration
     def test_prepare_item_reports_a_new_output(self, tmp_path: Path) -> None:
         """`created_output` is True for a new conversion and False for a kept output."""

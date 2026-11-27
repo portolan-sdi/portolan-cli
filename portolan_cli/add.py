@@ -111,6 +111,7 @@ from portolan_cli.preparation import (  # noqa: F401
 )
 from portolan_cli.preparation import (
     ROLE_SOURCE,
+    _cleanup_orphaned_output,
     ignored_by,
     is_rewrite_temp,
 )
@@ -992,8 +993,10 @@ def _prepare_multilayer_file(
             except Exception as err:
                 # prepare_item cannot tell a new layer file from an old one, so
                 # a layer file this run wrote goes here, with no STAC record.
+                # The cleanup logs an OSError, so the layer error stays and the
+                # other layers go on.
                 if isinstance(err, _NO_BBOX_ERRORS) and result.output not in existing:
-                    result.output.unlink(missing_ok=True)
+                    _cleanup_orphaned_output(result.output, file_path)
                 failure_list.append(
                     AddFailure(path=result.output, error=f"Layer {result.layer}: {err}")
                 )
