@@ -37,12 +37,26 @@ hooks = [
 # =============================================================================
 # External tool hooks
 # =============================================================================
+# Ruff runs from uv.lock, so the hook and `uv run ruff` use one version.
 [[repos]]
-repo = "https://github.com/astral-sh/ruff-pre-commit"
-rev = "v0.14.1"
+repo = "local"
 hooks = [
-  { id = "ruff", args = ["--fix"] },
-  { id = "ruff-format" },
+  {
+    id = "ruff",
+    name = "ruff",
+    entry = "uv run ruff check --fix --force-exclude",
+    language = "system",
+    types = ["python"],
+    require_serial = true,
+  },
+  {
+    id = "ruff-format",
+    name = "ruff-format",
+    entry = "uv run ruff format --force-exclude",
+    language = "system",
+    types = ["python"],
+    require_serial = true,
+  },
 ]
 
 [[repos]]
