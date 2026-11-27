@@ -2980,12 +2980,10 @@ class TestPartitionedOutputWithGeoparquetIO:
         assert [(f.path, f.error) for f in failures] == [(roads, f"Layer roads: {failure}")]
         assert skips == {}
 
-    @pytest.mark.integration
-    def test_prepare_item_reports_a_new_output(self, tmp_path: Path) -> None:
-        """`created_output` is True for a new conversion and False for a kept output."""
+    @staticmethod
+    def _points_catalog(tmp_path: Path) -> tuple[Path, Path]:
+        """Make a catalog with one GeoJSON source in collection ``coll``."""
         import shutil
-
-        from portolan_cli.preparation import prepare_item
 
         (tmp_path / ".portolan").mkdir()
         (tmp_path / ".portolan" / "config.yaml").write_text("{}\n", encoding="utf-8")
@@ -2994,6 +2992,14 @@ class TestPartitionedOutputWithGeoparquetIO:
         fixtures = Path(__file__).parents[1] / "fixtures" / "vector" / "valid"
         source = coll / "points.geojson"
         shutil.copy(fixtures / "points.geojson", source)
+        return coll, source
+
+    @pytest.mark.integration
+    def test_prepare_item_reports_a_new_output(self, tmp_path: Path) -> None:
+        """`created_output` is True for a new conversion and False for a kept output."""
+        from portolan_cli.preparation import prepare_item
+
+        coll, source = self._points_catalog(tmp_path)
 
         first = prepare_item(path=source, catalog_root=tmp_path, collection_id="coll")
         kept = prepare_item(path=source, catalog_root=tmp_path, collection_id="coll", force=True)
@@ -3014,17 +3020,9 @@ class TestPartitionedOutputWithGeoparquetIO:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: Exception
     ) -> None:
         """A CRS that cannot transform stops the add and leaves no converted file (#928)."""
-        import shutil
-
         from portolan_cli import preparation
 
-        (tmp_path / ".portolan").mkdir()
-        (tmp_path / ".portolan" / "config.yaml").write_text("{}\n", encoding="utf-8")
-        coll = tmp_path / "coll"
-        coll.mkdir()
-        fixtures = Path(__file__).parents[1] / "fixtures" / "vector" / "valid"
-        source = coll / "points.geojson"
-        shutil.copy(fixtures / "points.geojson", source)
+        coll, source = self._points_catalog(tmp_path)
 
         def unreadable(*_args: object) -> list[float]:
             raise failure
@@ -3069,17 +3067,9 @@ class TestPartitionedOutputWithGeoparquetIO:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """The cleanup removes only the sidecars this run made, not a user's notes (#928)."""
-        import shutil
-
         from portolan_cli import preparation
 
-        (tmp_path / ".portolan").mkdir()
-        (tmp_path / ".portolan" / "config.yaml").write_text("{}\n", encoding="utf-8")
-        coll = tmp_path / "coll"
-        coll.mkdir()
-        fixtures = Path(__file__).parents[1] / "fixtures" / "vector" / "valid"
-        source = coll / "points.geojson"
-        shutil.copy(fixtures / "points.geojson", source)
+        coll, source = self._points_catalog(tmp_path)
         (coll / "points.parquet.notes.txt").write_text("keep me\n", encoding="utf-8")
 
         def unreadable(_metadata: object, output_path: Path) -> list[float]:
