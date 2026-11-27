@@ -340,6 +340,32 @@ class TestGeoParquetMetadataEdgeCases:
         assert metadata.crs == "EPSG:4326"
 
     @pytest.mark.unit
+    def test_extract_crs_keeps_the_projjson_authority(self, tmp_path: Path) -> None:
+        """A PROJJSON id with the OGC authority reads as OGC:CRS84, not EPSG:CRS84 (#928)."""
+        import json
+
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+
+        geo_meta = {
+            "version": "1.0.0",
+            "primary_column": "geometry",
+            "columns": {
+                "geometry": {
+                    "encoding": "WKB",
+                    "crs": {"type": "GeographicCRS", "id": {"authority": "OGC", "code": "CRS84"}},
+                }
+            },
+        }
+        table = pa.table({"geometry": [b"\x00"] * 3})
+        path = tmp_path / "crs84.parquet"
+        pq.write_table(
+            table.cast(table.schema.with_metadata({b"geo": json.dumps(geo_meta).encode()})), path
+        )
+
+        assert extract_geoparquet_metadata(path).crs == "OGC:CRS84"
+
+    @pytest.mark.unit
     def test_extract_crs_from_projjson_without_epsg(self, tmp_path: Path) -> None:
         """Returns full PROJJSON when no EPSG code available."""
         import json

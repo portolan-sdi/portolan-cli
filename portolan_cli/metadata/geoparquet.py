@@ -498,10 +498,11 @@ def _extract_crs(column_meta: dict[str, Any]) -> str | dict[str, Any] | None:
 
     # CRS can be PROJJSON dict or WKT string
     if isinstance(crs, dict):
-        # Try to extract EPSG code from PROJJSON
-        epsg = crs.get("id", {}).get("code")
-        if epsg:
-            return f"EPSG:{epsg}"
+        # Read the code with its own authority, so OGC:CRS84 does not become
+        # EPSG:CRS84, which pyproj cannot read (#928).
+        crs_id = crs.get("id", {})
+        if crs_id.get("code"):
+            return f"{crs_id.get('authority', 'EPSG')}:{crs_id['code']}"
         return crs
     return str(crs)
 

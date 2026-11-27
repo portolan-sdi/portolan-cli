@@ -9,10 +9,17 @@ format, so the docs Vale check skips heading case in this file. -->
 - `create_item` raises `InvalidBboxError` for a bbox that is not WGS84.
 Before, it accepted a projected bbox and made an Item that STAC does not
 allow. `create_collection` gives the same error with the reason (#928)
+- `add` now fails on a CRS that Portolan cannot read or transform, instead of
+publishing an untransformed bbox. `transform_bbox_to_wgs84` raises
+`CRSTransformError` (PRTLN-CNV012) in these cases (#928)
 
 ### Feat
 
 - **api**: export the STAC builders `create_item`, `create_collection`, `add_projection_extension`, `add_vector_extension`, `add_raster_extension`, `add_table_extension`, and `wgs84_bbox` from `portolan_cli.api` as a supported API (#928)
+
+### Fix
+
+- **metadata**: read a GeoParquet PROJJSON CRS id with its own authority, so `OGC:CRS84` no longer reads as `EPSG:CRS84` (#928)
 
 ## v0.9.0 (2026-10-30)
 

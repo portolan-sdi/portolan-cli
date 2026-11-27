@@ -17,7 +17,7 @@ import antimeridian
 from pyproj import CRS, Transformer
 from pyproj.exceptions import CRSError
 
-from portolan_core.errors import CRSMismatchError
+from portolan_core.errors import CRSMismatchError, CRSTransformError
 from portolan_core.trace import count
 
 if TYPE_CHECKING:
@@ -109,6 +109,8 @@ def transform_bbox_to_wgs84(
 
     Raises:
         CRSMismatchError: When a CRS mismatch is detected and allow_guess=False.
+        CRSTransformError: When pyproj cannot read the CRS or the transform
+            fails.
         ValueError: When input bbox contains inf/nan values (issue #516).
     """
     # Validate input bbox for inf/nan (issue #516)
@@ -128,15 +130,13 @@ def transform_bbox_to_wgs84(
     label = describe_crs(source_crs)
 
     # Parse source CRS with specific exception handling
+    # An unreadable CRS or a failed transform leaves the bbox in the source
+    # CRS, which must not pass as WGS84 (#928).
     try:
         src_crs = CRS.from_user_input(source_crs)
-    except CRSError as e:
-        logger.warning("Could not parse CRS '%s': %s. Returning bbox unchanged.", label, e)
-        return bbox
-    except TypeError as e:
+    except (CRSError, TypeError) as e:
         # CRS.from_user_input can raise TypeError for invalid input types
-        logger.warning("Invalid CRS type '%s': %s. Returning bbox unchanged.", type(source_crs), e)
-        return bbox
+        raise CRSTransformError(label, str(e)) from e
 
     # Check if already WGS84
     if _is_wgs84(src_crs):
@@ -167,13 +167,7 @@ def transform_bbox_to_wgs84(
         return _snapped(_transform_and_compute_bbox(bbox, src_crs))
     except Exception as e:
         # Catch transformation errors (e.g., coordinates outside projection bounds)
-        logger.warning(
-            "CRS transformation failed for bbox %s from %s: %s. Returning bbox unchanged.",
-            bbox,
-            label,
-            e,
-        )
-        return bbox
+        raise CRSTransformError(label, str(e)) from e
 
 
 def _snapped(bbox: tuple[float, float, float, float]) -> tuple[float, float, float, float]:

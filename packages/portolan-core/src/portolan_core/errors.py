@@ -494,6 +494,25 @@ class CRSMismatchError(ConversionError):
         )
 
 
+class CRSTransformError(ConversionError):
+    """Raised when a bbox cannot be transformed from its declared CRS to WGS84.
+
+    Error code: PRTLN-CNV012
+
+    pyproj cannot read the CRS, or the transform fails. The bbox is still in
+    the source CRS, so it must not go into STAC as a WGS84 bbox (#928).
+    """
+
+    code = "PRTLN-CNV012"
+
+    def __init__(self, source_crs: str, reason: str) -> None:
+        super().__init__(
+            f"Cannot transform the bbox from {source_crs} to WGS84: {reason}",
+            source_crs=source_crs,
+            reason=reason,
+        )
+
+
 class RewriteFidelityError(ConversionError):
     """Raised when an in-place rewrite would lose part of the source file.
 

@@ -432,15 +432,36 @@ class TestBboxWgs84Transformation:
         assert abs(result[1] - bbox[1]) < 0.001
 
     @pytest.mark.unit
-    def test_transform_bbox_to_wgs84_handles_invalid_crs(self) -> None:
-        """transform_bbox_to_wgs84 logs warning and returns unchanged bbox for invalid CRS."""
+    def test_transform_bbox_to_wgs84_rejects_an_unreadable_crs(self) -> None:
+        """An unreadable CRS raises, so a native bbox never passes as WGS84 (#928)."""
         from portolan_cli.crs import transform_bbox_to_wgs84
+        from portolan_core.errors import CRSTransformError
 
-        bbox = (100, 200, 300, 400)
-        result = transform_bbox_to_wgs84(bbox, "NOT_A_VALID_CRS")
+        with pytest.raises(CRSTransformError) as excinfo:
+            transform_bbox_to_wgs84((100, 200, 300, 400), "NOT_A_VALID_CRS")
 
-        # Should return unchanged bbox (with warning logged)
-        assert result == bbox
+        assert excinfo.value.code == "PRTLN-CNV012"
+        assert excinfo.value.context["source_crs"] == "NOT_A_VALID_CRS"
+
+    @pytest.mark.unit
+    def test_transform_bbox_to_wgs84_rejects_a_failed_transform(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A transform that fails raises instead of returning the native bbox (#928)."""
+        from pyproj.exceptions import ProjError
+
+        import portolan_cli.crs as crs
+        from portolan_core.errors import CRSTransformError
+
+        def fail(*_args: object) -> None:
+            raise ProjError("outside the projection bounds")
+
+        monkeypatch.setattr(crs, "_transform_and_compute_bbox", fail)
+
+        with pytest.raises(CRSTransformError) as excinfo:
+            crs.transform_bbox_to_wgs84((500000.0, 4000000.0, 510000.0, 4010000.0), "EPSG:32610")
+
+        assert excinfo.value.context["reason"] == "outside the projection bounds"
 
     @pytest.mark.unit
     def test_transform_bbox_to_wgs84_antimeridian_crossing(self) -> None:
