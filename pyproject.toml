@@ -449,6 +449,8 @@ exclude = [
 ]
 sort_by_size = true
 verbose = false
+# A breaker in tests/property registers itself in BREAKERS. No caller names it.
+ignore_decorators = ["@breaks"]
 
 # ---------- architecture enforcement ----------
 # Stricter layered contracts are aspirational - the current architecture has some coupling
