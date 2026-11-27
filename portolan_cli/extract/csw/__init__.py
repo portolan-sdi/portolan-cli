@@ -1,11 +1,4 @@
-"""CSW (Catalog Service for Web) metadata extraction.
-
-This module provides functionality for fetching and parsing ISO 19139
-metadata from CSW services and static XML files.
-
-Primary entry point:
-    fetch_metadata_for_layer: Fetch metadata from a layer's metadataUrls
-"""
+"""CSW (Catalog Service for Web) metadata extraction."""
 
 from __future__ import annotations
 

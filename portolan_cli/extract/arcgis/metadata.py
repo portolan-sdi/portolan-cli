@@ -1,34 +1,4 @@
-"""ArcGIS metadata extraction and mapping.
-
-This module provides metadata extraction from ArcGIS REST API responses for the
-`portolan extract arcgis` command. It maps ArcGIS service info fields to the
-metadata.yaml structure used by Portolan.
-
-Mapping (per extract-arcgis-design.md):
-    | ArcGIS Field         | metadata.yaml Field  |
-    |----------------------|----------------------|
-    | Service URL          | source_url           |
-    | copyrightText        | attribution          |
-    | description          | (STAC description)   |
-    | serviceDescription   | processing_notes     |
-    | documentInfo.Author  | providers (producer) |
-    | documentInfo.Keywords| keywords (list)      |
-    | accessInformation    | known_issues         |
-    | licenseInfo          | license_info_raw     |
-
-Usage:
-    from portolan_cli.extract.arcgis.metadata import (
-        ArcGISMetadata,
-        extract_arcgis_metadata,
-    )
-
-    service_info = {"copyrightText": "City of Philadelphia", ...}
-    metadata = extract_arcgis_metadata(
-        service_info,
-        source_url="https://services.arcgis.com/.../FeatureServer"
-    )
-    print(metadata.attribution)  # "City of Philadelphia"
-"""
+"""ArcGIS metadata extraction and mapping."""
 
 from __future__ import annotations
 
@@ -71,14 +41,7 @@ class ArcGISMetadata:
     """Raw license text (not SPDX mapped) from licenseInfo."""
 
     def to_extracted(self) -> ExtractedMetadata:
-        """Convert to source-agnostic ExtractedMetadata.
-
-        Maps ArcGIS-specific fields to the generic ExtractedMetadata model
-        used for seeding metadata.yaml.
-
-        Returns:
-            ExtractedMetadata instance with mapped fields.
-        """
+        """Convert to source-agnostic ExtractedMetadata."""
         from portolan_cli.metadata_extraction import ExtractedMetadata
         from portolan_core.licensing import license_url_from_text
 
@@ -100,22 +63,7 @@ def extract_arcgis_metadata(
     service_info: dict[str, Any],
     source_url: str,
 ) -> ArcGISMetadata:
-    """Extract metadata from ArcGIS service info.
-
-    Args:
-        service_info: The JSON response from the ArcGIS REST API service endpoint.
-        source_url: The URL of the ArcGIS service (required).
-
-    Returns:
-        ArcGISMetadata dataclass with extracted fields. Missing or empty fields
-        are returned as None.
-
-    Note:
-        - Empty strings and whitespace-only strings are converted to None
-        - Non-string values (numbers, lists, etc.) are ignored and return None
-        - Keywords are split on commas and trimmed of whitespace
-        - HTML content in description fields is preserved
-    """
+    """Extract metadata from ArcGIS service info."""
     document_info = _get_document_info(service_info)
 
     return ArcGISMetadata(
@@ -139,18 +87,7 @@ def _get_document_info(service_info: dict[str, Any]) -> dict[str, Any] | None:
 
 
 def _extract_string(data: dict[str, Any], key: str) -> str | None:
-    """Extract a string value, returning None for empty/invalid values.
-
-    Args:
-        data: Dictionary to extract from.
-        key: Key to look up.
-
-    Returns:
-        The string value, or None if:
-        - Key doesn't exist
-        - Value is not a string
-        - Value is empty or whitespace-only
-    """
+    """Extract a string value, returning None for empty/invalid values."""
     value = data.get(key)
     if not isinstance(value, str):
         return None
@@ -160,20 +97,7 @@ def _extract_string(data: dict[str, Any], key: str) -> str | None:
 
 
 def _extract_keywords(document_info: dict[str, Any]) -> list[str] | None:
-    """Extract keywords from documentInfo.Keywords.
-
-    The Keywords field is a comma-separated string that gets split into a list.
-    Empty entries and whitespace are removed.
-
-    Args:
-        document_info: The documentInfo dict.
-
-    Returns:
-        List of keywords, or None if:
-        - Keywords field doesn't exist
-        - Keywords field is not a string
-        - All keywords are empty after splitting and trimming
-    """
+    """Extract keywords from documentInfo.Keywords."""
     keywords_raw = document_info.get("Keywords")
     if not isinstance(keywords_raw, str):
         return None

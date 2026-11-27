@@ -1,34 +1,4 @@
-"""Retry logic with exponential backoff for extraction operations.
-
-This module provides retry utilities for handling transient failures
-during layer extraction. The retry strategy follows the design:
-- Default: 3 attempts per layer
-- Backoff: Exponential (1s, 2s, 4s by default)
-- On persistent failure: Returns error for caller to handle
-
-Typical usage:
-    from portolan_cli.extract.common.retry import RetryConfig, retry_with_backoff
-
-    config = RetryConfig(max_attempts=3)
-    result = retry_with_backoff(
-        lambda: extract_layer(url, output_path),
-        config,
-        on_retry=lambda attempt, err: print(f"Retry {attempt}: {err}"),
-    )
-
-    if result.success:
-        print(f"Extracted in {result.attempts} attempts")
-    else:
-        print(f"Failed after {result.attempts} attempts: {result.error}")
-
-Only a transient failure gets a retry: a transport error, a timeout, HTTP
-408, 429, or 5xx, or an ArcGIS JSON body with one of those codes.
-``permanent_status`` finds a failure that a retry cannot fix: any other HTTP
-status, or an ArcGIS JSON error with any other code, such as the
-invalid-token codes 498 and 499. The layer fetch of every source, the ArcGIS
-discovery client, and the ImageServer tile requests use it, so the rule has
-one home. Each of those failures ends at once with ``PERMANENT_NOTE``.
-"""
+"""Retry logic with exponential backoff for extraction operations."""
 
 from __future__ import annotations
 
@@ -69,19 +39,7 @@ def is_transient_status(code: object) -> bool:
 
 
 def permanent_status(error: BaseException) -> str | None:
-    """Return the status of a failure that a retry cannot fix, or None.
-
-    The search follows the exception chain, because geoparquet-io wraps the
-    HTTP error. An error tells its status with a ``status_code`` attribute,
-    an HTTP ``response``, or an ``arcgis_code`` attribute. A transport error or a timeout carries no status, so it
-    gets the retries.
-
-    Args:
-        error: The failure.
-
-    Returns:
-        The status, such as ``HTTP 404``, or None for a transient failure.
-    """
+    """Return the status of a failure that a retry cannot fix, or None."""
     seen: set[int] = set()
     current: BaseException | None = error
     while current is not None and id(current) not in seen:
@@ -111,14 +69,7 @@ class RetryError(Exception):
 
 @dataclass
 class RetryConfig:
-    """Configuration for retry behavior.
-
-    Attributes:
-        max_attempts: Maximum number of attempts before giving up
-        initial_delay: Delay in seconds before first retry
-        backoff_factor: Multiplier for each subsequent delay
-        max_delay: Maximum delay between retries (caps exponential growth)
-    """
+    """Configuration for retry behavior."""
 
     max_attempts: int = 3
     initial_delay: float = 1.0
@@ -133,14 +84,7 @@ class RetryConfig:
 
 @dataclass
 class RetryResult(Generic[T]):
-    """Result of a retry operation.
-
-    Attributes:
-        success: Whether the operation succeeded
-        value: The return value (if successful)
-        attempts: Number of attempts made
-        error: The last error (if failed)
-    """
+    """Result of a retry operation."""
 
     success: bool
     value: T | None
@@ -166,21 +110,7 @@ def retry_with_backoff(
     on_retry: Callable[[int, Exception], None] | None = None,
     **kwargs: Any,
 ) -> RetryResult[T]:
-    """Execute an operation with retry and exponential backoff.
-
-    Args:
-        operation: Callable to execute
-        config: Retry configuration
-        *args: Positional arguments to pass to operation
-        retry_on: Exception types to retry on (default: all exceptions)
-        give_up_on: Exception types that end the retries at once. The
-            result then fails with that error, as a retry cannot change it.
-        on_retry: Callback called before each retry with (attempt, error)
-        **kwargs: Keyword arguments to pass to operation
-
-    Returns:
-        RetryResult containing success status, value, attempts, and error
-    """
+    """Execute an operation with retry and exponential backoff."""
     if retry_on is None:
         retry_on = (Exception,)
 

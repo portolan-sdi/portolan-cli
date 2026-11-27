@@ -1,11 +1,4 @@
-"""Common metadata seeding utilities for extraction backends.
-
-This module provides shared functionality for seeding metadata.yaml files
-at the collection level from extracted layer metadata.
-
-Used by both WFS and ArcGIS extraction backends to populate collection-level
-.portolan/metadata.yaml with layer-specific info (title, description).
-"""
+"""Common metadata seeding utilities for extraction backends."""
 
 from __future__ import annotations
 
@@ -22,19 +15,7 @@ def _select_best_description(
     title: str | None,
     layer_name: str,
 ) -> str | None:
-    """Select the best description from available metadata fields.
-
-    Prefers abstract if it's a real description, otherwise falls back to title.
-    Returns None if no good description is available.
-
-    Args:
-        abstract: Layer abstract/description.
-        title: Layer title.
-        layer_name: Layer name (used to detect if title/abstract just echoes it).
-
-    Returns:
-        Best available description, or None.
-    """
+    """Select the best description from available metadata fields."""
     # If abstract looks like a real description, use it
     if abstract and not _is_technical_name(abstract):
         return abstract
@@ -61,31 +42,7 @@ def seed_collection_metadata(
     description: str | None = None,
     keywords: list[str] | None = None,
 ) -> bool:
-    """Seed metadata.yaml for a collection with layer-specific info.
-
-    Creates .portolan/metadata.yaml within the collection directory with
-    layer-specific metadata (title, description) plus inherited source info.
-
-    Also updates collection.json with title/description per Issue #369
-    (propagate rich metadata to STAC, not just metadata.yaml).
-
-    Automatically selects the best description from available fields:
-    - Prefers abstract if it's a real description (not just a technical name)
-    - Falls back to title if abstract looks like an identifier
-    - Uses title in processing_notes if different from layer name
-
-    Args:
-        collection_dir: Path to the collection directory.
-        source_type: Source type identifier (e.g., "wfs", "arcgis_featureserver").
-        source_url: URL of the layer/feature source.
-        layer_name: Layer name for processing_notes.
-        title: Layer title.
-        description: Layer description/abstract (will be intelligently selected).
-        keywords: Layer-specific keywords.
-
-    Returns:
-        True if metadata.yaml was created, False if skipped (already exists).
-    """
+    """Seed metadata.yaml for a collection with layer-specific info."""
     from portolan_cli.metadata_extraction import ExtractedMetadata
     from portolan_cli.metadata_seeding import seed_metadata_yaml
     from portolan_cli.stac import update_stac_metadata
@@ -106,12 +63,11 @@ def seed_collection_metadata(
     )
 
     metadata_path = collection_dir / ".portolan" / "metadata.yaml"
-    # No placeholder: this is a child file and the merge lets the child win, so a
-    # TODO here would override the catalog's real license and contact (#686, #1039).
+    # No placeholder: the child file wins the merge, so a TODO would override
+    # the catalog's real license and contact.
     seeded = seed_metadata_yaml(extracted, metadata_path, placeholders=False)
 
-    # Per Issue #369: Also update collection.json with title/description
-    # This ensures STAC has meaningful metadata, not generic placeholders
+    # Also give collection.json a real title and description.
     collection_path = collection_dir / "collection.json"
     update_stac_metadata(
         collection_path,

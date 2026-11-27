@@ -1,22 +1,4 @@
-"""ESRI REST API renderer to Mapbox GL converter.
-
-Converts ESRI drawingInfo.renderer JSON to Mapbox GL style documents.
-
-Supported renderer types:
-- simple: Single symbol for all features
-- uniqueValue: Categorical classification (match expression)
-- classBreaks: Graduated classification (step expression)
-
-Supported symbol types:
-- esriSFS: Simple fill symbol (polygons)
-- esriSLS: Simple line symbol (lines)
-- esriSMS: Simple marker symbol (points → circles)
-- esriPMS: Picture marker symbol (points → warns, falls back to circle)
-
-Usage:
-    renderer = layer_json["drawingInfo"]["renderer"]
-    style = convert_esri_renderer(renderer, source_layer="my-layer")
-"""
+"""ESRI REST API renderer to Mapbox GL converter."""
 
 from __future__ import annotations
 
@@ -187,18 +169,7 @@ def parse_simple_renderer(
     source_layer: str,
     warnings: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Convert simple renderer to Mapbox GL style.
-
-    Simple renderers apply the same symbol to all features.
-
-    Args:
-        renderer: ESRI renderer dict with type="simple".
-        source_layer: Name for the source-layer in output.
-        warnings: Optional list to collect conversion warnings.
-
-    Returns:
-        Complete Mapbox GL style dict.
-    """
+    """Convert simple renderer to Mapbox GL style."""
     symbol = renderer.get("symbol") or {}
     layer = _parse_symbol(symbol, "layer-0", source_layer, warnings)
 
@@ -213,19 +184,7 @@ def parse_uniquevalue_renderer(
     source_layer: str,
     warnings: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Convert uniqueValue renderer to Mapbox GL style with match expression.
-
-    UniqueValue renderers apply different symbols based on attribute values.
-    Converts to a Mapbox GL match expression.
-
-    Args:
-        renderer: ESRI renderer dict with type="uniqueValue".
-        source_layer: Name for the source-layer in output.
-        warnings: Optional list to collect conversion warnings.
-
-    Returns:
-        Complete Mapbox GL style dict.
-    """
+    """Convert uniqueValue renderer to Mapbox GL style with match expression."""
     field = renderer.get("field1", renderer.get("field", "value"))
     infos = renderer.get("uniqueValueInfos", [])
 
@@ -335,12 +294,7 @@ def _choropleth_layer(
     min_value: Any,
     source_layer: str,
 ) -> dict[str, Any]:
-    """Build a fill or line layer whose color steps with the class breaks.
-
-    Each class opens at the previous class's maximum, so the first entry
-    carries minValue as its threshold and make_step_expression uses its
-    color as the below-first-break value.
-    """
+    """Build a fill or line layer whose color steps with the class breaks."""
     color_breaks: list[tuple[Any, Any]] = []
     for i, info in enumerate(break_infos):
         color = esri_color_to_hex(_break_symbol(info).get("color") or [128, 128, 128, 255])
@@ -368,19 +322,7 @@ def parse_classbreaks_renderer(
     source_layer: str,
     warnings: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Convert classBreaks renderer to Mapbox GL style with step expression.
-
-    ClassBreaks renderers apply different symbols based on numeric ranges.
-    Converts to a Mapbox GL step expression.
-
-    Args:
-        renderer: ESRI renderer dict with type="classBreaks".
-        source_layer: Name for the source-layer in output.
-        warnings: Optional list to collect conversion warnings.
-
-    Returns:
-        Complete Mapbox GL style dict.
-    """
+    """Convert classBreaks renderer to Mapbox GL style with step expression."""
     field = renderer.get("field", "value")
     min_value = renderer.get("minValue", 0)
     break_infos = renderer.get("classBreakInfos", [])
@@ -437,22 +379,7 @@ def convert_esri_renderer(
     *,
     return_warnings: bool = False,
 ) -> dict[str, Any] | tuple[dict[str, Any], list[str]]:
-    """Convert ESRI renderer to Mapbox GL style.
-
-    Main entry point for ESRI → Mapbox GL conversion. Routes to appropriate
-    parser based on renderer type.
-
-    Args:
-        renderer: ESRI drawingInfo.renderer dict.
-        source_layer: Name for the source-layer in output.
-        return_warnings: If True, return (style, warnings) tuple.
-
-    Returns:
-        Mapbox GL style dict, or (style, warnings) tuple if return_warnings=True.
-
-    Raises:
-        ESRIConverterError: If renderer type is not supported.
-    """
+    """Convert ESRI renderer to Mapbox GL style."""
     renderer_type = renderer.get("type", "")
     warnings: list[str] = []
 

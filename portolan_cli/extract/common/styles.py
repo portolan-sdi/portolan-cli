@@ -1,28 +1,4 @@
-"""Style and legend extraction orchestration for remote services.
-
-This module provides the high-level API for extracting styles from
-WMS and ESRI REST endpoints and writing them as Mapbox GL JSON files.
-Also extracts legend images from WMS GetLegendGraphic endpoint.
-
-Style extraction flow:
-1. Fetch style from source (WMS GetStyles or ESRI layer JSON)
-2. Convert to Mapbox GL using format-specific converter
-3. Write to {collection}/styles/{name}.json
-4. Return ExtractedStyle for STAC asset registration
-
-Legend extraction flow (Issue #498):
-1. Fetch legend image from WMS GetLegendGraphic endpoint
-2. Write to {collection}/legends/{name}.png
-3. Return ExtractedLegend for STAC asset registration
-
-Usage:
-    # During WFS extraction
-    style_info = extract_wms_style(wms_url, layer_name, collection_path)
-    legend_info = extract_wms_legend(wms_url, layer_name, collection_path)
-
-    # During ArcGIS extraction, with the layer JSON from the ArcGIS client
-    style_info = extract_esri_style(layer_json, collection_path)
-"""
+"""Style and legend extraction orchestration for remote services."""
 
 from __future__ import annotations
 
@@ -59,14 +35,7 @@ class StyleExtractionError(Exception):
 
 @dataclass
 class ExtractedStyle:
-    """Result of style extraction.
-
-    Attributes:
-        path: Path to written style JSON file.
-        name: Style name (used as asset key).
-        source_format: Original format ("sld" or "esri").
-        warnings: Any conversion warnings.
-    """
+    """Result of style extraction."""
 
     path: Path
     name: str
@@ -76,15 +45,7 @@ class ExtractedStyle:
 
 @dataclass
 class ExtractedLegend:
-    """Result of legend extraction.
-
-    Attributes:
-        path: Path to written legend PNG file.
-        name: Legend name (used as asset key).
-        media_type: MIME type (always "image/png").
-        width: Image width in pixels (None if not determined).
-        height: Image height in pixels (None if not determined).
-    """
+    """Result of legend extraction."""
 
     path: Path
     name: str
@@ -94,17 +55,7 @@ class ExtractedLegend:
 
 
 def _wfs_url_to_wms_path(wfs_url: str) -> tuple[str, str]:
-    """Convert WFS URL to WMS path.
-
-    GeoServer/GeoNode typically expose WMS at the same base URL as WFS.
-    We replace the service parameter and adjust the path.
-
-    Args:
-        wfs_url: WFS service endpoint URL.
-
-    Returns:
-        Tuple of (scheme://netloc, wms_path).
-    """
+    """Convert WFS URL to WMS path."""
     parsed = urlparse(wfs_url)
 
     # Try to detect if this is a GeoServer URL and adjust path
@@ -119,15 +70,7 @@ def _wfs_url_to_wms_path(wfs_url: str) -> tuple[str, str]:
 
 
 def _reject_credential_bearing_http_url(url: str) -> None:
-    """Refuse to fetch a non-HTTPS URL that carries a credential.
-
-    Args:
-        url: URL that will be sent as-is to the remote service.
-
-    Raises:
-        StyleExtractionError: If the URL uses a non-HTTPS scheme and its
-            query string has a parameter name that looks like a credential.
-    """
+    """Refuse to fetch a non-HTTPS URL that carries a credential."""
     parsed = urlparse(url)
     if parsed.scheme == "https":
         return
@@ -165,13 +108,7 @@ def _credential_redirect_guard(url: str) -> Callable[[httpx.Request], None]:
 
 
 def _guarded_get(url: str, timeout: float) -> httpx.Response:
-    """GET a URL, following redirects with the credential redirect guard applied.
-
-    Raises:
-        httpx.HTTPStatusError: On a non-2xx response.
-        httpx.RequestError: On a transport error.
-        StyleExtractionError: If a hop would send a credential over non-HTTPS.
-    """
+    """GET a URL, following redirects with the credential redirect guard applied."""
     with httpx.Client(
         timeout=timeout,
         follow_redirects=True,
@@ -183,18 +120,7 @@ def _guarded_get(url: str, timeout: float) -> httpx.Response:
 
 
 def _build_wms_getstyles_url(wfs_url: str, layer_name: str) -> str:
-    """Build WMS GetStyles URL from WFS endpoint.
-
-    GeoServer/GeoNode typically expose WMS at the same base URL as WFS.
-    We replace the service parameter and add GetStyles request.
-
-    Args:
-        wfs_url: WFS service endpoint URL.
-        layer_name: Layer name (may include workspace prefix like "geonode:layer").
-
-    Returns:
-        WMS GetStyles URL.
-    """
+    """Build WMS GetStyles URL from WFS endpoint."""
     parsed = urlparse(wfs_url)
     _, path = _wfs_url_to_wms_path(wfs_url)
 
@@ -206,23 +132,12 @@ def _build_wms_getstyles_url(wfs_url: str, layer_name: str) -> str:
         "layers": layer_name,
     }
 
-    # An API key survives. WFS request parameters go (issue #981).
+    # An API key survives. WFS request parameters go.
     return merge_query(urlunparse(parsed._replace(path=path)), params, drop=WFS_REQUEST_PARAMS)
 
 
 def _build_wms_getlegendgraphic_url(wfs_url: str, layer_name: str) -> str:
-    """Build WMS GetLegendGraphic URL from WFS endpoint.
-
-    GeoServer/GeoNode typically expose WMS at the same base URL as WFS.
-    We replace the service parameter and add GetLegendGraphic request.
-
-    Args:
-        wfs_url: WFS service endpoint URL.
-        layer_name: Layer name (may include workspace prefix like "geonode:layer").
-
-    Returns:
-        WMS GetLegendGraphic URL.
-    """
+    """Build WMS GetLegendGraphic URL from WFS endpoint."""
     parsed = urlparse(wfs_url)
     _, path = _wfs_url_to_wms_path(wfs_url)
 
@@ -235,24 +150,12 @@ def _build_wms_getlegendgraphic_url(wfs_url: str, layer_name: str) -> str:
         "format": "image/png",
     }
 
-    # An API key survives. WFS request parameters go (issue #981).
+    # An API key survives. WFS request parameters go.
     return merge_query(urlunparse(parsed._replace(path=path)), params, drop=WFS_REQUEST_PARAMS)
 
 
 def _fetch_wms_style(url: str, timeout: float = 30.0) -> str:
-    """Fetch SLD XML from WMS GetStyles request.
-
-    Args:
-        url: WMS GetStyles URL.
-        timeout: Request timeout in seconds.
-
-    Returns:
-        SLD XML string.
-
-    Raises:
-        StyleExtractionError: On HTTP or response errors, or if the URL
-            carries a credential over a non-HTTPS scheme.
-    """
+    """Fetch SLD XML from WMS GetStyles request."""
     _reject_credential_bearing_http_url(url)
 
     try:
@@ -265,7 +168,7 @@ def _fetch_wms_style(url: str, timeout: float = 30.0) -> str:
 
         # Check for error response
         if "ServiceException" in response.text:
-            # An error page can quote the request URL with its key (#981).
+            # An error page can quote the request URL with its key.
             raise StyleExtractionError(
                 redact_credentials(f"WMS GetStyles returned error: {response.text[:200]}")
             )
@@ -285,16 +188,7 @@ def _write_style_file(
     collection_path: Path,
     name: str,
 ) -> Path:
-    """Write Mapbox GL style to collection's styles directory.
-
-    Args:
-        style_dict: Mapbox GL style dict.
-        collection_path: Path to collection directory.
-        name: Style filename (without .json extension).
-
-    Returns:
-        Path to written file.
-    """
+    """Write Mapbox GL style to collection's styles directory."""
     styles_dir = collection_path / "styles"
     styles_dir.mkdir(parents=True, exist_ok=True)
 
@@ -313,22 +207,7 @@ def extract_wms_style(
     style_name: str = "default",
     timeout: float = 30.0,
 ) -> ExtractedStyle | None:
-    """Extract style from WMS GetStyles and write as Mapbox GL JSON.
-
-    Attempts to fetch SLD from companion WMS endpoint and convert to
-    Mapbox GL format. Returns None if style cannot be extracted.
-
-    Args:
-        wfs_url: WFS service endpoint URL.
-        layer_name: Layer name (may include workspace prefix).
-        collection_path: Path to collection directory.
-        source_layer: Source layer name for Mapbox GL (defaults to layer_name stem).
-        style_name: Output filename (default "default").
-        timeout: Request timeout in seconds.
-
-    Returns:
-        ExtractedStyle if successful, None if style unavailable.
-    """
+    """Extract style from WMS GetStyles and write as Mapbox GL JSON."""
     # Build source layer name
     if source_layer is None:
         # Strip workspace prefix like "geonode:"
@@ -373,20 +252,7 @@ def extract_esri_style(
     source_layer: str | None = None,
     style_name: str = "default",
 ) -> ExtractedStyle | None:
-    """Convert the ESRI renderer of a layer to a Mapbox GL JSON style file.
-
-    The caller fetches the layer JSON with the ArcGIS client, which sends
-    the token (issue #855).
-
-    Args:
-        layer_json: The layer's REST JSON, with ``drawingInfo.renderer``.
-        collection_path: Path to collection directory.
-        source_layer: Source layer name for Mapbox GL (defaults to layer name).
-        style_name: Output filename (default "default").
-
-    Returns:
-        ExtractedStyle if successful, None if style unavailable.
-    """
+    """Convert the ESRI renderer of a layer to a Mapbox GL JSON style file."""
     # Extract renderer from drawingInfo
     drawing_info = layer_json.get("drawingInfo", {})
     renderer = drawing_info.get("renderer")
@@ -421,22 +287,11 @@ def extract_esri_style(
     )
 
 
-# =============================================================================
-# Legend Extraction (Issue #498)
-# =============================================================================
+# Legend extraction
 
 
 def _fetch_wms_legend(url: str, timeout: float = 30.0) -> bytes | None:
-    """Fetch legend image bytes from WMS GetLegendGraphic request.
-
-    Args:
-        url: WMS GetLegendGraphic URL.
-        timeout: Request timeout in seconds.
-
-    Returns:
-        PNG image bytes if successful, None on errors (including a
-        credential-bearing non-HTTPS URL).
-    """
+    """Fetch legend image bytes from WMS GetLegendGraphic request."""
     try:
         _reject_credential_bearing_http_url(url)
 
@@ -471,16 +326,7 @@ def _write_legend_file(
     collection_path: Path,
     name: str,
 ) -> Path:
-    """Write legend PNG to collection's legends directory.
-
-    Args:
-        legend_bytes: PNG image bytes.
-        collection_path: Path to collection directory.
-        name: Legend filename (without .png extension).
-
-    Returns:
-        Path to written file.
-    """
+    """Write legend PNG to collection's legends directory."""
     legends_dir = collection_path / "legends"
     legends_dir.mkdir(parents=True, exist_ok=True)
 
@@ -498,21 +344,7 @@ def extract_wms_legend(
     legend_name: str = "source",
     timeout: float = 30.0,
 ) -> ExtractedLegend | None:
-    """Extract legend from WMS GetLegendGraphic and save to legends/ directory.
-
-    Attempts to fetch legend image from companion WMS endpoint.
-    Returns None if legend cannot be extracted.
-
-    Args:
-        wfs_url: WFS service endpoint URL.
-        layer_name: Layer name (may include workspace prefix).
-        collection_path: Path to collection directory.
-        legend_name: Output filename (default "source").
-        timeout: Request timeout in seconds.
-
-    Returns:
-        ExtractedLegend if successful, None if legend unavailable.
-    """
+    """Extract legend from WMS GetLegendGraphic and save to legends/ directory."""
     # Build WMS GetLegendGraphic URL
     legend_url = _build_wms_getlegendgraphic_url(wfs_url, layer_name)
     logger.debug("Fetching WMS legend from: %s", redact_credentials(legend_url))

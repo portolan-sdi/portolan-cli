@@ -1,12 +1,4 @@
-"""Read a remote catalog over the object store and clone it.
-
-This module is sync transport. It moves bytes and reads STAC links. It
-imports nothing from ``portolan_cli.scan`` or ``portolan_cli.convert``, so
-``clone`` and remote listing do not load the conversion stack. The sync
-orchestration, which runs scan and check, lives in ``portolan_cli.sync.core``.
-An import-linter contract and ``tests/integration/test_sync_transport_imports.py``
-keep the boundary.
-"""
+"""Read a remote catalog over the object store and clone it."""
 
 from __future__ import annotations
 
@@ -24,32 +16,11 @@ from portolan_core.json_io import write_json_atomic
 
 _MIN_URL_PARTS = 3
 
-# =============================================================================
 # URL Parsing Utilities
-# =============================================================================
 
 
 def infer_local_path_from_url(remote_url: str) -> Path:
-    """Infer local directory name from a remote catalog URL.
-
-    Extracts the last path component from the URL as the directory name,
-    similar to how `git clone` infers directory name from repo URL.
-
-    Args:
-        remote_url: Remote catalog URL (e.g., s3://mybucket/my-catalog).
-
-    Returns:
-        Path object with the inferred directory name.
-
-    Raises:
-        ValueError: If cannot infer a name (e.g., bucket-only URL).
-
-    Examples:
-        >>> infer_local_path_from_url("s3://bucket/my-catalog")
-        Path('my-catalog')
-        >>> infer_local_path_from_url("s3://bucket/path/to/catalog/")
-        Path('catalog')
-    """
+    """Infer local directory name from a remote catalog URL."""
     # Strip trailing slashes
     url = remote_url.rstrip("/")
 
@@ -59,9 +30,7 @@ def infer_local_path_from_url(remote_url: str) -> Path:
     # Filter out empty parts (from multiple slashes)
     parts = [p for p in parts if p]
 
-    # We need at least scheme://bucket/catalog (3+ parts after split)
-    # e.g., ['s3:', 'bucket', 'catalog'] or ['s3:', '', 'bucket', 'catalog']
-    # After removing scheme part, we need the catalog name
+    # Need at least scheme://bucket/catalog, such as ['s3:', '', 'bucket', 'catalog'].
     if len(parts) < _MIN_URL_PARTS:
         raise ValueError(
             f"Cannot infer local path from URL: {remote_url}. "
@@ -80,9 +49,7 @@ def infer_local_path_from_url(remote_url: str) -> Path:
     return Path(catalog_name)
 
 
-# =============================================================================
 # Remote Catalog Fetching
-# =============================================================================
 
 
 def _fetch_remote_catalog_json(
@@ -91,19 +58,7 @@ def _fetch_remote_catalog_json(
     profile: str | None = None,
     report: Report = silent,
 ) -> dict[str, Any]:
-    """Fetch and parse catalog.json from a remote catalog.
-
-    Args:
-        remote_url: Remote catalog URL (e.g., s3://bucket/catalog).
-        profile: AWS profile name (for S3).
-        report: Receives the download lines.
-
-    Returns:
-        Parsed catalog.json as a dictionary.
-
-    Raises:
-        CloneError: If fetch or parse fails.
-    """
+    """Fetch and parse catalog.json from a remote catalog."""
     # Build remote catalog.json path
     catalog_url = f"{remote_url.rstrip('/')}/catalog.json"
 
@@ -148,24 +103,7 @@ def list_remote_collections(
     max_depth: int = 10,
     report: Report = silent,
 ) -> list[str]:
-    """List all collections available in a remote catalog.
-
-    Recursively fetches catalog.json files and parses STAC child links
-    to discover collection names. Handles nested catalog structures (nested catalogs with flat collections).
-
-    Args:
-        remote_url: Remote catalog URL (e.g., s3://bucket/catalog).
-        profile: AWS profile name (for S3).
-        max_depth: Maximum recursion depth to prevent infinite loops.
-            Default is 10, which should handle most reasonable hierarchies.
-        report: Receives the warning when the walk reaches ``max_depth``.
-
-    Returns:
-        List of collection names found in the catalog (including nested).
-
-    Raises:
-        CloneError: If unable to fetch or parse the catalog.
-    """
+    """List all collections available in a remote catalog."""
     # Track visited URLs to detect circular references
     visited_urls: set[str] = set()
 
@@ -181,15 +119,7 @@ def list_remote_collections(
 
 
 def _resolve_href(base_url: str, href: str) -> str:
-    """Resolve a potentially relative href against a base URL.
-
-    Args:
-        base_url: The base catalog URL (e.g., s3://bucket/catalog).
-        href: The href to resolve (relative or absolute).
-
-    Returns:
-        Absolute URL for the href.
-    """
+    """Resolve a potentially relative href against a base URL."""
     # If href is already absolute (has scheme), return as-is
     if "://" in href:
         return href
@@ -212,15 +142,7 @@ def _resolve_href(base_url: str, href: str) -> str:
 
 
 def _extract_catalog_url_from_href(base_url: str, href: str) -> str:
-    """Extract the catalog directory URL from a catalog.json href.
-
-    Args:
-        base_url: The base catalog URL.
-        href: The href pointing to a catalog.json file.
-
-    Returns:
-        The catalog directory URL (without catalog.json suffix).
-    """
+    """Extract the catalog directory URL from a catalog.json href."""
     full_url = _resolve_href(base_url, href)
 
     # Remove the catalog.json suffix to get the catalog directory
@@ -242,21 +164,7 @@ def _list_remote_collections_recursive(
     path_prefix: str = "",
     report: Report = silent,
 ) -> list[str]:
-    """Recursively list collections from a catalog and its subcatalogs.
-
-    Internal recursive helper for list_remote_collections.
-
-    Args:
-        remote_url: URL of the catalog to read at this level.
-        profile: Named credential profile for the object store. None uses the
-            default credentials.
-        max_depth: Maximum number of catalog levels to descend.
-        current_depth: Depth of this call. The walk stops at ``max_depth``.
-        visited_urls: URLs already read. The set stops a circular reference.
-        path_prefix: The accumulated path from the root catalog to this point.
-            Used to construct full collection paths like "climate/hittekaart".
-        report: Receives the warning when the walk reaches ``max_depth``.
-    """
+    """Recursively list collections from a catalog and its subcatalogs."""
     # Normalize URL for visited check
     normalized_url = remote_url.rstrip("/")
 
@@ -328,17 +236,7 @@ def _list_remote_collections_recursive(
 
 
 def _extract_subcatalog_dir_from_href(href: str) -> str:
-    """Extract the subcatalog directory name from an href.
-
-    Used to build path prefixes for nested collections.
-
-    Args:
-        href: The href pointing to a catalog.json file.
-            e.g., "./climate/catalog.json" or "s3://bucket/catalog/climate/catalog.json"
-
-    Returns:
-        The subcatalog directory name (e.g., "climate").
-    """
+    """Extract the subcatalog directory name from an href."""
     # Remove catalog.json suffix
     if href.endswith("/catalog.json"):
         href = href[: -len("/catalog.json")]
@@ -359,20 +257,7 @@ def _extract_subcatalog_dir_from_href(href: str) -> str:
 
 
 def _extract_collection_name_from_href(href: str) -> str:
-    """Extract collection path from an href.
-
-    Handles both relative (./environment/collection-name/collection.json)
-    and absolute (s3://bucket/catalog/collection-name/collection.json) paths.
-
-    For relative paths, preserves the full path structure (e.g., "environment/bodemkwaliteit").
-    For absolute paths, extracts only the leaf directory name.
-
-    Args:
-        href: The href pointing to a collection.json file.
-
-    Returns:
-        The collection path relative to the catalog root.
-    """
+    """Extract collection path from an href."""
     # Remove collection.json suffix if present
     if href.endswith("/collection.json"):
         href = href[: -len("/collection.json")]
@@ -398,23 +283,12 @@ def _extract_collection_name_from_href(href: str) -> str:
     return href
 
 
-# =============================================================================
 # Clone Function
-# =============================================================================
 
 
 @dataclass
 class CloneResult:
-    """Result of a clone operation.
-
-    Attributes:
-        success: True if clone completed successfully.
-        pull_result: Result from the pull operation (single collection).
-        local_path: Path where the catalog was cloned to.
-        errors: List of error messages if any step failed.
-        collections_cloned: List of collection names that were cloned (multi-collection).
-        total_files_downloaded: Total files downloaded across all collections.
-    """
+    """Result of a clone operation."""
 
     success: bool
     pull_result: PullResult | None
@@ -443,12 +317,7 @@ class CloneError(Exception):
 
 
 def _drop_missing_child_links(local_path: Path, collections: list[str]) -> None:
-    """Drop each child link of a cloned catalog.json that the clone cannot resolve (#1042).
-
-    pull copies the remote root and intermediate catalog.json files, which link
-    to every remote collection. A clone of some collections, or a clone with a
-    failed pull, holds fewer.
-    """
+    """Drop each child link of a cloned catalog.json that the clone cannot resolve."""
     ids = {"", *(i for coll in collections for i in intermediate_catalog_ids(coll))}
     for path in (local_path / catalog_id / "catalog.json" for catalog_id in sorted(ids)):
         if not path.is_file():
@@ -476,32 +345,7 @@ def clone(  # noqa: PLR0915 - one ordered clone sequence
     report: Report = silent,
     show_progress: bool = False,
 ) -> CloneResult:
-    """Clone a remote catalog to a local directory.
-
-    This is essentially "pull to an empty directory" with guardrails.
-    Creates the target directory, initializes a Portolan catalog, and pulls
-    collections from remote storage.
-
-    When collection is None, all collections from the remote catalog are cloned.
-    When collection is specified, only that collection is cloned.
-
-    Args:
-        remote_url: Remote catalog URL (e.g., s3://bucket/catalog).
-        local_path: Local directory to clone into (will be created).
-        collection: Collection name to clone, or None to clone all collections.
-        profile: AWS profile name (for S3).
-        report: Receives each progress line.
-        show_progress: If True, draw a progress bar on a terminal. The library
-            draws the bar only when the caller asks. Moving the renderer to
-            the CLI is a follow-up.
-
-    Returns:
-        CloneResult with operation details.
-
-    Raises:
-        CloneError: If the target directory already exists and is not empty,
-                    or if the clone operation fails.
-    """
+    """Clone a remote catalog to a local directory."""
     errors: list[str] = []
     collections_cloned: list[str] = []
     total_files: int = 0

@@ -1,10 +1,4 @@
-"""IcebergBackend: enterprise versioning backend using Apache Iceberg.
-
-Implements the VersioningBackend protocol from portolan-cli, storing actual
-data in Iceberg tables and version metadata in snapshot summary properties.
-
-``hooks.iceberg_backend`` imports this module on first use.
-"""
+"""IcebergBackend: enterprise versioning backend using Apache Iceberg."""
 
 from __future__ import annotations
 
@@ -44,12 +38,7 @@ if TYPE_CHECKING:
 
 
 def _print_line(level: str, message: str) -> None:
-    """Print one line of an upload or a download through the output functions.
-
-    ``upload_file`` and ``download_file`` print nothing without a report
-    callback. This backend runs inside ``add`` and ``pull``, so it prints
-    their lines to the terminal.
-    """
+    """Print one line of an upload or a download through the output functions."""
     from portolan_cli.api import detail, error, info, success, warn
 
     {"success": success, "info": info, "warn": warn, "error": error, "detail": detail}[level](
@@ -66,16 +55,7 @@ def _merge_into_collection_json(
     extensions: tuple[str, ...],
     assets: dict[str, dict[str, Any]],
 ) -> None:
-    """Merge the Iceberg fields, extensions, and assets into ``collection.json``.
-
-    The merge keeps every other field in the file.
-
-    Args:
-        path: The collection.json file.
-        fields: ``table:*`` and ``iceberg:*`` fields. They replace earlier values.
-        extensions: Extension schema URLs to add when absent.
-        assets: Asset dicts by key. They replace an asset with the same key.
-    """
+    """Merge the Iceberg fields, extensions, and assets into ``collection.json``."""
     import json
 
     document: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
@@ -88,11 +68,7 @@ def _merge_into_collection_json(
 
 
 def _is_fetchable(href: str) -> bool:
-    """Can a reader retrieve this href over the web?
-
-    rashid's PTL-AST-002 accepts a relative href or https, so an s3:// or gs://
-    location fails the same rule a published catalog has to meet.
-    """
+    """Can a reader retrieve this href over the web?"""
     from urllib.parse import urlparse
 
     scheme = urlparse(href).scheme
@@ -100,14 +76,7 @@ def _is_fetchable(href: str) -> bool:
 
 
 class IcebergBackend:
-    """Enterprise versioning backend using Apache Iceberg.
-
-    Implements the VersioningBackend protocol from portolan-cli.
-    Discovered via get_backend("iceberg") when the [iceberg] extra is installed.
-
-    Data is stored natively in Iceberg tables (copy-on-write). Version
-    metadata is stored in snapshot summary properties.
-    """
+    """Enterprise versioning backend using Apache Iceberg."""
 
     def __init__(self, catalog: Catalog | None = None, catalog_root: Path | None = None) -> None:
         self._catalog: Catalog = catalog if catalog is not None else create_catalog(catalog_root)
@@ -133,11 +102,7 @@ class IcebergBackend:
     def _load_or_create_table(
         self, table_id: str, arrow_schema: pa.Schema, row_count: int = 0
     ) -> Table:
-        """Load an existing table or create one with the given schema.
-
-        For new tables with geometry, sets up Iceberg partition spec on the
-        geohash column if the data is large enough (>=100K rows).
-        """
+        """Load an existing table or create one with the given schema."""
         try:
             table = self._catalog.load_table(table_id)
             # Schema evolution: add new columns if needed
@@ -209,11 +174,7 @@ class IcebergBackend:
         removed: set[str] | None = None,
         version: str | None = None,
     ) -> Version:
-        """Publish a new version of a collection.
-
-        Reads actual Parquet data from asset files and writes it into the
-        Iceberg table. Version metadata is stored in snapshot properties.
-        """
+        """Publish a new version of a collection."""
         with span("iceberg.metadata", collection=collection):
             table_id = self._table_id(collection)
 
@@ -302,11 +263,7 @@ class IcebergBackend:
         return self._catalog.load_table(table_id)
 
     def rollback(self, collection: str, target_version: str) -> Version:
-        """Rollback to a previous version.
-
-        Uses Iceberg's native snapshot management to set the current snapshot
-        pointer back to the target version. No data is copied — this is instant.
-        """
+        """Rollback to a previous version."""
         table_id = self._table_id(collection)
         try:
             table = self._catalog.load_table(table_id)
@@ -363,11 +320,7 @@ class IcebergBackend:
         return pruned_versions
 
     def get_stac_metadata(self, collection: str) -> dict[str, Any]:
-        """Generate combined STAC metadata for a collection.
-
-        Returns a dict with table:* (Layer 1) and iceberg:* (Layer 2) fields.
-        NOT part of the VersioningBackend protocol — Iceberg-specific extension.
-        """
+        """Generate combined STAC metadata for a collection."""
         from portolan_cli.backends.iceberg.stac_generator import generate_collection_metadata
 
         table_id = self._table_id(collection)
@@ -391,16 +344,10 @@ class IcebergBackend:
             message="Drift detection pending sync implementation",
         )
 
-    # ------------------------------------------------------------------
     # Lifecycle hooks of the VersioningBackend protocol
-    # ------------------------------------------------------------------
 
     def on_post_add(self, context: PostAddContext) -> None:
-        """Post-add hook: update STAC extensions and upload metadata to remote.
-
-        Called by portolan-cli's finalize_items() after versioning completes.
-        Receives batch context with all items in the collection.
-        """
+        """Post-add hook: update STAC extensions and upload metadata to remote."""
         import logging
 
         import pystac
@@ -411,10 +358,7 @@ class IcebergBackend:
         collection_dir = context["collection_dir"]
         collection: pystac.Collection = context["collection"]
 
-        # Iceberg state is the source of truth: reflects actual row count,
-        # excludes derived columns (geohash_*, bbox_*), and uses Iceberg schema.
-        # Overwrites table:*/iceberg:* fields set by portolan-cli's pipeline,
-        # but merges stac_extensions and assets to preserve non-portolake entries.
+        # Iceberg state wins for table:* and iceberg:* fields. Extensions and assets merge.
         try:
             from portolan_cli.backends.iceberg.stac_generator import (
                 STAC_ICEBERG_EXTENSION,
@@ -435,22 +379,8 @@ class IcebergBackend:
                 if ext_url not in collection.stac_extensions:
                     collection.stac_extensions.append(ext_url)
 
-            # The table's current metadata.json, under its own key (issue #883).
-            # The spec asks only that a reader open the table from this file
-            # without a catalog service, which a warehouse on object storage
-            # satisfies whether or not a server also manages the table.
-            #
-            # The role is "metadata" alone, because the GeoParquet file keeps
-            # the data role. Earlier revisions assigned assets["data"] to
-            # table.location(), which is a directory and so resolves to no
-            # document. A generated catalog keys its GeoParquet asset by
-            # filename, so that assignment added a second asset carrying the
-            # same "data" role; a collection that does use the "data" key lost
-            # it. assets["data"] is not touched here.
-            # PTL-AST-002 allows a relative href or https. The extension says
-            # to add the asset only when the metadata.json is a document a
-            # reader can fetch, so a warehouse the catalog does not publish
-            # over the web carries the connection fields alone.
+            # The metadata.json asset takes the "metadata" role only. GeoParquet keeps "data".
+            # PTL-AST-002 allows a relative or https href only. An unpublished warehouse gets none.
             metadata_location = stac_metadata.get("iceberg:metadata_location")
             new_assets: dict[str, pystac.Asset] = {}
             if metadata_location and _is_fetchable(str(metadata_location)):
@@ -465,9 +395,7 @@ class IcebergBackend:
                 )
             collection.assets.update(new_assets)
 
-            # Merge into the file on disk. The enrichment hooks already wrote
-            # plugin fields there, and the in-memory collection does not hold
-            # them. A pystac save would drop them (#947).
+            # Merge on disk: a pystac save would drop the plugin fields that the enrich hooks wrote.
             _merge_into_collection_json(
                 Path(collection_dir) / "collection.json",
                 fields=stac_metadata,
@@ -503,11 +431,7 @@ class IcebergBackend:
         item_id: str,
         remote: str,
     ) -> None:
-        """Upload STAC metadata JSON files to remote storage.
-
-        Only uploads STAC metadata (item JSON, collection JSON, catalog.json).
-        Data files are NOT uploaded — they live in the Iceberg warehouse.
-        """
+        """Upload STAC metadata JSON files to remote storage."""
         from portolan_cli.api import upload_file
 
         remote = remote.rstrip("/")
@@ -542,11 +466,7 @@ class IcebergBackend:
         *,
         dry_run: bool = False,
     ) -> PullResult:
-        """Pull files from remote using Iceberg version info.
-
-        Queries get_current_version() for asset info, then downloads each
-        asset from {remote_url}/{href} to {local_root}/{href}.
-        """
+        """Pull files from remote using Iceberg version info."""
         from portolan_cli.api import PullResult, detail, download_file, error, info, success
 
         remote_url = remote_url.rstrip("/")

@@ -1,21 +1,4 @@
-"""File classification logic for portolan scan.
-
-This module provides the 10-category file classification system:
-- GEO_ASSET: Primary geospatial data (GeoParquet, GeoJSON, Shapefile, etc.)
-- KNOWN_SIDECAR: Shapefile sidecars, aux.xml, ovr files
-- TABULAR_DATA: Non-geo parquet, CSV, TSV, XLSX
-- STAC_METADATA: catalog.json, collection.json, STAC items
-- DOCUMENTATION: .md, .txt, README files
-- VISUALIZATION: .mbtiles
-- THUMBNAIL: Small .png, .jpg, .jpeg, .webp (< 1MB)
-- STYLE: style.json, MapLibre style definitions
-- JUNK: .exe, __pycache__, .git, IDE directories
-- UNKNOWN: Unclassified files requiring user review
-
-Functions:
-    classify_file: Classify a single file into one of 10 categories.
-    get_skip_reason: Get human-readable skip reason for a file category.
-"""
+"""File classification logic for portolan scan."""
 
 from __future__ import annotations
 
@@ -29,14 +12,10 @@ from portolan_core import extension_registry as _reg
 if TYPE_CHECKING:
     from pathlib import Path
 
-# =============================================================================
-# Extension Mappings (DERIVED from extension_registry — the single source,
-# . Edit rows there, not these frozensets.)
-# =============================================================================
+# Extension mappings, derived from extension_registry. Edit rows there, not these frozensets.
 
-# Primary geospatial formats (GEO_ASSET). .parquet is NOT here — it needs a
-# metadata peek to tell GeoParquet from plain Parquet. The scanner and the
-# format detector share formats.is_geoparquet, so they cannot disagree (#864).
+# Primary geospatial formats. .parquet needs a metadata peek, through the same
+# formats.is_geoparquet that the format detector uses.
 GEO_ASSET_EXTENSIONS: frozenset[str] = _reg.extensions_where(scan_category="geo_asset")
 
 # Shapefile / raster sidecars (KNOWN_SIDECAR). Compound forms like .aux.xml are
@@ -50,8 +29,7 @@ TABULAR_EXTENSIONS: frozenset[str] = _reg.extensions_where(is_tabular=True)
 # Documentation (DOCUMENTATION).
 DOC_EXTENSIONS: frozenset[str] = _reg.extensions_where(scan_category="documentation")
 
-# Visualization (VISUALIZATION). .pmtiles is NOT here — it is a primary
-# cloud-native format (GEO_ASSET). See issue #198.
+# Visualization. .pmtiles is not here: it is a primary cloud-native format (GEO_ASSET).
 VIZ_EXTENSIONS: frozenset[str] = _reg.extensions_where(scan_category="visualization")
 
 # Thumbnail/image formats (THUMBNAIL) — checked with size.
@@ -123,11 +101,7 @@ class SkippedFile:
 
 
 def _is_in_junk_dir(path: Path) -> bool:
-    """Check if path is inside a junk directory.
-
-    Uses case-insensitive matching to handle Windows/macOS filesystems
-    where __PYCACHE__ or .GIT are valid directory names.
-    """
+    """Check if path is inside a junk directory."""
     return any(part.lower() in JUNK_DIRS for part in path.parts)
 
 
@@ -145,15 +119,7 @@ def _classify_parquet(path: Path) -> tuple[FileCategory, SkipReasonType | None, 
 def _classify_by_extension(
     ext: str, path: Path
 ) -> tuple[FileCategory, SkipReasonType | None, str | None] | None:
-    """Classify a file by its extension alone.
-
-    Args:
-        ext: Lowercase file extension (e.g., '.parquet').
-        path: Path to the file (for parquet metadata peeking).
-
-    Returns:
-        Classification tuple if extension is recognized, None otherwise.
-    """
+    """Classify a file by its extension alone."""
     if ext in GEO_ASSET_EXTENSIONS:
         return (FileCategory.GEO_ASSET, None, None)
 
@@ -203,16 +169,7 @@ def _classify_by_extension(
 def _classify_by_name(
     path: Path, name: str, ext: str
 ) -> tuple[FileCategory, SkipReasonType | None, str | None] | None:
-    """Classify a file by its directory and its name.
-
-    Args:
-        path: Path to the file.
-        name: Lowercase file name.
-        ext: Lowercase file extension.
-
-    Returns:
-        Classification tuple if the name is recognized, None otherwise.
-    """
+    """Classify a file by its directory and its name."""
     # Check junk directories first
     if _is_in_junk_dir(path):
         return (
@@ -229,9 +186,7 @@ def _classify_by_name(
             f"{name} is STAC catalog metadata",
         )
 
-    # Check for STAC item files: JSON files named after their parent directory
-    # Pattern: item_dir/item_dir.json (e.g., tile_0_0/tile_0_0.json)
-    # This is the standard Portolan item structure
+    # A STAC item file is named after its parent directory: tile_0_0/tile_0_0.json.
     if ext == ".json" and path.stem.lower() == path.parent.name.lower():
         return (
             FileCategory.STAC_METADATA,
@@ -286,16 +241,7 @@ def classify_file(
     path: Path,
     size_bytes: int | None = None,
 ) -> tuple[FileCategory, SkipReasonType | None, str | None]:
-    """Classify a file into one of 10 categories.
-
-    Args:
-        path: Path to the file.
-        size_bytes: File size in bytes (optional, will stat if not provided).
-
-    Returns:
-        Tuple of (category, skip_reason_type, skip_reason_message).
-        If category is GEO_ASSET, skip_reason_type and message are None.
-    """
+    """Classify a file into one of 10 categories."""
     ext = path.suffix.lower()
     result = _classify_by_name(path, path.name.lower(), ext)
     if result is not None:
@@ -322,18 +268,7 @@ def get_skip_reason(
     category: FileCategory,
     path: Path,
 ) -> tuple[SkipReasonType, str]:
-    """Get skip reason for a non-geo-asset file.
-
-    Args:
-        category: The file's classification category.
-        path: Path to the file (for context in message).
-
-    Returns:
-        Tuple of (SkipReasonType, human-readable message).
-
-    Raises:
-        ValueError: If category is GEO_ASSET (which isn't skipped).
-    """
+    """Get skip reason for a non-geo-asset file."""
     if category == FileCategory.GEO_ASSET:
         msg = "GEO_ASSET files are not skipped"
         raise ValueError(msg)

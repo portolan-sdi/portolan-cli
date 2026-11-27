@@ -1,20 +1,4 @@
-"""Resume logic for interrupted ImageServer extractions.
-
-This module provides tile-based resume functionality for ImageServer extractions:
-
-- ImageServerResumeState: Tracks succeeded/failed tile coordinates
-- should_process_tile: Determines if a tile needs processing
-- load_resume_state: Loads state from extraction report
-- save_resume_state: Persists state to extraction report
-
-Usage:
-    state = load_resume_state(Path(".portolan/extraction-report.json"))
-
-    for x, y in tile_grid:
-        if should_process_tile(x, y, state):
-            # Extract this tile
-            ...
-"""
+"""Resume logic for interrupted ImageServer extractions."""
 
 from __future__ import annotations
 
@@ -46,30 +30,13 @@ GRID_TOLERANCE = 1e-9
 
 @dataclass(frozen=True)
 class TileGrid:
-    """The tile grid that a run extracted.
-
-    A tile id names a position in one grid. A run with another tile size, or
-    over another extent, builds a different grid, so the same id then names a
-    different area on the ground (pull request #871 review).
-
-    Attributes:
-        tile_size: Tile size in pixels that the run asked for.
-        extent: Extent the run covered, as (xmin, ymin, xmax, ymax) in the
-            service CRS.
-    """
+    """The tile grid that a run extracted."""
 
     tile_size: int
     extent: tuple[float, float, float, float]
 
     def matches(self, other: TileGrid) -> bool:
-        """Report whether another grid names the same tiles as this one.
-
-        Args:
-            other: Grid to compare against.
-
-        Returns:
-            True when both the tile size and the extent agree.
-        """
+        """Report whether another grid names the same tiles as this one."""
         if self.tile_size != other.tile_size:
             return False
         return all(
@@ -80,22 +47,7 @@ class TileGrid:
 
 @dataclass
 class ImageServerResumeState:
-    """State for resuming an interrupted ImageServer extraction.
-
-    Tracks which tiles have already been processed, enabling
-    the extraction to skip succeeded tiles and retry failed ones.
-
-    Attributes:
-        succeeded_tiles: Set of (x, y) tile coordinates that succeeded (to skip).
-        failed_tiles: Set of (x, y) tile coordinates that failed (to retry).
-        service_url: The ImageServer service URL being extracted.
-        started_at: When the extraction started.
-        coarse_empty_tiles: Set of (x, y) tile coordinates that the coarse scan
-            called empty. The scan reads a coarse cache level, which can drop a
-            thin feature, so these tiles stay apart from the succeeded ones.
-        grid: Tile grid the run extracted, or None for a report that an older
-            version wrote.
-    """
+    """State for resuming an interrupted ImageServer extraction."""
 
     succeeded_tiles: set[tuple[int, int]]
     failed_tiles: set[tuple[int, int]]
@@ -112,28 +64,7 @@ def should_process_tile(
     *,
     coarse_scan: bool = True,
 ) -> bool:
-    """Determine if a tile should be processed.
-
-    Decision logic:
-    - If no resume state: process all tiles
-    - If tile succeeded previously: skip (return False)
-    - If the coarse scan called the tile empty: skip while the scan runs, and
-      read it again under --no-coarse-scan
-    - If tile failed previously: retry (return True)
-    - If tile is new (not in state): process (return True)
-
-    A coarse verdict is a heuristic, so --no-coarse-scan must be able to
-    recover a block that the scan dropped (pull request #871 review).
-
-    Args:
-        x: The tile X coordinate.
-        y: The tile Y coordinate.
-        state: Resume state from previous extraction, or None.
-        coarse_scan: Whether this run runs the coarse scan.
-
-    Returns:
-        True if the tile should be processed, False if it should be skipped.
-    """
+    """Determine if a tile should be processed."""
     if state is None:
         # No resume state = fresh extraction, process everything
         return True
@@ -150,19 +81,7 @@ def load_resume_state(
     report_path: Path,
     expected_service_url: str | None = None,
 ) -> ImageServerResumeState | None:
-    """Load resume state from extraction report.
-
-    Safely handles missing, corrupted, or incompatible report files by
-    returning None rather than raising exceptions.
-
-    Args:
-        report_path: Path to the extraction report JSON file.
-        expected_service_url: If provided, returns None if the report's
-            service URL doesn't match (prevents resuming wrong extraction).
-
-    Returns:
-        ImageServerResumeState if successfully loaded, None otherwise.
-    """
+    """Load resume state from extraction report."""
     if not report_path.exists():
         return None
 
@@ -180,21 +99,7 @@ def load_resume_state(
 
 
 def _validate_tile_coordinate(coord: tuple[int, int]) -> bool:
-    """Validate that a tile coordinate is within reasonable bounds.
-
-    Protects against unreasonably large coordinates that could indicate
-    data corruption or memory exhaustion attacks.
-
-    Note: Negative coordinates are allowed because some coordinate systems
-    use negative offsets. Security validation for file paths (path traversal)
-    should happen in the extractor where file paths are constructed.
-
-    Args:
-        coord: Tile (x, y) coordinate tuple.
-
-    Returns:
-        True if coordinate is valid, False otherwise.
-    """
+    """Validate that a tile coordinate is within reasonable bounds."""
     x, y = coord
     return -MAX_COORD <= x <= MAX_COORD and -MAX_COORD <= y <= MAX_COORD
 
@@ -203,15 +108,7 @@ def _parse_report_data(
     data: dict[str, Any],
     expected_service_url: str | None = None,
 ) -> ImageServerResumeState | None:
-    """Parse report data into resume state.
-
-    Args:
-        data: Parsed JSON data from report file.
-        expected_service_url: If provided, validates URL match.
-
-    Returns:
-        ImageServerResumeState if valid, None otherwise.
-    """
+    """Parse report data into resume state."""
     # Check required fields
     if "service_url" not in data or "tiles" not in data:
         return None
@@ -272,15 +169,7 @@ def _parse_report_data(
 
 
 def _parse_grid(raw: Any) -> TileGrid | None:
-    """Read the tile grid from a report.
-
-    Args:
-        raw: Value of the ``grid`` key, which an older report does not carry.
-
-    Returns:
-        The grid, or None when the report declares none or declares a broken
-        one.
-    """
+    """Read the tile grid from a report."""
     if not isinstance(raw, dict):
         return None
     extent = raw.get("extent")
@@ -296,15 +185,7 @@ def _parse_grid(raw: Any) -> TileGrid | None:
 
 
 def save_resume_state(state: ImageServerResumeState, report_path: Path) -> None:
-    """Persist resume state to extraction report.
-
-    Creates parent directories if they don't exist. Overwrites any
-    existing file at the path.
-
-    Args:
-        state: The resume state to save.
-        report_path: Path to write the JSON file.
-    """
+    """Persist resume state to extraction report."""
     report_path.parent.mkdir(parents=True, exist_ok=True)
 
     data: dict[str, Any] = {

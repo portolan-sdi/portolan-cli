@@ -1,9 +1,4 @@
-"""WFS metadata extraction.
-
-This module extracts metadata from WFS GetCapabilities responses
-and converts it to Portolan's ExtractedMetadata format for seeding
-metadata.yaml files.
-"""
+"""WFS metadata extraction."""
 
 from __future__ import annotations
 
@@ -39,17 +34,7 @@ _BOILERPLATE_TITLES = [
 
 
 def is_boilerplate_description(text: str | None) -> bool:
-    """Check if description is software boilerplate rather than real content.
-
-    Matches known default phrases from common WFS servers. Does NOT match
-    legitimate descriptions that merely mention the software name.
-
-    Args:
-        text: Description text to check.
-
-    Returns:
-        True if text matches known boilerplate patterns.
-    """
+    """Check if description is software boilerplate rather than real content."""
     if not text:
         return False
 
@@ -65,17 +50,7 @@ def is_boilerplate_description(text: str | None) -> bool:
 
 @dataclass
 class WFSMetadata:
-    """Metadata extracted from a WFS service.
-
-    Attributes:
-        source_url: The WFS service URL.
-        service_title: Service title from GetCapabilities.
-        service_abstract: Service description from GetCapabilities.
-        provider_name: Provider/organization name.
-        keywords: Keywords from GetCapabilities.
-        fees: Fee information (often "None").
-        access_constraints: Access constraints or license info.
-    """
+    """Metadata extracted from a WFS service."""
 
     source_url: str
     service_title: str | None = None
@@ -106,15 +81,7 @@ class WFSMetadata:
         return "; ".join(parts) if parts else None
 
     def to_extracted(self) -> ExtractedMetadata:
-        """Convert to common ExtractedMetadata format.
-
-        Uses service_title as fallback when service_abstract is
-        boilerplate (e.g., GeoServer default text) or missing.
-        If both are boilerplate, description is None.
-
-        Returns:
-            ExtractedMetadata for use with metadata seeding.
-        """
+        """Convert to common ExtractedMetadata format."""
         from portolan_cli.metadata_extraction import ExtractedMetadata
         from portolan_core.licensing import license_url_from_text
 
@@ -144,15 +111,7 @@ def extract_wfs_metadata(
     capabilities: dict[str, Any],
     source_url: str,
 ) -> WFSMetadata:
-    """Extract metadata from WFS capabilities dict.
-
-    Args:
-        capabilities: Parsed GetCapabilities response.
-        source_url: The WFS service URL.
-
-    Returns:
-        WFSMetadata with extracted fields.
-    """
+    """Extract metadata from WFS capabilities dict."""
     return WFSMetadata(
         source_url=source_url,
         service_title=capabilities.get("service_title"),

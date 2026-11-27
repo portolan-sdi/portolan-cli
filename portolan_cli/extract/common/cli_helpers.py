@@ -1,7 +1,4 @@
-"""Click helpers that the extract commands share (#947).
-
-This module is part of the CLI layer.
-"""
+"""Click helpers that the extract commands share, in the CLI layer."""
 
 from __future__ import annotations
 
@@ -79,16 +76,7 @@ def validate_collection_name_cli(
     json_output: bool,
     url: str,
 ) -> None:
-    """Validate collection_name at CLI layer (fail fast).
-
-    Args:
-        collection_name: User-provided collection name (may be None).
-        json_output: If True, output errors as JSON.
-        url: Source URL for error context.
-
-    Raises:
-        SystemExit: If collection_name is invalid.
-    """
+    """Validate collection_name at CLI layer (fail fast)."""
     if collection_name is None:
         return
     # Reject path separators and parent references
@@ -119,10 +107,7 @@ def output_extract_error(
     url: str,
     command: str = "extract-arcgis",
 ) -> None:
-    """Output extraction error in JSON or text format.
-
-    The envelope names the service URL without its credential (#981).
-    """
+    """Output an extraction error in JSON or text, with no credential in the URL."""
     from portolan_cli.output import error
 
     if use_json:
@@ -160,7 +145,7 @@ def make_extract_progress_callback(
         elif progress.status == "success":
             detail("  ✓ Success")
         elif progress.status == "failed":
-            # Issue #504: show the error inline instead of "Failed" alone.
+            # Show the error inline instead of "Failed" alone.
             warn(f"  ✗ Failed: {progress.error}" if progress.error else "  ✗ Failed")
         elif progress.status == "skipped":
             detail(f"  ↪ {progress.error}" if progress.error else skipped_message)
@@ -208,12 +193,7 @@ def confirm_extraction(
     dry_run: bool,
     use_json: bool,
 ) -> None:
-    """Show the extraction plan and ask the user to confirm it.
-
-    The prompt runs only in interactive text mode. `line` and `sub_line` select
-    the output channel, because the ArcGIS command writes with `click.echo` and
-    the other commands write with `output.py`.
-    """
+    """Show the extraction plan and ask the user to confirm it."""
     if auto or dry_run or use_json:
         return
     line(f"Extract from: {redact_credentials(url)}")
@@ -234,23 +214,7 @@ def check_extract_catalog_id(
     command: str,
     use_json: bool,
 ) -> None:
-    """Check ``--id`` before the extraction starts.
-
-    ``init_catalog`` validates the id, but extract calls it after the whole
-    download. A rejected id would cost the harvest and leave data on disk with
-    no catalog.json. This check fails on the first line instead. ``--raw``
-    writes no catalog at all, so the flag does nothing and says so (issue #821).
-
-    Args:
-        catalog_id: The id the caller supplied, or None.
-        raw: True when ``--raw`` suppresses catalog creation.
-        url: The service URL, for the JSON error envelope.
-        command: The command name for the JSON error envelope.
-        use_json: True when the command emits JSON.
-
-    Raises:
-        SystemExit: If the id is not a valid STAC identifier.
-    """
+    """Check ``--id`` before the extraction starts."""
     if catalog_id is None:
         return
 
@@ -378,14 +342,7 @@ def source_arguments(command: Callable[..., Any]) -> Callable[..., Any]:
 
 
 def run_options(unit: str) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
-    """Add ``--resume``, ``--dry-run``, ``--json``, ``--auto``, and ``--raw``.
-
-    Args:
-        unit: What the source extracts, ``layers`` or ``tables``, for the help text.
-
-    Returns:
-        A decorator for the command.
-    """
+    """Add ``--resume``, ``--dry-run``, ``--json``, ``--auto``, and ``--raw``."""
     decorators = [
         click.option(
             "--resume",
@@ -407,11 +364,7 @@ def run_options(unit: str) -> Callable[[Callable[..., Any]], Callable[..., Any]]
 
 
 def catalog_options(command: Callable[..., Any]) -> Callable[..., Any]:
-    """Add ``--id``, ``--license``, and ``--license-url`` to an extract command.
-
-    Click lists options in decorator order. This decorator applies the three
-    in that order, so it can stand where the three decorators stood.
-    """
+    """Add ``--id``, ``--license``, and ``--license-url`` to an extract command."""
     options = [
         click.option(
             "--id",
@@ -445,11 +398,7 @@ def fail_missing_license(
     url: str,
     command: str = "extract-arcgis",
 ) -> NoReturn:
-    """Report a harvest with no usable license and stop the command.
-
-    Extract raises it before the download starts, so the user re-runs the
-    command rather than the harvest (issue #686).
-    """
+    """Report a harvest with no usable license and stop the command."""
     output_extract_error(use_json, type(err).__name__, str(err), url, command=command)
     if not use_json:
         info_output(CLI_LICENSE_REMEDIATION)

@@ -1,8 +1,4 @@
-"""Hook implementations of the built-in Iceberg plugin (#947).
-
-The module imports no pyiceberg. The factory imports the backend when a
-catalog asks for it, so a catalog on the ``file`` backend does not pay for it.
-"""
+"""Hook implementations of the built-in Iceberg plugin."""
 
 from __future__ import annotations
 
@@ -16,17 +12,7 @@ if TYPE_CHECKING:
 
 
 def iceberg_backend(catalog_root: Path | None = None) -> Any:
-    """Create an ``IcebergBackend``.
-
-    Args:
-        catalog_root: Catalog root the backend reads and writes.
-
-    Returns:
-        The backend.
-
-    Raises:
-        ValueError: Without the iceberg extra.
-    """
+    """Create an ``IcebergBackend``."""
     try:
         from portolan_cli.backends.iceberg.backend import IcebergBackend
     except ImportError as e:

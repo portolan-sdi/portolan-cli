@@ -1,18 +1,4 @@
-"""ArcGIS ImageServer extract functionality.
-
-This module handles discovery and extraction of raster data from ArcGIS
-ImageServer endpoints into Portolan catalogs.
-
-Modules:
-- discovery: Metadata discovery from ImageServer endpoints
-- resume: Tile-based resume state tracking
-- tiling: Tile grid calculation for partitioning large extents
-- extractor: Full extraction pipeline orchestrator (COG files only)
-- orchestrator: CLI-facing wrapper for Click commands
-
-Note: STAC metadata is created via the Portolan API (init_catalog + add_files)
-after extraction, not by the extractor itself.
-"""
+"""ArcGIS ImageServer extract functionality."""
 
 from __future__ import annotations
 

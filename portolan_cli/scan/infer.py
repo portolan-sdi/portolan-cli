@@ -1,17 +1,4 @@
-"""Collection inference for portolan scan.
-
-This module infers collection groupings from filename patterns:
-- Common prefix extraction
-- Numeric suffix detection (flood_rp10, flood_rp100)
-- Level/tier patterns (admin_L1, admin_L2)
-- Temporal patterns (census_2010, census_2020)
-
-Functions:
-    find_common_prefix: Find longest common prefix among names.
-    extract_numeric_groups: Group files by common base with numeric suffix.
-    detect_pattern_marker: Detect known pattern markers in filenames.
-    infer_collections: Main function to infer collection groupings.
-"""
+"""Collection inference for portolan scan."""
 
 from __future__ import annotations
 
@@ -76,14 +63,7 @@ def _get_stem(name: str) -> str:
 
 
 def find_common_prefix(names: list[str]) -> str | None:
-    """Find longest common prefix among names.
-
-    Args:
-        names: List of filenames to analyze.
-
-    Returns:
-        Longest common prefix (>= 3 chars), or None if too short.
-    """
+    """Find longest common prefix among names."""
     if len(names) < _MIN_GROUP_SIZE:
         return None
 
@@ -113,15 +93,7 @@ def find_common_prefix(names: list[str]) -> str | None:
 
 
 def extract_numeric_groups(names: list[str]) -> dict[str, list[str]]:
-    """Group files by common base with numeric suffix.
-
-    Args:
-        names: List of filenames to analyze.
-
-    Returns:
-        Dictionary mapping base name to list of matching filenames.
-        Only groups with 2+ members are included.
-    """
+    """Group files by common base with numeric suffix."""
     groups: dict[str, list[str]] = defaultdict(list)
 
     for name in names:
@@ -136,14 +108,7 @@ def extract_numeric_groups(names: list[str]) -> dict[str, list[str]]:
 
 
 def detect_pattern_marker(names: list[str]) -> tuple[str, str] | None:
-    """Detect known pattern markers in filenames.
-
-    Args:
-        names: List of filenames to analyze.
-
-    Returns:
-        Tuple of (base_name, pattern_type) if pattern found, None otherwise.
-    """
+    """Detect known pattern markers in filenames."""
     if len(names) < _MIN_GROUP_SIZE:
         return None
 
@@ -269,27 +234,11 @@ def infer_collections(
     files: list[ScannedFile],
     min_confidence: float = 0.5,
 ) -> list[CollectionSuggestion]:
-    """Infer collection groupings from filename patterns.
-
-    Uses multiple heuristics:
-    - Common prefix extraction
-    - Numeric suffix detection
-    - Pattern marker detection (rp, L, v, year)
-
-    Args:
-        files: List of geo-asset files to analyze.
-        min_confidence: Minimum confidence threshold (0.0-1.0).
-
-    Returns:
-        List of CollectionSuggestion objects, sorted by confidence descending.
-    """
+    """Infer collection groupings from filename patterns."""
     if len(files) < _MIN_GROUP_SIZE:
         return []
 
-    # Dedupe names to avoid iterating same filename multiple times when files
-    # with identical names exist in different directories. This prevents
-    # paths_by_name[n] from being called multiple times for the same name,
-    # which would add duplicate paths to the result.
+    # Dedupe names, or a name in two directories adds its paths twice.
     names = sorted({f.path.name for f in files})
     # Use multimap to handle duplicate filenames across directories
     # e.g., 2020/rivers.geojson and 2021/rivers.geojson both get tracked

@@ -1,23 +1,4 @@
-"""LayerSource: a data source made of layers, and the driver that extracts it (#947).
-
-A service that serves named layers implements ``LayerSource``.
-``run_layer_extraction`` runs it through the extraction lifecycle: filters,
-the license check, resume, fetch with retry (one layer at a time or in
-parallel), the extraction report, catalog setup, styles, provenance links,
-and collection metadata. ``extractor_from`` wraps a ``LayerSource`` as an
-``Extractor``, so it becomes ``portolan extract <name>``.
-
-The built-in ArcGIS, Carto, and WFS extractors are ``LayerSource``
-implementations too. Source-specific work goes through the protocol:
-
-- ``discover`` does everything that happens once per run, such as WFS
-  version negotiation or ArcGIS services-root traversal. It returns a
-  ``Discovery`` with the layers and the catalog-level metadata.
-- Each ``LayerRef`` carries the collection path and the source's own
-  ``data`` for the layer, such as a service URL or a negotiated version.
-- ``LayerSourceOptions.workers`` and ``layer_timeout`` select parallel
-  downloads with a per-layer deadline.
-"""
+"""LayerSource: a data source made of layers, and the driver that extracts it."""
 
 from __future__ import annotations
 
@@ -65,18 +46,13 @@ _METADATA_WORKERS = 4
 
 
 class EmptyLayerError(Exception):
-    """Raised by ``fetch`` when the layer has no features.
-
-    The driver does not retry it. A layer that the user did not name is
-    recorded as ``empty``, and a resumed run does not try it again. A layer
-    that the user named is ``failed`` (issue #1034).
-    """
+    """Raised by ``fetch`` when the layer has no features."""
 
 
 class NoLayersSelectedError(PortolanError):
-    """Raised when a run selects no layer to extract (issue #1034).
+    """Raised when a run selects no layer to extract.
 
-    Error code: PRTLN-EXT003
+    Error code: PRTLN-EXT003.
     """
 
     code = "PRTLN-EXT003"
@@ -87,27 +63,14 @@ class LayerRef:
     """One layer that a source serves, and the one identity of that layer.
 
     Attributes:
-        id: Layer id as the source knows it, such as an ArcGIS layer id. A
-            numeric filter pattern matches it (issue #1003). The report
-            records it.
-        name: Qualified layer name as the source knows it, such as a WFS
-            ``workspace:layer``. Filters match it and its leaf after the
-            last ``:`` (issue #768). Resume matches on it.
-        path: Collection directory relative to the catalog, ``/``-separated.
-            The data file is ``<path>/<last segment>.parquet``. None uses a
-            slug of the name.
-        data: The source's own data for the layer, for ``fetch`` and the
-            other methods. The driver does not read it.
+        id: Layer id as the source knows it. A numeric filter pattern matches it.
+        name: Qualified layer name, such as ``workspace:layer``. Filters match it and its leaf.
+        path: Collection directory relative to the catalog. None uses a slug of the name.
+        data: The source's own data for the layer. The driver does not read it.
         notes: Warnings that a dry run reports for the layer.
-        skip_reason: Why the layer cannot be fetched, such as a source with
-            no query support. The driver records the layer as ``skipped``
-            and does not call ``fetch``. None means fetch the layer.
-        kind: ``layer`` for a spatial layer, ``table`` for a table with no
-            geometry, ``raster`` for an image layer.
-        explicit: True when the user named this layer, with a ``--layers``
-            name or id, or with a layer URL. A named layer with 0 features
-            is ``failed``, not ``empty`` (issue #1034). ``filter_refs`` sets
-            it for a name match. A source sets it for a layer URL.
+        skip_reason: Why the layer cannot be fetched, so it is ``skipped``. None fetches it.
+        kind: ``layer`` (spatial), ``table`` (no geometry), or ``raster`` (image).
+        explicit: True when the user named this layer. A named layer with 0 features fails.
     """
 
     id: int
@@ -125,21 +88,17 @@ class Discovery:
     """What ``discover`` found at a source.
 
     Attributes:
-        source_url: URL that the report records and that the other methods
-            receive as ``source``.
+        source_url: URL that the report records and that the other methods receive as ``source``.
         layers: Layers in discovery order.
         metadata: Service metadata for the report. None records the URL only.
         catalog_seed: Metadata that seeds the catalog ``metadata.yaml``.
         license_url: License URL that the source publishes, if any.
         catalog_title: Title for a new catalog, or None for the default.
         catalog_description: Description for a new catalog, or None.
-        root_metadata: ``(title, description)`` written to ``catalog.json``
-            after a new catalog is created, or None to leave it.
+        root_metadata: ``(title, description)`` for a new ``catalog.json``, or None.
         folder_coverage: Folders that a services-root traversal visited.
-        empty_reason: Why ``layers`` is empty, for the error that a run with
-            no layers raises, such as a service that lists only tables.
-        filtered: True when ``discover`` already applied the layer filters
-            with ``filter_refs``. The driver then does not filter again.
+        empty_reason: Why ``layers`` is empty, for the error that a run with no layers raises.
+        filtered: True when ``discover`` already applied the layer filters.
     """
 
     source_url: str
@@ -164,12 +123,9 @@ class LayerMetadata:
         description: Collection description.
         keywords: Discovery keywords.
         layer_name: Layer name for the processing notes. None uses the name.
-        source_type: ``source_type`` in ``metadata.yaml``. None uses the
-            source's name.
+        source_type: ``source_type`` in ``metadata.yaml``. None uses the source's name.
         source_url: Layer URL for provenance. None uses the source link.
-        record: A full metadata record, such as an ISO 19139 record. It
-            replaces the fields above in ``metadata.yaml``, and ``title``
-            and ``description`` go to ``collection.json``.
+        record: A full metadata record, such as ISO 19139, that replaces the fields above.
         record_label: Name of the record kind for the progress message.
     """
 
@@ -204,8 +160,7 @@ class LayerSourceOptions:
         retries: Attempts per layer.
         retry_delay: Seconds before the first retry. Later retries double it.
         workers: Layers to fetch at the same time.
-        layer_timeout: With more than one worker, seconds a layer may run
-            before it is recorded as failed. None sets no limit.
+        layer_timeout: Seconds a layer may run with more than one worker. None sets no limit.
         catalog_id: Catalog id. None derives it from the output directory.
         license: SPDX license identifier, or ``other`` with ``license_url``.
         license_url: URL of the license text.
@@ -230,8 +185,7 @@ class LayerSource(Protocol):
     """A data source that serves named layers.
 
     Attributes:
-        name: The subcommand name, ``portolan extract <name>``. It is also
-            the default ``source_type`` in seeded metadata.
+        name: The subcommand name, and the default ``source_type`` in seeded metadata.
         summary: One line that describes the source.
     """
 
@@ -239,20 +193,11 @@ class LayerSource(Protocol):
     summary: str
 
     def discover(self, source: str, options: LayerSourceOptions) -> Discovery:
-        """Find the layers at ``source`` and the catalog-level metadata.
-
-        Do the work that happens once per run here, such as protocol
-        negotiation or a walk through a services root. Put what ``fetch``
-        needs for a layer into ``LayerRef.data``.
-        """
+        """Find the layers at ``source`` and the catalog-level metadata."""
         ...
 
     def fetch(self, source: str, layer: LayerRef, dest: Path) -> int:
-        """Write ``layer`` to ``dest`` as Parquet. Return the row count.
-
-        Raise ``EmptyLayerError`` for a layer with no features. Raise any
-        other exception for a failure. The driver retries a failure only.
-        """
+        """Write ``layer`` to ``dest`` as Parquet. Return the row count."""
         ...
 
     def layer_metadata(self, source: str, layer: LayerRef) -> LayerMetadata | None:
@@ -276,14 +221,7 @@ def slugify(name: str) -> str:
 
 
 def layer_path(layer: LayerRef) -> str:
-    """Return the layer's data file, relative to the catalog.
-
-    Raises:
-        InputValidationError: When ``layer.path`` could leave the catalog. It
-            must be relative and ``/``-separated, with no empty, ``.``, or
-            ``..`` segment. A ``:`` is refused too, because ``C:x`` names a
-            Windows drive.
-    """
+    """Return the layer's data file, relative to the catalog."""
     from portolan_cli.input_hardening import InputValidationError
 
     collection = layer.path or slugify(layer.name)
@@ -301,21 +239,7 @@ def layer_path(layer: LayerRef) -> str:
 def filter_refs(
     layers: list[LayerRef], include: list[str] | None, exclude: list[str] | None
 ) -> list[LayerRef]:
-    """Keep the layers that the include and exclude patterns select.
-
-    A pattern matches a layer as ``filters.layer_matches`` says. A layer
-    that a non-glob include pattern matches becomes ``explicit``, because
-    the user named it. A pattern that matches no layer logs a warning that
-    names the pattern and 3 layers of the source (issue #1034).
-
-    Args:
-        layers: The discovered layers, in discovery order.
-        include: Patterns to keep. None keeps every layer.
-        exclude: Patterns to drop, applied after ``include``.
-
-    Returns:
-        The kept layers, in discovery order.
-    """
+    """Keep the layers that the include and exclude patterns select."""
     from portolan_cli.extract.common.filters import is_glob, layer_matches
 
     include = include or []
@@ -341,12 +265,7 @@ def filter_refs(
 
 
 def _select_layers(discovery: Discovery, options: LayerSourceOptions) -> list[LayerRef]:
-    """Filter the discovered layers. Raise when the run selects none (issue #1034).
-
-    Raises:
-        NoLayersSelectedError: When no layer is left. The message names the
-            cause: the source lists no layers, or the filters match none.
-    """
+    """Filter the discovered layers. Raise when the run selects none."""
     layers = discovery.layers
     filters = options.layer_filter or options.layer_exclude
     if not discovery.filtered:
@@ -378,16 +297,7 @@ def build_report(
     *,
     wall_duration_seconds: float | None = None,
 ) -> ExtractionReport:
-    """Build the extraction report for ``results``.
-
-    Args:
-        discovery: The discovery the results come from.
-        results: One result per layer, in discovery order.
-        wall_duration_seconds: The wall-clock time of the fetch stage.
-
-    Returns:
-        The report with its summary.
-    """
+    """Build the extraction report for ``results``."""
     from portolan_cli.extract.common.report import (
         ExtractionReport,
         ExtractionSummary,
@@ -395,7 +305,7 @@ def build_report(
     )
 
     # The report keeps a local path, because push never publishes .portolan.
-    # ``_result`` already removed the credential of each error (issue #981).
+    # ``_result`` already removed the credential of each error.
     source_url = redact_credentials(discovery.source_url)
 
     summary = ExtractionSummary(
@@ -445,7 +355,7 @@ def _result(layer: LayerRef, status: str, **fields: Any) -> LayerResult:
         "attempts": 0,
     }
     values.update(fields)
-    # The terminal, the JSON envelope, and the report show these messages (#981).
+    # The terminal, the JSON envelope, and the report show these messages.
     values["error"] = values["error"] and redact_credentials(values["error"])
     values["warnings"] = [redact_credentials(warning) for warning in values["warnings"]]
     return LayerResult(id=layer.id, name=layer.name, status=status, **values)
@@ -504,7 +414,7 @@ class _Run:
         return self.promote(self.stage_layer(layer))
 
     def stage_layer(self, layer: LayerRef) -> _Staged:
-        """Stage one layer inside an ``extract.layer`` span (issue #991)."""
+        """Stage one layer inside an ``extract.layer`` span."""
         with span("extract.layer", layer=layer.name) as stage:
             staged = self._stage_layer(layer)
             result = staged.result
@@ -517,13 +427,7 @@ class _Run:
             return staged
 
     def _stage_layer(self, layer: LayerRef) -> _Staged:
-        """Fetch one layer with retry, and write its styles, into a staging tree.
-
-        A worker thread runs this step. Each layer gets its own tree under
-        ``.portolan/staging``, so nested collection paths do not mix. The
-        catalog changes only in ``promote``, so a timed-out fetch cannot
-        change it.
-        """
+        """Fetch one layer with retry, and write its styles, into a staging tree."""
         from portolan_cli.extract.common.retry import (
             PERMANENT_NOTE,
             PermanentError,
@@ -592,7 +496,7 @@ class _Run:
         shutil.rmtree(root, ignore_errors=True)
         error = str(outcome.error) if outcome.error else "Unknown error"
         if isinstance(outcome.error, EmptyLayerError) and layer.explicit:
-            # The user asked for this layer, so no data is a failure (issue #963).
+            # The user asked for this layer, so no data is a failure.
             error = f"Layer {layer.name} returned 0 features, and the run named it: {error}"
         elif isinstance(outcome.error, EmptyLayerError):
             logger.warning("Layer %s is empty (0 features), skipping", layer.name)
@@ -642,13 +546,7 @@ class _Run:
 
 
 def _previous_results(report_path: Path) -> tuple[dict[str, LayerResult], dict[str, LayerResult]]:
-    """Read the previous report: done layers by data file, other layers by name.
-
-    A done layer's output path is normalized to ``/``, because a report
-    written on Windows holds backslashes. The by-name map holds the empty
-    layers. It also holds the "skipped" layers with no output path, which an
-    older Carto report wrote for a table from an earlier run.
-    """
+    """Read the previous report: done layers by data file, other layers by name."""
     from portolan_cli.extract.common.report import load_report
 
     by_path: dict[str, LayerResult] = {}
@@ -706,11 +604,7 @@ def _resumed_result(
 def _fetch_sequential(
     run: _Run, plan: list[tuple[int, LayerRef, LayerResult | None]], total: int
 ) -> list[tuple[int, LayerResult]]:
-    """Fetch the layers in order. A layer with a kept result reports at its own index.
-
-    The ``[i/N]`` index then only increases, also with skipped and resumed
-    layers in the run (issue #1012).
-    """
+    """Fetch the layers in order. A layer with a kept result reports at its own index."""
     results: list[tuple[int, LayerResult]] = []
     for index, layer, kept in plan:
         if kept is not None:
@@ -737,14 +631,7 @@ def _report_kept(run: _Run, index: int, total: int, layer: LayerRef) -> None:
 def _fetch_parallel(  # noqa: PLR0914 - one ordered fetch sequence
     run: _Run, jobs: list[tuple[int, LayerRef]], total: int
 ) -> list[tuple[int, LayerResult]]:
-    """Fetch layers on worker threads, with a deadline per started layer.
-
-    A layer's deadline starts when a worker picks it up, not when it is
-    queued, so a queued layer is never timed out (issues #508, #526). A
-    timed-out thread runs on, but the run does not wait for it. Its staged
-    file never moves into the catalog. Python joins the thread when the
-    process exits.
-    """
+    """Fetch layers on worker threads, with a deadline per started layer."""
     workers = min(run.options.workers, len(jobs))
     timeout = run.options.layer_timeout
     logger.info("Extracting %d layers with %d workers", len(jobs), workers)
@@ -846,13 +733,11 @@ def _post_init(
         if any(not is_geoparquet(path) for path in files):
             set_setting(out, "tabular.enabled", True)
         # Overwrite the init defaults only on a new catalog. A second
-        # extraction into it must keep the root metadata (issue #832).
+        # extraction into it must keep the root metadata.
         if fresh and discovery.root_metadata is not None:
             title, description = discovery.root_metadata
             update_stac_metadata(out / "catalog.json", title=title, description=description)
-        # The license must be in place before add_files checks for it (issue #686).
-        # A source that harvests no catalog metadata still gets a metadata.yaml
-        # for the --license value. Without it, add_files rejects the catalog.
+        # Seed metadata.yaml with the license before add_files checks for it.
         seed = discovery.catalog_seed
         if seed is None and resolved_license is not None:
             seed = ExtractedMetadata(source_type=source_name, source_url=discovery.source_url)
@@ -900,17 +785,7 @@ def seed_collections(
     output_dir: Path,
     report: ExtractionReport,
 ) -> None:
-    """Seed ``metadata.yaml`` for each successful layer's collection.
-
-    ``layer_metadata`` runs for the layers in parallel, because it can fetch a
-    remote record. Seeding then runs in report order.
-
-    Args:
-        layer_source: The source the layers come from.
-        discovery: The discovery that holds the layers.
-        output_dir: Catalog directory.
-        report: The extraction report.
-    """
+    """Seed ``metadata.yaml`` for each successful layer's collection."""
     by_path = {layer_path(layer): layer for layer in discovery.layers}
     done = [
         (result, by_path[result.output_path])
@@ -945,22 +820,7 @@ def build_catalog(
     catalog_id: str | None = None,
     on_message: MessageCallback | None = None,
 ) -> None:
-    """Build or extend the catalog around the layers that succeeded.
-
-    Steps: init the catalog and add the files, register styles and legends,
-    add a ``via`` link to each collection, seed collection metadata, then
-    draw the thumbnails.
-
-    Args:
-        layer_source: The source the layers come from.
-        discovery: The discovery that holds the layers.
-        output_dir: Catalog directory.
-        report: The extraction report.
-        resolved_license: The license to seed (issue #686).
-        catalog_id: Catalog id. None derives it from the directory name.
-        on_message: Called as ``on_message(level, text)`` with each notice for
-            the user. None logs the notice instead.
-    """
+    """Build or extend the catalog around the layers that succeeded."""
     from portolan_cli.collection_thumbnail import ensure_collection_thumbnails
     from portolan_cli.extract.common.orchestrator_base import (
         add_source_links,
@@ -1003,9 +863,7 @@ def build_catalog(
             title_builder=lambda result: found.title if (found := link(result)) else result.name,
         )
         seed_collections(layer_source, discovery, output_dir, report)
-        # Thumbnails come last, as in `add`. The renderer's GUI objects then never
-        # meet the metadata thread pool above. A Tk object that a worker thread
-        # frees aborts the process on Windows.
+        # Thumbnails come last: a Tk object freed by a worker thread aborts the process on Windows.
         files, versioned = added
         collection_ids = {path.parent.relative_to(output_dir).as_posix() for path in files}
         with reporting(_without_detail(on_message)):
@@ -1040,28 +898,20 @@ def run_layer_extraction(
 ) -> ExtractionReport:
     """Extract the layers of ``source`` into a Portolan catalog.
 
-    Steps: discover, filter, check the license, resume, fetch with retry,
-    save the report to ``.portolan/extraction-report.json``, then build the
-    catalog unless ``options.raw`` is set.
-
     Args:
         layer_source: The source implementation.
         source: Service URL or other source locator.
         output_dir: Catalog directory.
         options: Extraction options. None uses the defaults.
         on_progress: Called with progress for each layer.
-        on_message: Called as ``on_message(level, text)`` with each notice of
-            the catalog build. The level is ``info`` or ``warn``. None logs
-            the notices to the ``portolan_cli`` logger instead.
+        on_message: Called as ``on_message(level, text)`` per notice. None logs the notices.
 
     Returns:
         The extraction report.
 
     Raises:
-        MissingLicenseError: Before any download, when no license can be
-            resolved and ``options.raw`` is not set.
-        InputValidationError: Before any write, when a layer's ``path`` could
-            leave the catalog.
+        MissingLicenseError: Before any download, when no license resolves outside raw mode.
+        InputValidationError: Before any write, when a layer's ``path`` could leave the catalog.
     """
     from portolan_cli.extract.common.report import save_report
 
@@ -1161,11 +1011,7 @@ class LayerSourceExtractor:
         )
 
     def cli_command(self) -> click.Command:
-        """Build ``portolan extract <name>`` for the source.
-
-        The command module is part of the CLI layer. It loads here, when the
-        user runs the command.
-        """
+        """Build ``portolan extract <name>`` for the source."""
         layer_cli = importlib.import_module("portolan_cli.extract.common.layer_cli")
         command: click.Command = layer_cli.build_command(self.layer_source)
         return command

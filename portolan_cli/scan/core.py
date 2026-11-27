@@ -1,26 +1,4 @@
-"""Directory scanning and issue detection for geospatial files.
-
-This module provides read-only analysis of directory structures to identify
-geospatial files ready for import and detect structural issues that could
-cause import failures.
-
-The scan command follows the ruff model: separate scanning/validation from
-import (like ruff check vs ruff format). See rationale.
-
-Example:
-    >>> from portolan_cli.scan.core import scan_directory, ScanOptions
-    >>> result = scan_directory(Path("/data/geospatial"))
-    >>> print(f"Found {len(result.ready)} files ready to import")
-    >>> if result.has_errors:
-    ...     print(f"Found {result.error_count} errors")
-
-Phase 1 MVP features:
-- File discovery with extension filtering
-- Recursive scanning with depth controls
-- Hidden file and symlink handling
-- Issue detection (14 types with 3 severity levels)
-- Human-readable and JSON output
-"""
+"""Directory scanning and issue detection for geospatial files."""
 
 from __future__ import annotations
 
@@ -80,20 +58,17 @@ from portolan_core.format_families import RASTER, VECTOR, is_geojson
 _PARENT_STEM_PARTS = 2
 _MIN_PARQUET_FILES = 2
 
-# =============================================================================
 # Constants
-# =============================================================================
 
-# Recognized geospatial file extensions (primary assets)
-# Note: .parquet is NOT here because we need to check metadata to distinguish
-# GeoParquet (geospatial) from regular Parquet (tabular data).
+# Recognized geospatial file extensions. .parquet needs a metadata check to tell
+# GeoParquet from plain Parquet.
 RECOGNIZED_VECTOR_EXTENSIONS: frozenset[str] = frozenset(
     {
         ".geojson",
         ".shp",
         ".gpkg",
         ".fgb",
-        ".pmtiles",  # PMTiles: cloud-native vector tiles (issue #198)
+        ".pmtiles",  # PMTiles: cloud-native vector tiles
     }
 )
 
@@ -103,9 +78,7 @@ RECOGNIZED_EXTENSIONS: frozenset[str] = RECOGNIZED_VECTOR_EXTENSIONS | RECOGNIZE
 
 # Note: PARQUET_EXTENSION imported from portolan_core.constants
 
-# Overview/derivative formats (not primary assets)
-# Note: .pmtiles was removed from here — PMTiles is a primary cloud-native
-# format, not a derivative. See issue #198 and formats.py CLOUD_NATIVE_EXTENSIONS.
+# Overview/derivative formats (not primary assets). PMTiles is a primary format.
 OVERVIEW_EXTENSIONS: frozenset[str] = frozenset()
 
 # Shapefile sidecar extensions
@@ -123,9 +96,7 @@ INVALID_CHAR_PATTERN: re.Pattern[str] = re.compile(r"[\s()\[\]\x00-\x1f\x7f]|[^\
 # WINDOWS_RESERVED_NAMES imported from portolan_core.constants
 
 
-# =============================================================================
 # Enums
-# =============================================================================
 
 
 class Severity(Enum):
@@ -170,9 +141,7 @@ class IssueType(Enum):
     INVALID_COLLECTION_ID = "invalid_collection_id"
 
 
-# =============================================================================
 # Data Classes
-# =============================================================================
 
 
 @dataclass(frozen=True)
@@ -212,22 +181,7 @@ class ScanOptions:
 
 @dataclass(frozen=True)
 class ScannedFile:
-    """A geospatial file ready for import.
-
-    Attributes:
-        path: Absolute path to the file or directory.
-        relative_path: Path relative to scan root, using forward slashes.
-        extension: File extension (e.g., ".parquet", ".gdb").
-        format_type: Whether this is VECTOR or RASTER data.
-        size_bytes: Total size in bytes.
-        inferred_collection_id: Nested collection path derived from directory structure.
-            For nested catalogs, this is the parent directory path relative
-            to the scan root. Example: "climate/hittekaart" for a file at
-            climate/hittekaart/data.parquet. Empty string for files at scan root.
-        format_status: Cloud-native status classification (CLOUD_NATIVE, CONVERTIBLE, UNSUPPORTED).
-        format_display_name: Human-readable format name (e.g., "GeoParquet", "GeoTIFF (not COG)").
-        metadata: Format-specific metadata (e.g., gdbtable_count for FileGDB).
-    """
+    """A geospatial file ready for import."""
 
     path: Path
     relative_path: str
@@ -391,9 +345,7 @@ class ScanResult:
             return False
 
 
-# =============================================================================
 # Internal Helper Classes
-# =============================================================================
 
 
 @dataclass
@@ -421,9 +373,7 @@ class _ScanContext:
     catalog_root: Path | None = None
 
 
-# =============================================================================
 # Helper Functions
-# =============================================================================
 
 
 def _is_recognized_extension(ext: str) -> bool:
@@ -458,11 +408,7 @@ def _has_invalid_characters(name: str) -> bool:
 
 
 def _get_relative_path(path: Path, root: Path) -> str:
-    """Get path relative to root as forward-slash string.
-
-    Returns paths with forward slashes regardless of OS for STAC compatibility.
-    STAC uses URL-style paths which always use forward slashes.
-    """
+    """Get path relative to root as forward-slash string."""
     try:
         return path.relative_to(root).as_posix()
     except ValueError:
@@ -470,36 +416,7 @@ def _get_relative_path(path: Path, root: Path) -> str:
 
 
 def _infer_collection_id_from_relative_path(relative_path: str) -> str:
-    """Infer nested collection ID from a relative path.
-
-    The collection ID is the directory portion of the relative path,
-    representing the leaf collection in a nested catalog structure.
-    Hive-style partition directories (key=value) are stripped from the
-    collection ID since they represent Items, not Collections.
-
-    Warning:
-        ANY directory matching the pattern `key=value` (where key is a valid
-        identifier starting with letter/underscore) is treated as a Hive
-        partition and stripped. This includes directories that may not be
-        intended as partitions, e.g., "version=2.0/" or "config=prod/".
-        Users should avoid = in directory names unless intending partitioning.
-
-    Examples:
-        "data.parquet" -> ""
-        "collection/data.parquet" -> "collection"
-        "climate/hittekaart/data.parquet" -> "climate/hittekaart"
-        "env/air/quality/pm25.parquet" -> "env/air/quality"
-        "sites/contours/gms_feature_id=abc/data.parquet" -> "sites/contours"
-        "data/year=2024/month=01/file.parquet" -> "data"
-        "project/version=2.0/data.parquet" -> "project"  (version=2.0 stripped!)
-
-    Args:
-        relative_path: Path relative to scan root, using forward slashes.
-
-    Returns:
-        Collection ID (parent directory path, excluding Hive partitions).
-        Empty string for root-level files or files only under partition dirs.
-    """
+    """Infer nested collection ID from a relative path."""
     # Find the last slash - everything before it is the directory path
     last_slash_idx = relative_path.rfind("/")
     if last_slash_idx == -1:
@@ -510,28 +427,14 @@ def _infer_collection_id_from_relative_path(relative_path: str) -> str:
     dir_path = relative_path[:last_slash_idx]
     segments = dir_path.split("/")
 
-    # Filter out Hive partition directories (key=value pattern) and empty segments
-    # Per issue #448: any directory matching key=value is a partition, not collection
-    # Empty segments (from double slashes like "foo//bar") are also filtered
+    # Drop Hive partition segments (key=value) and empty segments from double slashes.
     non_partition_segments = [seg for seg in segments if seg and is_hive_partition_dir(seg) is None]
 
     return "/".join(non_partition_segments)
 
 
 def _get_format_info(path: Path, ext: str, catalog_root: Path | None = None) -> FormatInfo:
-    """Get cloud-native status and format info for a file.
-
-    This is a lightweight wrapper around get_cloud_native_status() that
-    handles errors gracefully for scan context.
-
-    Args:
-        path: Path to the file.
-        ext: File extension (lowercase).
-        catalog_root: Catalog root, for a ``conversion.handlers`` pin.
-
-    Returns:
-        FormatInfo with status, display_name, target_format, and error_message.
-    """
+    """Get cloud-native status and format info for a file."""
     try:
         return get_cloud_native_status(path, catalog_root)
     except (FileNotFoundError, IsADirectoryError):
@@ -551,16 +454,7 @@ def _make_skipped_file(
     path: Path,
     size_bytes: int | None = None,
 ) -> SkippedFile:
-    """Create a SkippedFile with proper classification.
-
-    Args:
-        ctx: Scan context (provides root for relative path).
-        path: Path to the file being skipped.
-        size_bytes: File size in bytes (for thumbnail classification).
-
-    Returns:
-        SkippedFile with category and reason from classify_file.
-    """
+    """Create a SkippedFile with proper classification."""
     category, reason_type, reason_message = classify_file(path, size_bytes)
     return SkippedFile(
         path=path,
@@ -579,9 +473,7 @@ def _is_overview_extension(ext: str) -> bool:
     return ext.lower() in OVERVIEW_EXTENSIONS
 
 
-# =============================================================================
 # Issue Detection Functions
-# =============================================================================
 
 
 def _check_incomplete_shapefile(ctx: _ScanContext, shp_path: Path) -> None:
@@ -658,19 +550,7 @@ def _check_long_path(ctx: _ScanContext, path: Path) -> None:
 
 
 def _check_symlink_loop(ctx: _ScanContext, path: Path, is_directory: bool) -> bool:
-    """Check for symlink loop using inode tracking. Returns True if loop detected.
-
-    Only tracks inodes for directories to prevent infinite recursion.
-    File symlinks pointing to the same target are NOT considered loops.
-
-    Args:
-        ctx: Scan context with visited_inodes set.
-        path: Path to check (must be a symlink).
-        is_directory: True if the symlink target is a directory.
-
-    Returns:
-        True if a directory symlink loop was detected, False otherwise.
-    """
+    """Check for symlink loop using inode tracking. Returns True if loop detected."""
     # Only track directory inodes - file symlinks to same target are valid
     if not is_directory:
         return False
@@ -699,23 +579,7 @@ def _check_symlink_loop(ctx: _ScanContext, path: Path, is_directory: bool) -> bo
 def _check_broken_symlink(
     ctx: _ScanContext, path: Path, is_symlink: bool, is_file: bool, is_dir: bool
 ) -> bool:
-    """Check if a symlink is broken (target doesn't exist). Returns True if broken.
-
-    A broken symlink is one where:
-    - is_symlink is True (it's a symlink)
-    - is_file is False (target isn't a file or doesn't exist)
-    - is_dir is False (target isn't a directory)
-
-    Args:
-        ctx: Scan context for recording issues.
-        path: Path to check.
-        is_symlink: True if entry is a symlink.
-        is_file: Result of is_file(follow_symlinks=True).
-        is_dir: Result of is_dir(follow_symlinks=True).
-
-    Returns:
-        True if broken symlink was detected and reported, False otherwise.
-    """
+    """Check if a symlink is broken (target doesn't exist). Returns True if broken."""
     if is_symlink and not is_file and not is_dir:
         # Read the symlink target for the message
         try:
@@ -739,11 +603,7 @@ def _check_broken_symlink(
 
 
 def _check_orphan_sidecars(ctx: _ScanContext) -> None:
-    """Check for sidecar files without a corresponding primary (.shp) file.
-
-    Orphan sidecars are .dbf, .shx, .prj, etc. files that don't have a
-    matching .shp file in the same directory with the same stem.
-    """
+    """Check for sidecar files without a corresponding primary (.shp) file."""
     # Get all stems that have a .shp file
     shp_stems: set[str] = set()
     for scanned in ctx.ready:
@@ -780,22 +640,7 @@ def _check_orphan_sidecars(ctx: _ScanContext) -> None:
 
 
 def _check_mixed_structure(ctx: _ScanContext) -> None:
-    """Check for mixed flat/multi-item directory structure.
-
-    This detects directories that have both files directly AND files in
-    subdirectories, which indicates an unclear catalog structure.
-    Is this directory a single item with multiple files, or is each
-    subdirectory a separate item?
-
-    This check applies to ALL directories with geo-assets, not just root.
-
-    Algorithm: O(n × depth) where depth is tree depth (typically ~10).
-    For each directory with files, walk UP the parent chain checking if
-    any ancestor also has files. This replaces the previous O(n²) approach
-    that compared all pairs of directories.
-
-    See: https://github.com/portolan-sdi/portolan-cli/issues/314
-    """
+    """Check for mixed flat/multi-item directory structure."""
     # Build set of directories with files for O(1) lookup
     dirs_with_files: set[Path] = {d for d, files in ctx.primaries_by_dir.items() if files}
 
@@ -824,18 +669,7 @@ def _check_mixed_structure(ctx: _ScanContext) -> None:
 
 
 def _check_multiple_geo_primaries(ctx: _ScanContext) -> None:
-    """Check for multiple GeoParquet files in the same directory.
-
-    Multiple GeoParquet files in the same directory creates structural
-    ambiguity about which is the primary geo-asset for catalog purposes.
-    This is distinct from MULTIPLE_PRIMARIES (generic) because it specifically
-    targets the GeoParquet case and enables targeted guidance.
-
-    Key rule: One GeoParquet + multiple plain Parquet = VALID (companions OK)
-
-    Only GeoParquet files (those with geo metadata) are counted as geo-primaries.
-    Plain Parquet files (lookup tables, metadata) are companions, not primaries.
-    """
+    """Check for multiple GeoParquet files in the same directory."""
     for dir_path, primaries in ctx.primaries_by_dir.items():
         # Filter to only .parquet files
         parquet_files = [p for p in primaries if p.suffix.lower() == ".parquet"]
@@ -861,12 +695,7 @@ def _check_multiple_geo_primaries(ctx: _ScanContext) -> None:
 
 
 def _check_collection_ids(ctx: _ScanContext) -> None:
-    """Check directory names for valid collection ID format.
-
-    Per portolan-spec/structure.md, collection IDs SHOULD:
-    - Contain only lowercase letters, numbers, hyphens, and underscores
-    - Start with a letter
-    """
+    """Check directory names for valid collection ID format."""
     # Get unique directories that contain geospatial files
     checked_dirs: set[Path] = set()
 
@@ -941,9 +770,8 @@ def _finalize_multi_asset_checks(ctx: _ScanContext) -> None:
                 )
             )
 
-    # Check for duplicate basenames WITHIN the same directory only.
-    # Files with same name in sibling directories (e.g., 2010/radios.parquet and
-    # 2022/radios.parquet) are intentional organization, not duplicates.
+    # Duplicate basenames count only within one directory. Sibling directories
+    # such as 2010/ and 2022/ are intentional.
     for paths in ctx.basenames.values():
         if len(paths) > 1:
             # Group by parent directory
@@ -967,24 +795,12 @@ def _finalize_multi_asset_checks(ctx: _ScanContext) -> None:
 
 
 def is_windows_reserved_name(name: str) -> bool:
-    """Check if a filename is a Windows reserved device name.
-
-    Args:
-        name: Filename (stem only, without extension) to check.
-
-    Returns:
-        True if the name is a Windows reserved name.
-    """
+    """Check if a filename is a Windows reserved device name."""
     return name.lower() in WINDOWS_RESERVED_NAMES
 
 
 def _check_windows_reserved(ctx: _ScanContext, path: Path) -> None:
-    """Check if path contains Windows reserved names.
-
-    This is a cross-platform compatibility check. Files with Windows
-    reserved names (CON, PRN, AUX, NUL, COMx, LPTx) cannot be created
-    or accessed on Windows systems.
-    """
+    """Check if path contains Windows reserved names."""
     # Check the file/directory name itself
     stem = path.stem.lower()
     if stem in WINDOWS_RESERVED_NAMES:
@@ -1018,20 +834,11 @@ def _check_windows_reserved(ctx: _ScanContext, path: Path) -> None:
             break
 
 
-# =============================================================================
 # Core Scan Functions
-# =============================================================================
 
 
 def _get_dir_size(path: Path) -> int:
-    """Calculate total size of all files in a directory (non-recursive).
-
-    Args:
-        path: Path to directory.
-
-    Returns:
-        Total size in bytes of all files in the directory.
-    """
+    """Calculate total size of all files in a directory (non-recursive)."""
     total = 0
     try:
         for entry in os.scandir(path):
@@ -1044,16 +851,7 @@ def _get_dir_size(path: Path) -> int:
 
 
 def _gather_filegdb_metadata(path: Path) -> dict[str, Any]:
-    """Gather FileGDB-specific metadata.
-
-    Args:
-        path: Path to FileGDB directory.
-
-    Returns:
-        Dict with keys:
-        - gdbtable_count: Number of .gdbtable files
-        - lock_files_present: True if lock files detected (ArcGIS may have it open)
-    """
+    """Gather FileGDB-specific metadata."""
     gdbtable_count = 0
     lock_files_present = False
 
@@ -1081,21 +879,7 @@ def _walk_entry(
     entry: os.DirEntry[str],
     dirs_to_process: list[Path],
 ) -> Iterator[tuple[Path, int]]:
-    """Handle one directory entry found by the walk.
-
-    Yields the entry when it is a file or a FileGDB. Appends it to
-    dirs_to_process when it is a directory the walk must descend into. Yields
-    nothing for a hidden entry, a skipped symlink, or an entry that cannot be
-    read.
-
-    Args:
-        ctx: Scan context. The function appends an issue to it on a stat failure.
-        entry: Directory entry from os.scandir.
-        dirs_to_process: List that collects the subdirectories to walk next.
-
-    Yields:
-        Tuples of (path, size in bytes).
-    """
+    """Handle one directory entry found by the walk."""
     options = ctx.options
     if not options.include_hidden and _is_hidden(entry.name):
         return
@@ -1150,11 +934,7 @@ def _walk_entry(
 def _discover_files(
     ctx: _ScanContext,
 ) -> Iterator[tuple[Path, int]]:
-    """Discover files using os.walk with depth control.
-
-    Yields (file_path, file_size) tuples for all files found.
-    Uses os.walk for performance as recommended in design doc.
-    """
+    """Discover files using os.walk with depth control."""
     root = ctx.root
     options = ctx.options
 
@@ -1202,10 +982,7 @@ def _discover_files(
 
 
 def _other_format_type(path: Path, ext: str, catalog_root: Path | None = None) -> str | None:
-    """Return the family of a recognized or plugin extension, or None to skip.
-
-    A plugin format handler reads its own extensions (#947).
-    """
+    """Return the family of a recognized or plugin extension, or None to skip."""
     if _is_recognized_extension(ext):
         return _get_format_type(ext)
     if ext in plugin_extensions():
@@ -1270,11 +1047,7 @@ def _parquet_skip(path: Path, root: Path) -> SkippedFile | None:
 
 def _json_skip(path: Path, name: str, root: Path) -> SkippedFile | None:
     """Return the skip record of a .json file that is not GeoJSON, or None."""
-    # Handle .json files - need content inspection for GeoJSON detection
-    # Issue #256: GeoJSON files are often saved with .json extension
-    #
-    # But first, check for STAC metadata files (catalog.json, collection.json, etc.)
-    # These should be skipped as metadata, not inspected for GeoJSON content.
+    # Skip STAC metadata files first. Other .json files may be GeoJSON, so inspect them.
     if name in STAC_FILENAMES:
         # STAC metadata file - skip with proper classification
         return SkippedFile(
@@ -1284,9 +1057,7 @@ def _json_skip(path: Path, name: str, root: Path) -> SkippedFile | None:
             reason_type=SkipReasonType.METADATA_FILE,
             reason_message=f"{name} is STAC catalog metadata",
         )
-    # Check for STAC item files: JSON files named after their parent directory
-    # Pattern: item_dir/item_dir.json (e.g., tile_0_0/tile_0_0.json)
-    # This is the standard Portolan item structure
+    # A STAC item file is named after its parent directory: tile_0_0/tile_0_0.json.
     if path.stem.lower() == path.parent.name.lower():
         return SkippedFile(
             path=path,
@@ -1296,9 +1067,7 @@ def _json_skip(path: Path, name: str, root: Path) -> SkippedFile | None:
             reason_message=f"{path.name} is a STAC item metadata file",
         )
     if not is_geojson(path):
-        # Plain JSON, not GeoJSON - skip with informative message
-        # We override classify_file here because we have specific knowledge:
-        # we inspected the content and determined it's not GeoJSON.
+        # Plain JSON, not GeoJSON. The content check overrides classify_file.
         return SkippedFile(
             path=path,
             relative_path=_get_relative_path(path, root),
@@ -1311,10 +1080,7 @@ def _json_skip(path: Path, name: str, root: Path) -> SkippedFile | None:
 
 def _process_file(ctx: _ScanContext, path: Path, size: int) -> None:
     """Process a single discovered file or FileGDB directory."""
-    # Check for FileGDB directory FIRST - these are yielded by _discover_files
-    # as directories to be treated as single assets
-    # Issue #154: FileGDBs should be added to ready list (not special_formats)
-    # so they can be processed by `portolan add`
+    # A FileGDB directory is one asset, ready for `portolan add`.
     if path.is_dir() and is_filegdb(path):
         _process_filegdb(ctx, path, size)
         return
@@ -1413,30 +1179,7 @@ def scan_directory(
     options: ScanOptions | None = None,
     progress_callback: Callable[[], None] | None = None,
 ) -> ScanResult:
-    """Scan a directory for geospatial files and issues.
-
-    This is the primary entry point for the scan module.
-
-    Args:
-        path: Directory path to scan.
-        options: Scan configuration options. Defaults to ScanOptions().
-        progress_callback: Optional callback called for each directory scanned.
-            Used for progress reporting. Called with no arguments.
-
-    Returns:
-        ScanResult containing ready files, issues, and skipped files.
-
-    Raises:
-        FileNotFoundError: If path does not exist.
-        NotADirectoryError: If path is not a directory.
-
-    Example:
-        >>> from portolan_cli.scan.core import scan_directory, ScanOptions
-        >>> result = scan_directory(Path("/data/geospatial"))
-        >>> print(f"Found {len(result.ready)} files ready to import")
-        >>> if result.has_errors:
-        ...     print(f"Found {result.error_count} errors")
-    """
+    """Scan a directory for geospatial files and issues."""
     # Validate path
     if not path.exists():
         raise FileNotFoundError(f"Path does not exist: {path}")

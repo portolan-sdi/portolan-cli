@@ -1,15 +1,4 @@
-"""Shared Mapbox GL style building blocks.
-
-This module provides reusable functions for constructing Mapbox GL style
-documents. All source format converters (SLD, ESRI, etc.) use these
-primitives to generate consistent output.
-
-The design follows DRY principles: parsing logic lives in format-specific
-modules, while Mapbox GL generation is centralized here.
-
-Mapbox GL Style Spec Reference:
-https://docs.mapbox.com/mapbox-gl-js/style-spec/
-"""
+"""Shared Mapbox GL style building blocks."""
 
 from __future__ import annotations
 
@@ -24,16 +13,7 @@ NumericValue = int | float | Expression
 
 
 def esri_color_to_hex(color: list[int] | None) -> str:
-    """Convert ESRI [r, g, b, a] array to #rrggbb hex string.
-
-    Args:
-        color: ESRI color array [red, green, blue, alpha] with 0-255 values,
-            or None (e.g. when the ESRI API returns ``"color": null`` for
-            Arcade expression-based renderers). Returns a grey fallback for None.
-
-    Returns:
-        Hex color string like "#ff0000".
-    """
+    """Convert ESRI [r, g, b, a] array to #rrggbb hex string."""
     if color is None:
         return "#888888"
     r, g, b = color[0], color[1], color[2]
@@ -41,15 +21,7 @@ def esri_color_to_hex(color: list[int] | None) -> str:
 
 
 def esri_color_to_opacity(color: list[int] | None) -> float:
-    """Extract opacity from ESRI [r, g, b, a] array.
-
-    Args:
-        color: ESRI color array [red, green, blue, alpha] with 0-255 values,
-            or None. Returns fully opaque (1.0) for None.
-
-    Returns:
-        Opacity as float 0.0-1.0.
-    """
+    """Extract opacity from ESRI [r, g, b, a] array."""
     if color is None:
         return 1.0
     if len(color) < _RGBA_LEN:
@@ -58,15 +30,7 @@ def esri_color_to_opacity(color: list[int] | None) -> float:
 
 
 def hex_to_rgba(hex_color: str, opacity: float) -> str:
-    """Convert hex color and opacity to rgba() CSS string.
-
-    Args:
-        hex_color: Color like "#ff0000" or "ff0000".
-        opacity: Opacity 0.0-1.0.
-
-    Returns:
-        CSS rgba string like "rgba(255, 0, 0, 0.5)".
-    """
+    """Convert hex color and opacity to rgba() CSS string."""
     hex_color = hex_color.lstrip("#")
     r = int(hex_color[0:2], 16)
     g = int(hex_color[2:4], 16)
@@ -79,18 +43,7 @@ def make_match_expression(
     cases: list[tuple[Any, Any]],
     default: Any,
 ) -> Expression:
-    """Build a Mapbox GL match expression for categorical styling.
-
-    Creates: ["match", ["get", field], val1, output1, val2, output2, ..., default]
-
-    Args:
-        field: Property name to match on.
-        cases: List of (value, output) tuples. Output can be colors (str) or numbers.
-        default: Fallback value when no match.
-
-    Returns:
-        Mapbox GL match expression.
-    """
+    """Build a Mapbox GL match expression for categorical styling."""
     expr: list[Any] = ["match", ["get", field]]
     for value, output in cases:
         expr.append(value)
@@ -103,21 +56,7 @@ def make_step_expression(
     field: str,
     breaks: list[tuple[Any, Any]],
 ) -> Expression:
-    """Build a Mapbox GL step expression for graduated styling.
-
-    Creates: ["step", ["get", field], initial, break1, val1, break2, val2, ...]
-
-    The first tuple provides (min_value, initial_output). Subsequent tuples
-    define break points where the output changes.
-
-    Args:
-        field: Property name for class breaks.
-        breaks: List of (threshold, output_value) tuples. First tuple's
-            threshold is the minimum value, subsequent are break points.
-
-    Returns:
-        Mapbox GL step expression.
-    """
+    """Build a Mapbox GL step expression for graduated styling."""
     if not breaks:
         raise ValueError("make_step_expression requires at least one break point")
 
@@ -142,18 +81,7 @@ def make_fill_layer(
     fill_opacity: NumericValue = 1.0,
     outline_color: ColorValue | None = None,
 ) -> dict[str, Any]:
-    """Build a Mapbox GL fill layer for polygon data.
-
-    Args:
-        layer_id: Unique layer identifier.
-        source_layer: Name of source layer in vector tiles.
-        fill_color: Fill color (hex string or expression).
-        fill_opacity: Fill opacity 0.0-1.0.
-        outline_color: Optional outline color.
-
-    Returns:
-        Mapbox GL layer dict.
-    """
+    """Build a Mapbox GL fill layer for polygon data."""
     paint: dict[str, Any] = {
         "fill-color": fill_color,
         "fill-opacity": fill_opacity,
@@ -179,20 +107,7 @@ def make_circle_layer(
     stroke_color: ColorValue | None = None,
     stroke_width: NumericValue | None = None,
 ) -> dict[str, Any]:
-    """Build a Mapbox GL circle layer for point data.
-
-    Args:
-        layer_id: Unique layer identifier.
-        source_layer: Name of source layer in vector tiles.
-        circle_color: Circle fill color (hex string or expression).
-        circle_radius: Circle radius in pixels (number or expression).
-        circle_opacity: Circle opacity 0.0-1.0.
-        stroke_color: Optional stroke color.
-        stroke_width: Optional stroke width.
-
-    Returns:
-        Mapbox GL layer dict.
-    """
+    """Build a Mapbox GL circle layer for point data."""
     paint: dict[str, Any] = {
         "circle-color": circle_color,
         "circle-radius": circle_radius,
@@ -219,18 +134,7 @@ def make_line_layer(
     line_width: NumericValue = 1,
     line_opacity: NumericValue = 1.0,
 ) -> dict[str, Any]:
-    """Build a Mapbox GL line layer for linestring data.
-
-    Args:
-        layer_id: Unique layer identifier.
-        source_layer: Name of source layer in vector tiles.
-        line_color: Line color (hex string or expression).
-        line_width: Line width in pixels (number or expression).
-        line_opacity: Line opacity 0.0-1.0.
-
-    Returns:
-        Mapbox GL layer dict.
-    """
+    """Build a Mapbox GL line layer for linestring data."""
     return {
         "id": layer_id,
         "type": "line",
@@ -256,23 +160,7 @@ def make_symbol_layer(  # noqa: PLR0917 - one argument per Mapbox layer property
     text_anchor: str = "center",
     text_offset: tuple[float, float] | None = None,
 ) -> dict[str, Any]:
-    """Build a Mapbox GL symbol layer for text labels.
-
-    Args:
-        layer_id: Unique layer identifier.
-        source_layer: Name of source layer in vector tiles.
-        text_field: Text content (string or ["get", "fieldname"] expression).
-        text_color: Text color (hex string or expression).
-        text_size: Font size in pixels (number or expression).
-        text_font: List of font names (falls back to ["Noto Sans Regular"]).
-        text_halo_color: Optional halo (outline) color.
-        text_halo_width: Halo width in pixels.
-        text_anchor: Text anchor position (center, left, right, top, bottom, etc.).
-        text_offset: Optional (x, y) offset in ems.
-
-    Returns:
-        Mapbox GL symbol layer dict.
-    """
+    """Build a Mapbox GL symbol layer for text labels."""
     layout: dict[str, Any] = {
         "text-field": text_field,
         "text-size": text_size,
@@ -312,21 +200,7 @@ def make_mapbox_style(
     min_zoom: int | None = None,
     max_zoom: int | None = None,
 ) -> dict[str, Any]:
-    """Build a complete Mapbox GL style document.
-
-    Args:
-        name: Style name (appears in style["name"]).
-        layers: List of layer dicts (from make_*_layer functions).
-        pmtiles_url: Optional PMTiles URL for the source. A bare path is
-            written with the ``pmtiles://`` scheme so MapLibre can load it
-            (issue #756). When omitted, the source is completed later by
-            ``viz.style.complete_style_sources`` once the archive exists.
-        min_zoom: Optional archive minimum zoom (source ``minzoom``).
-        max_zoom: Optional archive maximum zoom (source ``maxzoom``).
-
-    Returns:
-        Complete Mapbox GL style dict with version, sources, and layers.
-    """
+    """Build a complete Mapbox GL style document."""
     source: dict[str, Any] = {"type": "vector"}
     if pmtiles_url:
         source["url"] = pmtiles_url if "://" in pmtiles_url else f"pmtiles://{pmtiles_url}"

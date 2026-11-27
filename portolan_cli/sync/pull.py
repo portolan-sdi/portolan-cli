@@ -1,26 +1,4 @@
-"""Pull updates from remote cloud storage catalogs.
-
-This module provides functionality to synchronize a local catalog with its
-remote counterpart, similar to `git pull`. It:
-
-1. Fetches remote versions.json
-2. Diffs against local versions.json
-3. Checks for uncommitted local changes
-4. Downloads changed assets (unless --force is used to overwrite)
-5. Updates local versions.json
-
-Mental model: `portolan pull` is like `git pull`
-- If local has uncommitted changes that would be overwritten, refuse (unless --force)
-- Show what would change with --dry-run
-- Update tracking file (versions.json) after successful sync
-
-
-Async Migration (Wave 2A):
-- `pull_async()` is the primary implementation using asyncio
-- `pull()` is a sync wrapper for backward compatibility
-- Concurrent downloads via asyncio.Semaphore with configurable concurrency
-- Circuit breaker pattern for resilience against repeated failures
-"""
+"""Pull updates from remote cloud storage catalogs."""
 
 from __future__ import annotations
 
@@ -82,18 +60,14 @@ _MAX_FILES_LISTED = 5
 DEFAULT_CONCURRENCY = get_default_concurrency()
 
 
-# =============================================================================
 # Exceptions
-# =============================================================================
 
 
 class PullError(Exception):
     """Base exception for pull operations."""
 
 
-# =============================================================================
 # Data Classes
-# =============================================================================
 
 
 @dataclass
@@ -136,11 +110,7 @@ class PullResult:
 
 @dataclass(frozen=True)
 class BackendPull:
-    """A pull of one collection that a non-file versioning backend ran.
-
-    A backend reports no restored files, so the envelope ``data`` has no
-    ``files_restored`` field.
-    """
+    """A pull of one collection that a non-file versioning backend ran."""
 
     result: PullResult
 
@@ -153,19 +123,7 @@ class BackendPull:
 
 @dataclass
 class VersionDiff:
-    """Diff between local and remote versions.
-
-    Attributes:
-        local_version: Current local version string.
-        remote_version: Current remote version string.
-        is_behind: True if local is behind remote (remote has newer versions).
-        is_local_ahead: True if local has versions remote doesn't have.
-        is_diverged: True if both local and remote have unique versions.
-        files_to_download: List of file names that need downloading.
-        remote_assets: Dict mapping filename to remote asset metadata.
-        local_only_versions: Versions that exist only locally (unpushed).
-        remote_only_versions: Versions that exist only remotely.
-    """
+    """Diff between local and remote versions."""
 
     local_version: str | None
     remote_version: str | None
@@ -180,16 +138,7 @@ class VersionDiff:
 
 @dataclass
 class PullAllResult:
-    """Result of a catalog-wide pull operation.
-
-    Attributes:
-        success: True if all collections pulled successfully.
-        total_collections: Total number of collections found.
-        successful_collections: Number of collections that pulled successfully.
-        failed_collections: Number of collections that failed.
-        total_files_downloaded: Total files downloaded across all collections.
-        collection_errors: Dict mapping collection name to list of error messages.
-    """
+    """Result of a catalog-wide pull operation."""
 
     success: bool
     total_collections: int
@@ -209,34 +158,14 @@ class PullAllResult:
         }
 
 
-# =============================================================================
 # Change Detection
-# =============================================================================
 
 
 def detect_uncommitted_changes(
     catalog_root: Path,
     collection: str,
 ) -> list[str]:
-    """Detect local files that differ from what versions.json says they should be.
-
-    This is like `git status` - it compares the actual local files against
-    what the local versions.json says they should be.
-
-    Uses mtime + size as a fast-path heuristic:
-    - If mtime and size match, skip the expensive checksum computation.
-    - Only compute checksum when mtime/size suggest a change.
-
-    Args:
-        catalog_root: Root directory of the catalog.
-        collection: Collection name/identifier.
-
-    Returns:
-        List of filenames with uncommitted changes.
-
-    Raises:
-        FileNotFoundError: If versions.json doesn't exist.
-    """
+    """Detect local files that differ from what versions.json says they should be."""
     # versions.json at collection root
     versions_path = catalog_root / collection / "versions.json"
 
@@ -278,22 +207,7 @@ def find_missing_files(
     catalog_root: Path,
     collection: str,
 ) -> list[str]:
-    """Find files that are tracked in versions.json but missing from disk.
-
-    Used by --restore to identify files that need re-downloading even when
-    version metadata matches. This addresses issue #325 where deleted local
-    files aren't restored by normal pull (which only checks version metadata).
-
-    Note: This is slower than metadata-only checks (requires filesystem stat
-    for each asset), but necessary for restore functionality.
-
-    Args:
-        catalog_root: Root directory of the catalog.
-        collection: Collection name/identifier.
-
-    Returns:
-        List of asset names (filenames) that are missing from disk.
-    """
+    """Find files that are tracked in versions.json but missing from disk."""
     # versions.json at collection root
     versions_path = catalog_root / collection / "versions.json"
 
@@ -320,29 +234,14 @@ def find_missing_files(
     return missing
 
 
-# =============================================================================
 # Version Diffing
-# =============================================================================
 
 
 def diff_versions(
     local_versions: VersionsFile,
     remote_versions: VersionsFile,
 ) -> VersionDiff:
-    """Diff local and remote versions to determine what needs downloading.
-
-    Detects three sync states:
-    - Remote ahead: Remote has versions local doesn't (safe to pull).
-    - Local ahead: Local has versions remote doesn't (would lose unpushed work).
-    - Diverged: Both have unique versions (conflict, need manual resolution).
-
-    Args:
-        local_versions: Local versions.json content.
-        remote_versions: Remote versions.json content.
-
-    Returns:
-        VersionDiff with files that need downloading and sync state flags.
-    """
+    """Diff local and remote versions to determine what needs downloading."""
     local_version = local_versions.current_version
     remote_version = remote_versions.current_version
 
@@ -358,7 +257,7 @@ def diff_versions(
     is_diverged = bool(local_only) and bool(remote_only)
     is_behind = bool(remote_only) and not local_only
 
-    # Get remote's current assets (always populate for restore support, issue #325)
+    # Get remote's current assets (always populate for restore support)
     remote_assets: dict[str, dict[str, str | int]] = {}
     if remote_versions.versions:
         current_remote = remote_versions.versions[-1]
@@ -376,9 +275,7 @@ def diff_versions(
         for name, asset in current_local.assets.items():
             local_assets[name] = asset.sha256
 
-    # Find files that need downloading:
-    # - New files not in local
-    # - Files with different checksums
+    # Download new files and files whose checksum differs.
     files_to_download = []
     for name, remote_asset in remote_assets.items():
         if name not in local_assets or local_assets[name] != remote_asset["sha256"]:
@@ -397,9 +294,7 @@ def diff_versions(
     )
 
 
-# =============================================================================
 # Remote Fetch
-# =============================================================================
 
 
 def fetch_remote_versions(
@@ -409,20 +304,7 @@ def fetch_remote_versions(
     *,
     report: Report | None = None,
 ) -> VersionsFile:
-    """Fetch remote versions.json.
-
-    Args:
-        remote_url: Remote catalog URL (e.g., s3://bucket/catalog).
-        collection: Collection name.
-        profile: AWS profile name (for S3).
-        report: Receives the download lines. Without it, they go to the log.
-
-    Returns:
-        Parsed VersionsFile from remote.
-
-    Raises:
-        PullError: If fetch fails.
-    """
+    """Fetch remote versions.json."""
     # Build remote versions.json path
     remote_versions_url = f"{remote_url.rstrip('/')}/{collection}/versions.json"
 
@@ -451,20 +333,7 @@ def fetch_remote_versions(
 
 
 def _validate_safe_path(local_root: Path, href: str) -> Path:
-    """Validate that href resolves to a path within local_root.
-
-    Security: Prevents path traversal attacks via malicious hrefs like "../../../etc/passwd".
-
-    Args:
-        local_root: The catalog root directory (trust boundary).
-        href: The href from remote asset metadata.
-
-    Returns:
-        The validated resolved path.
-
-    Raises:
-        ValueError: If href contains path traversal or escapes local_root.
-    """
+    """Validate that href resolves to a path within local_root."""
     import os
 
     # Reject absolute paths
@@ -498,23 +367,7 @@ def _download_assets(
     dry_run: bool = False,
     report: Report = silent,
 ) -> tuple[int, int]:
-    """Download assets from remote.
-
-    Args:
-        remote_url: Remote catalog base URL.
-        local_root: Local catalog root directory.
-        files_to_download: List of filenames to download.
-        remote_assets: Dict mapping filename to asset metadata.
-        profile: AWS profile name (for S3).
-        dry_run: If True, don't actually download.
-        report: Receives each progress line.
-
-    Returns:
-        Tuple of (files_downloaded, files_failed).
-
-    Raises:
-        ValueError: If any href contains path traversal or escapes catalog root.
-    """
+    """Download assets from remote."""
     downloaded = 0
     failed = 0
     total = len(files_to_download)
@@ -558,9 +411,7 @@ def _download_assets(
     return downloaded, failed
 
 
-# =============================================================================
 # Pre-Pull Validation
-# =============================================================================
 
 
 def _check_sync_state_conflicts(
@@ -568,16 +419,7 @@ def _check_sync_state_conflicts(
     force: bool,
     report: Report = silent,
 ) -> PullResult | None:
-    """Check for local-ahead or diverged states that would cause data loss.
-
-    Args:
-        diff: Version diff between local and remote.
-        force: If True, skip conflict checks.
-        report: Receives each line of the conflict message.
-
-    Returns:
-        PullResult with failure if conflicts found, None if OK to proceed.
-    """
+    """Check for local-ahead or diverged states that would cause data loss."""
     if force:
         return None
 
@@ -619,18 +461,7 @@ def _check_uncommitted_conflicts(
     force: bool,
     report: Report = silent,
 ) -> PullResult | None:
-    """Check for uncommitted local changes that would be overwritten.
-
-    Args:
-        local_root: Local catalog root directory.
-        collection: Collection name.
-        diff: Version diff with files to download.
-        force: If True, skip conflict checks.
-        report: Receives each line of the conflict message.
-
-    Returns:
-        PullResult with failure if conflicts found, None if OK to proceed.
-    """
+    """Check for uncommitted local changes that would be overwritten."""
     if force:
         return None
 
@@ -662,17 +493,7 @@ def _report_pull_plan(
     concurrency: int,
     report: Report = silent,
 ) -> None:
-    """Report what will be downloaded during a pull operation.
-
-    Extracted from pull_async to reduce function complexity.
-
-    Args:
-        remote_url: Remote catalog URL for display.
-        update_files: Files to download due to version changes.
-        restore_files: Files to restore (missing locally).
-        concurrency: Concurrency setting for display.
-        report: Receives each line of the plan.
-    """
+    """Report what will be downloaded during a pull operation."""
     update_count = len(update_files)
     restore_count = len(restore_files)
     all_files = update_files + restore_files
@@ -691,9 +512,7 @@ def _report_pull_plan(
         report("detail", f" ... and {len(all_files) - _MAX_FILES_LISTED} more")
 
 
-# =============================================================================
 # Async Download Primitives
-# =============================================================================
 
 
 async def _download_file_async(
@@ -701,20 +520,7 @@ async def _download_file_async(
     remote_key: str,
     local_path: Path,
 ) -> tuple[bool, int]:
-    """Download a single file asynchronously.
-
-    Uses atomic write pattern: writes to a temp file first, then renames
-    to the target path on success. This prevents data loss if download fails
-    when a valid file already exists at local_path.
-
-    Args:
-        store: Object store instance.
-        remote_key: Remote object key to download.
-        local_path: Local path to save the file.
-
-    Returns:
-        Tuple of (success, bytes_downloaded).
-    """
+    """Download a single file asynchronously."""
     # Use a temp file to avoid corrupting existing files on failure
     temp_path = local_path.with_name(local_path.name + ".part")
 
@@ -747,20 +553,7 @@ async def _fetch_remote_versions_async(
     *,
     report: Report = silent,
 ) -> VersionsFile:
-    """Fetch remote versions.json asynchronously.
-
-    Args:
-        remote_url: Remote catalog URL (e.g., s3://bucket/catalog).
-        collection: Collection name.
-        profile: AWS profile name (for S3).
-        report: Receives the endpoint line of the store setup.
-
-    Returns:
-        Parsed VersionsFile from remote.
-
-    Raises:
-        PullError: If fetch fails.
-    """
+    """Fetch remote versions.json asynchronously."""
     # Build remote versions.json path
     import json
 
@@ -804,23 +597,7 @@ async def _download_assets_async(  # noqa: PLR0915 - one ordered transport seque
     # to the CLI is a follow-up.
     show_progress: bool = False,
 ) -> tuple[int, int]:
-    """Download assets concurrently using asyncio.
-
-    Args:
-        store: Object store instance (pre-configured connection).
-        prefix: Remote path prefix within the bucket.
-        local_root: Local catalog root directory.
-        files_to_download: List of filenames to download.
-        remote_assets: Dict mapping filename to asset metadata.
-        concurrency: Maximum concurrent downloads.
-        report: Receives each failure line.
-        show_progress: If True, draw a progress bar on a terminal. The library
-            draws the bar only when the caller asks. Moving the renderer to
-            the CLI is a follow-up.
-
-    Returns:
-        Tuple of (files_downloaded, files_failed).
-    """
+    """Download assets concurrently using asyncio."""
     from portolan_cli.async_utils import AsyncProgressReporter
 
     if not files_to_download:
@@ -917,9 +694,7 @@ async def _download_assets_async(  # noqa: PLR0915 - one ordered transport seque
     return downloaded, failed
 
 
-# =============================================================================
-# Populate Missing File Sizes (Issue #501)
-# =============================================================================
+# Populate Missing File Sizes
 
 
 def _resolve_asset_url(href: str, base_url: str, rel_path: str = "") -> str:
@@ -951,21 +726,7 @@ async def _populate_missing_file_sizes(
     collection: str,
     remote_url: str,
 ) -> int:
-    """Populate missing file:size values in STAC assets via HTTP HEAD.
-
-    After pulling a remote catalog, some assets may not have file:size
-    populated. This function reads the collection.json and item.json files,
-    identifies assets missing file:size, fetches sizes via HTTP HEAD,
-    and updates the STAC files.
-
-    Args:
-        local_root: Local catalog root directory.
-        collection: Collection name.
-        remote_url: Remote catalog URL for constructing asset URLs.
-
-    Returns:
-        Number of file sizes populated.
-    """
+    """Populate missing file:size values in STAC assets via HTTP HEAD."""
     collection_dir = local_root / collection
     collection_json = collection_dir / "collection.json"
 
@@ -995,16 +756,7 @@ async def _enrich_file_sizes_safe(
     collection: str,
     remote_url: str,
 ) -> None:
-    """Safely enrich STAC assets with file:size metadata.
-
-    This is a non-fatal wrapper around _populate_missing_file_sizes.
-    File sizes are nice-to-have, so failures are silently ignored.
-
-    Args:
-        local_root: Local catalog root directory.
-        collection: Collection name.
-        remote_url: Remote catalog URL.
-    """
+    """Safely enrich STAC assets with file:size metadata."""
     try:
         sizes_populated = await _populate_missing_file_sizes(
             local_root=local_root,
@@ -1059,9 +811,7 @@ async def _process_stac_file_sizes(
     return populated
 
 
-# =============================================================================
 # Async Pull Function
-# =============================================================================
 
 
 async def pull_async(
@@ -1078,42 +828,7 @@ async def pull_async(
     report: Report = silent,
     show_progress: bool = False,
 ) -> PullResult:
-    """Pull updates from a remote catalog asynchronously.
-
-    Primary async implementation of pull. The sync `pull()` function
-    wraps this with `asyncio.run()`.
-
-    Similar to `git pull`, this:
-    1. Fetches remote versions.json
-    2. Compares with local versions.json
-    3. Checks for uncommitted local changes
-    4. Downloads changed files concurrently (unless blocked)
-    5. Updates local versions.json
-
-    Args:
-        remote_url: Remote catalog URL (e.g., s3://bucket/catalog).
-        local_root: Local catalog root directory.
-        collection: Collection name to pull.
-        force: If True, overwrite uncommitted local changes.
-        dry_run: If True, show what would happen without downloading.
-        restore: If True, re-download files that are missing locally even if
-            version metadata matches. Use this to recover deleted files.
-            See issue #325.
-        profile: AWS profile name (for S3).
-        concurrency: Maximum concurrent downloads (default: 50).
-        store: Optional pre-configured object store. If provided, reuses
-            this connection instead of creating a new one (for connection pooling).
-        report: Receives each progress line.
-        show_progress: If True, draw a progress bar on a terminal. The library
-            draws the bar only when the caller asks. Moving the renderer to
-            the CLI is a follow-up.
-
-    Returns:
-        PullResult with operation results.
-
-    Raises:
-        ValueError: If remote_url is invalid.
-    """
+    """Pull updates from a remote catalog asynchronously."""
     # Validate URL and parse components
     try:
         bucket_url, base_prefix = parse_object_store_url(remote_url)
@@ -1139,7 +854,7 @@ async def pull_async(
             versions=[],
         )
 
-    # Bug #137: dry-run must not make any network calls.
+    # dry-run must not make any network calls.
     if dry_run:
         report("info", f"[DRY RUN] Would pull from {remote_url}/{collection}")
         report("info", f"[DRY RUN] Local version: {local_versions.current_version or '(none)'}")
@@ -1236,7 +951,7 @@ async def pull_async(
             files_restored=min(downloaded, restore_count),
         )
 
-    # Issue #501: Populate missing file:size values via HTTP HEAD
+    # Populate missing file:size values via HTTP HEAD
     with span("pull.populate_sizes", collection=collection):
         await _enrich_file_sizes_safe(
             local_root=local_root,
@@ -1262,9 +977,7 @@ async def pull_async(
     )
 
 
-# =============================================================================
 # Main Pull Function (Sync Wrapper)
-# =============================================================================
 
 
 def pull(
@@ -1281,44 +994,9 @@ def pull(
     report: Report = silent,
     show_progress: bool = False,
 ) -> PullResult:
-    """Pull updates from a remote catalog (sync wrapper).
-
-    This is a thin wrapper around `pull_async()` for backward compatibility.
-    All logic is in the async implementation.
-
-    Similar to `git pull`, this:
-    1. Fetches remote versions.json
-    2. Compares with local versions.json
-    3. Checks for uncommitted local changes
-    4. Downloads changed files concurrently (unless blocked)
-    5. Updates local versions.json
-
-    Args:
-        remote_url: Remote catalog URL (e.g., s3://bucket/catalog).
-        local_root: Local catalog root directory.
-        collection: Collection name to pull.
-        force: If True, overwrite uncommitted local changes.
-        dry_run: If True, show what would happen without downloading.
-        restore: If True, re-download files that are missing locally even if
-            version metadata matches. Use this to recover deleted files.
-            See issue #325.
-        profile: AWS profile name (for S3).
-        concurrency: Maximum concurrent downloads (default: 50).
-        stac_tree: If True, also download the STAC documents of the collection
-            and the catalogs above it, and the objects that they name. clone
-            sets it, because versions.json names only the assets (#1042).
-        report: Receives each progress line.
-        show_progress: If True, draw a progress bar, as for ``pull_async``.
-
-    Returns:
-        PullResult with operation results.
-
-    Raises:
-        ValueError: If remote_url is invalid.
-    """
-    # A push can land between the asset download and the tree download. The
-    # tree download then checks the remote version against the one the assets
-    # came from, and a changed remote starts the clone of the collection again.
+    """Pull updates from a remote catalog (sync wrapper)."""
+    # A push can land between the asset and tree downloads. A changed remote
+    # version restarts the clone of the collection.
     attempt = 1
     while True:
         result = asyncio.run(
@@ -1384,23 +1062,7 @@ async def _download_stac_tree(
     expected_version: str | None = None,
     report: Report = silent,
 ) -> tuple[int, int, bool]:
-    """Download the STAC tree of ``collection`` and the objects it names (#1042).
-
-    clone starts from a fresh local catalog.json with no child links. The remote
-    root and intermediate catalog.json files hold those links. collection.json
-    names the items. Each document brings the files that ``published_files``
-    names, the same set that push uploads. The root and the collection
-    versions.json come as push wrote them. An object that no document names,
-    such as a stale object of a removed asset, stays remote.
-
-    ``expected_version`` is the version the assets came from. When the remote
-    manifest names another version, nothing is written and the third value is
-    True, so the caller pulls again before the tree is read.
-
-    Returns:
-        The number of files written, the number of files that failed, and
-        whether the remote changed.
-    """
+    """Download the STAC tree of ``collection`` and the objects it names."""
     if expected_version is not None:
         remote = await _fetch_remote_versions_async(remote_url, collection, profile, report=report)
         if remote.current_version != expected_version:
@@ -1458,9 +1120,7 @@ async def _download_stac_tree(
     return counts["written"], counts["failed"], False
 
 
-# =============================================================================
 # Catalog-wide Pull (Async)
-# =============================================================================
 
 
 def _report_one_pull_result(
@@ -1471,20 +1131,7 @@ def _report_one_pull_result(
     collection_errors: dict[str, list[str]],
     report: Report = silent,
 ) -> int | None:
-    """Print the outcome of one collection pull and record any errors.
-
-    Args:
-        result: One entry from asyncio.gather. It is an exception, or a tuple of
-            (collection, PullResult or None, error message or None).
-        coll: Collection name the entry belongs to.
-        index: Zero-based position of the entry.
-        total: Number of collections in the run.
-        collection_errors: Error map. The function adds a key on a failure.
-        report: Receives the outcome line.
-
-    Returns:
-        The number of files downloaded, or None when the pull failed.
-    """
+    """Print the outcome of one collection pull and record any errors."""
     prefix = f"[{index + 1}/{total}]"
 
     if isinstance(result, BaseException):
@@ -1537,34 +1184,7 @@ async def pull_all_collections_async(  # noqa: PLR0915 - one ordered transport s
     report: Report = silent,
     show_progress: bool = False,
 ) -> PullAllResult:
-    """Pull all collections in a catalog from cloud storage asynchronously.
-
-    Primary async implementation. Uses asyncio.gather() for concurrent
-    collection pulls within a single event loop.
-
-    Args:
-        remote_url: Remote catalog URL (e.g., s3://bucket/catalog).
-        local_root: Path to the local catalog root directory.
-        force: If True, overwrite uncommitted local changes.
-        dry_run: If True, show what would be downloaded without downloading.
-        restore: If True, re-download files that are missing locally even if
-            version metadata matches. Use this to recover deleted files.
-            See issue #325.
-        profile: AWS profile name (for S3 only).
-        concurrency: Maximum concurrent collection pulls. None = auto-detect.
-        file_concurrency: Maximum concurrent file downloads within each collection.
-            None = use pull_async default. (Maps to --concurrency CLI flag.)
-        report: Receives each progress line.
-        show_progress: If True, draw a progress bar on a terminal. The library
-            draws the bar only when the caller asks. Moving the renderer to
-            the CLI is a follow-up.
-
-    Returns:
-        PullAllResult with aggregate statistics and per-collection errors.
-
-    Raises:
-        ValueError: If local_root is not a valid catalog.
-    """
+    """Pull all collections in a catalog from cloud storage asynchronously."""
     # Import here to avoid circular dependency
     from portolan_cli.sync.push import discover_collections
     from portolan_cli.version_ops import try_backend_pull
@@ -1703,33 +1323,7 @@ def pull_all_collections(
     report: Report = silent,
     show_progress: bool = False,
 ) -> PullAllResult:
-    """Pull all collections in a catalog from cloud storage (sync wrapper).
-
-    This is a thin wrapper around `pull_all_collections_async()` for
-    backward compatibility. All logic is in the async implementation.
-
-    Args:
-        remote_url: Remote catalog URL (e.g., s3://bucket/catalog).
-        local_root: Path to the local catalog root directory.
-        force: If True, overwrite uncommitted local changes.
-        dry_run: If True, show what would be downloaded without downloading.
-        restore: If True, re-download files that are missing locally even if
-            version metadata matches. Use this to recover deleted files.
-            See issue #325.
-        profile: AWS profile name (for S3 only).
-        workers: Number of parallel workers. None = auto-detect, 1 = sequential.
-            (Maps to 'concurrency' in async implementation.)
-        file_concurrency: Maximum concurrent file downloads within each collection.
-            None = use pull_async default. (Maps to --concurrency CLI flag.)
-        report: Receives each progress line.
-        show_progress: If True, draw a progress bar, as for ``pull_all_collections_async``.
-
-    Returns:
-        PullAllResult with aggregate statistics and per-collection errors.
-
-    Raises:
-        ValueError: If local_root is not a valid catalog.
-    """
+    """Pull all collections in a catalog from cloud storage (sync wrapper)."""
     return asyncio.run(
         pull_all_collections_async(
             remote_url=remote_url,
@@ -1773,35 +1367,7 @@ def pull_catalog(
     report: Report = silent,
     show_progress: bool = False,
 ) -> PullResult | PullAllResult | BackendPull:
-    """Run ``portolan pull``: pull one collection, or each collection of the catalog.
-
-    A collection whose versioning backend is not ``file`` goes to that backend
-    first. Without ``collection``, ``pull_all_collections`` routes each
-    collection to its own backend.
-
-    Args:
-        remote_url: Remote catalog URL (e.g., s3://bucket/catalog).
-        local_root: Local catalog root directory.
-        collection: Collection to pull. None pulls each collection.
-        force: If True, overwrite uncommitted local changes.
-        dry_run: If True, show what would happen without downloading.
-        restore: If True, re-download files that are missing locally.
-        profile: AWS profile name (for S3).
-        workers: Parallel collection pulls for a catalog-wide pull.
-            None picks a count. A single-collection pull ignores it.
-        concurrency: Maximum concurrent file downloads within a collection.
-        report: Receives each progress line.
-        show_progress: If True, draw a progress bar on a terminal. The library
-            draws the bar only when the caller asks. Moving the renderer to
-            the CLI is a follow-up.
-
-    Returns:
-        A PullResult for one collection, a PullAllResult for the catalog, or a
-        BackendPull for a collection that a non-file backend pulled.
-
-    Raises:
-        ValueError: If remote_url is invalid or the catalog is not valid.
-    """
+    """Run ``portolan pull``: pull one collection, or each collection of the catalog."""
     if collection is None:
         return pull_all_collections(
             remote_url=remote_url,
