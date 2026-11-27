@@ -1407,7 +1407,9 @@ def add_projection_extension(
     if not hasattr(metadata, "crs") or metadata.crs is None:
         return
 
-    # Set proj:code
+    # Set proj:code or proj:projjson. Drop both first, so a repeat call names one CRS.
+    item.properties.pop("proj:code", None)
+    item.properties.pop("proj:projjson", None)
     crs_str = metadata.crs
     if isinstance(crs_str, str):
         # Normalize EPSG codes
