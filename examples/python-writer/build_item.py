@@ -22,7 +22,6 @@ import pystac
 
 from portolan_cli.api import (
     add_projection_extension,
-    add_table_extension,
     add_vector_extension,
     create_collection,
     create_item,
@@ -61,7 +60,6 @@ collection = create_collection(
     license="CC0-1.0",
     bbox=[min(west), min(south), max(east), max(north)],
 )
-add_table_extension(collection, metadata)
 collection.providers = [
     pystac.Provider(name="Wetlands Office", roles=["producer", "host"], url="https://example.org")
 ]

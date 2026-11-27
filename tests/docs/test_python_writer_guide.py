@@ -165,6 +165,11 @@ def test_the_builder_snippets_make_wgs84_items(
     assert item["properties"]["proj:bbox"][0] == pytest.approx(1611616.7567)
     assert item["bbox"] == pytest.approx([-77.0933, 38.7501, -76.8747, 39.0001], abs=1e-4)
     assert item["assets"]["data"]["href"] == "./dc-2023.parquet"
+    collection = json.loads(
+        (tmp_path / "wetlands-catalog" / "wetlands" / "collection.json").read_text()
+    )
+    # A table field from one file would misstate the collection, so the example sets none.
+    assert [key for key in collection if key.startswith("table:")] == []
 
 
 def test_the_builder_example_writes_a_catalog_that_check_accepts(tmp_path: Path) -> None:

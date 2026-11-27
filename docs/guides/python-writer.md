@@ -104,8 +104,8 @@ outside WGS84.
 --8<-- "examples/python-writer/build_item.py:collection"
 ```
 
-`add_table_extension` adds the row count and columns. Each collection needs
-at least one provider with the `producer` role and a thumbnail asset.
+Each collection needs at least one provider with the `producer` role and a
+thumbnail asset.
 
 ### Write the catalog
 
