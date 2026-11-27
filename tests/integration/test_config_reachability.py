@@ -610,7 +610,7 @@ def test_conversion_vector_layout_settings_reach_the_writer(
     assert table.column("name").to_pylist() == SOURCE_ORDER
     # The H3 index stores its resolution in bits 52 to 55.
     cells = table.column("h3_cell").to_pylist()
-    assert {int(cell, 16) >> 52 & 0xF for cell in cells} == {5}
+    assert {int(str(cell), 16) >> 52 & 0xF for cell in cells} == {5}
 
 
 SOURCE_ORDER = [
@@ -854,15 +854,17 @@ def _jpeg_quality(path: Path) -> list[int]:
     """Return each quality whose standard JPEG tables match the tables in ``path``."""
     import io
 
-    from PIL import Image
+    from PIL import Image, JpegImagePlugin
 
     def tables(quality: int, mode: str) -> dict[int, list[int]]:
         buffer = io.BytesIO()
         Image.new(mode, (16, 16)).save(buffer, "JPEG", quality=quality)
         with Image.open(buffer) as image:
+            assert isinstance(image, JpegImagePlugin.JpegImageFile)
             return {key: list(table) for key, table in image.quantization.items()}
 
     with Image.open(path) as image:
+        assert isinstance(image, JpegImagePlugin.JpegImageFile)
         found = {key: list(table) for key, table in image.quantization.items()}
         mode = image.mode
     return [quality for quality in range(1, 101) if tables(quality, mode) == found]

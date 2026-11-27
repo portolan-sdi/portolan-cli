@@ -30,7 +30,9 @@ from portolan_cli.viz.thumbnail_style import (
 def test_parse_match_expression_simple():
     """Parse a simple match expression with one category."""
     expr = ["match", ["get", "land_use"], "residential", "#ff6b6b", "#95afc0"]
-    field, color_map, default = parse_match_expression(expr)
+    parsed = parse_match_expression(expr)
+    assert parsed is not None
+    field, color_map, default = parsed
 
     assert field == "land_use"
     assert color_map == {"residential": "#ff6b6b"}
@@ -51,7 +53,9 @@ def test_parse_match_expression_multiple_categories():
         "#45b7d1",
         "#95afc0",
     ]
-    field, color_map, default = parse_match_expression(expr)
+    parsed = parse_match_expression(expr)
+    assert parsed is not None
+    field, color_map, default = parsed
 
     assert field == "land_use"
     assert color_map == {
@@ -66,7 +70,9 @@ def test_parse_match_expression_multiple_categories():
 def test_parse_match_expression_numeric_values():
     """Parse a match expression with numeric category values."""
     expr = ["match", ["get", "zone_code"], 1, "#ff0000", 2, "#00ff00", "#0000ff"]
-    field, color_map, default = parse_match_expression(expr)
+    parsed = parse_match_expression(expr)
+    assert parsed is not None
+    field, color_map, default = parsed
 
     assert field == "zone_code"
     assert color_map == {1: "#ff0000", 2: "#00ff00"}
@@ -267,6 +273,7 @@ def test_load_thumbnail_style_from_fixture():
 
     assert style is not None
     assert style.color_field == "land_use"
+    assert style.color_map is not None
     assert "residential" in style.color_map
 
 

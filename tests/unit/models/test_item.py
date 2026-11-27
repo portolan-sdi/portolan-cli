@@ -52,6 +52,7 @@ class TestAssetModel:
             type="image/tiff; application=geotiff; profile=cloud-optimized",
             roles=["data"],
         )
+        assert asset.type is not None
         assert "cloud-optimized" in asset.type
 
     @pytest.mark.unit

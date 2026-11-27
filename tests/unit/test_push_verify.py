@@ -355,7 +355,7 @@ class TestPushAsyncVerify:
         self, tmp_path: Path, failure: str | None
     ) -> None:
         """Repair uses the normal transaction and restores overwritten bytes on failure."""
-        from portolan_cli.sync.push import put_object_async
+        from portolan_cli.sync.upload import put_object_async
 
         a = b"unchanged bytes of a"
         b_old, b_new = b"old b", b"new bytes of b"

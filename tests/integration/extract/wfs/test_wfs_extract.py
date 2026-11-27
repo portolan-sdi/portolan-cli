@@ -46,6 +46,7 @@ if TYPE_CHECKING:
 
     from portolan_cli.extract.common.report import (
         ExtractionReport,
+        LayerResult,
     )
 
 make_layer_info = make_wfs_layer
@@ -176,7 +177,7 @@ class TestWFSAutoInitCatalog:
         output_dir = tmp_path / "multi_layer"
         output_dir.mkdir()
 
-        layers = []
+        layers: list[LayerResult] = []
         for layer_name in ["buildings", "roads"]:
             layer_dir = output_dir / layer_name
             layer_dir.mkdir()

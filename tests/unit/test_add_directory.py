@@ -11,10 +11,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from portolan_cli.add import (
-    add_directory,
-    iter_geospatial_files,
-)
+from portolan_cli.add import add_directory
+from portolan_cli.discovery import iter_geospatial_files
 from portolan_cli.plugins.builtin.formats import COG, GEOPARQUET
 
 if TYPE_CHECKING:

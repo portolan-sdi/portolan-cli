@@ -63,7 +63,7 @@ class XyzHandler:
 
     def convert(self, source: Path, output_dir: Path, catalog_root: Path | None) -> Path:
         """Write ``<stem>.parquet`` next to the source."""
-        import geoparquet_io as gpio  # type: ignore[import-untyped]
+        import geoparquet_io as gpio
 
         rows = [f"{x},{y},{z},POINT({x} {y})" for x, y, z in _points(source)]
         csv = output_dir / f".{source.stem}.xyz.csv"

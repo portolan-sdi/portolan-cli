@@ -21,8 +21,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 from click.testing import CliRunner
 
-from portolan_cli.add import ItemInfo
 from portolan_cli.cli import cli
+from portolan_core.query import ItemInfo
 
 if TYPE_CHECKING:
     from click.testing import Result

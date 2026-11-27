@@ -120,7 +120,7 @@ def local_catalog(tmp_path: Path) -> Path:
     (item_dir / "data.parquet").write_bytes(b"x" * 2048)
 
     # Create item STAC file using Portolan naming convention: {item_id}.json
-    item_data = {
+    item_data: dict[str, Any] = {
         "type": "Feature",
         "stac_version": "1.0.0",
         "id": "data",
@@ -784,7 +784,12 @@ class TestRollbackRestoresOverwrittenKeys:
         """The new versions.json is live, so the root catalog must name it too."""
         from portolan_cli.sync.push import push_all_collections
 
-        root = {"type": "Catalog", "id": "c", "stac_version": "1.1.0", "description": "c"}
+        root: dict[str, Any] = {
+            "type": "Catalog",
+            "id": "c",
+            "stac_version": "1.1.0",
+            "description": "c",
+        }
         root["links"] = [{"rel": "child", "href": "./test/collection.json"}]
         (local_catalog / "catalog.json").write_text(json.dumps(root))
         (local_catalog / ".portolan").mkdir(exist_ok=True)
@@ -2514,7 +2519,7 @@ class TestAssetDiffing:
             ]
         }
 
-        remote_versions_data = {"versions": []}  # Empty versions list
+        remote_versions_data: dict[str, Any] = {"versions": []}  # Empty versions list
 
         assets = _get_assets_to_upload(
             catalog_root=catalog_dir,

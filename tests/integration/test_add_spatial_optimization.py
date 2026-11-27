@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import shutil
 from pathlib import Path
+from typing import cast
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -122,12 +123,12 @@ class TestTheSourceFooterIsReadOnce:
     ) -> None:
         from portolan_cli import preparation
         from portolan_cli.conversion_config import VectorSettings
+        from portolan_cli.metadata.geoparquet import open_footer
         from portolan_core import trace
 
         source = tmp_path / "roads.parquet"
         shutil.copy(POINTS, source)
         opened: list[pq.ParquetFile] = []
-        open_footer = preparation.open_footer
 
         def recorded(path: Path) -> pq.ParquetFile | None:
             parquet = open_footer(path)
@@ -135,7 +136,7 @@ class TestTheSourceFooterIsReadOnce:
                 opened.append(parquet)
             return parquet
 
-        monkeypatch.setattr(preparation, "open_footer", recorded)
+        monkeypatch.setattr("portolan_cli.preparation.open_footer", recorded)
 
         with trace.tracing():
             output = preparation.convert_vector(source, tmp_path, settings=VectorSettings())
@@ -175,7 +176,7 @@ class TestAnAddReadsEachFooterOnce:
     def test_a_conformant_geoparquet_add_reads_its_footer_once(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        import geoparquet_io as gpio  # type: ignore[import-untyped]
+        import geoparquet_io as gpio
 
         root = tmp_path / "catalog"
         target = root / "roads" / "roads.parquet"
@@ -202,7 +203,7 @@ class TestAnAddReadsEachFooterOnce:
 class TestAddLeavesFilesAlone:
     def test_conformant_geoparquet_is_copied_untouched(self, tmp_path: Path) -> None:
         """A file that already carries the column costs nothing to add."""
-        import geoparquet_io as gpio  # type: ignore[import-untyped]
+        import geoparquet_io as gpio
 
         root = tmp_path / "catalog"
         collection = root / "roads"
@@ -290,7 +291,8 @@ class TestReconvertRepairsRowOrder:
 
         assert "re-convert requested" in output
         assert pq.read_table(target).column("id").to_pylist() != seeded_ids
-        assert sorted(pq.read_table(target).column("id").to_pylist()) == sorted(seeded_ids)
+        ids = pq.read_table(target).column("id").to_pylist()
+        assert sorted(cast("list[int]", ids)) == sorted(cast("list[int]", seeded_ids))
         assert _covering(target) is not None
 
 
@@ -443,7 +445,8 @@ class TestRewritePreservesPublisherMetadata:
 
         def counted_write(self: Table, path: str, *args: object, **kwargs: object) -> Path:
             writes.append(str(path))
-            return table_write(self, path, *args, **kwargs)  # type: ignore[arg-type]
+            written: Path = table_write(self, path, *args, **kwargs)
+            return written
 
         class CountedWriter(parquet_writer):  # type: ignore[misc, valid-type]
             def __init__(self, where: object, *args: object, **kwargs: object) -> None:
@@ -457,6 +460,7 @@ class TestRewritePreservesPublisherMetadata:
 
         assert len(writes) == 1, writes
         after = pq.read_metadata(target).metadata
+        assert after is not None
         assert after[b"publisher:provenance"] == b"cadastre"
         assert b"pandas" not in after
         assert _covering(target) is not None
@@ -576,7 +580,9 @@ class TestTheRewriteNeverLosesData:
         assert "bbox" in pq.ParquetFile(target).schema_arrow.names
 
         # It kept what the gate protects.
-        assert gpd.read_parquet(target).crs.to_epsg() == 3857
+        kept_crs = gpd.read_parquet(target).crs
+        assert kept_crs is not None
+        assert kept_crs.to_epsg() == 3857
         assert len(gpd.read_parquet(target)) == 2
         assert "n" in pq.ParquetFile(target).schema_arrow.names
 
@@ -695,7 +701,9 @@ class TestTheGuardsCoverEveryRewritePath:
         dest.mkdir()
         output = convert_vector(source, dest)
 
-        assert gpd.read_parquet(output).crs.to_epsg() == 3857
+        output_crs = gpd.read_parquet(output).crs
+        assert output_crs is not None
+        assert output_crs.to_epsg() == 3857
 
     def test_a_changed_crs_is_refused_like_a_dropped_one(self, tmp_path: Path) -> None:
         """The gate compares the CRS value, not only whether one is present."""

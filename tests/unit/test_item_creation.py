@@ -30,12 +30,11 @@ class TestItemCreation:
         import pyarrow as pa
         import pyarrow.parquet as pq
 
-        schema = pa.schema(
-            [
-                ("id", pa.int64()),
-                ("geometry", pa.binary()),
-            ]
-        )
+        columns: list[tuple[str, pa.DataType]] = [
+            ("id", pa.int64()),
+            ("geometry", pa.binary()),
+        ]
+        schema = pa.schema(columns)
 
         geo_metadata = {
             "version": "1.0.0",

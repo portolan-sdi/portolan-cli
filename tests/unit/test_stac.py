@@ -120,6 +120,7 @@ class TestCreateItem:
         )
 
         geom = item.geometry
+        assert geom is not None
         assert geom["type"] == "Polygon"
         # Should be a proper polygon ring
         coords = geom["coordinates"][0]
@@ -252,7 +253,9 @@ class TestItemManagement:
 
         add_item_to_collection(collection, item)
 
-        assert Path(item.get_self_href()) == written
+        href = item.get_self_href()
+        assert href is not None
+        assert Path(href) == written
 
     @pytest.mark.unit
     def test_add_multiple_items(self) -> None:

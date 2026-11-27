@@ -59,7 +59,8 @@ class TestMeasureWgs84Bbox:
         measured = measure_wgs84_bbox(path, "geometry", UTM30N)
         assert measured is not None
 
-        native = tuple(gdf.total_bounds)
+        minx, miny, maxx, maxy = map(float, gdf.total_bounds)
+        native = (minx, miny, maxx, maxy)
         rectangle = transform_bbox_to_wgs84(native, UTM30N)
 
         # Every side of the measured box sits inside the reprojected rectangle,
@@ -96,7 +97,9 @@ class TestMeasureWgs84Bbox:
         diamond = Polygon(
             [(600000, 4300000), (700000, 4400000), (600000, 4500000), (500000, 4400000)]
         )
-        gdf = gpd.GeoDataFrame({"name": ["a", "b"]}, geometry=[diamond, None], crs=UTM30N)
+        geometry = [diamond, None]
+        # types-geopandas rejects None in the list, but geopandas reads it as a null geometry.
+        gdf = gpd.GeoDataFrame({"name": ["a", "b"]}, geometry=geometry, crs=UTM30N)  # type: ignore[arg-type]
         gdf.to_parquet(path)
 
         measured = measure_wgs84_bbox(path, "geometry", UTM30N)
@@ -145,6 +148,7 @@ class TestExtractBboxWgs84UsesMeasurement:
         path = tmp_path / "diamond.parquet"
         _write_diamond(path)
         metadata = extract_geoparquet_metadata(path)
+        assert metadata.bbox is not None
 
         bbox = _extract_bbox_wgs84(metadata)
         assert bbox == list(transform_bbox_to_wgs84(metadata.bbox, UTM30N))
@@ -185,7 +189,8 @@ class TestAntimeridian:
         gdf.to_parquet(path)
 
         measured = measure_wgs84_bbox(path, "geometry", self.PDC)
-        rectangle = transform_bbox_to_wgs84(tuple(gdf.total_bounds), self.PDC)
+        minx, miny, maxx, maxy = map(float, gdf.total_bounds)
+        rectangle = transform_bbox_to_wgs84((minx, miny, maxx, maxy), self.PDC)
         assert measured == pytest.approx(tuple(rectangle), abs=0.01)
 
     def test_non_crossing_data_keeps_the_plain_frame(self, tmp_path: Path) -> None:
@@ -201,37 +206,32 @@ class TestAntimeridian:
 class TestTransformerFailureFallsBack:
     """A CRS pair pyproj cannot bridge must fall back, not raise."""
 
-    def test_transformer_construction_failure_returns_none(self, tmp_path: Path) -> None:
+    def test_transformer_construction_failure_returns_none(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         path = tmp_path / "diamond.parquet"
         _write_diamond(path)
 
-        import portolan_cli.crs as crs_module
+        from pyproj import Transformer
 
         def _boom(*args: object, **kwargs: object) -> None:
             raise RuntimeError("no pipeline between these CRSs")
 
-        original = crs_module.Transformer.from_crs
-        crs_module.Transformer.from_crs = _boom  # type: ignore[assignment]
-        try:
-            assert measure_wgs84_bbox(path, "geometry", UTM30N) is None
-        finally:
-            crs_module.Transformer.from_crs = original  # type: ignore[assignment]
+        monkeypatch.setattr(Transformer, "from_crs", _boom)
+        assert measure_wgs84_bbox(path, "geometry", UTM30N) is None
 
-    def test_extract_bbox_falls_back_when_measurement_fails(self, tmp_path: Path) -> None:
+    def test_extract_bbox_falls_back_when_measurement_fails(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """The caller still gets a bbox, from the reprojected rectangle."""
         from portolan_cli.metadata.geoparquet import extract_geoparquet_metadata
 
         path = tmp_path / "diamond.parquet"
         _write_diamond(path)
         metadata = extract_geoparquet_metadata(path)
+        assert metadata.bbox is not None
 
-        import portolan_cli.preparation as prep
-
-        original = prep.measure_wgs84_bbox
-        prep.measure_wgs84_bbox = lambda *a, **k: None  # type: ignore[assignment]
-        try:
-            bbox = _extract_bbox_wgs84(metadata, path)
-        finally:
-            prep.measure_wgs84_bbox = original  # type: ignore[assignment]
+        monkeypatch.setattr("portolan_cli.preparation.measure_wgs84_bbox", lambda *a, **k: None)
+        bbox = _extract_bbox_wgs84(metadata, path)
 
         assert bbox == list(transform_bbox_to_wgs84(metadata.bbox, UTM30N))

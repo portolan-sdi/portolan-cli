@@ -536,7 +536,7 @@ class TestUncommittedChangeDetection:
         portolan_dir.mkdir(parents=True)
 
         # Create versions.json with empty versions list
-        versions_data = {
+        versions_data: dict[str, Any] = {
             "spec_version": "1.0.0",
             "current_version": None,
             "versions": [],
@@ -965,7 +965,7 @@ class TestPathTraversalProtection:
         local_root.mkdir()
 
         # Malicious href with path traversal
-        remote_assets = {
+        remote_assets: dict[str, dict[str, str | int]] = {
             "evil.parquet": {
                 "sha256": "abc123",
                 "size_bytes": 1000,
@@ -990,7 +990,7 @@ class TestPathTraversalProtection:
         local_root.mkdir()
 
         # Absolute path href
-        remote_assets = {
+        remote_assets: dict[str, dict[str, str | int]] = {
             "evil.parquet": {
                 "sha256": "abc123",
                 "size_bytes": 1000,
@@ -1014,7 +1014,7 @@ class TestPathTraversalProtection:
         local_root = tmp_path / "catalog"
         local_root.mkdir()
 
-        remote_assets = {
+        remote_assets: dict[str, dict[str, str | int]] = {
             "data.parquet": {
                 "sha256": "abc123",
                 "size_bytes": 1000,
@@ -1125,7 +1125,7 @@ class TestProgressReporting:
         local_root = tmp_path / "catalog"
         local_root.mkdir()
 
-        remote_assets = {
+        remote_assets: dict[str, dict[str, str | int]] = {
             "file1.parquet": {
                 "sha256": "abc123",
                 "size_bytes": 1000,
@@ -1165,7 +1165,7 @@ class TestProgressReporting:
         local_root = tmp_path / "catalog"
         local_root.mkdir()
 
-        remote_assets = {
+        remote_assets: dict[str, dict[str, str | int]] = {
             "data.parquet": {
                 "sha256": "abc123",
                 "size_bytes": 1000,
@@ -1373,7 +1373,7 @@ class TestDownloadAssetsErrorHandling:
         local_root = tmp_path / "catalog"
         local_root.mkdir()
 
-        remote_assets = {
+        remote_assets: dict[str, dict[str, str | int]] = {
             "existing.parquet": {
                 "sha256": "abc123",
                 "size_bytes": 1000,
@@ -1407,7 +1407,7 @@ class TestDownloadAssetsErrorHandling:
         local_root = tmp_path / "catalog"
         local_root.mkdir()
 
-        remote_assets = {
+        remote_assets: dict[str, dict[str, str | int]] = {
             "data.parquet": {
                 "sha256": "abc123",
                 "size_bytes": 1000,

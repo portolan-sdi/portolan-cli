@@ -117,7 +117,6 @@ _.testinspect_geoparquet_includes_version_when_tracked  # unused method (tests/u
 _.testinspect_geoparquet_no_version_when_not_tracked  # unused method (tests/unit/test_inspect.py:264)
 _.testinspect_geoparquet_returns_metadata  # unused method (tests/unit/test_inspect.py:237)
 _.testvalidate_geoparquet_handles_directory  # unused method (tests/unit/test_convert.py:1939)
-_add_scripts_to_path  # unused function (tests/unit/test_scripts.py:87)
 _create_versions_file  # unused function (tests/unit/test_status.py:27)
 _no_rashid  # unused function (tests/unit/validation/test_workflow_notice.py:36)
 converted_parquet  # unused function (tests/unit/test_check_remove_legacy.py:108)

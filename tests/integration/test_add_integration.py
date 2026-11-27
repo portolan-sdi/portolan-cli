@@ -21,10 +21,9 @@ from portolan_cli.add import (
     add,
     convert_raster,
     convert_vector,
-    get_item_info,
-    list_items,
 )
 from portolan_core.checksums import compute_checksum
+from portolan_core.query import get_item_info, list_items
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -88,7 +87,7 @@ class TestConvertVector:
         covering column is copied byte for byte, so adding a large conformant
         file stays cheap.
         """
-        import geoparquet_io as gpio  # type: ignore[import-untyped]
+        import geoparquet_io as gpio
 
         source_dir = tmp_path / "source"
         source_dir.mkdir()

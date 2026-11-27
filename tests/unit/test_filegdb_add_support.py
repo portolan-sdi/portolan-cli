@@ -7,12 +7,23 @@ This requires promoting FileGDBs from `special_formats` to `ready` list.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import cast
 
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from portolan_cli.scan.core import ScanOptions, scan_directory
+from portolan_cli.scan.classify import SkippedFile
+from portolan_cli.scan.core import ScanOptions, ScanResult, scan_directory
+
+
+def _skipped_paths(result: ScanResult) -> list[Path]:
+    """Return the path of each skipped file. A bare legacy Path fails the test."""
+    paths: list[Path] = []
+    for item in result.skipped:
+        assert isinstance(item, SkippedFile)
+        paths.append(item.path)
+    return paths
 
 
 @pytest.mark.unit
@@ -125,7 +136,7 @@ class TestFileGDBInReadyList:
         assert empty_gdb not in ready_paths, "Empty .gdb dir should not be in ready"
 
         # The txt file inside should be in skipped
-        skipped_paths = [f.path for f in result.skipped]
+        skipped_paths = _skipped_paths(result)
         txt_found = any(p.name == "readme.txt" for p in skipped_paths)
         assert txt_found, "Files inside invalid .gdb should be walked normally"
 
@@ -155,8 +166,9 @@ class TestFileGDBCountsInSummary:
 
         result = scan_directory(tmp_path)
         result_dict = result.to_dict()
+        summary = cast("dict[str, int]", result_dict["summary"])
 
-        assert result_dict["summary"]["ready_count"] >= 1, (
+        assert summary["ready_count"] >= 1, (
             f"ready_count should include FileGDB. Got: {result_dict['summary']}"
         )
 
@@ -356,7 +368,7 @@ class TestFileGDBArchives:
         result = scan_directory(tmp_path)
 
         # Should be in skipped (as unknown) or special_formats
-        skipped_paths = [f.path for f in result.skipped]
+        skipped_paths = _skipped_paths(result)
         special_paths = [sf.path for sf in result.special_formats]
 
         is_tracked = archive in skipped_paths or archive in special_paths

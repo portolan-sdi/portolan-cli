@@ -73,6 +73,7 @@ class TestSchemaJsonRoundtrip:
         # Verify column details
         assert isinstance(imported.columns[0], ColumnSchema)
         assert imported.columns[0].description == "County boundary"
+        assert isinstance(imported.columns[1], ColumnSchema)
         assert imported.columns[1].semantic_type == "osi:Name"
 
     @pytest.mark.integration
@@ -191,6 +192,7 @@ class TestSchemaParquetRoundtrip:
         assert isinstance(imported.columns[0], ColumnSchema)
         assert imported.columns[0].name == "geometry"
         assert imported.columns[0].type == "binary"
+        assert isinstance(imported.columns[1], ColumnSchema)
         assert imported.columns[1].name == "value"
         assert imported.columns[1].type == "float64"
 

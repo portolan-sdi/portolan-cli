@@ -727,7 +727,7 @@ class TestTimeoutEnforcement:
 
 def test_failed_version_negotiation_logs_no_key(caplog: pytest.LogCaptureFixture) -> None:
     """#981: geoparquet-io quotes the keyed URL. The warning names the service without the key."""
-    from geoparquet_io.core.wfs import WFSError  # type: ignore[import-untyped]
+    from geoparquet_io.core.wfs import WFSError
 
     from portolan_cli.extract.wfs.orchestrator import _negotiate_version
 

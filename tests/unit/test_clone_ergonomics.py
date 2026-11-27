@@ -266,7 +266,7 @@ class TestFetchRemoteCatalogJson:
         assert result == catalog_content
         # Should fetch catalog.json from remote
         mock_download.assert_called_once()
-        call_source = mock_download.call_args.kwargs.get("source")
+        call_source = mock_download.call_args.kwargs["source"]
         assert "catalog.json" in call_source
 
     @pytest.mark.unit

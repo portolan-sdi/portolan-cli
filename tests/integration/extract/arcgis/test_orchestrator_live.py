@@ -91,6 +91,7 @@ class TestLiveExtraction:
         # Should have parquet files for each successful layer
         for layer in result.layers:
             if layer.status == "success":
+                assert layer.output_path is not None
                 output_path = tmp_path / layer.output_path
                 assert output_path.exists(), f"Missing output: {output_path}"
                 assert output_path.suffix == ".parquet"

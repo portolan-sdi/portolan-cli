@@ -65,7 +65,7 @@ def test_unreadable_extension_declaration_is_kept(tmp_path: Path, declaration: b
     source = tmp_path / "points.parquet"
     table = pq.read_table(POINTS)
     index = table.schema.get_field_index("geometry")
-    metadata = {
+    metadata: dict[bytes | str, bytes | str] = {
         b"ARROW:extension:name": b"geoarrow.wkb",
         b"ARROW:extension:metadata": declaration,
     }
@@ -273,7 +273,8 @@ def test_registered_nested_extensions_keep_raw_declarations(tmp_path: Path) -> N
     source = tmp_path / "points.parquet"
     pq.write_table(table.append_column("nested", nested), source)
     extension = PublisherType()
-    pa.register_extension_type(extension)
+    # pyarrow-stubs accept only PyExtensionType here. pyarrow takes any ExtensionType.
+    pa.register_extension_type(extension)  # type: ignore[arg-type]
     try:
         fidelity = read_rewrite_fidelity(source)
         assert fidelity is not None

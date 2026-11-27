@@ -70,6 +70,7 @@ def test_footer_hides_geo_from_the_arrow_schema(appended_geo_parquet: Path) -> N
     the reconstructed schema, the other tests stop covering issue #864.
     """
     metadata = pq.read_metadata(str(appended_geo_parquet))
+    assert metadata.metadata is not None
     assert b"geo" in metadata.metadata
     assert b"ARROW:schema" in metadata.metadata
     assert b"geo" not in (metadata.schema.to_arrow_schema().metadata or {})
@@ -83,10 +84,10 @@ def test_formats_is_geoparquet(appended_geo_parquet: Path) -> None:
 
 
 def test_classify_is_geoparquet(appended_geo_parquet: Path) -> None:
-    """``scan.classify.is_geoparquet`` reports True. It returned False before the fix."""
-    from portolan_cli.scan.classify import is_geoparquet
+    """``scan.classify`` reports a GeoParquet asset. It reported tabular data before the fix."""
+    from portolan_cli.scan.classify import FileCategory, classify_file
 
-    assert is_geoparquet(appended_geo_parquet) is True
+    assert classify_file(appended_geo_parquet) == (FileCategory.GEO_ASSET, None, None)
 
 
 def test_cloud_native_status_is_geoparquet(appended_geo_parquet: Path) -> None:

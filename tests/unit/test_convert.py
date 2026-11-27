@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import Any, Self
+from typing import Any, Literal, Self
 
 import pytest
 
@@ -85,7 +85,8 @@ class TestConversionStatus:
         from portolan_cli.convert import ConversionStatus
 
         assert ConversionStatus.SUCCESS == ConversionStatus.SUCCESS
-        assert ConversionStatus.SUCCESS != ConversionStatus.FAILED
+        # The test compares two distinct members on purpose.
+        assert ConversionStatus.SUCCESS != ConversionStatus.FAILED  # type: ignore[comparison-overlap]
 
     @pytest.mark.unit
     def test_can_use_as_dict_key(self) -> None:
@@ -1160,7 +1161,7 @@ class TestConvertDirectoryPoolFallback:
             def __enter__(self) -> Self:
                 return self
 
-            def __exit__(self, *args: object) -> bool:
+            def __exit__(self, *args: object) -> Literal[False]:
                 return False
 
             def submit(self, *args: object, **kwargs: object) -> object:
@@ -1228,7 +1229,7 @@ class TestConvertDirectoryPoolFallback:
             def __enter__(self) -> Self:
                 return self
 
-            def __exit__(self, *args: object) -> bool:
+            def __exit__(self, *args: object) -> Literal[False]:
                 return False
 
             def submit(self, _fn: object, source: Path, **_kw: object) -> _Future:
@@ -1655,10 +1656,7 @@ class TestConvertFileEdgeCases:
 
         for name, content in files:
             file_path = tmp_path / name
-            if isinstance(content, str):
-                file_path.write_text(content)
-            else:
-                file_path.write_bytes(content.encode() if isinstance(content, str) else content)
+            file_path.write_text(content)
 
             result = convert_file(file_path, output_dir=tmp_path)
 
@@ -2816,9 +2814,12 @@ class TestPartitionedOutputWithGeoparquetIO:
         converted.write_bytes(b"PAR1")
         called: list[str] = []
         monkeypatch.setattr(partitioning, "partition_strategy", lambda *_, **__: "kdtree")
-        monkeypatch.setattr(
-            partitioning, "partition_geoparquet", lambda **_: called.append("write") or []
-        )
+
+        def _partition(**_: object) -> list[Path]:
+            called.append("write")
+            return []
+
+        monkeypatch.setattr(partitioning, "partition_geoparquet", _partition)
 
         with pytest.raises(PartitionCollisionError, match="kdtree_cell=0000"):
             partitioning.partition_vector_file(converted, tmp_path)

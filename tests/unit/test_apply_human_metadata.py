@@ -118,7 +118,11 @@ def _providers_over_a_hand_edit(collection_dir: Path, catalog_root: Path) -> lis
     import pystac
 
     collection = create_collection(collection_id="roads", description="Roads")
-    collection.providers = [pystac.Provider(name="Hand Edited", roles=["producer", "host"])]
+    collection.providers = [
+        pystac.Provider(
+            name="Hand Edited", roles=[pystac.ProviderRole.PRODUCER, pystac.ProviderRole.HOST]
+        )
+    ]
     apply_human_metadata(collection, collection_dir, catalog_root)
     return [provider.name for provider in collection.providers or []]
 
@@ -180,7 +184,11 @@ class TestProvidersPrecedence:
         collection = create_collection(collection_id="roads", description="Roads")
         import pystac
 
-        collection.providers = [pystac.Provider(name="Stale", roles=["producer", "host"])]
+        collection.providers = [
+            pystac.Provider(
+                name="Stale", roles=[pystac.ProviderRole.PRODUCER, pystac.ProviderRole.HOST]
+            )
+        ]
 
         apply_human_metadata(collection, collection_dir, tmp_path)
 

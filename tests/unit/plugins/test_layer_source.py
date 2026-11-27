@@ -71,7 +71,7 @@ class _FixtureSource:
         )
 
     def fetch(self, source: str, layer: LayerRef, dest: Path) -> int:
-        import geoparquet_io as gpio  # type: ignore[import-untyped]
+        import geoparquet_io as gpio
 
         self.fetched.append(layer.name)
         self.threads.add(threading.current_thread().name)

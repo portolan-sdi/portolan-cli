@@ -10,7 +10,7 @@ import pytest
 
 def _gpio_connection_cap() -> int | None:
     """Return the memory_limit in bytes that geoparquet-io sets on a new connection."""
-    from geoparquet_io.core.memory_limits import (  # type: ignore[import-untyped]
+    from geoparquet_io.core.memory_limits import (
         default_memory_limit,
         parse_size,
     )

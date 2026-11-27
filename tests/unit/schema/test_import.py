@@ -128,6 +128,7 @@ class TestImportSchemaCsv:
         assert len(schema.columns) == 2
         assert isinstance(schema.columns[0], ColumnSchema)
         assert schema.columns[0].geometry_type == "Polygon"
+        assert isinstance(schema.columns[1], ColumnSchema)
         assert schema.columns[1].nullable is True
 
     @pytest.mark.unit
@@ -150,6 +151,7 @@ class TestImportSchemaCsv:
         assert len(schema.columns) == 2
         assert isinstance(schema.columns[0], BandSchema)
         assert schema.columns[0].nodata == 0.0
+        assert isinstance(schema.columns[1], BandSchema)
         assert schema.columns[1].nodata is None
 
     @pytest.mark.unit
@@ -194,7 +196,7 @@ class TestImportSchemaParquet:
     @pytest.mark.unit
     def test_import_cog_schema_from_parquet(self, tmp_path: Path) -> None:
         """Can import COG schema from Parquet."""
-        rows = [
+        rows: list[dict[str, object]] = [
             {"name": "band_1", "data_type": "uint8", "nodata": 0},
             {"name": "band_2", "data_type": "float32", "nodata": None},
         ]

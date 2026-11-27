@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import ast
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -329,7 +330,7 @@ def test_delegated_footer_reads_are_counted(
     actual: list[object] = []
     original = pq.ParquetFile.__init__
 
-    def opened(self: object, *args: object, **kwargs: object) -> None:
+    def opened(self: pq.ParquetFile, *args: Any, **kwargs: Any) -> None:
         actual.append(args[0])
         original(self, *args, **kwargs)
 

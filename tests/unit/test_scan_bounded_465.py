@@ -51,7 +51,8 @@ def initialized_catalog(tmp_path: Path) -> Path:
 
 def _collection_assets(collection_dir: Path) -> dict[str, dict]:
     data = json.loads((collection_dir / "collection.json").read_text())
-    return data.get("assets", {})
+    assets: dict[str, dict] = data.get("assets", {})
+    return assets
 
 
 @pytest.fixture(scope="module")
@@ -61,7 +62,7 @@ def conformant_parquet_bytes(tmp_path_factory: pytest.TempPathFactory, fixtures_
     The test fails rather than silently paying for 20 rewrites when the
     conformance rule changes and this file stops meeting it.
     """
-    import geoparquet_io as gpio  # type: ignore[import-untyped]
+    import geoparquet_io as gpio
 
     from portolan_cli.conversion_config import VectorSettings
     from portolan_cli.convert import apply_vector_settings

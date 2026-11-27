@@ -29,6 +29,7 @@ from portolan_cli.extract.common.report import (
     ExtractionReport,
     ExtractionSummary,
     LayerResult,
+    MetadataExtracted,
 )
 from portolan_cli.metadata_extraction import ExtractedMetadata
 
@@ -70,7 +71,16 @@ def _report(
         source_url=source_url,
         portolan_version="test",
         gpio_version="test",
-        metadata_extracted=None,
+        metadata_extracted=MetadataExtracted(
+            source_url=source_url,
+            description=None,
+            attribution=None,
+            keywords=None,
+            producer=None,
+            processing_notes=None,
+            known_issues=None,
+            license_info_raw=None,
+        ),
         layers=layers,
         summary=ExtractionSummary(
             total_layers=len(layers),
@@ -120,7 +130,7 @@ def _init_with_recorded_add(
     report: ExtractionReport,
     events: list[str],
     post_init: Any,
-) -> list[Path] | None:
+) -> tuple[list[Path], set[str]] | None:
     """Run ``init_extracted_catalog`` with an ``add_files`` that records its call."""
     monkeypatch.setattr("portolan_cli.add.add_files", _recording_add(events))
     return init_extracted_catalog(tmp_path, report, title="t", description="d", post_init=post_init)

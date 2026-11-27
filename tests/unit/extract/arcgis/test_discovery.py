@@ -415,7 +415,7 @@ def test_discover_services_forwards_token(monkeypatch: pytest.MonkeyPatch) -> No
 # =============================================================================
 
 
-def _mock_endpoints(monkeypatch: pytest.MonkeyPatch, responses: dict[str, dict]) -> None:  # type: ignore[type-arg]
+def _mock_endpoints(monkeypatch: pytest.MonkeyPatch, responses: dict[str, dict]) -> None:
     """Map base URL (without query) -> JSON body."""
 
     def fake_fetch(self: ArcGISClient, url: str) -> dict[str, Any]:

@@ -207,7 +207,7 @@ class TestRetryClassification:
             assert permanent_status(wrapped) == label
 
     def test_requests_error_with_a_response(self) -> None:
-        import requests  # type: ignore[import-untyped]
+        import requests
 
         response = requests.Response()
         response.status_code = 403

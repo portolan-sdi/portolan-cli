@@ -873,7 +873,7 @@ def no_extract_side_requests(monkeypatch: pytest.MonkeyPatch) -> None:
     layer details, and WFS 1.1.0. A test of one of these requests patches it
     itself, and its patch replaces this one.
     """
-    from geoparquet_io.core import wfs as gpio_wfs  # type: ignore[import-untyped]
+    from geoparquet_io.core import wfs as gpio_wfs
 
     from portolan_cli.extract.arcgis import discovery
     from portolan_cli.extract.arcgis import orchestrator as arcgis

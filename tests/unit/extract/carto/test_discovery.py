@@ -141,7 +141,7 @@ def test_tables_from_names_lists_without_network() -> None:
 
 def test_failed_request_keeps_no_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
     """#981: requests quotes the request URL with its api_key. The error drops the key."""
-    import requests  # type: ignore[import-untyped]
+    import requests
 
     from portolan_cli.extract.carto.discovery import carto_sql_request
 

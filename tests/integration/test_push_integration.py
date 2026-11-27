@@ -1874,8 +1874,8 @@ class TestPushAgainstMoto:
             data = json.loads(result.output)["data"]
             return sorted((f["rule_id"], f["path"]) for f in data["findings"])
 
-        source = [f for f in findings(root) if not f[1].startswith("rivers/")]
-        assert findings(cloned) == source
+        expected = [f for f in findings(root) if not f[1].startswith("rivers/")]
+        assert findings(cloned) == expected
 
     @pytest.mark.integration
     def test_credential_without_list_warns_once_and_deletes_nothing(

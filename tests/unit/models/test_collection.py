@@ -72,7 +72,9 @@ class TestCollectionModelCreation:
         )
 
         assert collection.title == "Full Collection"
+        assert collection.summaries is not None
         assert collection.summaries["crs"] == ["EPSG:4326"]
+        assert collection.providers is not None
         assert len(collection.providers) == 1
         assert collection.keywords == ["test", "demo"]
 

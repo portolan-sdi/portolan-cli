@@ -10,7 +10,7 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
@@ -323,6 +323,7 @@ class TestItemsParquetMirror:
         doc["links"].append({"rel": "item", "href": "./i9/i9.json"})
         (coll / "collection.json").write_text(json.dumps(doc))
         generate_parquet_mirrors(catalog, {"c"}, generate_parquet=True)
-        ids = pq.read_table(coll / "items.parquet", columns=["id"]).column("id").to_pylist()
+        column = pq.read_table(coll / "items.parquet", columns=["id"]).column("id")
+        ids = cast("list[str]", column.to_pylist())
         # The mirror holds its rows in Hilbert order, not in link order.
         assert sorted(ids) == ["i0", "i1", "i9"]

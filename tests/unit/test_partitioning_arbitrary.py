@@ -10,7 +10,7 @@ Tests the ability to:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -18,6 +18,11 @@ import pytest
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+
+def _keys(result: dict[str, object]) -> list[dict[str, Any]]:
+    """Return the partition keys of a get_partition_metadata result."""
+    return cast("list[dict[str, Any]]", result["partition:keys"])
 
 
 class TestArbitraryPartitionColumnDetection:
@@ -169,13 +174,12 @@ class TestSchemaConsistencyValidation:
         from portolan_cli.partitioning import validate_partition_schemas
 
         # Create partitions with identical schemas
-        schema = pa.schema(
-            [
-                ("id", pa.int64()),
-                ("name", pa.string()),
-                ("value", pa.float64()),
-            ]
-        )
+        columns: list[tuple[str, pa.DataType]] = [
+            ("id", pa.int64()),
+            ("name", pa.string()),
+            ("value", pa.float64()),
+        ]
+        schema = pa.schema(columns)
 
         for i, partition_id in enumerate(["001", "002", "003"]):
             partition_dir = tmp_path / f"partition_id={partition_id}"
@@ -233,12 +237,11 @@ class TestSchemaConsistencyValidation:
         """validate_partition_schemas returns the unified schema when consistent."""
         from portolan_cli.partitioning import validate_partition_schemas
 
-        schema = pa.schema(
-            [
-                ("geometry", pa.binary()),
-                ("name", pa.string()),
-            ]
-        )
+        columns: list[tuple[str, pa.DataType]] = [
+            ("geometry", pa.binary()),
+            ("name", pa.string()),
+        ]
+        schema = pa.schema(columns)
 
         for partition_id in ["a", "b"]:
             partition_dir = tmp_path / f"site={partition_id}"
@@ -285,8 +288,8 @@ class TestPartitionConfigSupport:
             description="Site UUID — matches gms_site_feature_id in aois.parquet",
         )
 
-        assert result["partition:keys"][0]["name"] == "gms_feature_id"
-        assert "Site UUID" in result["partition:keys"][0]["description"]
+        assert _keys(result)[0]["name"] == "gms_feature_id"
+        assert "Site UUID" in _keys(result)[0]["description"]
 
     @pytest.mark.unit
     def test_get_partition_metadata_auto_detects_without_config(self, tmp_path: Path) -> None:
@@ -299,7 +302,7 @@ class TestPartitionConfigSupport:
         # No partition_columns specified — should auto-detect
         result = get_partition_metadata(tmp_path)
 
-        assert result["partition:keys"][0]["name"] == "custom_key"
+        assert _keys(result)[0]["name"] == "custom_key"
 
 
 class TestPartitionMetadataDescription:
@@ -319,7 +322,7 @@ class TestPartitionMetadataDescription:
             description="Unique site identifier from the sites registry",
         )
 
-        key_def = result["partition:keys"][0]
+        key_def = _keys(result)[0]
         assert key_def["name"] == "site_id"
         assert key_def["description"] == "Unique site identifier from the sites registry"
 
@@ -340,7 +343,7 @@ class TestPartitionMetadataDescription:
             },
         )
 
-        keys_by_name = {k["name"]: k for k in result["partition:keys"]}
+        keys_by_name = {k["name"]: k for k in _keys(result)}
         assert keys_by_name["year"]["description"] == "Calendar year of observation"
         assert keys_by_name["region"]["description"] == "Geographic region code"
 
