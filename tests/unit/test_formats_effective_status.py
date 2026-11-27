@@ -1,12 +1,4 @@
-"""Unit tests for get_effective_status() with conversion overrides.
-
-Tests the integration between format detection and conversion config:
-- Force-convert cloud-native formats (e.g., FlatGeobuf -> CONVERTIBLE)
-- Preserve convertible formats (e.g., Shapefile -> CLOUD_NATIVE)
-- Path pattern overrides
-
-See GitHub Issue #75 and #103 for context.
-"""
+"""Unit tests for get_effective_status() with conversion overrides."""
 
 from __future__ import annotations
 
@@ -274,7 +266,7 @@ def _catalog_converting_fgb(root: Path) -> Path:
 
 
 class TestTheCatalogConvertListWins:
-    """Issue #1020: conversion.extensions.convert never reached the converter."""
+    """Conversion.extensions.convert never reached the converter."""
 
     @pytest.mark.unit
     def test_the_status_reads_the_catalog_list(self, tmp_path: Path) -> None:
@@ -297,12 +289,6 @@ class TestTheCatalogConvertListWins:
     def test_the_list_sends_only_a_convertible_vector_to_geoparquet(
         self, tmp_path: Path, fixture: str, target: str, handler: str
     ) -> None:
-        """A listed raster keeps the COG handler, which converts it again.
-
-        The GeoParquet handler failed on it with "No CRS found in input file".
-        A listed PMTiles keeps its own handler. Tiles have no GeoParquet
-        conversion, and the GeoParquet handler fails on the archive.
-        """
         from portolan_cli.plugins.formats import handler_for
 
         path = _catalog_converting(tmp_path, fixture, target)

@@ -1,12 +1,4 @@
-"""Unit tests for ItemModel and AssetModel dataclasses.
-
-Tests cover:
-- Item creation with required STAC fields
-- Asset creation and media types
-- Geometry and bbox handling
-- Properties including datetime
-- JSON serialization (to_dict/from_dict)
-"""
+"""Unit tests for ItemModel and AssetModel dataclasses."""
 
 from __future__ import annotations
 
@@ -358,11 +350,6 @@ class TestItemProperties:
 
     @pytest.mark.unit
     def test_cog_properties(self) -> None:
-        """Item can have COG-specific item-level properties.
-
-        Note: STAC v1.1.0 ``bands`` is an asset-level field (issue #437), so it
-        is not modeled here; raster:spatial_resolution is a valid item property.
-        """
         item = ItemModel(
             id="cog-item",
             geometry={"type": "Polygon", "coordinates": [[]]},

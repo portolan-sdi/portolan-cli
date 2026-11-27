@@ -1,4 +1,4 @@
-"""Tests for the plugin conformance checks in `portolan_cli.testing` (#947)."""
+"""Tests for the plugin conformance checks in `portolan_cli.testing`."""
 
 from __future__ import annotations
 
@@ -67,7 +67,7 @@ class _MemoryBackend:
             "message": "in sync",
         }
 
-    # The four lifecycle hooks are protocol methods since #977.
+    # The four lifecycle hooks are protocol methods.
     def on_post_add(self, context: Any) -> None:
         return None
 
@@ -157,12 +157,11 @@ def test_nonconforming_handler_lists_each_problem(tmp_path: Path) -> None:
 
 
 class _SixMethodBackend(_MemoryBackend):
-    """A backend written against the protocol before #977."""
+    """A backend without the lifecycle hooks of the protocol."""
 
     on_post_add = None  # type: ignore[assignment]
 
 
 def test_a_backend_without_the_lifecycle_hooks_does_not_conform(tmp_path: Path) -> None:
-    """#977: the four hooks are protocol members, so check_backend names a gap."""
     with pytest.raises(ConformanceError, match=r"does not implement VersioningBackend"):
         check_backend(_SixMethodBackend, tmp_path)

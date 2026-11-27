@@ -1,14 +1,4 @@
-"""Unit tests for batched failure output in _print_add_failures_batched.
-
-Tests verify that repeated add failures with the same error message are grouped
-together instead of printing one line per failure. This reduces noise when many
-files fail with the same error (e.g., 6 GDB files all missing CRS).
-
-Expected behavior (batched):
-    ✗ 6 items failed:
-      Reading failed: No CRS found (6 files):
-        Examples: file1.gdb, file2.gdb, file3.gdb (and 3 more)
-"""
+"""Unit tests for batched failure output in _print_add_failures_batched."""
 
 from __future__ import annotations
 
@@ -21,9 +11,7 @@ from hypothesis import strategies as st
 
 from portolan_cli.add import AddFailure
 
-# =============================================================================
 # Helpers
-# =============================================================================
 
 
 def make_failure(path: str, error_msg: str = "Reading failed: No CRS found") -> AddFailure:
@@ -46,9 +34,7 @@ def capture_batched_output(failures: list[AddFailure]) -> str:
     return "\n".join(lines)
 
 
-# =============================================================================
 # Core batching behaviour
-# =============================================================================
 
 
 @pytest.mark.unit
@@ -188,9 +174,7 @@ class TestAddFailuresBatching:
         assert "subdir/data.shp" in normalized_output
 
 
-# =============================================================================
 # Edge cases
-# =============================================================================
 
 
 @pytest.mark.unit
@@ -226,9 +210,7 @@ class TestAddFailuresBatchingEdgeCases:
         assert "3 files" in output
 
 
-# =============================================================================
 # Property-based tests (Hypothesis)
-# =============================================================================
 
 
 _EXTENSIONS = ("shp", "gdb", "tif", "gpkg")
@@ -244,11 +226,7 @@ _ERROR_PREFIXES = (
 
 @st.composite
 def add_failure_strategy(draw: st.DrawFn) -> AddFailure:
-    """Generate a random AddFailure.
-
-    Uses simple sampled strategies (faster than ``from_regex``) to avoid
-    Hypothesis ``too_slow`` health-check failures.
-    """
+    """Generate a random AddFailure."""
     dirname = draw(st.text(alphabet="abcdefghij", min_size=1, max_size=6))
     basename = draw(st.text(alphabet="abcdefghij0123456789", min_size=1, max_size=6))
     ext = draw(st.sampled_from(_EXTENSIONS))

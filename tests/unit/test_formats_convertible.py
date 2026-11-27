@@ -1,8 +1,4 @@
-"""Unit tests for convertible format detection.
-
-These tests verify that convertible formats (Shapefile, GeoJSON, GeoPackage, etc.)
-are correctly classified as CONVERTIBLE per spec 002-cloud-native-warnings User Story 2.
-"""
+"""Unit tests for convertible format detection."""
 
 from __future__ import annotations
 
@@ -92,11 +88,6 @@ class TestConvertibleRasterDetection:
 
     @pytest.mark.unit
     def test_non_cog_tiff_returns_convertible(self, tmp_path: Path) -> None:
-        """Non-COG TIFF returns CONVERTIBLE status.
-
-        Note: For small files, rio-cogeo may consider them valid COGs.
-        This test creates an invalid TIFF to force CONVERTIBLE status.
-        """
         # Create a file that is definitely not a valid COG
         # (not even a valid TIFF - will fail rio-cogeo validation)
         tiff_file = tmp_path / "non_cog.tif"
@@ -109,11 +100,6 @@ class TestConvertibleRasterDetection:
 
     @pytest.mark.unit
     def test_real_non_cog_tiff_returns_convertible(self, non_cog_tif: Path) -> None:
-        """Real-world non-COG TIFF fixture returns CONVERTIBLE status.
-
-        Uses Natural Earth data that is a valid GeoTIFF but NOT cloud-optimized.
-        This is more realistic than testing with corrupted files.
-        """
         result = get_cloud_native_status(non_cog_tif)
         assert result.status == CloudNativeStatus.CONVERTIBLE
         assert result.display_name == "TIFF"

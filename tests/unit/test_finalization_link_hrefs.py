@@ -1,19 +1,4 @@
-"""STAC link hrefs stay POSIX no matter what the host OS calls a path separator.
-
-A STAC href is a relative URL reference, so ``..\\catalog.json`` is not a
-"Windows spelling" of ``../catalog.json`` — it is a filename containing
-backslashes, and rashid's ``PTL-LNK-006`` (link resolution) correctly reports it
-as pointing nowhere. That is what broke the Windows CI job: the root/parent links
-of every collection were built with ``os.path.relpath``, which returns the native
-separator.
-
-``PureWindowsPath`` inputs reproduce the Windows computation on any host.
-
-The same rule catches a second way a link can point nowhere useful: naming a
-real file that is the wrong object. ``root``, ``parent``, and ``collection`` are
-three different targets, and the classes below hold each to its own (issue
-#711).
-"""
+"""STAC link hrefs stay POSIX no matter what the host OS calls a path separator."""
 
 from __future__ import annotations
 
@@ -97,14 +82,7 @@ class TestFixCollectionLinks:
 
 
 class TestParentLinkTargetsTheContainingCatalog:
-    """Issue #711: ``parent`` is the immediate container, never the root.
-
-    A nested collection sits under an intermediate ``catalog.json`` that
-    ``create_intermediate_catalogs`` writes for it, so its parent is always one
-    level up. Before the fix ``parent`` was a copy of the root href, which
-    walked past that intermediate catalog to the repository root and made the
-    tree unwalkable upward (rashid ``PTL-LNK-006``).
-    """
+    """``parent`` is the immediate container, never the root."""
 
     _collection = staticmethod(_write_collection)
     _hrefs = staticmethod(_hrefs)
@@ -158,12 +136,7 @@ class TestParentLinkTargetsTheContainingCatalog:
 
 
 class TestFixItemLinks:
-    """Issue #711: an item's ``root`` is the catalog root, not its collection.
-
-    ``add`` loads the collection standalone, so PySTAC never sees a parent
-    catalog and resolves each item's root to the collection itself. Nothing in
-    the add path repaired that; only ``check --fix`` did.
-    """
+    """An item's ``root`` is the catalog root, not its collection."""
 
     @staticmethod
     def _write_item(path: Path, links: list[dict[str, str]]) -> None:

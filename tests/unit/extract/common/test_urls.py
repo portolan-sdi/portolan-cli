@@ -1,4 +1,4 @@
-"""Tests for the query-merge helper and the published-string sanitizer (#981, #939)."""
+"""Tests for the query-merge helper and the published-string sanitizer."""
 
 from __future__ import annotations
 
@@ -16,7 +16,6 @@ pytestmark = pytest.mark.unit
 
 class TestMergeQuery:
     def test_override_replaces_a_parameter_of_any_case(self) -> None:
-        """#981: SERVICE and service are one parameter, so the URL holds one."""
         url = "https://h.example/geoserver/wfs?SERVICE=WFS&request=GetCapabilities&apikey=SECRET"
 
         merged = merge_query(url, {"service": "WFS", "request": "GetFeature", "typename": "ws:lyr"})
@@ -27,7 +26,6 @@ class TestMergeQuery:
         )
 
     def test_drop_removes_wfs_request_parameters_of_any_case(self) -> None:
-        """#981 rule 3: a WMS URL carries no WFS request parameter."""
         url = "https://h.example/geoserver/wfs?apikey=k%2B1&typeNames=x&OUTPUTFORMAT=json"
 
         merged = merge_query(url, {"service": "WMS"}, drop=WFS_REQUEST_PARAMS)
@@ -81,14 +79,12 @@ class TestSanitizePublishedString:
         ],
     )
     def test_local_location_is_refused(self, value: str) -> None:
-        """#939: a local path names the machine that ran the command."""
         assert sanitize_published_string(value) is None
 
     def test_plain_text_is_unchanged(self) -> None:
         assert sanitize_published_string("City of Philadelphia") == "City of Philadelphia"
 
     def test_url_inside_text_loses_its_credential(self) -> None:
-        """#981: an error message that quotes a request URL drops the credential of the URL."""
         text = "Error page from https://u:pw@h.example/wfs?authkey=SECRET&n=1: blocked. See /tmp/x"
 
         assert sanitize_published_string(text) == (

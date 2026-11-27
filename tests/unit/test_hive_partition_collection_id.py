@@ -1,11 +1,4 @@
-"""Tests for generic Hive partition detection in collection ID inference.
-
-Issue #448: Hive partition detection uses hard-coded column allowlist,
-causing directories like `gms_feature_id=<uuid>` to be misrouted as
-collection IDs instead of being recognized as partition directories.
-
-The fix: strip any `key=value/` path segments when inferring collection ID.
-"""
+"""Tests for generic Hive partition detection in collection ID inference."""
 
 from __future__ import annotations
 
@@ -28,7 +21,6 @@ class TestIsHivePartitionDir:
 
     def test_custom_partition_key(self) -> None:
         """Custom partition keys like gms_feature_id are detected."""
-        # This is the core fix for issue #448
         result = is_hive_partition_dir("gms_feature_id=abc123")
         assert result == ("gms_feature_id", "abc123")
 
@@ -80,12 +72,6 @@ class TestInferCollectionIdFromRelativePath:
         assert _infer_collection_id_from_relative_path("data.parquet") == ""
 
     def test_strips_single_hive_partition(self) -> None:
-        """Single Hive partition directory is stripped from collection ID.
-
-        This is the core test for issue #448:
-        sites/contours/gms_feature_id=abc123/contours.parquet
-        → collection ID should be "sites/contours", not "sites/contours/gms_feature_id=abc123"
-        """
         result = _infer_collection_id_from_relative_path(
             "sites/contours/gms_feature_id=abc123/contours.parquet"
         )
@@ -130,11 +116,6 @@ class TestInferCollectionIdFromRelativePath:
         assert result == ""
 
     def test_preserves_non_partition_dirs_after_partition(self) -> None:
-        """Non-partition directories are preserved even if they appear after a partition.
-
-        This is an edge case - typically partitions are at the leaf level,
-        but we should handle the weird case gracefully.
-        """
         # collection/partition=val/subdir/file.parquet
         # → "collection/subdir" (partition stripped, subdir preserved)
         result = _infer_collection_id_from_relative_path("collection/year=2024/subdir/data.parquet")
@@ -150,31 +131,12 @@ class TestInferCollectionIdFromRelativePath:
         assert result == "env/air/quality"
 
     def test_empty_segments_from_double_slash(self) -> None:
-        """Double slashes create empty segments that are filtered out.
-
-        This is an edge case where malformed paths with // could produce
-        empty segments. We filter them to normalize collection IDs.
-        """
         # foo//bar/data.parquet → split gives ["foo", "", "bar"]
         # Empty segments are filtered out to produce clean collection IDs
         result = _infer_collection_id_from_relative_path("foo//bar/data.parquet")
         assert result == "foo/bar"  # Empty segment filtered out
 
     def test_false_positive_legitimate_equals_directory(self) -> None:
-        """Directories with = that aren't Hive partitions ARE stripped.
-
-        IMPORTANT: This documents intentional behavior that may surprise users.
-        Any directory matching key=value format is treated as a Hive partition,
-        even if it's just a naming convention unrelated to partitioning.
-
-        Examples that WILL be stripped (potentially surprising):
-        - version=2.0/  → stripped (looks like partition)
-        - config=prod/  → stripped (looks like partition)
-        - type=residential/ → stripped (looks like partition)
-
-        Users who use = in directory names without intending Hive partitioning
-        should rename their directories or use a different separator (-, _).
-        """
         # This IS stripped because it matches key=value pattern
         result = _infer_collection_id_from_relative_path("project/version=2.0/data.parquet")
         assert result == "project"  # version=2.0 stripped!
@@ -195,11 +157,6 @@ class TestCollectionIdValidationIntegration:
     """Integration tests ensuring Hive partitions don't trigger validation errors."""
 
     def test_partition_key_not_in_collection_id(self) -> None:
-        """Partition keys with = don't end up in collection ID.
-
-        The collection_id module rejects '=' characters, so if partition
-        directories leak into the collection ID, validation will fail.
-        """
         from portolan_cli.collection_id import validate_collection_id
 
         # Infer collection ID from a path with Hive partition
@@ -214,12 +171,7 @@ class TestCollectionIdValidationIntegration:
 
 
 class TestDeriveItemIdHivePartitions:
-    """Tests for _derive_item_id_and_asset_level with Hive partitions.
-
-    Issue #443: Files in Hive partition directories must produce unique item IDs.
-    Single-level partitions (e.g., kdtree_cell=XXX/) use parent dir name (existing behavior).
-    Multi-level partitions (e.g., year=2023/month=01/) use full relative path to avoid collisions.
-    """
+    """Tests for _derive_item_id_and_asset_level with Hive partitions."""
 
     def test_single_level_hive_partition_uses_parent_name(self, tmp_path: Path) -> None:
         """Single-level Hive partitions use parent directory name as item_id.
@@ -246,11 +198,6 @@ class TestDeriveItemIdHivePartitions:
         assert item_id == "kdtree_cell=0000000001"
 
     def test_multi_level_hive_partition_has_unique_item_id(self, tmp_path: Path) -> None:
-        """Multi-level Hive partitions get unique item IDs from full relative path.
-
-        Files at year=2023/month=01/file.parquet and year=2024/month=01/file.parquet
-        must NOT both get item_id="month=01" (that would be a duplicate).
-        """
         from portolan_cli.add import _derive_item_id_and_asset_level
 
         collection_dir = tmp_path / "collection"

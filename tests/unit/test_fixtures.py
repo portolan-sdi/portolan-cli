@@ -1,10 +1,4 @@
-"""Tests to validate that test fixtures are correctly formed and usable.
-
-These tests verify that:
-1. Fixture files exist and are readable
-2. Valid fixtures can be parsed by the relevant libraries
-3. Invalid fixtures are indeed invalid (fail as expected)
-"""
+"""Tests to validate that test fixtures are correctly formed and usable."""
 
 from __future__ import annotations
 

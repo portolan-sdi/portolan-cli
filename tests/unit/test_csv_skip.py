@@ -1,13 +1,4 @@
-"""Unit tests for non-geospatial CSV/TSV handling (Issue #140).
-
-Tests that `portolan add` gracefully handles CSV/TSV files without geometry:
-- Track non-geo files as assets when in same dir as geo file
-- Skip non-geo files that have no companion geo file (can't create STAC item)
-- Emit appropriate log messages
-- Support both CSV and TSV file formats
-
-See: https://github.com/portolan-sdi/portolan-cli/issues/140
-"""
+"""Unit tests for non-geospatial CSV/TSV handling."""
 
 from __future__ import annotations
 
@@ -146,7 +137,7 @@ def geojson_file(tmp_path: Path) -> Path:
 
 
 class TestNonGeospatialCsvSkip:
-    """Tests for skipping non-geospatial CSV files (Issue #140)."""
+    """Tests for skipping non-geospatial CSV files."""
 
     @pytest.mark.unit
     def test_add_files_skips_non_geo_csv_with_warning(
@@ -177,7 +168,7 @@ class TestNonGeospatialCsvSkip:
     ) -> None:
         """add_files should continue processing other files after skipping non-geo CSV."""
         # Mock prepare_item and finalize_items to avoid actual conversion
-        # Per Issue #281: add_files now calls prepare_item + finalize_items
+        # add_files now calls prepare_item + finalize_items
         with (
             patch("portolan_cli.add.prepare_item") as mock_prepare,
             patch("portolan_cli.add.finalize_items") as mock_finalize,
@@ -257,7 +248,7 @@ class TestMixedDirectoryProcessing:
         _write_test_point_geojson(geojson)
 
         # Mock prepare_item and finalize_items to track calls
-        # Per Issue #281: add_files now calls prepare_item + finalize_items
+        # add_files now calls prepare_item + finalize_items
         with (
             patch("portolan_cli.add.prepare_item") as mock_add,
             patch("portolan_cli.add.finalize_items") as mock_finalize,
@@ -282,7 +273,7 @@ class TestMixedDirectoryProcessing:
         self, initialized_catalog: Path, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
         """Directory with only non-geo files should return empty without error."""
-        # Create collection/item structure inside initialized_catalog (Issue #163)
+        # Create collection/item structure inside initialized_catalog
         collection_dir = initialized_catalog / "collection"
         item_dir = collection_dir / "data"
         item_dir.mkdir(parents=True, exist_ok=True)
@@ -325,9 +316,6 @@ class TestCsvGeometryDetection:
     @pytest.mark.unit
     def test_csv_with_lat_lon_is_processed(self, initialized_catalog: Path, geo_csv: Path) -> None:
         """CSV with lat/lon columns should be attempted for processing."""
-        # This test verifies CSVs with geometry are NOT skipped
-        # The actual processing depends on geoparquet-io
-        # Per Issue #281: add_files now calls prepare_item + finalize_items
         with (
             patch("portolan_cli.add.prepare_item") as mock_add,
             patch("portolan_cli.add.finalize_items") as mock_finalize,
@@ -344,10 +332,6 @@ class TestCsvGeometryDetection:
         mock_add.assert_called_once()
         assert mock_add.call_args.kwargs["path"] == geo_csv
         assert (skipped, failures) == ([], [])
-
-        # Should attempt to add the CSV (whether it succeeds depends on geoparquet-io)
-        # The key is it's not preemptively skipped
-        # mock_add.called would be True if CSV was attempted
 
     @pytest.mark.unit
     def test_empty_csv_is_skipped(
@@ -388,7 +372,7 @@ class TestCsvGeometryDetection:
             "name,geometry,value\nPoint A,POINT(-122.4 37.8),100\nPoint B,POINT(-118.2 34.0),200\n"
         )
 
-        # Per Issue #281: add_files now calls prepare_item + finalize_items
+        # add_files now calls prepare_item + finalize_items
         with (
             patch("portolan_cli.add.prepare_item") as mock_add,
             patch("portolan_cli.add.finalize_items") as mock_finalize,
@@ -449,9 +433,7 @@ class TestWarningMessages:
         ), f"Warning should explain reason: {all_messages}"
 
 
-# =============================================================================
 # Hypothesis Property-Based Tests
-# =============================================================================
 
 
 # Strategy for generating non-geometry column names
@@ -605,9 +587,7 @@ class TestCsvSkipHypothesis:
             shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
-# =============================================================================
-# TSV Support Tests (Issue #140 extension)
-# =============================================================================
+# TSV Support Tests
 
 
 class TestTsvSupport:
@@ -664,7 +644,7 @@ class TestTsvSupport:
             "Point B\t34.0522\t-118.2437\t200\n"
         )
 
-        # Per Issue #281: add_files now calls prepare_item + finalize_items
+        # add_files now calls prepare_item + finalize_items
         with (
             patch("portolan_cli.add.prepare_item") as mock_add,
             patch("portolan_cli.add.finalize_items") as mock_finalize,
@@ -698,13 +678,11 @@ class TestTsvSupport:
         assert ".tsv" in extensions
 
 
-# =============================================================================
 # Exception Handling Tests (Adversarial Review - Narrow Exception Catch)
-# =============================================================================
 
 
 class TestExceptionHandlingNarrowness:
-    """Tests for narrow exception handling (adversarial review issue #1)."""
+    """Tests for narrow exception handling."""
 
     @pytest.mark.unit
     def test_non_geometry_click_exception_propagates(
@@ -718,7 +696,7 @@ class TestExceptionHandlingNarrowness:
         csv_file.write_text("name,value\ntest,100\n")
 
         # Mock add to raise a non-geometry ClickException
-        # Per Issue #175: errors are now collected instead of raised
+        # errors are now collected instead of raised
         with patch("portolan_cli.add.prepare_item") as mock_add:
             mock_add.side_effect = click.ClickException("Permission denied: /some/path")
 
@@ -733,9 +711,7 @@ class TestExceptionHandlingNarrowness:
             assert "Permission denied" in failures[0].error
 
 
-# =============================================================================
 # Asset Tracking Tests
-# =============================================================================
 
 
 class TestAdr0028AssetTracking:
@@ -758,7 +734,7 @@ class TestAdr0028AssetTracking:
         _write_test_point_geojson(geojson)
 
         # Mock prepare_item and finalize_items to simulate successful geo file processing
-        # Per Issue #281: add_files now calls prepare_item + finalize_items
+        # add_files now calls prepare_item + finalize_items
         with (
             patch("portolan_cli.add.prepare_item") as mock_add,
             patch("portolan_cli.add.finalize_items") as mock_finalize,
@@ -835,9 +811,7 @@ class TestAdr0028AssetTracking:
         )
 
 
-# =============================================================================
 # Helper Function Unit Tests (Coverage for lines 1104-1109, 1281-1333)
-# =============================================================================
 
 
 class TestCopyNonGeoToItemDir:
@@ -1039,9 +1013,7 @@ class TestUpdateItemWithAsset:
         assert any("primary" in msg or "not found" in msg for msg in warning_msgs)
 
 
-# =============================================================================
 # add_files Code Path Coverage Tests
-# =============================================================================
 
 
 class TestAddFilesCodePaths:
@@ -1062,7 +1034,7 @@ class TestAddFilesCodePaths:
         symlink = link_dir / "link.geojson"
         symlink.symlink_to(real_file)
 
-        # Per Issue #281: add_files now calls prepare_item + finalize_items
+        # add_files now calls prepare_item + finalize_items
         with (
             patch("portolan_cli.add.prepare_item") as mock_add,
             patch("portolan_cli.add.finalize_items") as mock_finalize,
@@ -1089,7 +1061,7 @@ class TestAddFilesCodePaths:
         geojson = collection_dir / "data.geojson"
         _write_test_point_geojson(geojson)
 
-        # Per Issue #281: add_files now calls prepare_item + finalize_items
+        # add_files now calls prepare_item + finalize_items
         with (
             patch("portolan_cli.add.prepare_item") as mock_add,
             patch("portolan_cli.add.finalize_items") as mock_finalize,
@@ -1119,7 +1091,7 @@ class TestAddFilesCodePaths:
         txt_file = collection_dir / "readme.txt"
         txt_file.write_text("This is a readme file")
 
-        # Per Issue #281: add_files now calls prepare_item + finalize_items
+        # add_files now calls prepare_item + finalize_items
         with (
             patch("portolan_cli.add.prepare_item") as mock_add,
             patch("portolan_cli.add.finalize_items") as mock_finalize,
@@ -1169,7 +1141,7 @@ class TestAddFilesCodePaths:
         geojson = collection_dir / "data.geojson"
         _write_test_point_geojson(geojson)
 
-        # Per Issue #281: add_files now calls prepare_item + finalize_items
+        # add_files now calls prepare_item + finalize_items
         with (
             patch("portolan_cli.add.prepare_item") as mock_add,
             patch("portolan_cli.add.finalize_items") as mock_finalize,
@@ -1265,7 +1237,7 @@ class TestAddFilesCodePaths:
             # Skip other files (like parquet) - they shouldn't be in source_dir
             raise ValueError(f"Unexpected file type: {path}")
 
-        # Per Issue #281: add_files now calls prepare_item + finalize_items
+        # add_files now calls prepare_item + finalize_items
         with (
             patch("portolan_cli.add.prepare_item") as mock_add,
             patch("portolan_cli.add.finalize_items") as mock_finalize,
@@ -1304,7 +1276,7 @@ class TestAddFilesCodePaths:
             # Simulate geometry detection error for a non-tabular format
             mock_add.side_effect = errors.NoGeometryError(str(geojson), "No geometry columns.")
 
-            # Per Issue #175: errors are now collected instead of raised
+            # errors are now collected instead of raised
             _added, _skipped, failures = add_files(
                 paths=[geojson],
                 catalog_root=initialized_catalog,
@@ -1319,7 +1291,6 @@ class TestAddFilesCodePaths:
     def test_value_error_reraise_with_context(
         self, initialized_catalog: Path, tmp_path: Path
     ) -> None:
-        """add_files should collect ValueError with file context (Issue #175)."""
         collection_dir = tmp_path / "collection"
         collection_dir.mkdir(parents=True)
 
@@ -1329,7 +1300,7 @@ class TestAddFilesCodePaths:
         with patch("portolan_cli.add.prepare_item") as mock_add:
             mock_add.side_effect = ValueError("Invalid data")
 
-            # Per Issue #175: errors are now collected instead of raised
+            # errors are now collected instead of raised
             _added, _skipped, failures = add_files(
                 paths=[geojson],
                 catalog_root=initialized_catalog,
@@ -1344,7 +1315,6 @@ class TestAddFilesCodePaths:
     def test_file_not_found_error_reraise_with_context(
         self, initialized_catalog: Path, tmp_path: Path
     ) -> None:
-        """add_files should collect FileNotFoundError with file context (Issue #175)."""
         collection_dir = tmp_path / "collection"
         collection_dir.mkdir(parents=True)
 
@@ -1354,7 +1324,7 @@ class TestAddFilesCodePaths:
         with patch("portolan_cli.add.prepare_item") as mock_add:
             mock_add.side_effect = FileNotFoundError("File missing")
 
-            # Per Issue #175: errors are now collected instead of raised
+            # errors are now collected instead of raised
             _added, _skipped, failures = add_files(
                 paths=[geojson],
                 catalog_root=initialized_catalog,
@@ -1366,9 +1336,7 @@ class TestAddFilesCodePaths:
             assert "data.geojson" in str(failures[0].path) or "Failed to add" in failures[0].error
 
 
-# =============================================================================
 # Mixed Format Integration Tests
-# =============================================================================
 
 
 class TestMixedFormatIntegration:
@@ -1392,7 +1360,7 @@ class TestMixedFormatIntegration:
         geojson = collection_dir / "data.geojson"
         _write_test_point_geojson(geojson)
 
-        # Per Issue #281: add_files now calls prepare_item + finalize_items
+        # add_files now calls prepare_item + finalize_items
         with (
             patch("portolan_cli.add.prepare_item") as mock_add,
             patch("portolan_cli.add.finalize_items") as mock_finalize,
@@ -1444,7 +1412,7 @@ class TestMixedFormatIntegration:
             for i in range(num_geo):
                 write_point_geojson(collection_dir / f"geo_{i}.geojson", i)
 
-            # Per Issue #281: add_files now calls prepare_item + finalize_items
+            # add_files now calls prepare_item + finalize_items
             with (
                 patch("portolan_cli.add.prepare_item") as mock_add,
                 patch("portolan_cli.add.finalize_items") as mock_finalize,

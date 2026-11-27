@@ -1,11 +1,4 @@
-"""Tests for Issue #256: Detect if .json files are valid GeoJSON.
-
-GeoJSON files are often saved with .json extension rather than .geojson.
-Portolan should detect GeoJSON content by inspecting the file, not just
-relying on extension.
-
-See: https://github.com/portolan-sdi/portolan-cli/issues/256
-"""
+"""Detect if .json files are valid GeoJSON."""
 
 from __future__ import annotations
 
@@ -32,11 +25,6 @@ class TestJsonGeoJsonDetectionInScan:
     """Tests for .json file detection in scan_directory."""
 
     def test_json_with_geojson_content_is_detected_as_ready(self, fixtures_dir: Path) -> None:
-        """A .json file containing valid GeoJSON should be in ready list.
-
-        This is the core fix for Issue #256: rec_centers.json contains
-        a valid FeatureCollection but has .json extension instead of .geojson.
-        """
         from portolan_cli.scan.core import scan_directory
 
         scan_path = fixtures_dir / "scan" / "json_geojson"
@@ -73,11 +61,6 @@ class TestJsonGeoJsonDetectionInScan:
         assert rec_centers.extension == ".json"
 
     def test_plain_json_is_skipped(self, fixtures_dir: Path) -> None:
-        """A .json file without GeoJSON content should be in skipped list.
-
-        config.json is a plain settings file, not GeoJSON. It should not
-        be added to the ready list.
-        """
         from portolan_cli.scan.core import scan_directory
 
         scan_path = fixtures_dir / "scan" / "json_geojson"
@@ -227,18 +210,9 @@ class TestJsonGeoJsonMixedDirectory:
 
 @pytest.mark.unit
 class TestJsonGeoJsonRobustness:
-    """Robustness tests for .json GeoJSON detection edge cases.
-
-    These tests cover error handling paths that could cause crashes or
-    incorrect behavior in production.
-    """
+    """Robustness tests for .json GeoJSON detection edge cases."""
 
     def test_binary_file_with_json_extension_is_skipped(self, tmp_path: Path) -> None:
-        """A binary file with .json extension should be skipped, not crash.
-
-        This tests the UnicodeDecodeError handling path. Binary files
-        cannot be decoded as UTF-8 and should be gracefully skipped.
-        """
         from portolan_cli.scan.core import scan_directory
 
         # Create a binary file with .json extension
@@ -256,12 +230,6 @@ class TestJsonGeoJsonRobustness:
         assert "binary.json" in skipped_names
 
     def test_geojson_token_after_8kb_is_skipped(self, tmp_path: Path) -> None:
-        """A .json with GeoJSON type token AFTER 8KB should be skipped.
-
-        The detection reads only the first 8KB for performance.
-        If the type token appears later, the file is not detected as GeoJSON.
-        This is a known limitation documented in the code.
-        """
         from portolan_cli.scan.core import scan_directory
 
         # Create a file with GeoJSON type token appearing after 8KB
@@ -344,11 +312,6 @@ class TestJsonGeoJsonRobustness:
         assert "corrupt.json" in skipped_names
 
     def test_json_with_bom_is_detected(self, tmp_path: Path) -> None:
-        """A GeoJSON .json file with UTF-8 BOM should still be detected.
-
-        Some editors add a BOM (Byte Order Mark) to UTF-8 files.
-        The detection should still work.
-        """
         from portolan_cli.scan.core import scan_directory
 
         # Create a GeoJSON file with UTF-8 BOM

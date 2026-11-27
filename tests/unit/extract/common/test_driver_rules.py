@@ -1,10 +1,4 @@
-"""The shared driver rules of #1034, with fake LayerSource objects and no network.
-
-Rule 1: a layer the user names that returns 0 features is ``failed`` (#963).
-Rule 2: a run that selects 0 layers raises, and the message names the cause
-(#652, #812). Rule 3: a filter pattern that matches no layer warns (#768).
-Rule 4: an empty layer from bulk discovery stays ``empty``, with a warning.
-"""
+"""The shared driver rules, with fake LayerSource objects and no network."""
 
 from __future__ import annotations
 
@@ -91,7 +85,6 @@ def _options(**fields: Any) -> LayerSourceOptions:
 
 class TestFilterRefs:
     def test_numeric_pattern_matches_the_source_id_not_the_position(self) -> None:
-        """#1003: --layers 2 selects layer id 2 in a service with ids 0, 2, 5."""
         layers = _refs(["a", "b", "c"], ids=[0, 2, 5])
 
         kept = filter_refs(layers, ["2"], None)
@@ -99,7 +92,6 @@ class TestFilterRefs:
         assert [(ref.id, ref.name) for ref in kept] == [(2, "b")]
 
     def test_plain_pattern_matches_the_leaf_of_a_qualified_name(self) -> None:
-        """#768/#1034: --exclude-layers terenuri excludes cadastru_data:terenuri."""
         kept = filter_refs(_refs(_WFS_NAMES), None, ["terenuri"])
 
         assert [ref.name for ref in kept] == ["cadastru_data:UAT1", "cadastru_data:cladiri"]
@@ -107,7 +99,6 @@ class TestFilterRefs:
     def test_pattern_that_matches_nothing_warns_with_three_names(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """#1034 rule 3: the warning names the pattern and 3 layers of the source."""
         layers = _refs([*_WFS_NAMES, "cadastru_data:adresa_point"])
 
         with caplog.at_level(logging.WARNING, logger="portolan_cli.extract.common.source"):
@@ -148,7 +139,6 @@ class TestFilterRefs:
 
 class TestNamedLayers:
     def test_named_layer_with_zero_features_fails(self, tmp_path: Path) -> None:
-        """#963/#1034 rule 1: a layer named with --layers that is empty is failed."""
         source = _FakeSource(_refs(_WFS_NAMES), empty={"cadastru_data:UAT1"})
 
         report = run_layer_extraction(
@@ -163,7 +153,6 @@ class TestNamedLayers:
         assert report.summary.failed == 1
 
     def test_layer_url_layer_with_zero_features_fails(self, tmp_path: Path) -> None:
-        """A source marks a layer from a layer URL as explicit (#652)."""
         layer = LayerRef(id=0, name="PRK.open_space", explicit=True)
         source = _FakeSource([layer], empty={"PRK.open_space"})
 
@@ -182,7 +171,6 @@ class TestNamedLayers:
 
 class TestZeroLayers:
     def test_filter_that_selects_nothing_raises(self, tmp_path: Path) -> None:
-        """#1034 rule 2: the source advertises layers, and the run selects 0."""
         source = _FakeSource(_refs(_WFS_NAMES))
 
         with pytest.raises(NoLayersSelectedError) as caught:
@@ -197,7 +185,6 @@ class TestZeroLayers:
         assert source.fetched == []
 
     def test_source_reason_names_the_cause(self, tmp_path: Path) -> None:
-        """#812: a source with only tables says how to reach them."""
         reason = "The service lists 1 table and no layers. Pass --include-tables."
         source = _FakeSource([], empty_reason=reason)
 
@@ -274,7 +261,6 @@ class TestBulkDiscovery:
     def test_unnamed_empty_layer_stays_empty_with_a_warning(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """#1034 rule 4: bulk discovery keeps the empty status."""
         source = _FakeSource(_refs(["a", "b"]), empty={"b"})
 
         with caplog.at_level(logging.WARNING, logger="portolan_cli.extract.common.source"):
@@ -287,7 +273,6 @@ class TestBulkDiscovery:
 
 class TestProgressOrder:
     def test_index_only_increases_with_skipped_and_resumed_layers(self, tmp_path: Path) -> None:
-        """#1012: skipped and resumed layers print at their own position."""
         layers = [
             LayerRef(id=0, name="done"),
             LayerRef(id=1, name="fetch1"),
@@ -396,7 +381,6 @@ _NOTE = "A retry cannot fix this failure."
 def test_layer_fetch_retries_only_a_transient_status(
     tmp_path: Path, status: int, fetches: int, error: str
 ) -> None:
-    """#1035: the shared driver gives up at once on 401, 403, and 404, for every source."""
     import requests
 
     response = requests.Response()
@@ -418,7 +402,6 @@ def test_layer_fetch_retries_only_a_transient_status(
 
 @pytest.mark.integration
 def test_credentials_never_reach_the_catalog(fixtures_dir: Path, tmp_path: Path) -> None:
-    """#981: an API key in the source URL is in no file the extraction writes."""
     import geoparquet_io as gpio
 
     from portolan_cli.metadata_extraction import ExtractedMetadata
@@ -464,11 +447,6 @@ def test_credentials_never_reach_the_catalog(fixtures_dir: Path, tmp_path: Path)
 def test_a_failed_layer_error_keeps_no_credential(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """#981: an error page that echoes the request URL leaves its API key out of every message.
-
-    The report, the progress event that the terminal prints, and the retry log
-    each get the error without the key.
-    """
     url = "https://h.example/geoserver/wfs?authkey=SECRET"
     clean = "Server returned an error page:\n<p>Blocked: https://h.example/geoserver/wfs?n=1</p>"
 
@@ -497,7 +475,6 @@ def test_a_failed_layer_error_keeps_no_credential(
 def test_extracted_catalog_has_a_producer_and_a_thumbnail(
     fixtures_dir: Path, tmp_path: Path
 ) -> None:
-    """#1039: the run names the producer and draws the thumbnail (PTL-PRV-001, PTL-VIZ-001)."""
     import geoparquet_io as gpio
 
     from portolan_cli.metadata_extraction import ExtractedMetadata

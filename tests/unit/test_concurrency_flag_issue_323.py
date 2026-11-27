@@ -1,12 +1,4 @@
-"""Tests for GitHub issue #323: --concurrency flag ignored for catalog-wide operations.
-
-The bug: When doing catalog-wide push/pull (no --collection specified), the
---concurrency flag (which controls file-level parallelism within each collection)
-was completely ignored. It was only passed to single-collection operations.
-
-The fix: Pass file_concurrency through to push_all_collections/pull_all_collections
-so that individual collection operations also respect file-level concurrency limits.
-"""
+"""Catalog-wide push and pull pass --concurrency to each collection."""
 
 from __future__ import annotations
 
@@ -25,15 +17,12 @@ from portolan_cli.sync.push import PushAllResult, PushResult, push_all_collectio
 # Mark all tests in this module as unit tests
 pytestmark = pytest.mark.unit
 
-# Remote URL for tests - set via env var (Issue #356: sensitive settings)
+# Remote URL for tests - set via env var
 TEST_REMOTE = "s3://test/catalog"
 
 
 def _setup_valid_catalog(catalog_root: Path) -> None:
-    """Helper to create a valid catalog with .portolan/config.yaml.
-
-    Note: remote must be set via PORTOLAN_REMOTE env var (Issue #356).
-    """
+    """Helper to create a valid catalog with .portolan/config.yaml."""
     portolan_dir = catalog_root / ".portolan"
     portolan_dir.mkdir(parents=True, exist_ok=True)
     (portolan_dir / "config.yaml").write_text("version: '1.0'\n")
@@ -46,9 +35,7 @@ def _create_collection(catalog_root: Path, name: str) -> None:
     (collection_dir / "versions.json").write_text(json.dumps({"versions": []}))
 
 
-# =============================================================================
 # Tests for push_all_collections file_concurrency parameter
-# =============================================================================
 
 
 class TestPushAllCollectionsFileConcurrency:
@@ -109,7 +96,6 @@ class TestPushAllCollectionsFileConcurrency:
 
     @patch("portolan_cli.sync.push.push_async", new_callable=AsyncMock)
     def test_file_concurrency_none_uses_default(self, mock_push: AsyncMock, tmp_path: Path) -> None:
-        """file_concurrency=None uses the default concurrency (8 per Issue #344)."""
         _setup_valid_catalog(tmp_path)
         _create_collection(tmp_path, "col1")
 
@@ -128,15 +114,12 @@ class TestPushAllCollectionsFileConcurrency:
         )
 
         assert result.success is True
-        # When file_concurrency is None, the default (8) is applied
-        # per Issue #344 (lowered from 50 for home network safety)
+        # When file_concurrency is None, the default (8) applies.
         call_kwargs = mock_push.call_args.kwargs
         assert call_kwargs.get("concurrency") == 8
 
 
-# =============================================================================
 # Tests for pull_all_collections file_concurrency parameter
-# =============================================================================
 
 
 class TestPullAllCollectionsFileConcurrency:
@@ -221,9 +204,7 @@ class TestPullAllCollectionsFileConcurrency:
         assert call_kwargs.get("concurrency") is None
 
 
-# =============================================================================
 # Tests for CLI --concurrency flag with catalog-wide operations
-# =============================================================================
 
 
 class TestCliConcurrencyFlagCatalogWide:
@@ -264,7 +245,6 @@ class TestCliConcurrencyFlagCatalogWide:
     def test_push_concurrency_default_passed_to_push_all_collections(
         self, mock_push_all: MagicMock, runner: CliRunner, tmp_path: Path
     ) -> None:
-        """Default --concurrency (8 per Issue #344) is passed to push_all_collections."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
             _setup_valid_catalog(Path())
             _create_collection(Path(), "col1")
@@ -278,7 +258,7 @@ class TestCliConcurrencyFlagCatalogWide:
                 total_versions_pushed=1,
             )
 
-            # Don't specify --concurrency, should use default of 8 (Issue #344)
+            # Don't specify --concurrency, should use default of 8
             with patch.dict(os.environ, {"PORTOLAN_REMOTE": TEST_REMOTE}):
                 result = runner.invoke(cli, ["push", "--catalog", "."])
 
@@ -339,9 +319,7 @@ class TestCliConcurrencyFlagCatalogWide:
             assert call_kwargs["file_concurrency"] == 50
 
 
-# =============================================================================
 # Tests for combined workers + file_concurrency
-# =============================================================================
 
 
 class TestCombinedConcurrencyParameters:

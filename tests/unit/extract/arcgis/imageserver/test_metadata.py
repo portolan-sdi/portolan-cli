@@ -1,8 +1,4 @@
-"""Tests for ImageServer STAC metadata generation.
-
-Tests verify that STAC Collection and Item metadata are correctly
-generated from ImageServer metadata using the Wave 1 data models.
-"""
+"""Tests for ImageServer STAC metadata generation."""
 
 from __future__ import annotations
 
@@ -16,9 +12,7 @@ from portolan_cli.extract.arcgis.imageserver.metadata import (
 from portolan_cli.extract.arcgis.imageserver.tiling import TileSpec
 from portolan_core.models._stac_version import get_stac_version
 
-# =============================================================================
 # Fixtures using Wave 1 data models
-# =============================================================================
 
 
 @pytest.fixture
@@ -116,9 +110,7 @@ def edge_tile() -> TileSpec:
     )
 
 
-# =============================================================================
 # Collection Metadata Tests
-# =============================================================================
 
 
 @pytest.mark.unit
@@ -201,7 +193,6 @@ class TestCreateCollectionMetadata:
         assert temporal["interval"] == [[None, None]]
 
     def test_summaries_include_band_info(self, multiband_metadata: ImageServerMetadata) -> None:
-        """Summaries carry one core `bands` entry per band (issue #654)."""
         result = create_collection_metadata(multiband_metadata, "https://example.com")
 
         summaries = result["summaries"]
@@ -220,7 +211,6 @@ class TestCreateCollectionMetadata:
         assert source_links[0]["href"] == url
 
     def test_license_defaults_to_other(self, sample_metadata: ImageServerMetadata) -> None:
-        """License defaults to the STAC 1.1 'other' keyword for unknown sources (issue #568)."""
         result = create_collection_metadata(sample_metadata, "https://example.com")
         assert result.get("license") == "other"
 
@@ -241,9 +231,7 @@ class TestCreateCollectionMetadata:
         assert bbox[2] == pytest.approx(180.0, abs=0.1)
 
 
-# =============================================================================
 # Item Metadata Tests
-# =============================================================================
 
 
 @pytest.mark.unit
@@ -369,7 +357,6 @@ class TestCreateItemMetadata:
     def test_bands_are_core_stac_without_the_raster_extension(
         self, sample_tile: TileSpec, sample_metadata: ImageServerMetadata
     ) -> None:
-        """Band metadata uses the core v1.1.0 `bands` array (issue #654)."""
         result = create_item_metadata(sample_tile, sample_metadata, "data.tif")
 
         data_asset = result["assets"]["data"]

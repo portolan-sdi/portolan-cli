@@ -1,8 +1,4 @@
-"""Tests for CRS validation and mismatch detection.
-
-These tests address Issue #4 from TESTING-NOTES.md:
-CRS mislabeling where files declare EPSG:28992 but contain WGS84 coordinates.
-"""
+"""Tests for CRS validation and mismatch detection."""
 
 from __future__ import annotations
 
@@ -100,12 +96,6 @@ class TestValidateBboxCrs:
         assert result is None
 
     def test_warning_when_projected_crs_but_wgs84_coords(self) -> None:
-        """Warning when CRS is projected but coordinates look like WGS84.
-
-        This is the exact bug from TESTING-NOTES.md Issue #4:
-        - File declares EPSG:28992 (RD New)
-        - But coordinates are actually WGS84 (4.29, 52.07)
-        """
         bbox = (4.29, 52.07, 4.35, 52.10)  # WGS84 coords
         result = validate_bbox_crs(bbox, "EPSG:28992")
 
@@ -142,13 +132,6 @@ class TestValidateBboxCrs:
             assert result is None, f"Unexpected warning for CRS {crs}"
 
     def test_no_warning_when_geographic_crs_with_lonlat_coords(self) -> None:
-        """No warning for non-WGS84 geographic CRSes like ETRS89.
-
-        Geographic CRSes (ETRS89, NAD83, etc.) naturally have coordinates in
-        the same lon/lat range as WGS84. This is not a mismatch — unlike
-        projected CRSes (EPSG:28992) where lon/lat-range coordinates indicate
-        the data was mislabeled.
-        """
         bbox = (3.16, 50.75, 7.23, 53.54)  # Netherlands in ETRS89
         for crs in ["EPSG:4258", "EPSG:4269"]:  # ETRS89, NAD83
             result = validate_bbox_crs(bbox, crs)
@@ -159,12 +142,6 @@ class TestTransformBboxToWgs84WithValidation:
     """Tests for CRS mismatch detection during bbox transformation."""
 
     def test_raises_error_on_crs_mismatch_by_default(self) -> None:
-        """transform_bbox_to_wgs84 raises CRSMismatchError by default.
-
-        When coordinates look like WGS84 but CRS declares projected system,
-        we should fail-fast with a clear exception to avoid propagating
-        invalid coordinates.
-        """
         bbox = (4.29, 52.07, 4.35, 52.10)  # WGS84 coords
 
         with pytest.raises(CRSMismatchError) as exc_info:
@@ -177,12 +154,6 @@ class TestTransformBboxToWgs84WithValidation:
     def test_logs_warning_on_crs_mismatch_with_allow_guess(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """transform_bbox_to_wgs84 logs warning when allow_guess=True.
-
-        When coordinates look like WGS84 but CRS declares projected system,
-        and allow_guess=True, we should warn but still return the coordinates
-        (assuming they're already WGS84).
-        """
         bbox = (4.29, 52.07, 4.35, 52.10)  # WGS84 coords
 
         with caplog.at_level(logging.WARNING):
@@ -197,11 +168,6 @@ class TestTransformBboxToWgs84WithValidation:
         )
 
     def test_returns_unchanged_bbox_on_mismatch_with_allow_guess(self) -> None:
-        """When CRS mismatch detected with allow_guess=True, return bbox unchanged.
-
-        If coordinates are already WGS84 but CRS claims projected, attempting
-        the transformation would produce garbage. Better to return unchanged.
-        """
         bbox = (4.29, 52.07, 4.35, 52.10)  # WGS84 coords
 
         result = transform_bbox_to_wgs84(bbox, "EPSG:28992", allow_guess=True)
@@ -229,7 +195,7 @@ class TestTransformBboxToWgs84WithValidation:
 
 
 class TestRejectNonWgs84Magnitudes:
-    """Bboxes treated as WGS84 must actually be in lon/lat range (issue #785)."""
+    """Bboxes treated as WGS84 must actually be in lon/lat range."""
 
     METER_BBOX = (121577.87, 4214399.77, 353182.80, 4486795.22)
     LONLAT_BBOX = (-7.33, 38.04, -4.70, 40.49)
@@ -259,12 +225,7 @@ class TestRejectNonWgs84Magnitudes:
 
 
 class TestWgs84EdgeTolerance:
-    """A longitude that rounds past 180 is 180, not a projected coordinate (issue #882).
-
-    The Portolan specification's own ``natural-earth-countries.parquet`` carries
-    ``[-180.0, -90.0, 180.00000000000006, 83.64513000000001]``. The excess is
-    6e-14 degrees, about 7 nanometres on the ground.
-    """
+    """A longitude that rounds past 180 is 180, not a projected coordinate."""
 
     NATURAL_EARTH_BBOX = (-180.0, -90.0, 180.00000000000006, 83.64513000000001)
 

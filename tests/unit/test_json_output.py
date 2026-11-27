@@ -1,8 +1,4 @@
-"""Tests for JSON output envelope module.
-
-These tests verify the OutputEnvelope dataclass and factory functions
-for consistent JSON output across all CLI commands.
-"""
+"""Tests for JSON output envelope module."""
 
 from __future__ import annotations
 

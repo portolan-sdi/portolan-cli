@@ -1,8 +1,4 @@
-"""Plugins reach Portolan through the public API only (#947).
-
-If a built-in plugin needs a private module, an outside plugin cannot do the
-same work. The fix is to widen ``portolan_cli.api``, not to import past it.
-"""
+"""Plugins reach Portolan through the public API only."""
 
 from __future__ import annotations
 
@@ -49,7 +45,7 @@ def _private_imports(source: Path, own_package: str) -> list[str]:
             for module in modules:
                 if module.startswith(own_package):
                     continue
-                # portolan_core holds the reader modules, which are not the plugin API (#1133).
+                # portolan_core holds the reader modules, which are not the plugin API.
                 private = module.split(".")[0] in ("portolan_cli", "portolan_core")
                 if private and module not in PUBLIC_MODULES:
                     found.append(f"{path.relative_to(source)}:{node.lineno} imports {module}")

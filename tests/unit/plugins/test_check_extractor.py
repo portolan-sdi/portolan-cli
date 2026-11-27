@@ -1,4 +1,4 @@
-"""Tests for `portolan_cli.testing.check_extractor` (#947)."""
+"""Tests for `portolan_cli.testing.check_extractor`."""
 
 from __future__ import annotations
 

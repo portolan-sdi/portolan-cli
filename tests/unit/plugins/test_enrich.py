@@ -1,4 +1,4 @@
-"""Tests for the STAC enrichment hooks on files (#947)."""
+"""Tests for the STAC enrichment hooks on files."""
 
 from __future__ import annotations
 

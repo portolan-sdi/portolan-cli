@@ -1,8 +1,4 @@
-"""Unit tests for unified find_catalog_root function.
-
-Find_catalog_root() uses .portolan/config.yaml as the single sentinel
-for catalog root detection, unifying behavior across all CLI commands.
-"""
+"""Unit tests for unified find_catalog_root function."""
 
 from __future__ import annotations
 
@@ -336,9 +332,7 @@ class TestFindCatalogRootEdgeCases:
         # Act
         result = find_catalog_root(tmp_path)
 
-        # Assert: Should NOT find wrong case (on case-sensitive filesystems)
-        # Note: This test may pass trivially on case-insensitive filesystems (macOS default)
-        # but is important for Linux
+        # Only a case-sensitive filesystem can tell the cases apart.
         if not (tmp_path / ".portolan").exists():
             assert result is None
 
@@ -361,11 +355,6 @@ class TestFindCatalogRootEdgeCases:
 
     @pytest.mark.unit
     def test_require_operational_false_for_init(self, tmp_path: Path) -> None:
-        """find_catalog_root with require_operational=False finds config.yaml-only repos.
-
-        This mode is used during init_catalog() when config.yaml is written
-        before catalog.json is created.
-        """
         from portolan_cli.catalog import find_catalog_root
 
         # Setup: Only config.yaml, no operational files (simulates mid-init state)

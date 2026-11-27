@@ -1,13 +1,4 @@
-"""Unit tests for top-level add/rm commands.
-
-Tests the CLI layer for `portolan add` and `portolan rm` commands.
-These commands replace the old `dataset add` and `dataset remove` subcommands.
-
-Git-style implicit tracking
-- `add <path>` tracks files (infers collection from path)
-- `rm <path>` untracks AND deletes (no confirmation)
-- `rm --keep <path>` untracks but preserves file
-"""
+"""Unit tests for top-level add/rm commands."""
 
 from __future__ import annotations
 
@@ -61,11 +52,7 @@ def setup_catalog(path: Path) -> None:
 
 
 def _rm_with_mocked_removal(runner: CliRunner, *args: str) -> tuple[Result, MagicMock]:
-    """Run ``portolan <args> <file>`` in a fresh catalog with ``remove_files`` mocked.
-
-    The mock reports the file as removed. ``args`` holds every argument before
-    the file path.
-    """
+    """Run ``portolan <args> <file>`` in a fresh catalog with ``remove_files`` mocked."""
     with runner.isolated_filesystem() as temp_dir:
         collection_dir = Path(temp_dir) / "data"
         setup_catalog(Path(temp_dir))
@@ -249,11 +236,6 @@ class TestAdd:
 
     @pytest.mark.unit
     def test_add_raster_at_collection_root_reports_specific_reason(self, runner: CliRunner) -> None:
-        """A raster file at <collection>/file.tif (no item subdir) is skipped,
-        and the warning identifies the specific rule — *raster needs item
-        subdirectory* — rather than the misleading generic 'catalog root'
-        message that the warn used to print for all infer-id failures.
-        """
         with runner.isolated_filesystem() as temp_dir:
             temp_path = Path(temp_dir)
             setup_catalog(temp_path)
@@ -364,7 +346,6 @@ class TestAdd:
 
     @pytest.mark.unit
     def test_add_multiple_paths(self, runner: CliRunner) -> None:
-        """add accepts multiple paths and batches them into a single add_files call (Issue #176)."""
         with runner.isolated_filesystem() as temp_dir:
             temp_path = Path(temp_dir)
             setup_catalog(temp_path)
@@ -689,12 +670,6 @@ class TestRm:
 
     @pytest.mark.unit
     def test_rm_missing_path_is_not_rejected_at_the_cli(self, runner: CliRunner) -> None:
-        """rm no longer rejects a path missing from disk at the CLI boundary (#803).
-
-        Before the fix, click's ``Path(exists=True)`` blocked rm on a deleted
-        file. Now a missing, untracked path reaches ``remove_files`` and is
-        skipped cleanly rather than failing with "does not exist".
-        """
         with runner.isolated_filesystem() as temp_dir:
             temp_path = Path(temp_dir)
             setup_catalog(temp_path)
@@ -712,7 +687,7 @@ class TestRm:
             assert "does not exist" not in result.output
             assert "Removed" not in result.output
             # A path that is neither tracked nor on disk is a no-op. rm must
-            # report it, not exit silently (#827).
+            # report it, not exit silently.
             assert "Nothing to remove" in result.output
             assert "gone.parquet" in result.output
 
@@ -824,12 +799,7 @@ class TestAddSidecarDetection:
 
 
 class TestPathToCollectionResolution:
-    """Tests for path -> collection ID resolution.
-
-    With the batched add_files approach (CLI wraps API), the CLI now
-    delegates collection inference entirely to add_files by passing collection_id=None.
-    These tests verify that paths are correctly resolved and passed through.
-    """
+    """Tests for path -> collection ID resolution."""
 
     @pytest.mark.unit
     def test_resolve_collection_from_nested_path(self, runner: CliRunner) -> None:
@@ -888,11 +858,7 @@ class TestPathToCollectionResolution:
 
 
 class TestAddJsonOutput:
-    """Stdout of a JSON add is one JSON document (#1005).
-
-    Each test runs the real add. A library message that reaches stdout
-    breaks ``json.loads(result.stdout)``.
-    """
+    """Stdout of a JSON add is one JSON document."""
 
     @pytest.mark.integration
     @pytest.mark.realdata
@@ -982,11 +948,7 @@ class TestAddWorkerNotice:
 
 
 class TestAddIgnoredFiles:
-    """``add`` skips the files that ``ignored_files`` in config.yaml excludes (#1044).
-
-    Every skipped file keeps its reason, in the human summary, on stderr, and
-    in the JSON envelope.
-    """
+    """``add`` skips the files that ``ignored_files`` in config.yaml excludes."""
 
     IGNORED = "it matches ignored_files pattern '*.geojson'"
     NOTICE = f"⚠ Skipping places.geojson: {IGNORED}\n"
@@ -1053,12 +1015,6 @@ class TestAddIgnoredFiles:
     def test_a_source_whose_output_is_ignored_is_skipped_before_conversion(
         self, run_cli: RunCli, conformant_catalog: Path, valid_points_geojson: Path
     ) -> None:
-        """A pattern that excludes the converted file rejects the add of its source.
-
-        Without this, the GeoJSON passes the input filter, its GeoParquet is
-        written and then dropped by the asset scan, and the catalog publishes
-        the source with the data role.
-        """
         root = conformant_catalog
         config = root / ".portolan" / "config.yaml"
         config.write_text(config.read_text() + 'ignored_files:\n  - "*.parquet"\n')
@@ -1179,11 +1135,6 @@ class TestReportSkipsAndFindCollections:
 
     @pytest.mark.unit
     def test_an_ignored_file_before_a_tracked_skip(self, tmp_path: Path) -> None:
-        """The warning for the ignored file does not stop the walk over the later skips.
-
-        A tracked skip belongs to the nearest collection above it, which can
-        sit below a subcatalog.
-        """
         from portolan_cli.add import _collections_to_refresh
         from portolan_cli.report import reporting
 
@@ -1302,13 +1253,7 @@ class TestCatalogIndexAfterAdd:
 
 
 class TestSideStepExitAfterAdd:
-    """A side step that fails after ``add_files`` still commits the added files.
-
-    ``add_files`` writes collection.json for each collection. The mirror, the
-    PMTiles, and the thumbnail steps run after it. A failure in one of them
-    keeps its exit code, and versions.json and the catalog index still record
-    the files that collection.json lists.
-    """
+    """A side step that fails after ``add_files`` still commits the added files."""
 
     @staticmethod
     def _assert_catalog_agrees(root: Path, collection_ids: list[str]) -> None:

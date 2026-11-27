@@ -1,12 +1,4 @@
-"""Unit tests for SchemaModel, ColumnSchema, and BandSchema dataclasses.
-
-Tests cover:
-- Schema creation for GeoParquet and COG formats
-- Column and band metadata
-- User-editable vs auto-extracted fields
-- JSON serialization (to_dict/from_dict)
-- Validation rules
-"""
+"""Unit tests for SchemaModel, ColumnSchema, and BandSchema dataclasses."""
 
 from __future__ import annotations
 

@@ -1,10 +1,4 @@
-"""Unit tests for own-over-inherited metadata precedence (issue #755).
-
-``portolan add`` used to overwrite a collection's title, license, and providers
-with values merged down from the catalog root. ``apply_human_metadata`` fixes
-that: a value the collection owns wins, and an inherited value only fills a field
-the collection still lacks.
-"""
+"""Unit tests for own-over-inherited metadata precedence."""
 
 from __future__ import annotations
 
@@ -36,7 +30,6 @@ def _collection_dir(catalog_root: Path, collection_id: str = "roads") -> Path:
 
 class TestTitlePrecedence:
     def test_inherited_title_never_overwrites_a_collection_title(self, tmp_path: Path) -> None:
-        """The catalog title must not become the collection title (issue #755)."""
         _write_metadata(tmp_path, {"title": "Root Catalog"})
         collection_dir = _collection_dir(tmp_path)
         collection = create_collection(collection_id="roads", description="Roads", title="Roads")
@@ -60,7 +53,6 @@ class TestDescriptionPrecedence:
     def test_inherited_description_never_overwrites_a_collection_description(
         self, tmp_path: Path
     ) -> None:
-        """An ancestor description must not become the collection description (issue #755)."""
         _write_metadata(tmp_path, {"description": "Root catalog description"})
         collection_dir = _collection_dir(tmp_path)
         collection = create_collection(
@@ -145,11 +137,6 @@ class TestProvidersPrecedence:
         assert names == ["City GIS"]
 
     def test_own_contact_regenerates_providers(self, tmp_path: Path) -> None:
-        """An owned contact rebuilds providers, even over a hand-edited array.
-
-        A collection's own metadata.yaml is authoritative. A contact it declares
-        seeds the host provider, so the resolved providers replace the array.
-        """
         collection_dir = _collection_dir(tmp_path)
         _write_metadata(
             collection_dir,
@@ -159,7 +146,6 @@ class TestProvidersPrecedence:
         assert names == ["City GIS"]
 
     def test_inherited_providers_replace_existing(self, tmp_path: Path) -> None:
-        """An explicit providers array in any metadata.yaml is the override (#813)."""
         _write_metadata(
             tmp_path,
             {"providers": [{"name": "Root Org", "roles": ["producer", "host"]}]},

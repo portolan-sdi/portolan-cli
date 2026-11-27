@@ -1,13 +1,4 @@
-"""Unit tests for ImageServer extraction resume logic.
-
-Tests the tile-based resume functionality for interrupted ImageServer extractions:
-- ImageServerResumeState: Tracks succeeded/failed tile coordinates
-- should_process_tile: Determines if tile needs processing
-- load_resume_state: Loads state from extraction report
-- save_resume_state: Persists state to extraction report
-
-Following TDD: tests written before implementation.
-"""
+"""Unit tests for ImageServer extraction resume logic."""
 
 from __future__ import annotations
 
@@ -451,7 +442,7 @@ class TestEdgeCases:
 
 @pytest.mark.unit
 class TestCoarseEmptyTiles:
-    """A coarse-scan verdict is not a completed tile (PR #871 review)."""
+    """A coarse-scan verdict is not a completed tile."""
 
     @staticmethod
     def _state() -> ImageServerResumeState:
@@ -563,17 +554,7 @@ def _create_imageserver_report(
     failed_tiles: list[tuple[int, int]],
     started_at: str,
 ) -> dict[str, Any]:
-    """Create ImageServer extraction report dict for testing.
-
-    Args:
-        service_url: ImageServer service URL.
-        succeeded_tiles: List of (x, y) tuples for succeeded tiles.
-        failed_tiles: List of (x, y) tuples for failed tiles.
-        started_at: ISO 8601 timestamp.
-
-    Returns:
-        Dict representing extraction report JSON.
-    """
+    """Create ImageServer extraction report dict for testing."""
     return {
         "extraction_type": "imageserver",
         "service_url": service_url,

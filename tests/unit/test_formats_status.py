@@ -1,8 +1,4 @@
-"""Unit tests for CloudNativeStatus enum and FormatInfo dataclass.
-
-These tests verify the foundational data structures for cloud-native format
-classification per spec 002-cloud-native-warnings.
-"""
+"""Unit tests for CloudNativeStatus enum and FormatInfo dataclass."""
 
 from __future__ import annotations
 

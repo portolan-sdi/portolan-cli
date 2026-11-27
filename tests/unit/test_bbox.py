@@ -20,7 +20,7 @@ pytestmark = pytest.mark.unit
 
 
 class TestTo2dBbox:
-    """Tests for to_2d_bbox: reducing STAC 3D bboxes to 2D (issue #592)."""
+    """Tests for to_2d_bbox: reducing STAC 3D bboxes to 2D."""
 
     def test_2d_bbox_returned_unchanged(self) -> None:
         """A 4-element bbox is already 2D and returned as-is."""
@@ -85,7 +85,6 @@ class TestIsValidBbox:
 
     def test_sentinel_inf_value_invalid(self) -> None:
         """The specific sentinel value from IGN Argentina should be invalid."""
-        # This is the actual value that caused issue #516
         sentinel = -1.79e308
         assert is_valid_bbox([sentinel, sentinel, 180.0, 66.55]) is False
 
@@ -114,27 +113,14 @@ class TestIsValidBbox:
         assert is_valid_bbox([-74.0, 40.0, -73.0, 41.0, 0.0]) is False  # 5 elements
 
     def test_6d_bbox_valid(self) -> None:
-        """6-element 3D bbox [w, s, min_z, e, n, max_z] should be valid (#592)."""
         # west=-74, south=40, min_z=0, east=-73, north=41, max_z=100
         assert is_valid_bbox([-74.0, 40.0, 0.0, -73.0, 41.0, 100.0]) is True
 
     def test_6d_bbox_range_check_uses_correct_indices(self) -> None:
-        """Range checks must read east/north from indices 3/4, not 2/3 (#592).
-
-        Here east=190 (index 3) is out of longitude range. The pre-#592 slice
-        read east from index 2 (0.0, in range) and would have wrongly passed.
-        """
         # west=-74, south=40, min_z=0, east=190 (invalid), north=41, max_z=100
         assert is_valid_bbox([-74.0, 40.0, 0.0, 190.0, 41.0, 100.0]) is False
 
     def test_6d_bbox_south_gt_north_invalid(self) -> None:
-        """A 3D bbox whose reduced south > north is invalid (#592).
-
-        This is the exact shape of the old bug-encoding fixture
-        [-74, 40, -73, 41, 0, 100]: read as STAC 3D it is
-        [w=-74, s=40, min_z=-73, e=41, n=0, max_z=100], so north (0) < south (40).
-        The pre-#592 slice read north from index 3 (41) and wrongly passed.
-        """
         assert is_valid_bbox([-74.0, 40.0, -73.0, 41.0, 0.0, 100.0]) is False
 
     def test_6d_bbox_with_invalid_2d_components(self) -> None:
@@ -306,12 +292,6 @@ class TestComputeBboxUnion:
         assert result.bbox is None
 
     def test_3d_bboxes_union_uses_2d_extent(self) -> None:
-        """6-element bboxes must union on [w, s, e, n], not the min_z slice (#592).
-
-        With the pre-fix bbox[2]=east assumption, both bboxes' east collapses to
-        their min_z (0.0) and north to their real east, producing a bogus
-        [-122.5, 37.5, 0.0, -73.0] envelope instead of the real 2D union.
-        """
         bboxes = [
             [-74.0, 40.0, 0.0, -73.0, 41.0, 100.0],  # NYC, elevation 0..100
             [-122.5, 37.5, 0.0, -122.0, 38.0, 100.0],  # SF, elevation 0..100
@@ -361,12 +341,6 @@ class TestComputeBboxUnion:
         assert compute_bbox_union(bboxes).bboxes == expected
 
     def test_us_counties_extent_is_never_two_bboxes(self) -> None:
-        """Issue #852: STAC 1.1.0 allows one bbox or three or more, never two.
-
-        The input is the measured extent of us-counties from the issue. On main
-        the union wrote the two hemisphere parts alone, and dropped the
-        overall extent that STAC requires as the first entry.
-        """
         crossing = [172.4616709015344, 17.884812999999998, -65.22111000000001, 71.3525606439998]
         result = compute_bbox_union([crossing])
         assert result.bboxes == [
@@ -453,7 +427,7 @@ class TestBboxValidationResult:
 
 
 class TestWgs84EdgeTolerance:
-    """A coordinate that rounds past a bound is the bound (issue #882)."""
+    """A coordinate that rounds past a bound is the bound."""
 
     def test_rounded_longitude_is_valid(self) -> None:
         from portolan_core.bbox import is_valid_bbox

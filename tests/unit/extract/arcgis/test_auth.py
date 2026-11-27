@@ -1,8 +1,4 @@
-"""Tests for ArcGIS authentication module.
-
-Covers token pass-through, username/password token minting via generateToken,
-and error paths when minting fails.
-"""
+"""Tests for ArcGIS authentication module."""
 
 from __future__ import annotations
 
@@ -129,8 +125,6 @@ def test_resolve_token_raises_on_non_object_token_body(monkeypatch: pytest.Monke
 
 @pytest.mark.unit
 def test_info_error_names_the_server_without_its_userinfo(monkeypatch: pytest.MonkeyPatch) -> None:
-    """#981: the error names the server, not the password in its URL."""
-
     def fake_get(self: object, url: str) -> httpx.Response:
         return httpx.Response(503)
 

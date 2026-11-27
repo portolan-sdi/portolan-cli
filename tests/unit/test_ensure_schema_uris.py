@@ -1,4 +1,4 @@
-"""Unit tests for the catalog-wide schema-URI sweep (issue #654)."""
+"""Unit tests for the catalog-wide schema-URI sweep."""
 
 from __future__ import annotations
 

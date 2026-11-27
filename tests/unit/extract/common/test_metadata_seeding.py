@@ -1,8 +1,4 @@
-"""Tests for common metadata seeding utilities.
-
-These tests verify the shared metadata seeding functionality used
-by both WFS and ArcGIS extraction backends.
-"""
+"""Tests for common metadata seeding utilities."""
 
 from __future__ import annotations
 
@@ -161,7 +157,6 @@ class TestSeedCollectionMetadata:
         assert metadata_path.exists()
 
     def test_child_file_holds_no_placeholder_and_no_credential(self, tmp_path: Path) -> None:
-        """#1039, #981: the child inherits the catalog contact, and its URL holds no key."""
         import yaml
 
         from portolan_cli.extract.common.metadata_seeding import seed_collection_metadata

@@ -1,11 +1,4 @@
-"""Tests for collection ID validation and normalization.
-
-Per portolan-spec/structure.md, collection IDs SHOULD:
-- Contain only lowercase letters, numbers, hyphens, underscores, and forward slashes
-- Start with a letter or number (not hyphen/underscore)
-- Be unique within the catalog (uniqueness tested elsewhere)
-- Support nested paths (e.g., climate/hittekaart, rivers/2020/q1)
-"""
+"""Tests for collection ID validation and normalization."""
 
 from __future__ import annotations
 

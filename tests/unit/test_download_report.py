@@ -1,8 +1,4 @@
-"""download_file sends its transfer lines to a report callback, or to the log.
-
-The store is an in-memory obstore ``MemoryStore``, so no test sends a network
-request.
-"""
+"""Download_file sends its transfer lines to a report callback, or to the log."""
 
 from __future__ import annotations
 

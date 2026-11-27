@@ -1,4 +1,4 @@
-"""Tests for the plugin manager (#947)."""
+"""Tests for the plugin manager."""
 
 from __future__ import annotations
 
@@ -165,11 +165,6 @@ def test_importing_the_cli_builds_no_manager() -> None:
 
 
 def test_failed_registration_leaves_no_hook_behind(installed: list[EntryPoint]) -> None:
-    """A plugin that fails validation contributes no hook at all.
-
-    pluggy adds hook implementations one by one and stops at the first
-    invalid one. The valid ones before it stay unless the manager removes them.
-    """
     installed.append(_ep("half", "half"))
 
     with pytest.warns(manager.PluginLoadWarning, match="'half'.*did not register"):

@@ -1,4 +1,4 @@
-"""Tests for LayerSource, run_layer_extraction, and extractor_from (#947)."""
+"""Tests for LayerSource, run_layer_extraction, and extractor_from."""
 
 from __future__ import annotations
 
@@ -37,11 +37,7 @@ _LAYERS = {"points": "points.geojson", "lines": "lines.geojson"}
 
 
 class _FixtureSource:
-    """Two fixture GeoJSON files as layers.
-
-    `fail` names layers whose fetch raises, `empty` names layers with no
-    features, and `slow` holds per-layer sleeps in seconds.
-    """
+    """Two fixture GeoJSON files as layers."""
 
     name = "fixtures"
     summary = "Layers from the test fixture GeoJSON files."
@@ -623,10 +619,8 @@ def test_timed_out_layer_stops_its_retries(fixtures_dir: Path, tmp_path: Path) -
             if layer.name == "points":
                 calls.append(layer.name)
                 workers.append(threading.current_thread())
-                # Fail only after the run gave up on the layer. A fixed sleep
-                # raced the deadline check on a loaded CI runner, and the
-                # first failure then reached a retry before the run marked
-                # the layer abandoned.
+                # Fail only after the run gave up on the layer. A fixed sleep races the
+                # deadline check on a loaded CI runner.
                 run_returned.wait(timeout=30)
                 raise ConnectionError("points is down")
             return super().fetch(source, layer, dest)
@@ -685,7 +679,7 @@ def test_late_success_of_a_timed_out_layer_writes_no_styles(
 
 
 class _SkippingSource(_FixtureSource):
-    """A source whose `lines` layer cannot be fetched (issue #1001)."""
+    """A source whose `lines` layer cannot be fetched."""
 
     def discover(self, source: str, options: LayerSourceOptions) -> Discovery:
         found = super().discover(source, options)
@@ -743,7 +737,6 @@ def test_skipped_layer_stays_skipped_on_resume(fixtures_dir: Path, tmp_path: Pat
 
 
 def test_report_holds_the_fetch_wall_time(fixtures_dir: Path, tmp_path: Path) -> None:
-    """The summary holds the fetch wall time next to the per-layer sum (#991)."""
     source = _FixtureSource(fixtures_dir, slow={"points": 0.2, "lines": 0.2})
 
     report = run_layer_extraction(source, "src", tmp_path / "out", _options(workers=2, raw=True))
@@ -757,7 +750,6 @@ def test_report_holds_the_fetch_wall_time(fixtures_dir: Path, tmp_path: Path) ->
 
 
 def test_layer_spans_nest_under_fetch_on_worker_threads(fixtures_dir: Path, tmp_path: Path) -> None:
-    """Each layer gets an extract.layer span under extract.fetch, on its worker thread (#991)."""
     trace.enable()
     source = _FixtureSource(fixtures_dir, slow={"points": 0.1})
 
@@ -776,7 +768,6 @@ def test_layer_spans_nest_under_fetch_on_worker_threads(fixtures_dir: Path, tmp_
 
 
 def test_catalog_messages_reach_the_callback(fixtures_dir: Path, tmp_path: Path) -> None:
-    """The catalog build hands its notices to ``on_message`` (#1133)."""
     out = tmp_path / "out"
     messages: list[tuple[str, str]] = []
 
@@ -818,11 +809,6 @@ def test_catalog_messages_reach_the_callback(fixtures_dir: Path, tmp_path: Path)
 def test_a_run_without_a_callback_prints_nothing(
     fixtures_dir: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """A plugin that passes no callback gets the catalog, and no catalog notice prints.
-
-    preparation.py still prints its rewrite line through output.py. Its own
-    ratchet entry covers it, so the test checks only the catalog notices.
-    """
     from portolan_cli import logging_setup
 
     logging_setup.reset_logging()

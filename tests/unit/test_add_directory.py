@@ -129,7 +129,7 @@ class TestAddDirectory:
     @pytest.mark.unit
     def test_add_directory_single_file(self, initialized_catalog: Path, tmp_path: Path) -> None:
         """add_directory processes single file in directory."""
-        # Create file inside collection/item structure (Issue #163)
+        # Create file inside collection/item structure
         item_dir = initialized_catalog / "col" / "myitem"
         item_dir.mkdir(parents=True)
 
@@ -186,7 +186,7 @@ class TestAddDirectory:
     @pytest.mark.unit
     def test_add_directory_multiple_files(self, initialized_catalog: Path, tmp_path: Path) -> None:
         """add_directory processes all geospatial files in an item directory."""
-        # Create files inside collection/item structure (Issue #163)
+        # Create files inside collection/item structure
         # Multiple files in same item dir = multiple assets for one item
         item_dir = initialized_catalog / "col" / "myitem"
         item_dir.mkdir(parents=True)
@@ -266,9 +266,7 @@ class TestAddDirectory:
                 collection_id="col",
             )
 
-            # With new design, multiple files in one item_dir = one item with multiple assets
-            # Or multiple items if add_directory processes each file separately
-            # The key point: all results have same item_id (parent dir name)
+            # All results have the item_id of the parent directory.
             assert len(results) >= 1
             for r in results:
                 assert r.item_id == "myitem"
@@ -276,7 +274,7 @@ class TestAddDirectory:
     @pytest.mark.unit
     def test_add_directory_recursive(self, initialized_catalog: Path, tmp_path: Path) -> None:
         """add_directory finds files recursively."""
-        # Create nested item directories inside the collection (Issue #163)
+        # Create nested item directories inside the collection
         # Structure: col/top_item/top.geojson + col/nested/deep_item/deep.geojson
         col_dir = initialized_catalog / "col"
         col_dir.mkdir(parents=True)

@@ -1,13 +1,4 @@
-"""Unit tests for conversion configuration.
-
-Tests the conversion config system that allows users to override default
-format handling behavior:
-- Force-convert cloud-native formats (e.g., FlatGeobuf -> GeoParquet)
-- Preserve convertible formats (e.g., keep Shapefiles as-is)
-- Path-based overrides with glob patterns
-
-See GitHub Issue #75 for context on FlatGeobuf handling.
-"""
+"""Unit tests for conversion configuration."""
 
 from __future__ import annotations
 
@@ -395,9 +386,7 @@ conversion:
         assert overrides.extensions_preserve == frozenset({".shp", ".geojson"})
 
 
-# =============================================================================
-# COG Settings Tests (Issue #279)
-# =============================================================================
+# COG Settings Tests
 
 
 class TestCogSettingsDataclass:
@@ -692,9 +681,7 @@ conversion:
         assert settings.thumbnail_quality == 75  # Default (150 > 100)
 
 
-# =============================================================================
 # COG Settings Validation Tests
-# =============================================================================
 
 
 class TestValidateCogSettings:
@@ -903,9 +890,7 @@ conversion:
         assert settings.resampling == "bilinear"
 
 
-# =============================================================================
-# VectorSettings Tests (Issue #340)
-# =============================================================================
+# VectorSettings Tests
 
 
 class TestVectorSettingsDefaults:
@@ -913,7 +898,6 @@ class TestVectorSettingsDefaults:
 
     @pytest.mark.unit
     def test_default_values(self) -> None:
-        """Defaults produce GeoParquet that conforms to the profile (#805)."""
         from portolan_cli.conversion_config import VectorSettings
 
         settings = VectorSettings()
@@ -1280,13 +1264,11 @@ conversion:
         assert settings.partition is False
 
 
-# =============================================================================
-# COG Defaults Derived From the Source Raster (Issue #690)
-# =============================================================================
+# COG Defaults Derived From the Source Raster
 
 
 def _write_raster(path: Path, *, dtype: str, count: int = 1) -> Path:
-    """Write a tiny GeoTIFF used to exercise default derivation."""
+    """Write a tiny GeoTIFF for the default derivation tests."""
     import numpy as np
     import rasterio
     from rasterio.transform import from_origin
@@ -1359,7 +1341,6 @@ class TestDeriveCogDefaults:
 
     @pytest.mark.unit
     def test_unreadable_source_falls_back_to_conservative_defaults(self, tmp_path: Path) -> None:
-        """An unreadable raster yields the pre-#690 defaults rather than an error."""
         from portolan_cli.conversion_config import derive_cog_defaults
 
         broken = tmp_path / "broken.tif"
@@ -1479,13 +1460,7 @@ conversion:
 
 
 class TestInvalidValuesReachTheOperator:
-    """A misspelled value changes what the writer produces.
-
-    `sort` and `add_bbox` default to the values the Portolan profile needs, so
-    the fallback for an unknown `sort` is `hilbert`, not `none`. That makes a
-    typo quieter than it used to be: the operator asked for one layout and got
-    another. The warning goes to the terminal, not only the log (issue #805).
-    """
+    """A misspelled value changes what the writer produces."""
 
     @pytest.mark.unit
     def test_unknown_sort_warns_the_operator(

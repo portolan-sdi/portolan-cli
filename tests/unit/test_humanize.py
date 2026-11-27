@@ -1,10 +1,4 @@
-"""Unit tests for the slug humanizer (Issue #502).
-
-Titles on collections, items, and child/item links must be human-readable.
-These tests pin down how a machine slug like
-``publico_areas_programaticas_desarrollo_social`` becomes
-``Publico Areas Programaticas Desarrollo Social``.
-"""
+"""Unit tests for the slug humanizer."""
 
 from __future__ import annotations
 
@@ -75,7 +69,7 @@ class TestDeriveTitle:
         ["Provincia", "Municipio", "País", "Localidad", "Departamento"],
     )
     def test_preserves_single_word_proper_titles(self, title: str) -> None:
-        # Issue #513: a clean, capitalized single-word source title must not be
+        # A clean, capitalized single-word source title must not be
         # clobbered by a worse id-derived slug (e.g. "Provincia" -> "Ign Provincia").
         assert derive_title(title, f"ign_{title.lower()}") == title
 
@@ -87,7 +81,7 @@ class TestIsTechnicalName:
         ["Provincia", "Municipio", "País", "Localidad", "Departamento", "Río"],
     )
     def test_capitalized_single_word_is_not_technical(self, text: str) -> None:
-        # Issue #513: ordinary one-word proper titles are human-readable.
+        # Ordinary one-word proper titles are human-readable.
         assert is_technical_name(text) is False
 
     @pytest.mark.parametrize("text", ["USA", "IGN", "COVID19"])
@@ -111,9 +105,8 @@ class TestIsTechnicalName:
 
     @pytest.mark.parametrize("text", ["Buildings", "Parcels", "Roads"])
     def test_capitalized_single_word_layer_titles_survive_filter(self, text: str) -> None:
-        # Issue #513 broadened scope: extraction/seeding callers gate on
-        # is_technical_name, so capitalized single-word source/layer titles now
-        # survive filtering instead of being clobbered by an id-derived slug.
+        # Extraction and seeding callers gate on is_technical_name, so a capitalized
+        # single-word title must survive and not become an id-derived slug.
         assert is_technical_name(text) is False
 
     @pytest.mark.parametrize("text", ["", None])

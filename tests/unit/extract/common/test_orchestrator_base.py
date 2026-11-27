@@ -1,10 +1,4 @@
-"""Tests for the shared post-extraction catalog lifecycle.
-
-These cover the helpers in ``extract/common/orchestrator_base.py`` that the
-ArcGIS, WFS, and Carto orchestrators delegate to. The source-specific pieces
-(URL/title builders, metadata serializers) are exercised via the orchestrators'
-own suites; here we verify the shared skeleton in isolation.
-"""
+"""Tests for the shared post-extraction catalog lifecycle."""
 
 from __future__ import annotations
 
@@ -157,7 +151,6 @@ def test_add_extracted_files_logs_what_stays_out(
 def test_the_add_of_extract_prints_what_the_library_reports(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """A rewrite notice prints as it did before #1133."""
     import portolan_cli.catalog as catalog_mod
     from portolan_cli.report import emit
 
@@ -226,7 +219,7 @@ class TestInitExtractedCatalog:
             license_id: str | None,
         ) -> tuple[Path, list[str]]:
             events.append("init")
-            # Issue #686: extract seeds metadata.yaml itself, in post_init, so
+            # extract seeds metadata.yaml itself, in post_init, so
             # init_catalog must not write a template over it.
             assert license_id is None
             return output_dir / "catalog.json", []
@@ -235,7 +228,7 @@ class TestInitExtractedCatalog:
             events.append("post_init")
             assert files == [tmp_path / "a/a.parquet"]
             # The catalog was created by this call, so the hook may seed root
-            # metadata (issue #832).
+            # metadata.
             assert fresh is True
 
         monkeypatch.setattr(catalog_mod, "init_catalog", _fake_init)
@@ -258,7 +251,7 @@ class TestInitExtractedCatalog:
     @pytest.mark.parametrize(
         ("catalog_id", "forward"),
         [
-            # The shared seam forwards the caller's id to init_catalog (issue #821)
+            # The shared seam forwards the caller's id to init_catalog
             ("phl-housing", True),
             # Without an id the seam keeps the directory-name derivation
             (None, False),
@@ -295,7 +288,7 @@ class TestInitExtractedCatalog:
     def test_adds_to_existing_catalog_without_init(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        # A directory that is already a Portolan catalog (issue #767). detect_state
+        # A directory that is already a Portolan catalog. detect_state
         # reads config.yaml alone to return MANAGED.
         (tmp_path / ".portolan").mkdir()
         (tmp_path / ".portolan" / "config.yaml").write_text("# Portolan configuration\n")
@@ -312,7 +305,7 @@ class TestInitExtractedCatalog:
             events.append("post_init")
             assert files == [tmp_path / "a/a.parquet"]
             # The catalog already existed, so the hook must not overwrite root
-            # metadata (issue #832).
+            # metadata.
             assert fresh is False
 
         monkeypatch.setattr(catalog_mod, "init_catalog", _fake_init)
@@ -327,7 +320,6 @@ class TestInitExtractedCatalog:
     def test_reports_init_catalog_warnings(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """extract prints what init_catalog had to guess, the way `init` does (#821)."""
         report = _report([_layer(0, "a", output_path="a/a.parquet")])
 
         import portolan_cli.catalog as catalog_mod
@@ -435,7 +427,6 @@ class TestRegisterCollectionStyles:
     def test_prints_the_default_style_notice(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """A default that Portolan chose among several styles is announced, as before #1133."""
         import json
 
         report = _report([_layer(0, "a", output_path="a/a.parquet")])
@@ -492,7 +483,6 @@ class TestSeedCatalogMetadata:
     def test_attribution_names_the_producer_and_unset_host_warns(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """#1039: the source's attribution is the producer, and no placeholder host is made."""
         from portolan_cli.providers import resolve_providers
         from portolan_core.config import load_merged_metadata
 
@@ -535,7 +525,6 @@ class TestSeedCatalogMetadata:
 
 class TestLegendFileFields:
     def test_legend_assets_carry_size_and_checksum(self, tmp_path: Path) -> None:
-        """#1039: legends/source states file:size and file:checksum (PTL-AST-003)."""
         from portolan_core.checksums import file_fields
 
         collection = tmp_path / "a"

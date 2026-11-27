@@ -1,11 +1,4 @@
-"""Tests for add progress reporting.
-
-Tests verify:
-1. File pre-counting is accurate
-2. Progress reporter tracks state correctly
-3. JSON mode suppresses output
-4. Thread-safety for parallel workers
-"""
+"""Tests for add progress reporting."""
 
 from __future__ import annotations
 

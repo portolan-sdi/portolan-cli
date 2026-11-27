@@ -1,10 +1,4 @@
-"""Tests for the single-source extension registry (issue #558).
-
-These pin the *derived* vocabulary to explicit expected literals, so the test
-fails loudly if a registry row is added/removed/mis-typed. They also assert the
-structural invariants (disjointness, uniqueness) and that the four consuming
-modules expose exactly the registry-derived values.
-"""
+"""Tests for the single-source extension registry."""
 
 from __future__ import annotations
 
@@ -19,7 +13,7 @@ class TestDerivedSets:
     """Registry derivations equal their expected post-reconciliation literals."""
 
     def test_cloud_native_extensions(self) -> None:
-        # .raquet dropped (#487); .parquet/.tif are "inspect"; .zarr/.copc.laz
+        # .raquet is not listed; .parquet/.tif are "inspect"; .zarr/.copc.laz
         # are cloud-native but dir/compound so excluded from the static set.
         assert reg.cloud_native_extensions() == {".fgb", ".pmtiles"}
 
@@ -120,7 +114,7 @@ class TestDerivedSets:
         }
 
     def test_scan_image_extensions_include_svg(self) -> None:
-        # .svg added so scan agrees with add._ROLE_MAP (#558).
+        # .svg added so scan agrees with add._ROLE_MAP.
         assert reg.extensions_where(scan_category="thumbnail") == {
             ".png",
             ".jpg",

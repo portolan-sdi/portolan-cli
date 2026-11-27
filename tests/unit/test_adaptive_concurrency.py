@@ -1,13 +1,4 @@
-"""Unit tests for adaptive concurrency (slow-start) feature.
-
-Tests for Issue #344 Item 4: Adaptive slow-start for network-safe uploads.
-The adaptive concurrency manager:
-- Starts with a small concurrency window
-- Ramps up on success
-- Backs off on errors/timeouts
-
-TDD: These tests are written FIRST, before implementation.
-"""
+"""Unit tests for adaptive concurrency (slow-start) feature."""
 
 from __future__ import annotations
 
@@ -15,9 +6,7 @@ import asyncio
 
 import pytest
 
-# =============================================================================
 # AdaptiveConcurrencyManager Tests
-# =============================================================================
 
 
 class TestAdaptiveConcurrencyManager:

@@ -1,14 +1,4 @@
-"""Unit tests for add command continue-on-errors behavior.
-
-Per GitHub issue #175: `portolan add .` should continue processing all files
-even when some fail, then report all failures at the end.
-
-Expected behavior:
-- Continue processing all files even when some fail
-- Collect all errors
-- Report all failures at the end
-- Exit with non-zero code if any failures occurred
-"""
+"""Unit tests for add command continue-on-errors behavior."""
 
 from __future__ import annotations
 
@@ -122,8 +112,7 @@ class TestAddFilesContinuesOnErrors:
             call_count += 1
             if "bad" in path.name:
                 raise ValueError("missing bounding box")
-            # Return a MagicMock simulating PreparedItem (Issue #383 requires
-            # is_collection_level_asset to be set for source_to_item_dir mapping)
+            # A PreparedItem mock. source_to_item_dir needs is_collection_level_asset.
             return MagicMock(
                 item_id="good",
                 collection_id="collection",
@@ -133,7 +122,7 @@ class TestAddFilesContinuesOnErrors:
                 is_collection_level_asset=False,
             )
 
-        # Per Issue #281: add_files now calls prepare_item + finalize_items
+        # add_files now calls prepare_item + finalize_items
         with (
             patch("portolan_cli.add.prepare_item", side_effect=mock_add),
             patch("portolan_cli.add.finalize_items") as mock_finalize,
@@ -183,7 +172,7 @@ class TestAddFilesContinuesOnErrors:
         ) -> MagicMock:
             if "file1" in path.name:
                 raise FileNotFoundError("Source file disappeared")
-            # Return MagicMock simulating PreparedItem (Issue #383)
+            # Return MagicMock simulating PreparedItem
             return MagicMock(
                 item_id="file2",
                 collection_id="collection",
@@ -193,7 +182,7 @@ class TestAddFilesContinuesOnErrors:
                 is_collection_level_asset=False,
             )
 
-        # Per Issue #281: add_files now calls prepare_item + finalize_items
+        # add_files now calls prepare_item + finalize_items
         with (
             patch("portolan_cli.add.prepare_item", side_effect=mock_add),
             patch("portolan_cli.add.finalize_items") as mock_finalize,
@@ -392,12 +381,6 @@ class TestAddFilesReturnContract:
 
     @pytest.mark.unit
     def test_add_files_returns_three_value_tuple(self, tmp_path: Path) -> None:
-        """add_files returns exactly 3 values: (added, skipped, failures).
-
-        This documents the return contract introduced in Issue #175.
-        Callers must unpack all three values:
-            added, skipped, failures = add_files(...)
-        """
         setup_catalog(tmp_path)
 
         collection_dir = tmp_path / "collection" / "item"
@@ -405,8 +388,8 @@ class TestAddFilesReturnContract:
         f = collection_dir / "test.geojson"
         f.write_text('{"type": "FeatureCollection", "features": []}')
 
-        # Per Issue #281: add_files now calls prepare_item + finalize_items
-        # Return MagicMock simulating PreparedItem (Issue #383)
+        # add_files now calls prepare_item + finalize_items
+        # Return MagicMock simulating PreparedItem
         with (
             patch(
                 "portolan_cli.add.prepare_item",
@@ -442,12 +425,6 @@ class TestOutputEdgeCases:
 
     @pytest.mark.unit
     def test_human_output_zero_added_some_skipped_some_failures(self, runner: CliRunner) -> None:
-        """Human output when all files either skipped or failed (none added).
-
-        This is a realistic scenario: e.g., several files are unchanged
-        (skipped) and one has an error. The output should show failure
-        details without an 'Added 0 items' header.
-        """
         with runner.isolated_filesystem() as temp_dir:
             temp_path = Path(temp_dir)
             setup_catalog(temp_path)
@@ -483,11 +460,6 @@ class TestOutputEdgeCases:
 
     @pytest.mark.unit
     def test_click_exception_error_format_no_path_duplication(self, runner: CliRunner) -> None:
-        """ClickException errors should not duplicate the file path.
-
-        Bug #191 review: ClickException errors stored as str(err) produce
-        clean output like '- path: message' without repeating the path.
-        """
         with runner.isolated_filesystem() as temp_dir:
             temp_path = Path(temp_dir)
             setup_catalog(temp_path)
@@ -512,9 +484,8 @@ class TestOutputEdgeCases:
 
                 result = runner.invoke(cli, ["add", str(collection_dir)])
 
-                # The path should appear in '- path: error' format
-                # and NOT be duplicated inside the error message
-                # Use str(err_path) for cross-platform compatibility (Windows uses \)
+                # The path shows once, as '- path: error'. str(err_path) keeps the
+                # Windows separator.
                 assert f"{err_path}: Permission denied" in result.output
                 # Verify no double-path pattern
                 assert "Failed to add" not in result.output

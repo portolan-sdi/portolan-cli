@@ -1,8 +1,4 @@
-"""A token in an ArcGIS URL never reaches a result, a repr, an error, or a message.
-
-The Codex review of #1133 found the raw ImageServer URL in the ``repr()`` of
-``ImageServerRunResult``. A repr reaches tracebacks and logs.
-"""
+"""A token in an ArcGIS URL never reaches a result, a repr, an error, or a message."""
 
 from __future__ import annotations
 

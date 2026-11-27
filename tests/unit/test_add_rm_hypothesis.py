@@ -1,11 +1,4 @@
-"""Property-based tests for add/rm functions using Hypothesis.
-
-These tests verify invariants hold across many randomly generated inputs,
-defending against tautological tests that might pass but not actually test
-anything meaningful.
-
-Per CLAUDE.md: "Property-based testing — Use hypothesis for invariant verification"
-"""
+"""Property-based tests for add/rm functions using Hypothesis."""
 
 from __future__ import annotations
 
@@ -23,9 +16,7 @@ from portolan_cli.collection_id import resolve_collection_id
 from portolan_cli.discovery import get_sidecars, iter_geospatial_files
 from portolan_core.constants import GEOSPATIAL_EXTENSIONS, SIDECAR_PATTERNS
 
-# =============================================================================
 # Custom Strategies
-# =============================================================================
 
 # Safe filename characters (avoid path separators, null bytes, etc.)
 safe_chars = st.sampled_from(string.ascii_letters + string.digits + "_-")
@@ -61,9 +52,7 @@ collection_name = st.builds(
 )
 
 
-# =============================================================================
 # Property: get_sidecars should be pure and deterministic
-# =============================================================================
 
 
 class TestGetSidecarsProperties:
@@ -149,9 +138,7 @@ class TestGetSidecarsProperties:
             assert result == [], f"Unknown extension should return empty list, got {result}"
 
 
-# =============================================================================
 # Property: resolve_collection_id extracts first path component
-# =============================================================================
 
 
 class TestResolveCollectionIdProperties:
@@ -226,9 +213,7 @@ class TestResolveCollectionIdProperties:
             assert result1 == result2, "resolve_collection_id should be deterministic"
 
 
-# =============================================================================
 # Property: iter_geospatial_files filters by extension
-# =============================================================================
 
 
 class TestIterGeospatialFilesProperties:
@@ -286,9 +271,7 @@ class TestIterGeospatialFilesProperties:
             assert result == sorted(result), "Results should be sorted"
 
 
-# =============================================================================
 # Property: SIDECAR_PATTERNS has consistent structure
-# =============================================================================
 
 
 class TestSidecarPatternsProperties:
@@ -318,9 +301,7 @@ class TestSidecarPatternsProperties:
             assert len(sidecars) == len(set(sidecars)), f"Duplicate sidecars for {primary_ext}"
 
 
-# =============================================================================
 # Property: Geospatial extensions are consistent
-# =============================================================================
 
 
 class TestGeospatialExtensionsProperties:
@@ -348,17 +329,11 @@ class TestGeospatialExtensionsProperties:
         )
 
 
-# =============================================================================
 # Property: find_catalog_root walks up directory tree
-# =============================================================================
 
 
 class TestFindCatalogRootProperties:
-    """Property-based tests for find_catalog_root function.
-
-    Find_catalog_root uses .portolan/config.yaml as the single sentinel,
-    unifying detection across all CLI commands.
-    """
+    """Property-based tests for find_catalog_root function."""
 
     @pytest.mark.integration  # Uses filesystem I/O (tempfile.TemporaryDirectory)
     @given(collection=collection_name, subdir=safe_filename)
@@ -367,7 +342,7 @@ class TestFindCatalogRootProperties:
         """find_catalog_root finds catalog from nested subdirectory."""
         with tempfile.TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
-            # Create managed catalog with .portolan/config.yaml + catalog.json (per issue #290)
+            # Create managed catalog with .portolan/config.yaml + catalog.json
             portolan_dir = tmp_path / ".portolan"
             portolan_dir.mkdir()
             (portolan_dir / "metadata.yaml").write_text('license: "CC-BY-4.0"\n')
@@ -392,7 +367,7 @@ class TestFindCatalogRootProperties:
         """find_catalog_root finds catalog when starting at catalog root."""
         with tempfile.TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
-            # Create managed catalog with .portolan/config.yaml + catalog.json (per issue #290)
+            # Create managed catalog with .portolan/config.yaml + catalog.json
             portolan_dir = tmp_path / ".portolan"
             portolan_dir.mkdir()
             (portolan_dir / "metadata.yaml").write_text('license: "CC-BY-4.0"\n')
@@ -459,9 +434,7 @@ class TestFindCatalogRootProperties:
             assert result is None, f"Should ignore UNMANAGED_STAC, got {result}"
 
 
-# =============================================================================
 # Property: _increment_version handles various version formats
-# =============================================================================
 
 
 class TestIncrementVersionProperties:
@@ -517,12 +490,6 @@ class TestIncrementVersionProperties:
 
     @pytest.mark.unit
     def test_increment_nonnumeric_last_part_is_not_noop(self) -> None:
-        """Versions whose last dot-part is non-numeric still bump (no silent no-op).
-
-        Regression: "1.2.3rc1" has three parts but "3rc1" is not a digit and the
-        length is not < 3, so the old fallback returned the input unchanged - a
-        no-op that stalls version bumps. The result must differ from the input.
-        """
         from portolan_core.versions import _increment_version
 
         for version in ("1.2.3rc1", "1.2.foo", "2.5.9beta"):
@@ -532,9 +499,7 @@ class TestIncrementVersionProperties:
             assert result == "0.0.1"
 
 
-# =============================================================================
 # Property: Constants module exports correct values
-# =============================================================================
 
 
 class TestConstantsProperties:
@@ -582,9 +547,7 @@ class TestConstantsProperties:
         assert ".prj" in shp_sidecars
 
 
-# =============================================================================
 # Edge case tests for uncovered branches
-# =============================================================================
 
 
 class TestResolveCollectionIdEdgeCases:
@@ -832,7 +795,7 @@ class TestAddFilesEdgeCases:
         link = collection / "link.geojson"
         link.symlink_to(real_file)
 
-        # Per Issue #281: add_files now calls prepare_item + finalize_items
+        # add_files now calls prepare_item + finalize_items
         with (
             patch("portolan_cli.add.prepare_item") as mock_prepare,
             patch("portolan_cli.add.finalize_items") as mock_finalize,
@@ -864,11 +827,6 @@ class TestAddFilesEdgeCases:
 
     @pytest.mark.unit
     def test_add_files_error_wraps_context(self, tmp_path: Path) -> None:
-        """add_files collects errors with file path context (Issue #175).
-
-        Previously this test verified errors were raised with context.
-        Now errors are collected in the failures list instead.
-        """
         from unittest.mock import patch
 
         from portolan_cli.add import add_files
@@ -885,11 +843,11 @@ class TestAddFilesEdgeCases:
         test_file = collection / "test.geojson"
         test_file.write_text("{}")
 
-        # Per Issue #281: add_files now calls prepare_item instead of add
+        # add_files now calls prepare_item instead of add
         with patch("portolan_cli.add.prepare_item") as mock_prepare:
             mock_prepare.side_effect = ValueError("original error")
 
-            # Per Issue #175: errors are now collected instead of raised
+            # errors are now collected instead of raised
             _added, _skipped, failures = add_files(paths=[test_file], catalog_root=catalog)
 
             # Should have one failure with the raw error message
@@ -1102,17 +1060,11 @@ class TestIterFilesWithSidecarsEdgeCases:
         assert non_geo2 not in result
 
 
-# =============================================================================
-# Multi-Asset Properties (Issue #133)
-# =============================================================================
+# Multi-Asset Properties
 
 
 class TestMultiAssetProperties:
-    """Property-based tests for multi-asset tracking behavior (issue #133).
-
-    Per issue #133, ALL files in item directories should be tracked as assets,
-    not just geospatial files. These tests verify the properties of that behavior.
-    """
+    """Property-based tests for multi-asset tracking behavior."""
 
     @pytest.mark.unit
     @given(ext=st.sampled_from([".png", ".jpg", ".pdf", ".txt", ".md", ".json", ".xml"]))
@@ -1297,30 +1249,16 @@ class TestMultiAssetProperties:
             assert "readme.txt" in asset_files or "data.parquet" in asset_files
 
 
-# =============================================================================
-# Property: catalog root detection for add. (Issue #137)
-# =============================================================================
+# Property: catalog root detection for add.
 
 
 class TestCatalogRootAddProperties:
-    """Property-based tests for add. at catalog root behavior.
-
-    These tests verify the invariants of the fix for Issue #137:
-    - resolve_collection_id(path, catalog_root) raises ValueError when path == catalog_root
-    - When target_path == catalog_root, collection_id should be None (inferred per-file)
-    - When target_path != catalog_root, collection_id should be the first path component
-    """
+    """Property-based tests for add. at catalog root behavior."""
 
     @pytest.mark.unit
     @given(collection=collection_name)
     @settings(max_examples=30)
     def test_resolve_collection_id_always_fails_at_root(self, collection: str) -> None:
-        """resolve_collection_id raises ValueError when path == catalog_root.
-
-        This documents the pre-condition that drove the fix: the root cause
-        of Issue #137 is that resolve_collection_id returns empty parts when
-        path equals catalog_root.
-        """
         with tempfile.TemporaryDirectory() as tmp:
             catalog_root = Path(tmp).resolve()
             # path == catalog_root → empty relative parts → ValueError
@@ -1333,12 +1271,6 @@ class TestCatalogRootAddProperties:
     def test_resolve_collection_id_returns_first_component_for_nested_path(
         self, collection: str, filename: str, ext: str
     ) -> None:
-        """resolve_collection_id returns the first directory component for nested paths.
-
-        This verifies the invariant that drives collection inference in add_files
-        when collection_id=None: for any file inside a collection directory,
-        the first component of the path relative to catalog_root is the collection.
-        """
         with tempfile.TemporaryDirectory() as tmp:
             catalog_root = Path(tmp).resolve()
             # Create: catalog_root/<collection>/<filename><ext>
@@ -1357,11 +1289,6 @@ class TestCatalogRootAddProperties:
     def test_resolve_collection_id_first_component_only_for_deeply_nested(
         self, collection: str, sub: str, filename: str
     ) -> None:
-        """resolve_collection_id returns FIRST component, not full path, for deep nesting.
-
-        The collection is always the first directory component.
-        For a/b/c.parquet relative to root, the collection is 'a', not 'a/b'.
-        """
         with tempfile.TemporaryDirectory() as tmp:
             catalog_root = Path(tmp).resolve()
             # Create deep nesting: catalog_root/<collection>/<sub>/<file>.parquet
@@ -1377,9 +1304,7 @@ class TestCatalogRootAddProperties:
             )
 
 
-# =============================================================================
-# Property: item_id derivation from parent directory (Issue #163)
-# =============================================================================
+# Property: item_id derivation from parent directory
 
 
 # Valid GeoJSON template for testing add()
@@ -1405,14 +1330,7 @@ MINIMAL_CATALOG_TEMPLATE = {
 
 
 def _setup_managed_catalog(catalog_root: Path) -> None:
-    """Set up a minimal managed catalog for testing.
-
-    Creates:
-    - catalog.json (STAC root)
-    - .portolan/config.yaml (sentinel)
-
-    Note: state.json removed per issue #290.
-    """
+    """Set up a minimal managed catalog for testing."""
     import json
 
     # STAC catalog at root
@@ -1427,13 +1345,7 @@ def _setup_managed_catalog(catalog_root: Path) -> None:
 
 @functools.cache
 def _conformant_parquet_bytes() -> bytes:
-    """A GeoParquet of VALID_GEOJSON_TEMPLATE that `add` copies without a rewrite.
-
-    The item-id properties below call `add` on this file, not on GeoJSON. The
-    item id comes from the directory before any conversion, so the property is
-    the same. A GeoJSON source made every example pay for a geoparquet-io
-    conversion, and the three properties took 18 s together.
-    """
+    """A GeoParquet of VALID_GEOJSON_TEMPLATE that `add` copies without a rewrite."""
     import json
 
     import geoparquet_io as gpio
@@ -1461,14 +1373,7 @@ def _parquet_name(stem: str) -> str:
 
 
 class TestItemIdDerivationProperties:
-    """Property-based tests for item_id derivation.
-
-    Issue #163: item_id should be derived from parent directory name, not filename.
-    This enables the canonical structure: catalog_root/collection/item_id/files.
-
-    CRITICAL: These tests MUST call add() to verify actual behavior,
-    not just test Python's Path operations (which would be tautological).
-    """
+    """Property-based tests for item_id derivation."""
 
     @pytest.mark.integration  # Calls add() with real filesystem + geoparquet-io
     @given(
@@ -1482,14 +1387,6 @@ class TestItemIdDerivationProperties:
     def test_add_derives_item_id_from_parent_directory(
         self, collection: str, item_id: str, filename: str
     ) -> None:
-        """add() should derive item_id from parent directory name, not filename.
-
-        This is the fundamental invariant from Issue #163: the directory structure
-        determines item boundaries, not filenames.
-
-        NON-TAUTOLOGICAL: This test calls add() and verifies ItemInfo.item_id.
-        """
-
         from portolan_cli.add import add
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -1530,14 +1427,6 @@ class TestItemIdDerivationProperties:
     def test_add_multiple_files_same_item_id(
         self, collection: str, item_id: str, filename1: str, filename2: str
     ) -> None:
-        """Multiple calls to add() for files in same directory return same item_id.
-
-        Issue #163: Files in the same item directory are assets of ONE item,
-        not separate items with different item_ids.
-
-        NON-TAUTOLOGICAL: This test calls add() twice and compares results.
-        """
-
         from portolan_cli.add import add
 
         # Ensure distinct filenames
@@ -1578,9 +1467,7 @@ class TestItemIdDerivationProperties:
             )
 
 
-# =============================================================================
-# Property: Pre-validation atomicity (Issue #163)
-# =============================================================================
+# Property: Pre-validation atomicity
 
 
 # Invalid GeoJSON templates for atomicity testing
@@ -1596,26 +1483,12 @@ INVALID_GEOJSON_EMPTY_FEATURES = {
 
 
 class TestPreValidationAtomicityProperties:
-    """Property-based tests for pre-validation atomicity.
-
-    Issue #163: Failed add operations should not create partial artifacts.
-    Pre-validation should check for valid geometry BEFORE any filesystem operations.
-
-    CRITICAL: These tests MUST call add() to verify actual atomicity,
-    not just _pre_validate_geometry() in isolation.
-    """
+    """Property-based tests for pre-validation atomicity."""
 
     @pytest.mark.integration  # Calls add() - requires full catalog setup
     @given(collection=collection_name, item_id=collection_name)
     @settings(max_examples=5, deadline=30000)
     def test_add_invalid_geojson_no_stac_artifacts(self, collection: str, item_id: str) -> None:
-        """add() failure should not create STAC collection/item/versions.json.
-
-        Issue #163: When add fails due to missing geometry, no STAC artifacts
-        (collection.json, item.json, versions.json) should be created.
-
-        NON-TAUTOLOGICAL: This test calls add() and checks for artifacts.
-        """
         import json
 
         from portolan_cli.add import add
@@ -1735,9 +1608,7 @@ class TestPreValidationAtomicityProperties:
             assert files_before == files_after, "_pre_validate_geometry should be pure"
 
 
-# =============================================================================
-# Property: item_id override (Issue #136)
-# =============================================================================
+# Property: item_id override
 
 
 # Strategies for invalid item IDs
@@ -1754,12 +1625,7 @@ invalid_item_id_with_backslash = st.builds(
 
 
 class TestItemIdOverrideProperties:
-    """Property-based tests for --item-id override functionality.
-
-    Issue #136: Users should be able to override automatic item ID derivation
-    via the --item-id flag. Invalid item IDs (containing path separators or
-    special values like '.' and '..') should be rejected.
-    """
+    """Property-based tests for --item-id override functionality."""
 
     @pytest.mark.integration
     @given(
@@ -1768,12 +1634,6 @@ class TestItemIdOverrideProperties:
     )
     @settings(max_examples=5, deadline=30000)
     def test_add_respects_item_id_override(self, collection: str, custom_item_id: str) -> None:
-        """add() should use the provided item_id instead of deriving it.
-
-        Issue #136: When item_id is explicitly provided, it should override
-        the automatic derivation from parent directory name.
-        """
-
         from portolan_cli.add import add
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -1805,10 +1665,6 @@ class TestItemIdOverrideProperties:
     @given(invalid_id=invalid_item_id_with_slash)
     @settings(max_examples=10)
     def test_add_rejects_item_id_with_slash(self, invalid_id: str) -> None:
-        """add() should reject item_ids containing forward slashes.
-
-        Issue #136: item_id must be a single path segment, not a path.
-        """
         import json
 
         from portolan_cli.add import add
@@ -1836,10 +1692,6 @@ class TestItemIdOverrideProperties:
     @given(invalid_id=invalid_item_id_with_backslash)
     @settings(max_examples=10)
     def test_add_rejects_item_id_with_backslash(self, invalid_id: str) -> None:
-        """add() should reject item_ids containing backslashes.
-
-        Issue #136: item_id must be a single path segment, not a path.
-        """
         import json
 
         from portolan_cli.add import add
@@ -1866,10 +1718,6 @@ class TestItemIdOverrideProperties:
     @given(invalid_id=st.sampled_from([".", ".."]))
     @settings(max_examples=2)
     def test_add_rejects_dot_item_ids(self, invalid_id: str) -> None:
-        """add() should reject '.' and '..' as item_ids.
-
-        Issue #136: These are reserved path components and not valid item IDs.
-        """
         import json
 
         from portolan_cli.add import add

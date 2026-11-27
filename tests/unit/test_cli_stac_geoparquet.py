@@ -1,7 +1,4 @@
-"""Tests for 'portolan stac-geoparquet' CLI command.
-
-TDD-first tests for the stac-geoparquet command per issue #319.
-"""
+"""Tests for 'portolan stac-geoparquet' CLI command."""
 
 from __future__ import annotations
 
@@ -16,9 +13,7 @@ from portolan_cli.cli import cli
 if TYPE_CHECKING:
     from pathlib import Path
 
-# =============================================================================
 # Fixtures
-# =============================================================================
 
 
 @pytest.fixture
@@ -107,9 +102,7 @@ def catalog_with_collection(tmp_path: Path) -> Path:
     return catalog_root
 
 
-# =============================================================================
 # Test: Basic Command Execution
-# =============================================================================
 
 
 class TestStacGeoparquetCommand:
@@ -147,11 +140,6 @@ class TestStacGeoparquetCommand:
     def test_generate_registers_asset_without_link(
         self, runner: CliRunner, catalog_with_collection: Path
     ) -> None:
-        """Generation registers the collection-mirror asset and no link (#654).
-
-        Spec formats.md: the single asset registration is the whole
-        requirement; no rel="items" link is needed.
-        """
         result = runner.invoke(
             cli,
             [
@@ -221,9 +209,7 @@ class TestStacGeoparquetCommand:
         assert "parquet_path" in data["data"]["results"][0]
 
 
-# =============================================================================
 # Test: Catalog-Level Operation
-# =============================================================================
 
 
 class TestStacGeoparquetCatalogLevel:
@@ -249,11 +235,6 @@ class TestStacGeoparquetCatalogLevel:
 
     @pytest.mark.unit
     def test_discovery_finds_a_collection_organized_by_catalogs(self, tmp_path: Path) -> None:
-        """A collection whose items hang off catalogs is still a collection.
-
-        Discovery accepted only a collection carrying its own ``rel="item"``
-        links, so this layout was skipped silently and never got a mirror.
-        """
         from portolan_cli.stac_parquet import collections_with_items
 
         collection_dir = tmp_path / "landsat"
@@ -338,9 +319,7 @@ class TestStacGeoparquetCatalogLevel:
         assert data["data"]["collections_processed"] >= 1
 
 
-# =============================================================================
 # Test: Error Handling
-# =============================================================================
 
 
 class TestStacGeoparquetErrors:
@@ -417,9 +396,7 @@ class TestStacGeoparquetErrors:
         assert "no items" in result.output.lower() or "empty" in result.output.lower()
 
 
-# =============================================================================
 # Test: Dry Run Mode
-# =============================================================================
 
 
 class TestStacGeoparquetDryRun:

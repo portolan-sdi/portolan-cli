@@ -1,10 +1,4 @@
-"""Tests for ArcGIS metadata extraction.
-
-These tests verify the metadata mapper for `portolan extract arcgis`:
-- Map ArcGIS REST API fields to metadata.yaml structure
-- Return a dataclass with extracted fields (None for missing)
-- Handle edge cases (empty strings, missing fields, nested objects)
-"""
+"""Tests for ArcGIS metadata extraction."""
 
 from __future__ import annotations
 
@@ -66,9 +60,7 @@ class TestArcGISMetadataDataclass:
 class TestExtractArcGISMetadata:
     """Tests for extract_arcgis_metadata function."""
 
-    # =========================================================================
     # Basic field extraction
-    # =========================================================================
 
     @pytest.mark.unit
     def test_source_url_required(self) -> None:
@@ -130,9 +122,7 @@ class TestExtractArcGISMetadata:
 
         assert metadata.license_info_raw == "Public domain - no restrictions apply"
 
-    # =========================================================================
     # Nested documentInfo extraction
-    # =========================================================================
 
     @pytest.mark.unit
     def test_document_info_author_is_a_producer_and_not_the_contact(self) -> None:
@@ -246,9 +236,7 @@ class TestExtractArcGISMetadata:
 
         assert metadata.keywords == ["census"]
 
-    # =========================================================================
     # Missing fields
-    # =========================================================================
 
     @pytest.mark.unit
     def test_missing_fields_return_none(self) -> None:
@@ -288,9 +276,7 @@ class TestExtractArcGISMetadata:
         assert metadata.producer is None
         assert metadata.keywords is None
 
-    # =========================================================================
     # Empty string handling
-    # =========================================================================
 
     @pytest.mark.unit
     def test_empty_string_treated_as_none(self) -> None:
@@ -354,9 +340,7 @@ class TestExtractArcGISMetadata:
 
         assert metadata.keywords is None
 
-    # =========================================================================
     # Full service info example
-    # =========================================================================
 
     @pytest.mark.unit
     def test_full_service_info_extraction(self) -> None:
@@ -386,9 +370,7 @@ class TestExtractArcGISMetadata:
         assert metadata.producer == "Philadelphia GIS Team"
         assert metadata.keywords == ["census", "demographics", "boundaries", "philly"]
 
-    # =========================================================================
     # Edge cases
-    # =========================================================================
 
     @pytest.mark.unit
     def test_html_in_description_preserved(self) -> None:

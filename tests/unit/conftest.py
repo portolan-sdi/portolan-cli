@@ -1,4 +1,4 @@
-"""Fixtures shared by the RunState, commit, and catalog-scale unit tests (issue #995)."""
+"""Fixtures shared by the RunState, commit, and catalog-scale unit tests."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ import pytest
 
 from portolan_core import trace
 from portolan_core.versions import Asset, Version, VersionsFile, write_versions
-from tests.print_report import print_report_fixture  # noqa: F401  (a shared fixture)
+from tests.print_report import print_report_fixture  # noqa: F401 - a shared fixture
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator

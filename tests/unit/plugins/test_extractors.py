@@ -1,4 +1,4 @@
-"""Tests for the extractor hook and the `portolan extract` group (#947)."""
+"""Tests for the extractor hook and the `portolan extract` group."""
 
 from __future__ import annotations
 

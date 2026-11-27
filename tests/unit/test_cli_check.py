@@ -1,10 +1,4 @@
-"""Tests for 'portolan check' CLI command.
-
-Validation runs on rashid, so these tests build catalogs through the
-real generator rather than hand-writing catalog.json: a hand-built catalog trips
-half the PTL-* rule set before the test's own subject is reached. Findings a
-test asserts on are ones it introduces itself.
-"""
+"""Tests for 'portolan check' CLI command."""
 
 from __future__ import annotations
 
@@ -26,9 +20,7 @@ if TYPE_CHECKING:
 
 VECTOR_FIXTURES = Path(__file__).parent.parent / "fixtures" / "vector" / "valid"
 
-# =============================================================================
 # Shared fixtures
-# =============================================================================
 
 
 @pytest.fixture
@@ -52,12 +44,7 @@ def mock_check_report(tmp_path: Path) -> Any:
 
 
 def _break_catalog(root: Path) -> str:
-    """Introduce one PTL-LNK-003 error and return the rule id it raises.
-
-    PTL-LNK-003 fires on a structural link whose type is not application/json.
-    It is AUTO and the `links` fixer repairs it, which is what the payload and
-    exit-code tests below assert.
-    """
+    """Introduce one PTL-LNK-003 error and return the rule id it raises."""
     catalog_file = root / "catalog.json"
     doc = json.loads(catalog_file.read_text())
     for link in doc["links"]:
@@ -110,7 +97,6 @@ class TestCheckCommand:
     def test_check_json_exposes_spec_version(
         self, runner: CliRunner, valid_catalog: Path, extra_flags: list[str]
     ) -> None:
-        """check --json reports the Portolan spec version across every scope (#566)."""
         from rashid_core.api import newest_profile_version
 
         expected = newest_profile_version().removeprefix("v")
@@ -701,7 +687,7 @@ class TestCheckMetadataFixFlag:
 
 
 class TestCheckForceWorkers:
-    """The --force and --workers flags (issue #530)."""
+    """The --force and --workers flags."""
 
     @pytest.fixture
     def catalog(self, conformant_catalog: Path) -> Path:
@@ -792,11 +778,7 @@ class TestCheckConfig:
 
 
 class TestFixSplitRendering:
-    """`_print_fix_split` reports what changed, not what was attempted.
-
-    These drive the renderer directly: the accounting bugs it fixes are about
-    which payload keys it reads, and a synthetic payload pins that exactly.
-    """
+    """`_print_fix_split` reports what changed, not what was attempted."""
 
     @staticmethod
     def _render(capsys: pytest.CaptureFixture[str], **fix: Any) -> str:
@@ -870,19 +852,11 @@ class TestFixSplitRendering:
         assert out.count("the automatic fix did not resolve this") == 2
 
 
-# =============================================================================
-# Exit-code contract per mode (#853)
-# =============================================================================
+# Exit-code contract per mode
 
 
 def _mirror_catalog_with_a_lost_child_link(root: Path) -> Path:
-    """Add a collection through the CLI, then break it with one AUTO and one INSTRUCT error.
-
-    The collection names a producer and a different host, so rashid sees a
-    mirror with no rel:'via' link (PTL-PRO-001, INSTRUCT), the case #853
-    reports. The catalog loses its child link (PTL-LNK-002, AUTO), which the
-    links fixer restores.
-    """
+    """Add a collection through the CLI, then break it with one AUTO and one INSTRUCT error."""
     (root / "roads").mkdir()
     shutil.copy2(VECTOR_FIXTURES / "points.geojson", root / "roads" / "roads.geojson")
     add = CliRunner().invoke(cli, ["add", "--portolan-dir", str(root), str(root / "roads")])
@@ -912,15 +886,7 @@ def _errors(envelope: dict[str, Any]) -> list[tuple[str, str]]:
 
 
 class TestExitCodePerMode:
-    """Each mode exits on the findings it owns (#853).
-
-    A check command exits 1 while a blocking finding remains, whether or not
-    ``--fix`` repaired something. ``--fix --metadata`` is the metadata refresh.
-    Its ``success`` field says whether the refresh did its job, and ``passed``
-    says whether the catalog conforms. An INSTRUCT error is work for a person:
-    the refresh succeeds, the catalog does not pass, and the exit code follows
-    ``passed``. ``--strict`` adds the warnings and the workflow notice.
-    """
+    """Each mode exits on the findings it owns."""
 
     @pytest.mark.integration
     @pytest.mark.parametrize(
@@ -1036,11 +1002,6 @@ class TestExitCodePerMode:
     def test_refresh_fails_when_a_collection_breaks_the_stac_schema(
         self, runner: CliRunner, valid_catalog: Path
     ) -> None:
-        """A collection.json that parses but breaks the STAC schema fails the refresh.
-
-        The envelope names the schema rule, which a syntax error (PTL-GEN-000)
-        does not share.
-        """
         (valid_catalog / "roads").mkdir()
         shutil.copy2(VECTOR_FIXTURES / "points.geojson", valid_catalog / "roads" / "roads.geojson")
         add = runner.invoke(

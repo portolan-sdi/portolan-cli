@@ -1,12 +1,4 @@
-"""Unit tests for --force and --reconvert flags on portolan add.
-
-Per Issue #386: Add --force flag to portolan add for re-tracking files.
-
-Behavior:
-- --force: Bypass mtime change detection, re-extract metadata from existing outputs
-- --force --reconvert: Also re-convert from source files
-- Warning when source file is newer than output (suggests --reconvert)
-"""
+"""Unit tests for --force and --reconvert flags on portolan add."""
 
 from __future__ import annotations
 

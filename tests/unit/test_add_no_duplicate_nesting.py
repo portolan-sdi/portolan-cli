@@ -1,13 +1,4 @@
-"""Unit tests for preventing duplicate directory nesting in add command.
-
-Tests that `portolan add collection/item_dir/FILE.tif` does NOT create
-an additional `collection/item_dir/FILE/` subdirectory for the STAC item.
-
-The item JSON should be stored without creating a duplicate nested directory
-based on the file stem.
-
-Related issue: portolan add creates duplicate nested subdirectories
-"""
+"""Unit tests for preventing duplicate directory nesting in add command."""
 
 from __future__ import annotations
 
@@ -28,11 +19,7 @@ def runner() -> CliRunner:
 
 @pytest.fixture
 def mock_cog_file(tmp_path: Path) -> Path:
-    """Create a minimal mock COG file for testing.
-
-    This creates a file that passes basic format detection but
-    doesn't require actual raster processing.
-    """
+    """Create a minimal mock COG file for testing."""
     # For unit tests, we just need a file with .tif extension
     # Integration tests will use real COG files
     tif_file = tmp_path / "test.tif"
@@ -45,16 +32,6 @@ class TestNoDuplicateNesting:
 
     @pytest.mark.unit
     def test_add_does_not_create_stem_subdirectory(self, runner: CliRunner) -> None:
-        """Adding a file should not create a subdirectory named after the file stem.
-
-        Given: catalog/collection/item_dir/FILE.tif
-        After add:
-          - STAC item metadata should be stored appropriately
-          - NO new directory catalog/collection/item_dir/FILE/ should be created
-
-        This tests the bug where adding 26453E204934N.tif created a
-        26453E204934N/ subdirectory.
-        """
         with runner.isolated_filesystem():
             # Create catalog structure
             Path("catalog.json").write_text(
@@ -98,15 +75,6 @@ class TestNoDuplicateNesting:
 
     @pytest.mark.unit
     def test_add_preserves_flat_structure(self, runner: CliRunner) -> None:
-        """Adding a file should preserve the flat item directory structure.
-
-        The item directory (parent of the file) should contain:
-        - The original data file(s)
-        - STAC metadata (item.json or {item_id}.json)
-        - collection.json and versions.json at collection level
-
-        NOT a nested subdirectory named after the file.
-        """
         with runner.isolated_filesystem():
             Path("catalog.json").write_text(
                 json.dumps(
@@ -145,13 +113,6 @@ class TestNoDuplicateNesting:
 
     @pytest.mark.unit
     def test_item_json_location(self, runner: CliRunner) -> None:
-        """STAC item JSON should be in the item directory, not a nested subdir.
-
-        If an item JSON is created, it should be at:
-          collection/item_dir/{item_id}.json
-        NOT at:
-          collection/item_dir/{file_stem}/{file_stem}.json
-        """
         with runner.isolated_filesystem():
             Path("catalog.json").write_text(
                 json.dumps(

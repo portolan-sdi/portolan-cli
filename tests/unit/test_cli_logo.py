@@ -1,8 +1,4 @@
-"""Tests for the catalog-logo CLI surface: `init --logo` and `portolan logo`.
-
-The link shape itself is covered by ``tests/unit/test_logo.py``; these tests
-cover the wiring, the JSON envelope, and the exit codes.
-"""
+"""Tests for the catalog-logo CLI surface: `init --logo` and `portolan logo`."""
 
 from __future__ import annotations
 

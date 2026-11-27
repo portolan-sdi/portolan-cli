@@ -1,8 +1,4 @@
-"""Tests for the inspect module.
-
-TDD-first tests for file, collection, and catalog inspection functionality.
-These tests verify metadata extraction and version lookup for the info command.
-"""
+"""Tests for the inspect module."""
 
 from __future__ import annotations
 
@@ -14,9 +10,7 @@ import pytest
 if TYPE_CHECKING:
     from pathlib import Path
 
-# =============================================================================
 # Fixtures
-# =============================================================================
 
 
 @pytest.fixture
@@ -226,9 +220,7 @@ def catalog_with_cog(tmp_path: Path, valid_rgb_cog: Path) -> Path:
     return catalog_root
 
 
-# =============================================================================
 # Test: File Info - GeoParquet
-# =============================================================================
 
 
 class TestFileInfoGeoParquet:
@@ -281,9 +273,7 @@ class TestFileInfoGeoParquet:
             inspect_file(tmp_path / "nonexistent.parquet", catalog_root=tmp_path)
 
 
-# =============================================================================
 # Test: File Info - COG
-# =============================================================================
 
 
 class TestFileInfoCOG:
@@ -315,9 +305,7 @@ class TestFileInfoCOG:
         assert result.version == "v2.0.0"
 
 
-# =============================================================================
 # Test: Collection Info
-# =============================================================================
 
 
 class TestCollectionInfo:
@@ -401,9 +389,7 @@ class TestCollectionInfo:
             inspect_collection(tmp_path / "nonexistent")
 
 
-# =============================================================================
 # Test: Catalog Info
-# =============================================================================
 
 
 class TestCatalogInfo:
@@ -429,9 +415,7 @@ class TestCatalogInfo:
             inspect_catalog(tmp_path)
 
 
-# =============================================================================
 # Test: FileInfo Output Format (compliant)
-# =============================================================================
 
 
 class TestFileInfoOutputFormat:

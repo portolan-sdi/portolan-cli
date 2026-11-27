@@ -1,11 +1,4 @@
-"""Importing portolan_cli turns off mimalloc's eager arena commit in PyArrow.
-
-PyArrow 26 bundles mimalloc 3.3.1. On Linux, mimalloc commits each arena
-eagerly and marks it for transparent huge pages, so every arena chunk that a
-thread touches becomes resident in 2 MiB pages. The nightly add-rasters
-scenario grew by about 45 MB from that alone. Each check runs in a fresh
-interpreter, because mimalloc reads its options once, when PyArrow loads.
-"""
+"""Importing portolan_cli turns off mimalloc's eager arena commit in PyArrow."""
 
 from __future__ import annotations
 

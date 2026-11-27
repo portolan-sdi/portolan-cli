@@ -1,8 +1,4 @@
-"""Tests for `portolan init` CLI command.
-
-These tests verify the CLI behavior of the init command. For the new v2 file
-structure, catalog.json is at ROOT level (not in .portolan).
-"""
+"""Tests for `portolan init` CLI command."""
 
 from __future__ import annotations
 
@@ -33,10 +29,9 @@ class TestCliInit:
             assert result.exit_code == 0, f"Failed: {result.output}"
             # New structure: catalog.json at root
             assert Path("catalog.json").exists()
-            # .portolan directory with config.yaml (per issue #290, state.json removed)
+            # .portolan directory with config.yaml
             assert Path(".portolan").exists()
             assert Path(".portolan/config.yaml").exists()
-            # Note: state.json no longer created (removed per issue #290)
 
     @pytest.mark.unit
     def test_init_prints_success_message(self, runner: CliRunner, tmp_path: Path) -> None:
@@ -51,7 +46,7 @@ class TestCliInit:
     def test_init_fails_if_managed_catalog_exists(self, runner: CliRunner, tmp_path: Path) -> None:
         """portolan init should fail if MANAGED catalog exists."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            # Create managed catalog (config.yaml alone is sufficient per issue #290)
+            # Create managed catalog (config.yaml alone is sufficient)
             portolan = Path(".portolan")
             portolan.mkdir()
             (portolan / "config.yaml").write_text("# Portolan config\n")
@@ -160,7 +155,6 @@ class TestCliInit:
 
     @pytest.mark.unit
     def test_rejected_id_creates_no_directory(self, runner: CliRunner, tmp_path: Path) -> None:
-        """A rejected --id leaves no directory behind (issue #821)."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
             result = runner.invoke(
                 cli, ["init", "newdir", "--auto", "--id", "bad id", "--license", "CC-BY-4.0"]
@@ -185,7 +179,6 @@ class TestCliInit:
     def test_warns_when_derived_id_is_a_tooling_artifact(
         self, runner: CliRunner, tmp_path: Path
     ) -> None:
-        """A directory named 'publish' warns that the derived id names no data (#821)."""
         target = tmp_path / "publish"
         target.mkdir()
         result = runner.invoke(cli, ["init", str(target), "--auto", "--license", "CC-BY-4.0"])
@@ -241,11 +234,6 @@ class TestCliInitInteractive:
     def test_interactive_derives_title_on_empty_input(
         self, runner: CliRunner, tmp_path: Path
     ) -> None:
-        """Empty title input derives a human-readable title (Issue #502).
-
-        Titles are mandatory, so an empty prompt falls back to a title
-        humanized from the catalog directory name rather than None.
-        """
         import json
 
         with runner.isolated_filesystem(temp_dir=tmp_path):

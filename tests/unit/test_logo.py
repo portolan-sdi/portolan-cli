@@ -1,9 +1,4 @@
-"""Unit tests for catalog logo support (PORTO-CORE-074..077).
-
-Covers the leaf writer ``portolan_cli.logo``: media-type inference from the
-extension, the ``rel="icon"`` link shape, the ``_assets/`` copy, replacement
-semantics, and the errors raised for a source the spec's enum rejects.
-"""
+"""Unit tests for catalog logo support (PORTO-CORE-074..077)."""
 
 from __future__ import annotations
 

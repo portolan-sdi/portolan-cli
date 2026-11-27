@@ -1,12 +1,4 @@
-"""Unit tests for CLI list command and format helpers.
-
-Tests the CLI layer for the top-level `portolan list` command.
-
-Note: add/remove were moved to top-level `portolan add` and `portolan rm`
-commands (see test_cli_add_rm.py).
-
-Updated for issue #210: list now shows ALL files with status indicators.
-"""
+"""Unit tests for CLI list command and format helpers."""
 
 from __future__ import annotations
 
@@ -51,9 +43,7 @@ def _write_asset(path: str, size: int) -> None:
     asset.write_bytes(b"x" * size)
 
 
-# =============================================================================
 # Top-level 'portolan list' command tests
-# =============================================================================
 
 
 class TestTopLevelList:
@@ -115,7 +105,7 @@ class TestTopLevelList:
             envelope = json.loads(result.output)
             assert envelope["success"] is True
             assert envelope["command"] == "list"
-            # Updated for #210: JSON structure has collections array (empty when no items)
+            # The collections array is empty when there are no items.
             assert envelope["data"]["collections"] == []
             # Summary shows all zeros
             assert envelope["data"]["summary"]["total_tracked"] == 0
@@ -135,15 +125,6 @@ class TestTopLevelList:
 
     @pytest.mark.unit
     def test_list_shows_tree_view_format(self, runner: CliRunner) -> None:
-        """portolan list shows items in tree view format.
-
-        Expected format (updated for #210 with status indicators):
-        demographics/
-          census/
-            + census.parquet (GeoParquet, 4.2MB)  [untracked]
-          boundaries/
-            + boundaries.parquet (GeoParquet, 1.1MB)  [untracked]
-        """
         with runner.isolated_filesystem():
             _write_catalog()
             # Create actual files for scanning
@@ -221,7 +202,6 @@ class TestTopLevelList:
             envelope = json.loads(result.output)
             assert envelope["success"] is True
             assert envelope["command"] == "list"
-            # Updated for #210: JSON structure has collections with nested items
             assert "collections" in envelope["data"]
             assert len(envelope["data"]["collections"]) == 1
             assert envelope["data"]["collections"][0]["id"] == "col1"

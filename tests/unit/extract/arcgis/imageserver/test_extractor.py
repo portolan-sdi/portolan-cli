@@ -1,8 +1,4 @@
-"""Tests for ImageServer extraction orchestrator.
-
-Tests verify the full extraction pipeline using Wave 1 data models.
-Uses mocking for HTTP and COG conversion to keep tests fast and isolated.
-"""
+"""Tests for ImageServer extraction orchestrator."""
 
 from __future__ import annotations
 
@@ -28,9 +24,7 @@ from tests.unit.extract.arcgis.imageserver import requires_lerc
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-# =============================================================================
 # Fixtures
-# =============================================================================
 
 
 @pytest.fixture
@@ -90,9 +84,7 @@ def sample_tile() -> TileSpec:
     )
 
 
-# =============================================================================
 # ExtractionConfig Tests
-# =============================================================================
 
 
 @pytest.mark.unit
@@ -170,9 +162,7 @@ class TestExtractionConfig:
         assert config.dry_run is True
 
 
-# =============================================================================
 # ExtractionResult Tests
-# =============================================================================
 
 
 @pytest.mark.unit
@@ -206,9 +196,7 @@ class TestExtractionResult:
         assert result.catalog_initialized is False
 
 
-# =============================================================================
 # Error Handling Tests
-# =============================================================================
 
 
 @pytest.mark.unit
@@ -229,9 +217,7 @@ class TestErrorHandling:
         assert error.__cause__ is cause
 
 
-# =============================================================================
 # Async Function Tests (proper pytest-asyncio)
-# =============================================================================
 
 
 @pytest.mark.unit
@@ -356,9 +342,7 @@ class TestExtractImageserver:
                 )
 
 
-# =============================================================================
 # Integration-style Tests (still unit, but test module interactions)
-# =============================================================================
 
 
 @pytest.mark.unit
@@ -395,14 +379,9 @@ class TestModuleImports:
         assert is_dataclass(ExtractionResult)
 
 
-# =============================================================================
-# Tests for Issue #335 Fixes
-# =============================================================================
-
-
 @pytest.mark.unit
 class TestBboxCrsDetection:
-    """Tests for WGS84 bbox detection and reprojection (issue #335 fix)."""
+    """Tests for WGS84 bbox detection and reprojection."""
 
     def test_is_likely_wgs84_with_lat_lon_coords(self) -> None:
         """Bbox with WGS84-range coordinates is detected."""
@@ -432,9 +411,7 @@ class TestBboxCrsDetection:
         """Bbox is correctly reprojected from WGS84 to Web Mercator."""
         from portolan_cli.extract.arcgis.imageserver.extractor import _reproject_bbox
 
-        # Philadelphia area: known coordinates for verification
-        # WGS84: (-75.17, 39.95, -75.15, 39.97)
-        # Expected Web Mercator (approximately):
+        # Philadelphia. Expected Web Mercator (approximately):
         # minx: -8367886, miny: 4858679, maxx: -8365659, maxy: 4861583
         bbox = (-75.17, 39.95, -75.15, 39.97)
         result = _reproject_bbox(bbox, "EPSG:4326", "EPSG:3857")
@@ -545,7 +522,7 @@ class TestCollectionNameValidation:
 
 @pytest.mark.unit
 class TestJsonErrorParsing:
-    """Tests for JSON error response parsing (issue #335 fix)."""
+    """Tests for JSON error response parsing."""
 
     @pytest.mark.asyncio
     async def test_download_tile_parses_arcgis_json_error(
@@ -594,7 +571,7 @@ def _recording_add(events: list[str]) -> Callable[..., tuple[list[Path], list[Pa
 
 
 class TestAutoInitCatalogExistingCatalog:
-    """Tests for _auto_init_catalog on an existing catalog (issue #767, #832)."""
+    """Tests for _auto_init_catalog on an existing catalog."""
 
     def _make_tile(self, output_dir: Path, collection_name: str = "tiles") -> None:
         """Write a placeholder COG so _auto_init_catalog finds a file to add."""
@@ -629,13 +606,6 @@ class TestAutoInitCatalogExistingCatalog:
     def test_second_extraction_skips_init_on_existing_catalog(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """A second ImageServer extraction adds tiles without aborting (issue #767).
-
-        The COG tiles download before _auto_init_catalog runs. Before the fix,
-        init_catalog raised CatalogAlreadyExistsError on a MANAGED directory, so
-        the run aborted after the download and never wrote collection.json. The
-        guard must skip init_catalog and add the tiles instead.
-        """
         from portolan_cli.extract.arcgis.imageserver.extractor import _auto_init_catalog
 
         # Mark the directory as an existing Portolan catalog. detect_state reads
@@ -663,7 +633,6 @@ class TestAutoInitCatalogExistingCatalog:
     def test_reports_init_catalog_warnings(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """The raster path prints what init_catalog had to guess (issue #821)."""
         from portolan_cli.extract.arcgis.imageserver.extractor import _auto_init_catalog
 
         self._make_tile(tmp_path)
@@ -700,9 +669,7 @@ class TestAutoInitCatalogExistingCatalog:
         assert "Ignored --id 'phl-housing'" in caplog.text
 
 
-# =============================================================================
-# HTTP error messages (issue #870)
-# =============================================================================
+# HTTP error messages
 
 
 def _mock_client_with_status(status_code: int, content: bytes) -> AsyncMock:
@@ -722,13 +689,7 @@ def _mock_client_with_status(status_code: int, content: bytes) -> AsyncMock:
 
 @pytest.mark.unit
 class TestHttpErrorMessages:
-    """A failed exportImage request reports the reason and the request URL.
-
-    Issue #870 reports NAIP tiles that fail with "HTTP 500" and nothing else.
-    The error must carry the ArcGIS message and details when the body has
-    them, the body text when it is not JSON, and the exportImage URL in every
-    case so the user can reproduce the request.
-    """
+    """A failed exportImage request reports the reason and the request URL."""
 
     EXPORT_URL = (
         "https://example.com/ImageServer/exportImage"
@@ -792,11 +753,6 @@ class TestHttpErrorMessages:
     async def test_http_500_html_body_reports_its_title_only(
         self, sample_tile: TileSpec, tmp_path: Path
     ) -> None:
-        """An error page spends its first 200 characters on boilerplate.
-
-        The request URL is the useful part of the message, so the excerpt
-        quotes the page title alone (pull request #871 review).
-        """
         body = (
             b"<!DOCTYPE html><html><head><style>"
             + b"body{font-family:sans-serif}" * 20
@@ -864,7 +820,7 @@ class TestHttpErrorMessages:
 
 @pytest.mark.unit
 class TestFailedTileOutput:
-    """The per-tile failure line shows the reason (issue #870)."""
+    """The per-tile failure line shows the reason."""
 
     def test_failed_tile_line_includes_reason(
         self, tmp_path: Path, sample_tile: TileSpec, caplog: pytest.LogCaptureFixture
@@ -908,19 +864,12 @@ class TestFailedTileOutput:
         )
 
 
-# =============================================================================
-# License resolution on the raster path (issue #870)
-# =============================================================================
+# License resolution on the raster path
 
 
 @pytest.mark.unit
 class TestLicenseResolution:
-    """The raster path honors --license and stops early without one.
-
-    Issue #870 runs `extract arcgis <ImageServer> --license CC-BY-4.0`. Before
-    the fix the raster path dropped the flag, seeded a TODO placeholder, and
-    the add license gate (issue #686) aborted after every tile had downloaded.
-    """
+    """The raster path honors --license and stops early without one."""
 
     def _run(
         self,
@@ -1077,12 +1026,6 @@ class TestResumeSplitRunsBeforeTheCoarseScan:
     async def test_a_completed_tile_is_not_scanned_and_stays_skipped(
         self, tmp_path: Path, sample_metadata: ImageServerMetadata
     ) -> None:
-        """The scan reads the pending tiles only (CodeRabbit review of issue #870).
-
-        Before the fix the scan ran over every tile. A completed tile that the
-        coarse level called empty lost its "skipped" status and was counted as
-        empty instead.
-        """
         from datetime import datetime
 
         from portolan_cli.extract.arcgis.imageserver.resume import ImageServerResumeState
@@ -1104,9 +1047,7 @@ class TestResumeSplitRunsBeforeTheCoarseScan:
         assert [t.status for t in result.report.tiles if t.tile_id == "tile_0_0"] == ["skipped"]
 
 
-# =============================================================================
-# Tile cache routing (issue #870)
-# =============================================================================
+# Tile cache routing
 
 TILE_ORIGIN_X = -12060495.1357351
 TILE_ORIGIN_Y = 5110175.25118694
@@ -1115,11 +1056,7 @@ LERC_FIXTURES = Path(__file__).parents[4] / "fixtures" / "imageserver" / "tileca
 
 @pytest.fixture
 def tiles_only_metadata() -> ImageServerMetadata:
-    """Metadata for a hosted tiled imagery layer, which rejects exportImage.
-
-    The numbers come from the live service named in issue #870. The extent
-    covers 512 x 512 pixels at level 9, so it makes one output tile.
-    """
+    """Metadata for a hosted tiled imagery layer, which rejects exportImage."""
     from portolan_cli.extract.arcgis.imageserver.tilecache import parse_tile_info
 
     cache = parse_tile_info(
@@ -1286,7 +1223,7 @@ class TestTilePlanning:
 
 @pytest.mark.unit
 class TestTilesOnlyExtraction:
-    """End-to-end extraction against a cache-only service (issue #870)."""
+    """End-to-end extraction against a cache-only service."""
 
     @staticmethod
     def _transport(body: bytes) -> httpx.MockTransport:
@@ -1301,11 +1238,7 @@ class TestTilesOnlyExtraction:
 
     @staticmethod
     def _client_factory(transport: httpx.MockTransport) -> Any:
-        """Build a replacement for httpx.AsyncClient that uses a transport.
-
-        The real class is captured now, because patching the attribute would
-        otherwise make the replacement call itself.
-        """
+        """Build a replacement for httpx.AsyncClient that uses a transport."""
         real_client = httpx.AsyncClient
 
         def _build(**kwargs: Any) -> httpx.AsyncClient:
@@ -1368,14 +1301,6 @@ class TestTilesOnlyExtraction:
     async def test_a_float32_cache_keeps_its_mask_in_the_cog(
         self, tmp_path: Path, tiles_only_metadata: ImageServerMetadata
     ) -> None:
-        """A float cache must not report its masked pixels as valid zeros.
-
-        rio-cogeo wraps the raw GeoTIFF in a WarpedVRT with an alpha band. For
-        a float source GDAL builds a float alpha band and reads it as data, so
-        an internal mask alone does not survive the conversion. The raw file
-        carries nan in the masked pixels and declares nan as its nodata value
-        (pull request #871 review).
-        """
         import numpy as np
         import rasterio
 
@@ -1444,7 +1369,7 @@ class TestTilesOnlyExtraction:
 
 @pytest.mark.unit
 class TestCacheRequestCountWarning:
-    """A full-extent cache read must report its own cost (issue #870)."""
+    """A full-extent cache read must report its own cost."""
 
     @staticmethod
     def _blocks(count: int) -> list[TileSpec]:
@@ -1488,7 +1413,7 @@ class TestCacheRequestCountWarning:
 
 @pytest.mark.unit
 class TestCoarseScan:
-    """Skipping empty blocks after a coarse probe (issue #870)."""
+    """Skipping empty blocks after a coarse probe."""
 
     @staticmethod
     def _wide(metadata: ImageServerMetadata) -> ImageServerMetadata:
@@ -1618,7 +1543,7 @@ class TestCoarseScan:
 
 @pytest.mark.unit
 class TestCoarseScanResume:
-    """A coarse verdict must not become a completed tile (PR #871 review)."""
+    """A coarse verdict must not become a completed tile."""
 
     @requires_lerc
     @pytest.mark.asyncio
@@ -1652,11 +1577,6 @@ class TestCoarseScanResume:
     async def test_no_coarse_scan_reads_a_block_the_scan_dropped(
         self, tmp_path: Path, tiles_only_metadata: ImageServerMetadata
     ) -> None:
-        """--resume --no-coarse-scan must recover a block the probe skipped.
-
-        The probe reads a coarse level, which can drop a thin feature. The
-        recovery run therefore reads the block at full resolution.
-        """
         data = (LERC_FIXTURES / "lerc2d_level0_0_0.bin").read_bytes()
         empty = (LERC_FIXTURES / "lerc2d_empty.bin").read_bytes()
         wide = TestCoarseScan._wide(tiles_only_metadata)
@@ -1772,11 +1692,6 @@ class TestResumeGridGuard:
         assert state.succeeded_tiles == {(0, 0), (1, 0)}
 
     def test_a_state_without_a_grid_still_resumes(self, tmp_path: Path) -> None:
-        """A report an older version wrote declares no grid.
-
-        Such a state cannot be checked, and refusing it would break every
-        resume that is already in flight.
-        """
         import json
 
         from portolan_cli.extract.arcgis.imageserver.resume import TileGrid
@@ -1895,11 +1810,6 @@ class TestCacheRateLimit:
 async def test_cog_quality_reaches_the_codec_option(
     tmp_path: Path, compression: str, tag: str
 ) -> None:
-    """conversion.cog.quality reaches the COG as the GTiff option of the codec.
-
-    The GTiff driver has no QUALITY option. It takes JPEG_QUALITY and
-    WEBP_LEVEL, and reports the value back in IMAGE_STRUCTURE.
-    """
     import numpy as np
     import rasterio
     from rasterio.transform import from_origin
@@ -1932,7 +1842,6 @@ async def test_cog_quality_reaches_the_codec_option(
 async def test_tile_download_error_names_the_request_without_its_userinfo(
     sample_tile: TileSpec, tmp_path: Path
 ) -> None:
-    """#981: the error quotes the exportImage request, not the password of the service URL."""
     from portolan_cli.extract.arcgis.imageserver.extractor import ImageServerExtractionError
 
     mock_client = AsyncMock()
@@ -1995,7 +1904,6 @@ async def test_tile_retries_only_a_transient_failure(
     requests: int,
     error: str,
 ) -> None:
-    """#1035: a tile request follows the one retry rule of extract/common/retry.py."""
     import asyncio
 
     from portolan_cli.extract.arcgis.imageserver.extractor import ExtractionConfig, _process_tile
@@ -2030,7 +1938,6 @@ _TOKEN_SERVICE = "https://h.example/X/ImageServer?token=SECRET"
 
 
 def test_report_holds_no_token(sample_metadata: ImageServerMetadata, tmp_path: Path) -> None:
-    """The report, its metadata, and the saved file hold no token (Codex re-review of #1133)."""
     from portolan_cli.extract.arcgis.imageserver.report import (
         build_imageserver_report,
         save_imageserver_report,

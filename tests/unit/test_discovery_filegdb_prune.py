@@ -1,15 +1,4 @@
-"""Discovery must prune FileGDB subtrees during traversal, not post-filter.
-
-Issue #590: ``iter_geospatial_files`` used ``Path.rglob("*")``, which descends
-into and enumerates every internal file of a ``.gdb`` directory before a
-post-filter discards them. FileGDBs hold thousands of internal files, so on
-catalogs with large geodatabases this wasted walk dominates discovery time.
-
-The traversal must stop at the ``.gdb`` boundary: once a FileGDB directory is
-recognized as an asset, its contents must never be enumerated. These tests
-assert the pruning behaviorally (the ``.gdb`` directory is never listed) and
-confirm the discovery results are unchanged.
-"""
+"""Discovery must prune FileGDB subtrees during traversal, not post-filter."""
 
 from __future__ import annotations
 
@@ -35,14 +24,7 @@ def _make_filegdb(parent: Path, name: str, *, internal_files: int = 5) -> Path:
 
 
 def _count_scandir_calls(monkeypatch: pytest.MonkeyPatch) -> Counter[Path]:
-    """Record how many times each directory is opened via ``os.scandir``.
-
-    ``is_filegdb`` opens a candidate ``.gdb`` exactly once to classify it (it
-    early-returns at the first marker, so that scan is O(1), not O(internals)).
-    A traversal that also *descends* into the FileGDB opens it a second time to
-    walk its children -- that second open is the wasted work issue #590 removes.
-    So the discriminating signal is: a FileGDB must be scandir'd at most once.
-    """
+    """Record how many times each directory is opened via ``os.scandir``."""
     calls: Counter[Path] = Counter()
     real_scandir = os.scandir
 
@@ -91,13 +73,6 @@ def test_nested_filegdb_scanned_once_not_descended_into(
 def test_filegdb_scan_cost_independent_of_internal_count(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Discovery cost over a .gdb must not grow with its internal file count.
-
-    Honors the issue's "many internal files" acceptance criterion: a tiny and a
-    large FileGDB must be opened the same number of times (once). Under the old
-    ``rglob`` walk the descent materialized every internal entry, so cost scaled
-    with the internal count; pruning makes it constant.
-    """
     small_root = tmp_path / "s"
     small_root.mkdir()
     small_gdb = _make_filegdb(small_root, "small.gdb", internal_files=2)

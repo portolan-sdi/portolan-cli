@@ -1,8 +1,4 @@
-"""Tests for WFS extraction orchestrator.
-
-These tests verify the main orchestration logic for WFS extraction,
-including layer filtering, extraction, and catalog initialization.
-"""
+"""Tests for WFS extraction orchestrator."""
 
 from __future__ import annotations
 
@@ -59,13 +55,13 @@ class TestExtractionOptions:
         assert options.raw is False
         assert options.dry_run is False
         assert options.wfs_version == "auto"
-        # Issue #529: adopt gpio 1.3+ defaults.
+        # Adopt gpio 1.3+ defaults.
         assert options.page_size == 100000
         assert options.auto_tile is True
 
 
 class TestExtractSingleLayer:
-    """Tests for WFSLayerSource.fetch gpio delegation (Issue #529)."""
+    """Tests for WFSLayerSource.fetch gpio delegation."""
 
     @staticmethod
     def _fetch(options: ExtractionOptions, name: str, dest: Path) -> None:
@@ -96,7 +92,6 @@ class TestExtractSingleLayer:
         assert mock_convert.call_args.kwargs["auto_tile"] is False
 
     def test_empty_layer_error_becomes_empty_layer(self, tmp_path: Path) -> None:
-        """gpio's 'No features returned' error becomes EmptyLayerError (Issue #450)."""
         from portolan_cli.extract.common.source import EmptyLayerError
 
         with (
@@ -447,7 +442,7 @@ class TestWFSMetadataSeeding:
 
 
 class TestSlugify:
-    """Tests for the shared slugify that WFS collection names use (Issue #379)."""
+    """Tests for the shared slugify that WFS collection names use."""
 
     def test_basic_slug(self) -> None:
         """Basic name is slugified without hash."""
@@ -467,7 +462,7 @@ class TestSlugify:
 
 
 class TestAssignSlugs:
-    """Tests for _assign_slugs function (Issue #379)."""
+    """Tests for _assign_slugs function."""
 
     def test_unique_names_no_hash(self) -> None:
         """Unique layer names get slugs without hash suffixes."""
@@ -538,7 +533,7 @@ class TestAssignSlugs:
 
 
 class TestExtractionProgressError:
-    """Tests for error field in ExtractionProgress (Issue #504)."""
+    """Tests for error field in ExtractionProgress."""
 
     def test_progress_has_optional_error_field(self) -> None:
         """ExtractionProgress can carry an optional error message."""
@@ -577,7 +572,7 @@ class TestExtractionProgressError:
             mock_discover.return_value = make_discovery_result([make_layer_info("fail_layer", 0)])
             mock_version.return_value = "1.1.0"
 
-            # A non-raw extraction builds a catalog, which needs a license (issue #686).
+            # A non-raw extraction builds a catalog, which needs a license.
             options = ExtractionOptions(workers=1, retries=1, license="CC-BY-4.0")
             extract_wfs_catalog(
                 url="https://example.com/wfs",
@@ -592,11 +587,7 @@ class TestExtractionProgressError:
 
 
 class _VirtualClock:
-    """Stand in for the ``time`` module of ``extract/common/source.py``.
-
-    The clock moves only when a test advances it. A per-layer deadline then
-    depends on the order of events in the run, not on the speed of the runner.
-    """
+    """Stand in for the ``time`` module of ``extract/common/source.py``."""
 
     def __init__(self) -> None:
         self._now = 0.0
@@ -612,12 +603,7 @@ class _VirtualClock:
 
 
 class TestTimeoutEnforcement:
-    """Tests for per-layer timeout enforcement in a parallel run (Issue #508).
-
-    The timeout tests use a virtual clock. A wall-clock version failed on
-    loaded Windows runners, where the file I/O of one layer can stall for
-    seconds.
-    """
+    """Tests for per-layer timeout enforcement in a parallel run."""
 
     @staticmethod
     def _run(
@@ -682,21 +668,6 @@ class TestTimeoutEnforcement:
         assert [r.status for r in report.layers] == ["success", "success"]
 
     def test_queued_layers_do_not_time_out(self, tmp_path: Path) -> None:
-        """Queued layers must not time out while waiting for a worker (Issue #526).
-
-        The two workers meet at a barrier once in each fetch, and the clock
-        moves 1s at each meeting. A running layer sees exactly 1s pass, far
-        under the 10s timeout. 48 layers take 24 meetings, and the last layers
-        wait 23s in the queue. A deadline from submission fails them.
-
-        A fetch also takes a token, and the main thread gives one back for
-        each layer it reports. The workers then stay at most one round ahead
-        of the main thread. The main thread thus checks the deadlines while
-        layers are still in the queue, and does not find all 48 done at once.
-
-        The waits time out after 15s. One worker can stall for that long
-        before the test fails.
-        """
         clock = _VirtualClock()
         rounds = threading.Barrier(2, action=lambda: clock.advance(1.0))
         tokens = threading.Semaphore(2)
@@ -728,7 +699,6 @@ class TestTimeoutEnforcement:
 
 
 def test_failed_version_negotiation_logs_no_key(caplog: pytest.LogCaptureFixture) -> None:
-    """#981: geoparquet-io quotes the keyed URL. The warning names the service without the key."""
     from geoparquet_io.core.wfs import WFSError
 
     from portolan_cli.extract.wfs.orchestrator import _negotiate_version

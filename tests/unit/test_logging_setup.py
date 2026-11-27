@@ -1,4 +1,4 @@
-"""Unit tests for the logging setup (issue #991)."""
+"""Unit tests for the logging setup."""
 
 from __future__ import annotations
 
@@ -28,11 +28,7 @@ PKG = logging.getLogger("portolan_cli")
 
 @pytest.fixture(autouse=True)
 def default_root_level() -> Iterator[None]:
-    """Start from Python's default root level, and restore the level after.
-
-    Another test in the same worker can leave the root logger at a different
-    level. These tests assert levels relative to the default.
-    """
+    """Start from Python's default root level, and restore the level after."""
     root = logging.getLogger()
     saved = root.level
     root.setLevel(logging.WARNING)
@@ -76,7 +72,6 @@ class TestLevel:
         assert PKG.getEffectiveLevel() == expected
 
     def test_verbose_reaches_the_core_logger(self) -> None:
-        """The reader modules live in portolan_core, so -v covers its logger too (#1133)."""
         logging_setup.configure_logging(verbosity=1, quiet=False)
         assert logging.getLogger("portolan_core.config").getEffectiveLevel() == logging.INFO
         logging_setup.reset_logging()
@@ -188,11 +183,7 @@ class TestUserFormat:
 
 
 class TestCredentialsStayOutOfTheLog:
-    """No handler of the run writes a URL credential (basemap key, #1067 review).
-
-    The tile URL of a keyed basemap holds ``?key=``. urllib3 logs each request
-    line at DEBUG, and an HTTP error quotes the URL.
-    """
+    """No handler of the run writes a URL credential (such as a basemap key)."""
 
     SECRET = "SECRET123"
     TILE = "https://a.basemaps.cartocdn.com/light_all/8/135/95.png?key=SECRET123"

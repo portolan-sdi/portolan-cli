@@ -1,8 +1,4 @@
-"""Unit tests for the credential warning of the push command.
-
-`check_credentials` builds a hint that names every way to supply credentials.
-The push command prints that hint before it contacts the store.
-"""
+"""Unit tests for the credential warning of the push command."""
 
 from __future__ import annotations
 
