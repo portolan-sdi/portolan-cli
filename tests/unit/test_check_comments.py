@@ -95,6 +95,17 @@ def test_click_docstrings_keep_the_history_ban(tmp_path: Path) -> None:
     assert _codes(tmp_path, "a.py", src) == ["DOC-HIST"]
 
 
+def test_click_docstrings_may_show_example_dates(tmp_path: Path) -> None:
+    src = '@cli.command()\ndef cmd() -> None:\n    """Run it.\n\n    portolan add x --datetime 2024-06-15\n    """\n'
+    assert _codes(tmp_path, "a.py", src) == []
+
+
+def test_other_docstrings_keep_the_date_ban(tmp_path: Path) -> None:
+    assert _codes(tmp_path, "a.py", 'def f() -> None:\n    """Fixed on 2024-06-15."""\n') == [
+        "DOC-HIST"
+    ]
+
+
 def test_api_groups_docstring_is_exempt(tmp_path: Path) -> None:
     src = '"""API.\n\nGroups:\n\n- Hooks: x,\n  y.\n- More.\n"""\n'
     assert _codes(tmp_path, "portolan_cli/api.py", src) == []

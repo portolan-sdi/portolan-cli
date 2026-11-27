@@ -28,7 +28,12 @@ DEFS = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
 SYNCED = "synced from portolan-sdi/portolan-ops"
 
 
-def _hist(text: str) -> bool:
+ISO_DATE = re.compile(r"\b20\d\d-\d\d-\d\d\b")
+
+
+def _hist(text: str, click: bool = False) -> bool:
+    # A Click docstring is --help text, so a date in it is an example value.
+    text = ISO_DATE.sub("", text) if click else text
     return "://" not in text and bool(HISTORY.search(text))
 
 
@@ -72,9 +77,12 @@ def _docstrings(tree: ast.Module, rel: str, prefixes: set[str]) -> list[tuple[in
         doc = ast.get_docstring(node, clean=False)
         if doc is not None:
             start = node.body[0].lineno
+            click = _is_click(node)
             lines = enumerate(doc.splitlines())
-            found += [(start + n, "DOC-HIST history in a docstring") for n, s in lines if _hist(s)]
-            exempt = _is_click(node) or (rel.endswith("portolan_cli/api.py") and not qual)
+            found += [
+                (start + n, "DOC-HIST history in a docstring") for n, s in lines if _hist(s, click)
+            ]
+            exempt = click or (rel.endswith("portolan_cli/api.py") and not qual)
             if not exempt and _too_long(doc, shown):
                 found.append(
                     (start, f"DOC-LEN docstring over {CAP} lines or off the section format")

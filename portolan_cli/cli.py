@@ -2391,8 +2391,8 @@ def add_cmd(
         --datetime applies to ALL items added in this command. For items
         with different acquisition dates, run separate add commands:
 
-            portolan add census/2020/ --datetime 2020-04-01T00:00:00Z
-            portolan add census/2023/ --datetime 2023-04-01T00:00:00Z
+            portolan add census/2020/ --datetime 2020-04-01
+            portolan add census/2023/ --datetime 2023-04-01
 
         If --datetime is omitted, items have a null temporal extent and carry
         the sentinel start/end range. Run 'portolan check' to find items
@@ -2405,7 +2405,7 @@ def add_cmd(
         portolan add imagery/                      # Add all files in directory
         portolan add .                             # Add all files in catalog
         portolan add data.geojson --item-id my-id  # Override item ID (single file only)
-        portolan add sat.tif --datetime 2024-06-15T12:00:00Z # Explicit acquisition date
+        portolan add sat.tif --datetime 2024-06-15 # Explicit acquisition date
 
     Smart behavior:
     - Unchanged files are silently skipped (use --verbose to see them)
