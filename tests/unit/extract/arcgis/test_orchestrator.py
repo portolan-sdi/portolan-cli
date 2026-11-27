@@ -9,7 +9,7 @@ from __future__ import annotations
 import sys
 import types
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -756,10 +756,11 @@ class TestServicesRootDiscoveryResult:
         d = result.to_dict()
 
         assert d["base_url"] == TEST_SERVICES_ROOT_URL
-        assert len(d["services"]) == 2
-        assert d["services"][0]["name"] == "Census_2020"
-        assert d["services"][0]["type"] == "FeatureServer"
-        assert d["services"][0]["url"].endswith("Census_2020/FeatureServer")
+        services_out = cast("list[dict[str, str]]", d["services"])
+        assert len(services_out) == 2
+        assert services_out[0]["name"] == "Census_2020"
+        assert services_out[0]["type"] == "FeatureServer"
+        assert services_out[0]["url"].endswith("Census_2020/FeatureServer")
         assert d["folders"] == ["Archived"]
         assert d["total_services"] == 2
 
@@ -1471,7 +1472,9 @@ def _read_crs(path: Path) -> object:
     # Close the reader before returning. Windows blocks a replace on the file
     # while a handle stays open.
     with pq.ParquetFile(path) as parquet_file:
-        geo = json.loads(parquet_file.metadata.metadata[b"geo"])
+        file_metadata = parquet_file.metadata.metadata
+        assert file_metadata is not None
+        geo = json.loads(file_metadata[b"geo"])
     return geo["columns"][geo["primary_column"]].get("crs")
 
 

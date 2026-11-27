@@ -45,18 +45,21 @@ class TestCollectionIdPathSyntax:
         """Test that paths with uppercase letters are rejected."""
         is_valid, error = validate_collection_id("Environment/Air-Quality")
         assert not is_valid
+        assert error is not None
         assert "uppercase" in error.lower()
 
     def test_validate_path_rejects_spaces(self) -> None:
         """Test that paths with spaces are rejected."""
         is_valid, error = validate_collection_id("environment/air quality")
         assert not is_valid
+        assert error is not None
         assert "spaces" in error.lower()
 
     def test_validate_path_rejects_invalid_chars(self) -> None:
         """Test that paths with invalid characters are rejected."""
         is_valid, error = validate_collection_id("environment/air@quality")
         assert not is_valid
+        assert error is not None
         assert "invalid character" in error.lower()
 
     def test_validate_path_rejects_leading_slash(self) -> None:

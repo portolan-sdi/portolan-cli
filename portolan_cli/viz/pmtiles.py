@@ -167,7 +167,7 @@ def check_pmtiles_available() -> None:
     # Check for the geoparquet-io PMTiles API. geoparquet-io is a core
     # dependency, so this only fails on a version below 1.3.0 (Issue #754).
     try:
-        from geoparquet_io.api.ops import (  # type: ignore[import-untyped] # noqa: F401
+        from geoparquet_io.api.ops import (  # noqa: F401
             create_pmtiles,
         )
     except ImportError as e:

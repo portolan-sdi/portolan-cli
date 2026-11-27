@@ -275,10 +275,9 @@ class TestParquetGeometryDetection:
         # Verify the fixture has no geo metadata
         pf = pq.ParquetFile(tabular_parquet)
         schema = pf.schema_arrow
-        metadata = schema.metadata
-        assert metadata is None or b"geo" not in metadata, (
-            "Test fixture should not have geo metadata"
-        )
+        # The schema has no metadata at all here. pyarrow-stubs types it as a dict.
+        metadata = schema.metadata or {}
+        assert b"geo" not in metadata, "Test fixture should not have geo metadata"
 
 
 # =============================================================================
@@ -432,7 +431,7 @@ class TestGeoParquetSuccessPath:
         # Mock prepare_item and finalize_items to simulate success
         # Per Issue #281: add_files now calls prepare_item + finalize_items
         # The added list is populated from finalize_items return value
-        from portolan_cli.add import ItemInfo
+        from portolan_core.query import ItemInfo
 
         mock_item_info = ItemInfo(
             item_id="item",
@@ -554,9 +553,10 @@ class TestTabularParquetHypothesis:
                 )
             except Exception as e:
                 pytest.fail(f"add_files raised for non-geo parquet: {e}")
-            # A lone non-geo parquet is a failure that names the file, never an item
-            assert added == []
-            assert [f.path for f in failures] == [parquet_file]
+            else:
+                # A lone non-geo parquet is a failure that names the file, never an item
+                assert added == []
+                assert [f.path for f in failures] == [parquet_file]
         finally:
             shutil.rmtree(tmp_dir, ignore_errors=True)
 
@@ -655,7 +655,8 @@ class TestTabularParquetHypothesis:
                 )
             except Exception as e:
                 pytest.fail(f"add_files raised for parquet content: {e}")
-            assert added == []
-            assert [f.path for f in failures] == [parquet_file]
+            else:
+                assert added == []
+                assert [f.path for f in failures] == [parquet_file]
         finally:
             shutil.rmtree(tmp_dir, ignore_errors=True)

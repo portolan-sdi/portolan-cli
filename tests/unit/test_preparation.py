@@ -8,7 +8,7 @@ the new module's seam, independent of the full add() orchestration.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -653,7 +653,9 @@ class TestConvertTabularKeepsAForeignFile:
 
         out = convert_tabular(tmp_path / "t.csv", tmp_path)
 
-        recorded = pq.read_metadata(out).metadata[PROVENANCE_KEY.encode()]
+        file_metadata = pq.read_metadata(out).metadata
+        assert file_metadata is not None
+        recorded = file_metadata[PROVENANCE_KEY.encode()]
         assert json.loads(recorded) == {
             "base": "absolute",
             "path": (tmp_path / "t.csv").resolve().as_posix(),
@@ -954,7 +956,9 @@ class TestTheGateSeesWhatTheRewriteDrops:
             else field
             for field in table.schema
         ]
-        pq.write_table(table.cast(pa.schema(fields, metadata=metadata)), path)
+        # The pyarrow stub types the metadata as an invariant dict of bytes or str.
+        schema_metadata = cast("dict[bytes | str, bytes | str]", metadata)
+        pq.write_table(table.cast(pa.schema(fields, metadata=schema_metadata)), path)
         return path
 
     @pytest.mark.unit

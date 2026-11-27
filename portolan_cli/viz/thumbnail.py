@@ -515,7 +515,7 @@ def _read_pmtiles_geometries(
         return [], None
 
     try:
-        import mapbox_vector_tile  # type: ignore
+        import mapbox_vector_tile
     except ImportError:
         logger.debug("mapbox-vector-tile library not available")
         return [], None
@@ -1609,16 +1609,18 @@ def _get_tile(url: str) -> Any:
     import io
 
     import numpy as np
-    import requests  # type: ignore[import-untyped]
+    import requests
     from contextily.tile import USER_AGENT
     from PIL import Image
 
-    for attempt in range(_TILE_RETRIES + 1):
+    attempt = 0
+    while True:
         response = requests.get(url, headers={"user-agent": USER_AGENT}, timeout=_TILE_TIMEOUT_S)
         if response.status_code == 404 or attempt == _TILE_RETRIES:
             response.raise_for_status()
-        if response.ok:
+        if response.ok or attempt == _TILE_RETRIES:
             break
+        attempt += 1
     with Image.open(io.BytesIO(response.content)) as image:
         return np.asarray(image.convert("RGBA"))
 

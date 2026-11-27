@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import os
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
@@ -84,9 +84,9 @@ class TestWriteJsonAtomic:
 
         # Serialization happens before the temp file exists, so probe at
         # os.fdopen — the moment the freshly created temp file is opened.
-        def _spy_fdopen(fd: int, *args: object, **kwargs: object) -> object:
+        def _spy_fdopen(fd: int, *args: Any, **kwargs: Any) -> Any:
             seen.extend(_temp_siblings(tmp_path))
-            return real_fdopen(fd, *args, **kwargs)  # type: ignore[arg-type]
+            return real_fdopen(fd, *args, **kwargs)
 
         monkeypatch.setattr("portolan_core.json_io.os.fdopen", _spy_fdopen)
         write_json_atomic(target, {"id": "root"})

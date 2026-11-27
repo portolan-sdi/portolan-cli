@@ -118,7 +118,7 @@ class TestParallelPushIntegration:
         active_count: list[int] = []
         lock = threading.Lock()
 
-        async def track_concurrent(**kwargs):  # type: ignore[no-untyped-def]
+        async def track_concurrent(**kwargs):
             with lock:
                 active_count.append(threading.active_count())
 
@@ -153,7 +153,7 @@ class TestParallelPushIntegration:
         """workers=1 executes collections sequentially."""
         call_order: list[str] = []
 
-        async def track_order(**kwargs):  # type: ignore[no-untyped-def]
+        async def track_order(**kwargs):
             call_order.append(kwargs["collection"])
             return PushResult(
                 success=True, files_uploaded=1, versions_pushed=1, conflicts=[], errors=[]
@@ -182,7 +182,7 @@ class TestParallelPushIntegration:
     ) -> None:
         """Parallel execution continues when individual collections fail."""
 
-        async def mixed_results(**kwargs):  # type: ignore[no-untyped-def]
+        async def mixed_results(**kwargs):
             if kwargs["collection"] == "collection_b":
                 return PushResult(
                     success=False,

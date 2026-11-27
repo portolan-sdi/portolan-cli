@@ -7,13 +7,21 @@ not walked into with internal files reported as "unknown format".
 from __future__ import annotations
 
 from pathlib import Path
+from typing import cast
 
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from portolan_cli.scan.core import ScanOptions, scan_directory
+from portolan_cli.scan.classify import SkippedFile
+from portolan_cli.scan.core import ScanOptions, ScanResult, scan_directory
 from portolan_cli.scan.detect import is_filegdb
+
+
+def _skipped(result: ScanResult) -> list[SkippedFile]:
+    """Return the skipped entries. The scanner records each one as a SkippedFile."""
+    assert all(isinstance(entry, SkippedFile) for entry in result.skipped)
+    return cast("list[SkippedFile]", result.skipped)
 
 
 @pytest.mark.unit
@@ -35,7 +43,7 @@ class TestFileGDBDirectoryDiscovery:
 
         # Internal files should NOT be reported as unknown/skipped
         internal_extensions = {".gdbtable", ".gdbtablx", ".spx"}
-        skipped_extensions = {f.path.suffix for f in result.skipped}
+        skipped_extensions = {f.path.suffix for f in _skipped(result)}
 
         # None of the internal FileGDB extensions should be in skipped files
         assert not internal_extensions.intersection(skipped_extensions), (
@@ -53,7 +61,7 @@ class TestFileGDBDirectoryDiscovery:
 
         # FileGDB should appear in special_formats or be handled appropriately
         # The directory itself should be detected, not its internal files
-        all_paths = [f.path for f in result.ready + result.skipped]
+        all_paths = [f.path for f in result.ready + _skipped(result)]
 
         # Should NOT contain paths inside the .gdb directory
         for path in all_paths:
@@ -91,7 +99,7 @@ class TestFileGDBDirectoryDiscovery:
         result = scan_directory(tmp_path, options=ScanOptions(recursive=True))
 
         # Should NOT find internal .gdbtable files in skipped
-        gdbtable_files = [f for f in result.skipped if f.path.suffix == ".gdbtable"]
+        gdbtable_files = [f for f in _skipped(result) if f.path.suffix == ".gdbtable"]
         assert len(gdbtable_files) == 0, (
             f"Internal .gdbtable files should not be reported: {gdbtable_files}"
         )
@@ -107,7 +115,7 @@ class TestFileGDBDirectoryDiscovery:
         result = scan_directory(tmp_path)
 
         # None of the internal files should be in results
-        all_files = result.ready + result.skipped
+        all_files = result.ready + _skipped(result)
         internal_files = [f for f in all_files if ".gdb/" in str(f.path) or ".gdb\\" in str(f.path)]
         assert len(internal_files) == 0, (
             f"No internal FileGDB files should be found: {internal_files}"
@@ -124,7 +132,7 @@ class TestFileGDBDirectoryDiscovery:
         result = scan_directory(tmp_path)
 
         # The txt file inside should be found (skipped as unknown format)
-        txt_found = any(f.path.suffix == ".txt" for f in result.skipped)
+        txt_found = any(f.path.suffix == ".txt" for f in _skipped(result))
         assert txt_found, "Empty .gdb dir should be walked into like regular directory"
 
     def test_filegdb_with_lock_files(self, tmp_path: Path) -> None:
@@ -140,7 +148,7 @@ class TestFileGDBDirectoryDiscovery:
 
         # Lock files should NOT be in results
         lock_files = [
-            f for f in result.skipped if f.path.suffix == ".lck" or "lock" in f.path.name.lower()
+            f for f in _skipped(result) if f.path.suffix == ".lck" or "lock" in f.path.name.lower()
         ]
         assert len(lock_files) == 0, f"Lock files should not be found: {lock_files}"
 
@@ -161,7 +169,7 @@ class TestFileGDBArchiveDetection:
         result = scan_directory(tmp_path)
 
         # The zip file should be found (in ready or skipped based on support)
-        all_files = result.ready + result.skipped
+        all_files = result.ready + _skipped(result)
         zip_found = any(f.path == zip_path for f in all_files)
         assert zip_found, "FileGDB zip archive should be detected"
 
@@ -309,7 +317,7 @@ class TestFileGDBPropertyBased:
             result = scan_directory(tmp_path)
 
             # Collect all paths from results
-            all_paths = [f.path for f in result.ready] + [f.path for f in result.skipped]
+            all_paths = [f.path for f in result.ready] + [f.path for f in _skipped(result)]
 
             # No path should be inside a .gdb directory
             for path in all_paths:
@@ -345,7 +353,7 @@ class TestFileGDBPropertyBased:
             result = scan_directory(tmp_path, options=ScanOptions(recursive=True))
 
             # No .gdbtable files should appear in skipped
-            gdbtable_files = [f for f in result.skipped if f.path.suffix == ".gdbtable"]
+            gdbtable_files = [f for f in _skipped(result) if f.path.suffix == ".gdbtable"]
             assert len(gdbtable_files) == 0, (
                 f"Internal .gdbtable files found at depth {depth}: {gdbtable_files}"
             )

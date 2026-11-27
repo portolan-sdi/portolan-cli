@@ -452,10 +452,8 @@ class TestAddPMTilesLinkToCollection:
     @pytest.mark.unit
     def test_adds_web_map_links_link_and_extension(self, tmp_path: Path) -> None:
         """Adds rel='pmtiles' link with media type, layers, and extension."""
-        from portolan_cli.viz.pmtiles import (
-            WEB_MAP_LINKS_EXTENSION,
-            add_pmtiles_link_to_collection,
-        )
+        from portolan_cli.viz.pmtiles import add_pmtiles_link_to_collection
+        from portolan_cli.viz.pmtiles_links import WEB_MAP_LINKS_EXTENSION
 
         collection_dir = self._collection(tmp_path)
 
@@ -472,10 +470,8 @@ class TestAddPMTilesLinkToCollection:
     @pytest.mark.unit
     def test_idempotent_does_not_duplicate_link_or_extension(self, tmp_path: Path) -> None:
         """Calling twice keeps exactly one link and one extension entry."""
-        from portolan_cli.viz.pmtiles import (
-            WEB_MAP_LINKS_EXTENSION,
-            add_pmtiles_link_to_collection,
-        )
+        from portolan_cli.viz.pmtiles import add_pmtiles_link_to_collection
+        from portolan_cli.viz.pmtiles_links import WEB_MAP_LINKS_EXTENSION
 
         collection_dir = self._collection(tmp_path)
 
@@ -1157,10 +1153,8 @@ class TestGeneratePMTilesForCollection:
     @pytest.mark.unit
     def test_generate_emits_pmtiles_link(self, tmp_path: Path) -> None:
         """The generate path emits the rel='pmtiles' web-map-links link (#569)."""
-        from portolan_cli.viz.pmtiles import (
-            WEB_MAP_LINKS_EXTENSION,
-            generate_pmtiles_for_collection,
-        )
+        from portolan_cli.viz.pmtiles import generate_pmtiles_for_collection
+        from portolan_cli.viz.pmtiles_links import WEB_MAP_LINKS_EXTENSION
 
         collection_dir = tmp_path / "demographics"
         collection_dir.mkdir()

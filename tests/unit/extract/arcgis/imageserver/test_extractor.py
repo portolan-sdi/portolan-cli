@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from datetime import UTC
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -24,6 +24,9 @@ from portolan_cli.extract.arcgis.imageserver.extractor import (
 )
 from portolan_cli.extract.arcgis.imageserver.tiling import TileSpec
 from tests.unit.extract.arcgis.imageserver import requires_lerc
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 # =============================================================================
 # Fixtures
@@ -580,6 +583,16 @@ class TestJsonErrorParsing:
 
 
 @pytest.mark.unit
+def _recording_add(events: list[str]) -> Callable[..., tuple[list[Path], list[Path], list[Path]]]:
+    """Return a stand-in for ``add_files`` that records each call in ``events``."""
+
+    def fake_add(**_kwargs: object) -> tuple[list[Path], list[Path], list[Path]]:
+        events.append("add")
+        return [], [], []
+
+    return fake_add
+
+
 class TestAutoInitCatalogExistingCatalog:
     """Tests for _auto_init_catalog on an existing catalog (issue #767, #832)."""
 
@@ -606,7 +619,7 @@ class TestAutoInitCatalogExistingCatalog:
             return output_dir / "catalog.json", []
 
         monkeypatch.setattr(catalog_mod, "init_catalog", _fake_init)
-        monkeypatch.setattr(add_mod, "add_files", lambda **k: events.append("add") or ([], [], []))
+        monkeypatch.setattr(add_mod, "add_files", _recording_add(events))
 
         result = _auto_init_catalog(tmp_path, service_name="svc")
 
@@ -639,7 +652,7 @@ class TestAutoInitCatalogExistingCatalog:
         monkeypatch.setattr(
             catalog_mod, "init_catalog", lambda *a, **k: (tmp_path / "catalog.json", [])
         )
-        monkeypatch.setattr(add_mod, "add_files", lambda **k: events.append("add") or ([], [], []))
+        monkeypatch.setattr(add_mod, "add_files", _recording_add(events))
 
         result = _auto_init_catalog(tmp_path, service_name="svc", collection_name="naip-2024")
 

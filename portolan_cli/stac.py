@@ -34,6 +34,7 @@ from portolan_core.json_io import write_json_atomic
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Mapping, Sequence
 
+    from portolan_cli.metadata.geoparquet import GeoParquetMetadata
     from portolan_cli.metadata.tabular import TabularMetadata
 
 logger = logging.getLogger(__name__)
@@ -1299,7 +1300,7 @@ def _warn_on_mismatches(metadata_list: Sequence[object]) -> None:
         )
 
 
-def aggregate_table_metadata(metadata_list: Sequence[object]) -> object:
+def aggregate_table_metadata(metadata_list: Sequence[object]) -> GeoParquetMetadata:
     """Aggregate table metadata from multiple vector items for collection-level extension.
 
     Used to combine metadata from multiple GeoParquet files in a collection:
@@ -1813,7 +1814,7 @@ def apply_collection_fields(collection: pystac.Collection, fields: CollectionFie
         collection.extent.spatial = fields.spatial
     if fields.temporal is not None:
         collection.extent.temporal = fields.temporal
-    stored = collection.summaries.to_dict() if collection.summaries is not None else {}
+    stored = collection.summaries.to_dict()
     collection.summaries = pystac.Summaries(_merged_summaries(stored, fields.summaries))
     other_keys = [
         *collection.extra_fields,

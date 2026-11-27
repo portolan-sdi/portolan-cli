@@ -56,7 +56,7 @@ from portolan_cli.scan.output import (
     render_tree_view,
 )
 from portolan_cli.scan.progress import ScanProgressReporter, count_directories
-from portolan_cli.utils import format_size
+from portolan_cli.utils import format_size as format_size
 from portolan_core import trace
 from portolan_core.catalog_list import (
     AssetInfo,
@@ -1394,8 +1394,7 @@ def check(
     from portolan_core.errors import NotACatalogError
 
     def show_conversion_progress(result: ConversionResult) -> None:
-        if result.source:
-            info_output(f"Converting: {result.source.name}")
+        info_output(f"Converting: {result.source.name}")
 
     def show_fix_report(report: FixReport | None, conversion: Any) -> None:
         _output_fix_human(

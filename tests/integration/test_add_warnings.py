@@ -125,8 +125,9 @@ class TestUnsupportedEmitsError:
 
         result = get_cloud_native_status(las_file)
         assert result.status == CloudNativeStatus.UNSUPPORTED
-        assert "COPC" in result.error_message  # type: ignore
-        assert "pdal" in result.error_message.lower()  # type: ignore
+        assert result.error_message is not None
+        assert "COPC" in result.error_message
+        assert "pdal" in result.error_message.lower()
 
     @pytest.mark.integration
     def test_unsupported_format_error_exception(self, tmp_path: Path) -> None:

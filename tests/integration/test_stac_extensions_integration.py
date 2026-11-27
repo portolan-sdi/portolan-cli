@@ -80,6 +80,7 @@ class TestProjectionExtensionVector:
     def test_projection_extension_skips_when_crs_none(self, open_buildings_path: Path) -> None:
         """Projection extension does nothing when CRS is None."""
         metadata = extract_geoparquet_metadata(open_buildings_path)
+        assert metadata.bbox is not None
 
         # Many GeoParquet files have CRS=None (implied WGS84)
         assert metadata.crs is None
@@ -102,6 +103,7 @@ class TestProjectionExtensionVector:
             pytest.skip("UTM fixture not available")
 
         metadata = extract_geoparquet_metadata(utm_path)
+        assert metadata.bbox is not None
         item = create_item(item_id="utm-item", bbox=[0, 0, 1, 1])
 
         add_projection_extension(item, metadata)
@@ -207,6 +209,7 @@ class TestBboxTransformation:
     def test_wgs84_bbox_unchanged(self, open_buildings_path: Path) -> None:
         """WGS84 bbox passes through unchanged."""
         metadata = extract_geoparquet_metadata(open_buildings_path)
+        assert metadata.bbox is not None
 
         # This file should be in WGS84
         crs_str = metadata.crs if isinstance(metadata.crs, str) else None
@@ -222,6 +225,7 @@ class TestAntimeridianHandling:
     def test_antimeridian_bbox_valid(self, fieldmaps_boundaries_path: Path) -> None:
         """Antimeridian-crossing bbox produces valid WGS84 coordinates."""
         metadata = extract_geoparquet_metadata(fieldmaps_boundaries_path)
+        assert metadata.bbox is not None
 
         crs_str = metadata.crs if isinstance(metadata.crs, str) else None
         wgs84_bbox = transform_bbox_to_wgs84(metadata.bbox, crs_str)
@@ -270,6 +274,7 @@ class TestEndToEndWorkflow:
         """Vector workflow adds table extension (projection only if CRS present)."""
         # Extract metadata (simulating add.py workflow)
         metadata = extract_geoparquet_metadata(open_buildings_path)
+        assert metadata.bbox is not None
 
         # Transform bbox
         crs_str = metadata.crs if isinstance(metadata.crs, str) else None
@@ -309,6 +314,7 @@ class TestEndToEndWorkflow:
             pytest.skip("UTM fixture not available")
 
         metadata = extract_geoparquet_metadata(utm_path)
+        assert metadata.bbox is not None
 
         # Transform bbox from UTM to WGS84
         crs_str = metadata.crs if isinstance(metadata.crs, str) else None
@@ -452,7 +458,7 @@ class TestRasterExtensionCompliance:
         """
         from portolan_cli.stac import build_stac_extensions
 
-        properties = {
+        properties: dict[str, object] = {
             "bands": [{"name": "red", "data_type": "uint8"}],
             "datetime": "2024-01-01T00:00:00Z",
         }

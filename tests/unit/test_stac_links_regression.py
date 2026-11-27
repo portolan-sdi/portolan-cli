@@ -21,9 +21,9 @@ import pytest
 from portolan_cli.add import (
     _scan_item_assets,
     add,
-    is_current,
 )
 from portolan_cli.catalog import init_catalog
+from portolan_core.query import is_current
 from portolan_core.versions import read_versions
 
 

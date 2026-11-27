@@ -6,8 +6,6 @@ These tests verify that:
 3. Invalid fixtures are indeed invalid (fail as expected)
 """
 
-# mypy: disable-error-code="import-untyped"
-
 from __future__ import annotations
 
 import json

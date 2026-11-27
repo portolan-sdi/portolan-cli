@@ -22,10 +22,10 @@ from click.testing import CliRunner
 
 from portolan_cli.add import (
     AddFailure,
-    ItemInfo,
     add_files,
 )
 from portolan_cli.cli import cli
+from portolan_core.query import ItemInfo
 
 if TYPE_CHECKING:
     from datetime import datetime

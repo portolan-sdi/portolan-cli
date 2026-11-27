@@ -229,7 +229,7 @@ def partition_geoparquet(
     """
     import shutil
 
-    from geoparquet_io.core.partition.by_kdtree import (  # type: ignore[import-untyped]
+    from geoparquet_io.core.partition.by_kdtree import (
         partition_by_kdtree,
     )
 

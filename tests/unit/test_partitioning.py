@@ -12,9 +12,26 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING, Any, cast
 from unittest import mock
 
 import pytest
+
+if TYPE_CHECKING:
+    from datetime import datetime
+
+    import pystac
+
+
+def _world_extent() -> pystac.Extent:
+    """Return a whole-world extent with an open interval."""
+    import pystac
+
+    interval: list[list[datetime | None]] = [[None, None]]
+    return pystac.Extent(
+        spatial=pystac.SpatialExtent(bboxes=[[-180.0, -90.0, 180.0, 90.0]]),
+        temporal=pystac.TemporalExtent(intervals=interval),
+    )
 
 
 class TestShouldPartition:
@@ -45,7 +62,7 @@ class TestShouldPartition:
 
         original_stat = os.stat
 
-        def mock_stat(path: str | Path, *args: object, **kwargs: object) -> os.stat_result:
+        def mock_stat(path: str | Path, *args: Any, **kwargs: Any) -> os.stat_result:
             if Path(path) == large_file:
                 # Return a mock stat result with 3GB size
                 return os.stat_result((0, 0, 0, 0, 0, 0, 3 * 1024 * 1024 * 1024, 0, 0, 0))
@@ -68,7 +85,7 @@ class TestShouldPartition:
 
         original_stat = os.stat
 
-        def mock_stat(path: str | Path, *args: object, **kwargs: object) -> os.stat_result:
+        def mock_stat(path: str | Path, *args: Any, **kwargs: Any) -> os.stat_result:
             if Path(path) == file_path:
                 # Return a mock stat result with 500MB size
                 return os.stat_result((0, 0, 0, 0, 0, 0, 500 * 1024 * 1024, 0, 0, 0))
@@ -93,7 +110,7 @@ class TestShouldPartition:
 
         original_stat = os.stat
 
-        def mock_stat(path: str | Path, *args: object, **kwargs: object) -> os.stat_result:
+        def mock_stat(path: str | Path, *args: Any, **kwargs: Any) -> os.stat_result:
             if Path(path) == large_file:
                 return os.stat_result((0, 0, 0, 0, 0, 0, 5 * 1024 * 1024 * 1024, 0, 0, 0))
             return original_stat(path, *args, **kwargs)
@@ -439,9 +456,10 @@ class TestGetPartitionMetadata:
         assert result["partition:scheme"] == "hive"
         assert result["partition:strategy"] == "kdtree"
         assert result["partition:file_count"] == 2
-        assert len(result["partition:keys"]) == 1
-        assert result["partition:keys"][0]["name"] == "kdtree_cell"
-        assert result["partition:keys"][0]["type"] == "string"
+        keys = cast("list[dict[str, str]]", result["partition:keys"])
+        assert len(keys) == 1
+        assert keys[0]["name"] == "kdtree_cell"
+        assert keys[0]["type"] == "string"
 
     @pytest.mark.unit
     def test_get_partition_metadata_counts_files_correctly(self, tmp_path: Path) -> None:
@@ -469,8 +487,9 @@ class TestGetPartitionMetadata:
 
         result = get_partition_metadata(tmp_path, strategy="h3")
 
-        assert result["partition:keys"][0]["name"] == "h3_cell"
-        assert "H3" in result["partition:keys"][0]["description"]
+        keys = cast("list[dict[str, str]]", result["partition:keys"])
+        assert keys[0]["name"] == "h3_cell"
+        assert "H3" in keys[0]["description"]
 
 
 class TestDetectPartitioning:
@@ -547,10 +566,7 @@ class TestPartitionExtensionInStac:
         collection = pystac.Collection(
             id="test",
             description="Test",
-            extent=pystac.Extent(
-                spatial=pystac.SpatialExtent(bboxes=[[-180, -90, 180, 90]]),
-                temporal=pystac.TemporalExtent(intervals=[[None, None]]),
-            ),
+            extent=_world_extent(),
         )
 
         partition_metadata = {
@@ -577,13 +593,10 @@ class TestPartitionExtensionInStac:
         collection = pystac.Collection(
             id="test",
             description="Test",
-            extent=pystac.Extent(
-                spatial=pystac.SpatialExtent(bboxes=[[-180, -90, 180, 90]]),
-                temporal=pystac.TemporalExtent(intervals=[[None, None]]),
-            ),
+            extent=_world_extent(),
         )
 
-        partition_metadata = {"partition:scheme": "hive", "partition:keys": []}
+        partition_metadata: dict[str, object] = {"partition:scheme": "hive", "partition:keys": []}
 
         add_partition_metadata_to_collection(collection, partition_metadata)
 
@@ -594,7 +607,7 @@ class TestPartitionExtensionInStac:
         """build_stac_extensions detects partition:* fields."""
         from portolan_cli.stac import EXTENSION_URLS, build_stac_extensions
 
-        properties = {
+        properties: dict[str, object] = {
             "partition:scheme": "hive",
             "partition:strategy": "kdtree",
             "partition:keys": [],
@@ -747,10 +760,7 @@ class TestGlobAssetKeyCollision:
         collection = pystac.Collection(
             id="test",
             description="Test collection",
-            extent=pystac.Extent(
-                spatial=pystac.SpatialExtent(bboxes=[[-180, -90, 180, 90]]),
-                temporal=pystac.TemporalExtent(intervals=[[None, None]]),
-            ),
+            extent=_world_extent(),
         )
         # Add a non-glob asset at the target key "partitioned_data"
         collection.assets["partitioned_data"] = pystac.Asset(
@@ -787,10 +797,7 @@ class TestGlobAssetKeyCollision:
         collection = pystac.Collection(
             id="test",
             description="Test collection",
-            extent=pystac.Extent(
-                spatial=pystac.SpatialExtent(bboxes=[[-180, -90, 180, 90]]),
-                temporal=pystac.TemporalExtent(intervals=[[None, None]]),
-            ),
+            extent=_world_extent(),
         )
         collection.assets["existing_glob"] = pystac.Asset(
             href="./year=*/*.parquet",  # Already a glob

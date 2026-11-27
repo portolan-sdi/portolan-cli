@@ -205,7 +205,7 @@ class TestPropertyBasedInference:
         common_part=st.text(
             min_size=4,
             max_size=20,
-            alphabet=st.characters(whitelist_categories=("Ll",), whitelist_characters="_"),
+            alphabet=st.characters(categories=["Ll"], include_characters="_"),
         ),
         suffixes=st.lists(
             st.text(

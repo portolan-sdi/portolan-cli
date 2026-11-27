@@ -19,7 +19,6 @@ import ast
 import re
 import sys
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from pathlib import Path
 
 # Repo-specific instructions live in AGENTS.md. CLAUDE.md only imports it,
@@ -198,13 +197,6 @@ def update_generated_section(claude_md: str, section_name: str, new_content: str
         return claude_md
 
     return updated
-
-
-def add_freshness_marker(section_header: str, date: str | None = None) -> str:
-    """Generate a freshness marker for a section."""
-    if date is None:
-        date = datetime.now(UTC).strftime("%Y-%m-%d")
-    return f"<!-- freshness: last-verified: {date} -->\n{section_header}"
 
 
 # =============================================================================

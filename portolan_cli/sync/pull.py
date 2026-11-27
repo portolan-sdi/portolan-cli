@@ -34,7 +34,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import obstore as obs
-from obstore.exceptions import NotFoundError
 
 from portolan_cli.async_utils import (
     CircuitBreaker,
@@ -1318,7 +1317,8 @@ def pull(
     # A push can land between the asset download and the tree download. The
     # tree download then checks the remote version against the one the assets
     # came from, and a changed remote starts the clone of the collection again.
-    for attempt in range(1, _CLONE_ATTEMPTS + 1):
+    attempt = 1
+    while True:
         result = asyncio.run(
             pull_async(
                 remote_url=remote_url,
@@ -1353,13 +1353,14 @@ def pull(
             f"The remote published a new version of '{collection}' during the clone. "
             f"Downloading it ({attempt}/{_CLONE_ATTEMPTS}).",
         )
-    else:
-        result.success = False
-        report(
-            "error",
-            f"The remote of '{collection}' changed during each of {_CLONE_ATTEMPTS} attempts",
-        )
-        return result
+        if attempt == _CLONE_ATTEMPTS:
+            result.success = False
+            report(
+                "error",
+                f"The remote of '{collection}' changed during each of {_CLONE_ATTEMPTS} attempts",
+            )
+            return result
+        attempt += 1
     result.files_downloaded += written
     if failed:
         result.success = False
@@ -1414,7 +1415,7 @@ async def _download_stac_tree(
             try:
                 target = _validate_safe_path(local_root, rel)
                 await _download_file_async(store, f"{prefix}/{rel}".lstrip("/"), target)
-            except (NotFoundError, FileNotFoundError):
+            except FileNotFoundError:
                 return False
             except Exception as e:
                 report("error", f"Failed to download {rel}: {e}")

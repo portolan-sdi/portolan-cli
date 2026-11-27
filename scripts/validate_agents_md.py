@@ -6,7 +6,6 @@ This script checks that:
 2. All CLI command references match actual Click commands
 3. All test markers match pyproject.toml definitions
 4. All code import examples are valid
-5. Freshness markers are not stale (warn only)
 
 Exit codes:
     0: All validations pass
@@ -19,8 +18,11 @@ import ast
 import re
 import sys
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 # Repo-specific instructions live in AGENTS.md. CLAUDE.md only imports it,
 # because Claude Code reads CLAUDE.md and every other agent reads AGENTS.md.
@@ -188,7 +190,11 @@ def _extract_command_info(node: ast.FunctionDef) -> tuple[str | None, str | None
             continue
 
         # Get command name: explicit from decorator or derived from function name
-        cmd_name = _get_explicit_command_name(decorator) if has_explicit else None
+        cmd_name = (
+            _get_explicit_command_name(decorator)
+            if has_explicit and isinstance(decorator, ast.Call)
+            else None
+        )
         if not cmd_name:
             cmd_name = _normalize_function_name(node.name)
 
@@ -399,86 +405,14 @@ def validate_code_examples(claude_md: str, root: Path) -> ValidationResult:
 
 
 # =============================================================================
-# FreshnessValidator - Check freshness markers aren't stale
-# =============================================================================
-
-
-@dataclass
-class FreshnessMarker:
-    """A freshness marker found in AGENTS.md."""
-
-    section: str
-    last_verified: datetime
-    line_number: int
-
-
-def extract_freshness_markers(claude_md: str) -> list[FreshnessMarker]:
-    """Extract freshness markers from AGENTS.md.
-
-    Format:
-    <!-- freshness: last-verified: 2026-02-27 -->
-    ## Section Name
-    ...
-    <!-- /freshness -->
-    """
-    markers: list[FreshnessMarker] = []
-
-    # Match freshness markers
-    pattern = r"<!--\s*freshness:\s*last-verified:\s*(\d{4}-\d{2}-\d{2})\s*-->\s*\n##\s*([^\n]+)"
-
-    for match in re.finditer(pattern, claude_md):
-        date_str = match.group(1)
-        section = match.group(2).strip()
-        line_number = claude_md[: match.start()].count("\n") + 1
-
-        try:
-            last_verified = datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=UTC)
-            markers.append(
-                FreshnessMarker(
-                    section=section, last_verified=last_verified, line_number=line_number
-                )
-            )
-        except ValueError:
-            pass
-
-    return markers
-
-
-def validate_freshness(claude_md: str, _root: Path, stale_days: int = 30) -> ValidationResult:
-    """Check that freshness markers aren't too old (warning only)."""
-    result = ValidationResult(validator="Freshness")
-
-    markers = extract_freshness_markers(claude_md)
-    now = datetime.now(UTC)
-
-    stale_sections: list[str] = []
-    for marker in markers:
-        age = (now - marker.last_verified).days
-        if age > stale_days:
-            stale_sections.append(
-                f"  - '{marker.section}' (line {marker.line_number}): "
-                f"verified {age} days ago ({marker.last_verified.date()})"
-            )
-
-    if stale_sections:
-        result.warnings.append(
-            f"Sections with stale freshness markers (>{stale_days} days):\n"
-            + "\n".join(stale_sections)
-        )
-
-    return result
-
-
-# =============================================================================
 # Main Validation Runner
 # =============================================================================
 
-VALIDATORS = [
+VALIDATORS: list[Callable[[str, Path], ValidationResult]] = [
     validate_file_paths,
     validate_cli_commands,
     validate_test_markers,
     validate_code_examples,
-    validate_freshness,
 ]
 
 

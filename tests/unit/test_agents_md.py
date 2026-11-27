@@ -34,7 +34,7 @@ def _write(path: Path, data: dict) -> Path:
 
 
 def _catalog(**overrides: object) -> dict:
-    base = {
+    base: dict[str, object] = {
         "type": "Catalog",
         "stac_version": "1.1.0",
         "id": "demo",

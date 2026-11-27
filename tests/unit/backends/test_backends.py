@@ -447,7 +447,7 @@ class TestJsonFileBackendIntegration:
         collection_dir = catalog_root / "test"
         collection_dir.mkdir(parents=True)
 
-        versions_data = {
+        versions_data: dict[str, Any] = {
             "spec_version": "1.0.0",
             "current_version": None,
             "versions": [],

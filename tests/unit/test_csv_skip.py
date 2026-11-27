@@ -27,8 +27,8 @@ from portolan_cli.add import (
     _copy_non_geo_to_item_dir,
     _update_item_with_asset,
     add_files,
-    iter_files_with_sidecars,
 )
+from portolan_cli.discovery import iter_files_with_sidecars
 from portolan_core import errors
 from portolan_core.constants import GEOSPATIAL_EXTENSIONS, TABULAR_EXTENSIONS
 from portolan_core.run_state import RunState
@@ -513,14 +513,11 @@ class TestCsvSkipHypothesis:
             csv_file.write_text(csv_content)
 
             # This should NOT raise - ever
-            try:
-                added, skipped, failures = add_files(
-                    paths=[csv_file],
-                    catalog_root=tmp_path,
-                    collection_id="collection",
-                )
-            except Exception as e:
-                pytest.fail(f"add_files raised for non-geo CSV: {e}")
+            added, skipped, failures = add_files(
+                paths=[csv_file],
+                catalog_root=tmp_path,
+                collection_id="collection",
+            )
             # A lone non-geo CSV is a failure that names the file, never an item
             assert added == []
             assert [f.path for f in failures] == [csv_file]
@@ -596,14 +593,11 @@ class TestCsvSkipHypothesis:
             csv_file.write_text(csv_content)
 
             # Should not raise
-            try:
-                added, skipped, failures = add_files(
-                    paths=[csv_file],
-                    catalog_root=tmp_path,
-                    collection_id="collection",
-                )
-            except Exception as e:
-                pytest.fail(f"add_files raised for CSV content: {e}")
+            added, skipped, failures = add_files(
+                paths=[csv_file],
+                catalog_root=tmp_path,
+                collection_id="collection",
+            )
             assert added == []
             assert [f.path for f in failures] == [csv_file]
         finally:

@@ -131,6 +131,7 @@ class TestImageServerMetadataExtractedToExtracted:
         extracted = metadata.to_extracted()
 
         # Should include both service_description and technical specs
+        assert extracted.processing_notes is not None
         assert "High-res imagery" in extracted.processing_notes
         assert "pixel_type: U16" in extracted.processing_notes
         assert "band_count: 4" in extracted.processing_notes

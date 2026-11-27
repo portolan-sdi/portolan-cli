@@ -190,7 +190,8 @@ def _check_json(root: Path, *args: str) -> dict[str, Any]:
         cli, ["check", str(root), "--metadata", "--json", *args], catch_exceptions=False
     )
     payload: dict[str, Any] = json.loads(result.output)
-    return payload["data"]
+    data: dict[str, Any] = payload["data"]
+    return data
 
 
 def _snapshot(root: Path) -> dict[str, bytes]:

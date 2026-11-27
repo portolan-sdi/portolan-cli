@@ -89,8 +89,8 @@ OBJECT_STORE_IMPORTERS = frozenset(
 )
 
 # Delete only. Lower these numbers when a name or a clone goes away.
-VULTURE_WHITELIST_NAMES = 96
-JSCPD_BASELINE_FINGERPRINTS = 521
+VULTURE_WHITELIST_NAMES = 95
+JSCPD_BASELINE_FINGERPRINTS = 520
 
 
 def _pyproject() -> dict[str, Any]:
@@ -272,6 +272,16 @@ def test_prek_vulture_hook_has_no_args() -> None:
     assert len(vulture) == 1
     repo = tomllib.loads(vulture[0])
     assert (repo["rev"], repo["hooks"]) == ("v2.16", [{"id": "vulture"}])
+
+
+def test_prek_mypy_hook_has_no_args() -> None:
+    """The hook passes no paths, so ``files`` in ``[tool.mypy]`` is the one scope."""
+    prek = PREK.read_text(encoding="utf-8")
+    (hook,) = re.findall(r'\{\s*id = "mypy",.*?\}', prek, flags=re.DOTALL)
+    assert 'entry = "uv run mypy",' in hook
+    assert "args" not in hook
+    files = _pyproject()["tool"]["mypy"]["files"]
+    assert files == ["portolan_cli", "packages/portolan-core/src", "scripts", "tests"]
 
 
 def test_jscpd_baseline_only_shrinks() -> None:

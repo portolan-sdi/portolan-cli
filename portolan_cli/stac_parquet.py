@@ -200,7 +200,7 @@ def _spatially_ordered(table: pa.Table) -> pa.Table:
     rarely spatial. geoparquet-io sorts the rows and keeps the schema and its
     metadata, so stac-geoparquet writes the same columns.
     """
-    from geoparquet_io.api.table import Table  # type: ignore[import-untyped]
+    from geoparquet_io.api.table import Table
 
     ordered: pa.Table = Table(table, geometry_column="geometry").sort_hilbert().to_arrow()
     return ordered.replace_schema_metadata(table.schema.metadata)

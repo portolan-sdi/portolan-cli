@@ -66,6 +66,7 @@ class TestFlexibleDatetimeType:
     def test_converts_valid_datetime(self) -> None:
         """Should convert valid datetime string."""
         result = FLEXIBLE_DATETIME.convert("2024-06-15", None, None)
+        assert result is not None
         assert result.year == 2024
         assert result.month == 6
 

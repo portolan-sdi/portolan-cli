@@ -396,20 +396,50 @@ docstring-code-format = true
 [tool.mypy]
 python_version = "3.11"
 strict = true # Enables all strict flags at once
-# The example plugin (#947) is a separate package. This path lets mypy check
+# Bare `uv run mypy` checks this scope. The prek hook passes no paths.
+files = ["portolan_cli", "packages/portolan-core/src", "scripts", "tests"]
+# The example plugin (#947) is a separate package. Its path lets mypy check
 # its tests and its code without installing it.
-mypy_path = "tests/plugins/portolan_example/src"
-# pyarrow >=24 ships py.typed but leaves pyarrow.parquet helpers untyped, so
-# strict's disallow_untyped_calls trips on every read_table/write_table/
-# ParquetFile/read_metadata/read_schema call. Scope the suppression to pyarrow
-# instead of relaxing strictness globally.
-untyped_calls_exclude = ["pyarrow"]
+mypy_path = ["packages/portolan-core/src", "tests/plugins/portolan_example/src"]
+explicit_package_bases = true
+enable_error_code = [
+    "ignore-without-code",
+    "redundant-expr",
+    "truthy-bool",
+    "possibly-undefined",
+    "redundant-self",
+    "unused-awaitable",
+    "deprecated",
+    "exhaustive-match",
+]
 # Reports code that the types say cannot run, such as an isinstance branch the
 # annotation already rules out.
 warn_unreachable = true
 
+# Tests may leave helpers and fixtures unannotated. Every other strict check applies.
 [[tool.mypy.overrides]]
-module = ["pyarrow.*", "rasterio.*", "gitingest.*", "matplotlib.*", "pyiceberg.*", "shapely.*", "pygeohash.*", "geopandas.*", "contextily.*", "jsonschema.*"]
+module = ["tests.*"]
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+disallow_untyped_calls = false
+disallow_any_generics = false
+
+# These packages ship no py.typed marker. PyPI has no stub for gitingest,
+# pygeohash, contextily, geoparquet-io, geoarrow, lerc, mapbox-vector-tile or
+# pyogrio. types-rasterio needs Python 3.12, and the project
+# supports Python 3.11.
+[[tool.mypy.overrides]]
+module = [
+    "rasterio.*",
+    "gitingest.*",
+    "pygeohash.*",
+    "contextily.*",
+    "geoparquet_io.*",
+    "geoarrow.*",
+    "lerc.*",
+    "mapbox_vector_tile.*",
+    "pyogrio.*",
+]
 ignore_missing_imports = true
 
 # markdown ships no inline types. types-Markdown exists on PyPI, so mypy
@@ -422,7 +452,7 @@ module = ["markdown.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
-module = ["docs.test_reference_generation"]
+module = ["tests.docs.test_reference_generation"]
 disable_error_code = ["import-untyped"]
 
 # ---------- spell check ----------
@@ -788,4 +818,18 @@ dev = [
     "pytest-asyncio>=1.3.0",
     "pytest-xdist>=3.8.0",
     "types-pyyaml>=6.0.12.20250915",
+    # pyarrow ships py.typed but leaves most of its API untyped.
+    "pyarrow-stubs>=20.0.0.20260819",
+    # shapely ships no inline types.
+    "types-shapely>=2.1",
+    # pandas ships no inline types.
+    "pandas-stubs>=2.2",
+    # jsonschema ships no inline types.
+    "types-jsonschema>=4.25",
+    # geopandas ships no inline types.
+    "types-geopandas>=1.0",
+    # requests ships no inline types.
+    "types-requests>=2.32",
+    # boto3 ships no inline types. The s3 extra types the S3 client the tests use.
+    "boto3-stubs[s3]>=1.35",
 ]

@@ -66,7 +66,7 @@ def capture_output(result: ScanResult, *, show_all: bool = False) -> str:
 
     lines: list[str] = []
 
-    def fake_echo(msg: str = "", **kwargs: object) -> None:  # type: ignore[misc]
+    def fake_echo(msg: str = "", **kwargs: object) -> None:
         lines.append(str(msg))
 
     with (

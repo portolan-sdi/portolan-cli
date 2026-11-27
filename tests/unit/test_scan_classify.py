@@ -349,6 +349,7 @@ class TestClassifyFileEdgeCases:
 
         assert category == FileCategory.UNKNOWN
         assert skip_type == SkipReasonType.UNKNOWN_FORMAT
+        assert skip_msg is not None
         assert "large image" in skip_msg.lower() or "unknown" in skip_msg.lower()
 
     def test_image_with_size_provided(self, tmp_path: Path) -> None:
@@ -428,6 +429,7 @@ class TestClassifyFileSupportingFormats:
 
         assert category == FileCategory.STYLE
         assert skip_type == SkipReasonType.METADATA_FILE
+        assert skip_msg is not None
         assert "styles/ directory" in skip_msg
 
     def test_txt_classified_as_documentation(self, tmp_path: Path) -> None:

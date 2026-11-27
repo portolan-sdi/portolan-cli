@@ -65,7 +65,7 @@ def check_format_handler(handler: Any, sample: Path, output_dir: Path) -> None:
     if problems:
         raise ConformanceError("\n".join(problems))
 
-    output = handler.convert(sample, output_dir, None)
+    output: object = handler.convert(sample, output_dir, None)
     if not isinstance(output, Path) or not output.exists():
         raise ConformanceError(f"convert returned {output!r}, expected an existing Path.")
 
@@ -219,7 +219,9 @@ def check_backend(factory: Callable[..., Any], catalog_root: Path) -> None:
         )
 
     history = backend.list_versions(_COLLECTION)
-    wrong = sorted({type(v).__name__ for v in history if not isinstance(v, Version)})
+    # A plugin can return any type at runtime.
+    items: list[object] = list(history)
+    wrong = sorted({type(v).__name__ for v in items if not isinstance(v, Version)})
     if wrong:
         problems.append(f"list_versions returned {', '.join(wrong)} items, expected Version.")
     elif [v.version for v in history] != [first.version, second.version]:
@@ -294,9 +296,12 @@ def check_extractor(
         raise ConformanceError(f"{type(extractor).__name__} does not implement Extractor.")
 
     problems: list[str] = []
-    if not isinstance(extractor.name, str) or not re.fullmatch(r"[a-z][a-z0-9-]*", extractor.name):
-        problems.append(f"name {extractor.name!r} is not a lowercase command name.")
-    if not isinstance(extractor.summary, str) or not extractor.summary.strip():
+    # A plugin can set any type at runtime.
+    name: object = extractor.name
+    summary: object = extractor.summary
+    if not isinstance(name, str) or not re.fullmatch(r"[a-z][a-z0-9-]*", name):
+        problems.append(f"name {name!r} is not a lowercase command name.")
+    if not isinstance(summary, str) or not summary.strip():
         problems.append("summary is empty.")
     try:
         command = extractor.cli_command()

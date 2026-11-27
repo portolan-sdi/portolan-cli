@@ -51,13 +51,13 @@ class TestFormatFileSize:
     def test_format_megabytes(self) -> None:
         """Files under 1GB should show MB."""
         assert format_file_size(1024 * 1024) == "1.0 MB"
-        assert format_file_size(54.2 * 1024 * 1024) == "54.2 MB"
+        assert format_file_size(int(54.2 * 1024 * 1024)) == "54.2 MB"
 
     @pytest.mark.unit
     def test_format_gigabytes(self) -> None:
         """Large files should show GB."""
         assert format_file_size(1024 * 1024 * 1024) == "1.0 GB"
-        assert format_file_size(2.5 * 1024 * 1024 * 1024) == "2.5 GB"
+        assert format_file_size(int(2.5 * 1024 * 1024 * 1024)) == "2.5 GB"
 
 
 class TestFormatSpeed:

@@ -17,16 +17,14 @@ import pytest
 
 from portolan_cli.add import (
     IGNORED_FILES,
-    ItemInfo,
     _get_asset_role,
     _get_media_type,
     add,
-    get_item_info,
-    list_items,
 )
 from portolan_cli.plugins.builtin.formats import COG, GEOPARQUET
 from portolan_cli.preparation import PreparedItem
 from portolan_core.checksums import compute_checksum, compute_dir_size
+from portolan_core.query import ItemInfo, get_item_info, list_items
 from portolan_core.versions import read_versions
 
 if TYPE_CHECKING:

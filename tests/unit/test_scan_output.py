@@ -12,6 +12,7 @@ Tests for:
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 
@@ -215,7 +216,7 @@ class TestSkipReasonDisplay:
         """group_skipped_files groups by category."""
         from portolan_cli.scan.output import group_skipped_files
 
-        skipped = [
+        skipped: list[Path | SkippedFile] = [
             make_skipped_file(
                 tmp_path / "data.dbf",
                 FileCategory.KNOWN_SIDECAR,
@@ -1744,7 +1745,7 @@ class TestScanOutputIntegration:
         data = result.to_dict()
 
         # Check that ready files include the new fields
-        ready_files = data["ready"]
+        ready_files = cast("list[dict[str, Any]]", data["ready"])
         assert len(ready_files) > 0, "Expected ready files"
 
         for file_dict in ready_files:

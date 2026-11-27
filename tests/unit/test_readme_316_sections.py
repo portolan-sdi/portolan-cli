@@ -9,6 +9,8 @@ Tests new metadata fields for citation, authors, and version sections:
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 
@@ -106,7 +108,7 @@ class TestCitationSectionExtended:
         from portolan_cli.readme import _add_citation_section
 
         sections: list[str] = []
-        metadata = {}
+        metadata: dict[str, Any] = {}
 
         _add_citation_section(sections, metadata)
 
@@ -185,7 +187,7 @@ class TestAuthorsSection:
         from portolan_cli.readme import _add_authors_section
 
         sections: list[str] = []
-        metadata = {}
+        metadata: dict[str, Any] = {}
 
         _add_authors_section(sections, metadata)
 
@@ -198,7 +200,7 @@ class TestAuthorsSection:
         from portolan_cli.readme import _add_authors_section
 
         sections: list[str] = []
-        metadata = {"authors": []}
+        metadata: dict[str, Any] = {"authors": []}
 
         _add_authors_section(sections, metadata)
 
@@ -245,7 +247,7 @@ class TestVersionSection:
         from portolan_cli.readme import _add_version_section
 
         sections: list[str] = []
-        metadata = {}
+        metadata: dict[str, Any] = {}
 
         _add_version_section(sections, metadata)
 

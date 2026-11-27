@@ -230,7 +230,9 @@ def test_extract_arcgis_list_services(
         url, tmp_path / "unused", list_only=True, options=ArcGISOptions(recurse=False)
     )
     assert json.loads(result.stdout) == expected.to_dict()
-    assert expected.to_dict()["total_services"] > 0
+    total = expected.to_dict()["total_services"]
+    assert isinstance(total, int)
+    assert total > 0
 
 
 def test_extract_arcgis_rejects_bad_id(parity: Parity) -> None:

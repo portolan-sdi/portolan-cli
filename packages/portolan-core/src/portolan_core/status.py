@@ -185,9 +185,9 @@ def _is_stac_item(file_path: Path) -> bool:
     """Check if a JSON file is a STAC item (has type: Feature)."""
     if file_path.suffix != ".json":
         return False
-    try:
-        import json
+    import json
 
+    try:
         data = json.loads(file_path.read_text(encoding="utf-8"))
         return bool(data.get("type") == "Feature")
     except (json.JSONDecodeError, OSError, KeyError):

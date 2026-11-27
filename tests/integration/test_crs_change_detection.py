@@ -17,8 +17,9 @@ import pytest
 from click.testing import CliRunner
 from shapely.geometry import Point
 
-from portolan_cli.add import add_files, is_current
+from portolan_cli.add import add_files
 from portolan_cli.cli import cli
+from portolan_core.query import is_current
 
 
 @pytest.fixture
@@ -95,6 +96,7 @@ class TestCRSChangeDetection:
 
         # Simulate external reprojection: read, reproject, overwrite
         gdf = gpd.read_parquet(parquet_path)
+        assert gdf.crs is not None
         assert gdf.crs.to_epsg() == 3857, f"Expected EPSG:3857, got {gdf.crs}"
 
         # Capture original mtime before reprojection
@@ -102,6 +104,7 @@ class TestCRSChangeDetection:
 
         # Reproject to EPSG:4326
         gdf_4326 = gdf.to_crs("EPSG:4326")
+        assert gdf_4326.crs is not None
         assert gdf_4326.crs.to_epsg() == 4326
 
         # Overwrite the original file (simulating gpio convert + mv)
@@ -113,6 +116,7 @@ class TestCRSChangeDetection:
 
         # Verify CRS actually changed in file
         gdf_check = gpd.read_parquet(parquet_path)
+        assert gdf_check.crs is not None
         assert gdf_check.crs.to_epsg() == 4326, "File should now be EPSG:4326"
 
         # THE KEY TEST: is_current() should return False (file changed)

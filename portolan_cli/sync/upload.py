@@ -684,8 +684,8 @@ def _boto3_credential_provider(profile: str | None) -> S3CredentialProvider | No
             fails.
     """
     try:
-        import boto3  # type: ignore[import-untyped]
-        from botocore.exceptions import ProfileNotFound  # type: ignore[import-untyped]
+        import boto3
+        from botocore.exceptions import ProfileNotFound
         from obstore.auth.boto3 import Boto3CredentialProvider
     except ImportError:
         return None

@@ -140,7 +140,6 @@ hooks = [
     entry = "uv run mypy",
     language = "system",
     types = ["python"],
-    args = ["portolan_cli", "packages/portolan-core/src"],
     pass_filenames = false,
     require_serial = true,
   },

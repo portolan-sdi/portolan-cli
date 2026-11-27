@@ -46,7 +46,7 @@ import json
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 from rashid_core.api import (
     STRUCTURAL_RELS,
@@ -66,9 +66,16 @@ from portolan_cli.validation.remediation import Bucket, remediation_of
 if TYPE_CHECKING:
     from portolan_core.run_state import RunState
 
+
 #: A fixer sweeps ``catalog_root``. ``dry_run`` means report but do not write.
 #: The run state is the one of the command, or None outside ``check --fix``.
-Fixer = Callable[[Path, bool, "RunState | None"], list[FixResult]]
+class Fixer(Protocol):
+    """A fixer sweeps ``catalog_root``. A call without a state opens its own run."""
+
+    def __call__(
+        self, root: Path, dry_run: bool, state: RunState | None = None, /
+    ) -> list[FixResult]:
+        """Repair the catalog and report each change."""
 
 
 @dataclass(frozen=True)

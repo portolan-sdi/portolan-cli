@@ -264,8 +264,8 @@ def test_only_the_live_network_step_continues_on_error() -> None:
     steps. One ran the ruff S rules that the quality job already gates, and it
     could only warn. The other let a pip-audit crash end in a green run.
     """
-    soft = []
-    soft_jobs = []
+    soft: list[tuple[str, str, str | None]] = []
+    soft_jobs: list[tuple[str, str]] = []
     for workflow in sorted(WORKFLOWS.glob("*.yml")):
         for name, job in _jobs(workflow.name).items():
             if job.get("continue-on-error"):

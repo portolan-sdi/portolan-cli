@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import struct
+from typing import cast
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -42,7 +43,7 @@ def test_export_current_snapshot(iceberg_backend, iceberg_catalog, tmp_path):
     assert output.exists()
     result = pq.read_table(output)
     assert len(result) == 3
-    assert sorted(result.column("id").to_pylist()) == [1, 2, 3]
+    assert sorted(cast("list[int]", result.column("id").to_pylist())) == [1, 2, 3]
 
 
 @pytest.mark.integration

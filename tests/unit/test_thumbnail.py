@@ -8,13 +8,16 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from unittest.mock import patch
 
 import pytest
 
 from portolan_core import trace
 from tests.perf.runner import STUB_TILE_RGBA
+
+if TYPE_CHECKING:
+    from shapely.geometry.base import BaseGeometry
 
 # =============================================================================
 # Phase 1: ThumbnailConfig Tests
@@ -971,6 +974,7 @@ class TestThumbnailRendersVisibleGeometry:
 
         from portolan_cli.viz.thumbnail import ThumbnailConfig, generate_thumbnail_from_geoparquet
 
+        geoms: list[BaseGeometry]
         if kind == "sparse_points":
             geoms = [Point(x, x) for x in range(-50, 50, 5)]
         elif kind == "dense_lines":
@@ -1271,7 +1275,9 @@ def _expected_frame(gpq_path: Path) -> tuple[float, float, float, float]:
 
     from portolan_cli.viz.thumbnail import _frame_bounds
 
-    geo = json.loads(pq.ParquetFile(gpq_path).metadata.metadata[b"geo"])
+    footer = pq.ParquetFile(gpq_path).metadata.metadata
+    assert footer is not None
+    geo = json.loads(footer[b"geo"])
     minx, miny, maxx, maxy = geo["columns"][geo["primary_column"]]["bbox"]
     to_mercator = Transformer.from_crs("OGC:CRS84", "EPSG:3857", always_xy=True)
     return _frame_bounds(to_mercator.transform_bounds(minx, miny, maxx, maxy, densify_pts=21))

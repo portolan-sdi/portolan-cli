@@ -196,7 +196,7 @@ class TestFindMissingFiles:
         collection_dir.mkdir()
 
         # Create empty versions.json
-        versions_data = {
+        versions_data: dict[str, object] = {
             "spec_version": "1.0.0",
             "current_version": None,
             "versions": [],

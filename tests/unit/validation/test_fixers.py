@@ -498,9 +498,9 @@ class TestLinksFixer:
         Concatenating it with a tuple raised ``TypeError`` the moment upstream
         exported anything but a tuple.
         """
-        monkeypatch.setattr(
-            fixers_module, "STRUCTURAL_RELS", frozenset(fixers_module.STRUCTURAL_RELS)
-        )
+        from rashid_core.api import STRUCTURAL_RELS
+
+        monkeypatch.setattr(fixers_module, "STRUCTURAL_RELS", frozenset(STRUCTURAL_RELS))
         collection = _tiny_catalog(tmp_path)
         data = _read_json(collection / "collection.json")
         data["links"] = [

@@ -29,7 +29,7 @@ def _geoparquet(crs: str) -> GeoParquetMetadata:
     return GeoParquetMetadata(
         bbox=None,
         crs=crs,
-        geometry_type="Polygon",
+        geometry_type=["Polygon"],
         geometry_column="geometry",
         feature_count=10,
         schema={},

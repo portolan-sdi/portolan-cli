@@ -633,7 +633,7 @@ def with_provenance(table: Any, source: Path, *, require_geometry: bool = False)
             deletes that output and tracks the source as a companion, so a
             record would only cost a hash of the source.
     """
-    from geoparquet_io.api.table import Table  # type: ignore[import-untyped]
+    from geoparquet_io.api.table import Table
 
     if not isinstance(table, Table):
         return table
@@ -2083,7 +2083,7 @@ def _convert_vector_layer(
     Raises:
         Exception: If conversion fails.
     """
-    import geoparquet_io as gpio  # type: ignore[import-untyped]
+    import geoparquet_io as gpio
 
     if settings is None:
         settings = VectorSettings()
