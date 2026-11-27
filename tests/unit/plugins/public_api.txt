@@ -28,10 +28,16 @@ SourceLink
 VECTOR_EXTENSIONS
 Version
 VersioningBackend
+add_projection_extension
+add_raster_extension
+add_table_extension
+add_vector_extension
 aggregate_table_extension
 compute_checksum
 convert_raster
 convert_vector
+create_collection
+create_item
 describe_raster_item
 describe_vector_item
 detail
@@ -63,6 +69,7 @@ upload_file
 validate_cog
 validate_geoparquet
 warn
+wgs84_bbox
 write_json_atomic
 write_raster_thumbnail
 

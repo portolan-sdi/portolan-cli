@@ -17,11 +17,11 @@ from portolan_cli.plugins.builtin.formats import COG, FLATGEOBUF, GEOPARQUET, PM
 from portolan_cli.preparation import (
     _add_statistics_to_properties,
     _convert_and_extract_metadata,
-    _extract_bbox_wgs84,
     _extract_statistics_best_effort,
     _get_asset_role,
     _scan_item_assets,
     _validate_collection_id,
+    wgs84_bbox,
 )
 from portolan_core.errors import AssetKeyCollisionError
 
@@ -488,7 +488,7 @@ class TestScanItemAssetsSymlinks:
 
 
 class TestExtractBboxWgs84:
-    """_extract_bbox_wgs84 CRS handling."""
+    """wgs84_bbox CRS handling."""
 
     def test_projjson_dict_crs_is_passed_through(self) -> None:
         """A PROJJSON dict reaches the CRS layer rather than raising.
@@ -506,7 +506,7 @@ class TestExtractBboxWgs84:
             "portolan_cli.preparation.transform_bbox_to_wgs84",
             return_value=(-58.06, -34.94, -57.95, -34.87),
         ) as transform:
-            result = _extract_bbox_wgs84(meta)
+            result = wgs84_bbox(meta)
         assert result == [-58.06, -34.94, -57.95, -34.87]
         transform.assert_called_once_with(meta.bbox, projjson)
 
@@ -518,7 +518,7 @@ class TestExtractBboxWgs84:
             "portolan_cli.preparation.transform_bbox_to_wgs84",
             return_value=(-1.0, -1.0, 2.0, 2.0),
         ) as transform:
-            result = _extract_bbox_wgs84(meta)
+            result = wgs84_bbox(meta)
         assert result == [-1.0, -1.0, 2.0, 2.0]
         transform.assert_called_once_with(meta.bbox, "EPSG:3857")
 

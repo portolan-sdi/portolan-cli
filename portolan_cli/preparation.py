@@ -775,8 +775,8 @@ VectorMetadata = GeoParquetMetadata | PMTilesMetadata | FlatGeobufMetadata
 AllMetadata = VectorMetadata | COGMetadata
 
 
-def _extract_bbox_wgs84(metadata: AllMetadata, data_path: Path | None = None) -> list[float]:
-    """Extract bbox from metadata, transforming to WGS84 if needed.
+def wgs84_bbox(metadata: AllMetadata, data_path: Path | None = None) -> list[float]:
+    """Return the WGS84 bbox of a metadata object, for a STAC Item or Collection.
 
     PMTiles bbox is already in WGS84 (4326). Other formats may need
     CRS transformation.
@@ -1284,7 +1284,7 @@ def prepare_item(
             path=metadata.id if hasattr(metadata, "id") else path.stem,
             reason="The source file may have no valid geometry.",
         )
-    bbox = _extract_bbox_wgs84(metadata, output_path)
+    bbox = wgs84_bbox(metadata, output_path)
 
     # Step 5: Scan assets and compute statistics
     collection_level = is_collection_level_asset and handler.asset_level == "collection"

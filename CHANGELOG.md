@@ -2,6 +2,18 @@
 format, so the docs Vale check skips heading case in this file. -->
 <!-- vale Portolan-Mechanics.Headings = NO -->
 
+## Unreleased
+
+### BREAKING CHANGE
+
+- `create_item` raises `InvalidBboxError` for a bbox that is not WGS84.
+Before, it accepted a projected bbox and made an Item that STAC does not
+allow. `create_collection` gives the same error with the reason (#928)
+
+### Feat
+
+- **api**: export the STAC builders `create_item`, `create_collection`, `add_projection_extension`, `add_vector_extension`, `add_raster_extension`, `add_table_extension`, and `wgs84_bbox` from `portolan_cli.api` as a supported API (#928)
+
 ## v0.9.0 (2026-10-30)
 
 Some entries come from pull requests whose title type hides a user-facing
