@@ -174,6 +174,7 @@ from portolan_core.errors import (
     AssetKeyCollisionError,
     CRSMismatchError,
     CRSTransformError,
+    InvalidBboxError,
     MissingLicenseError,
     NoGeometryError,
     PartitionCollisionError,
@@ -923,7 +924,7 @@ class _ProcessResult:
 
 
 #: The errors on which prepare_item removes a new output that has no bbox.
-_NO_BBOX_ERRORS = (NoGeometryError, CRSTransformError, CRSMismatchError)
+_NO_BBOX_ERRORS = (NoGeometryError, CRSTransformError, CRSMismatchError, InvalidBboxError)
 
 
 def _prepare_multilayer_file(

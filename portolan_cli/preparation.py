@@ -79,6 +79,7 @@ from portolan_cli.report import emit
 from portolan_cli.scan.detect import is_filegdb
 from portolan_cli.stac import (
     STEM_RANK_SOURCE,
+    _require_wgs84,
     add_projection_extension,
     add_raster_extension,
     add_vector_extension,
@@ -104,6 +105,7 @@ from portolan_core.errors import (
     AssetKeyCollisionError,
     CRSMismatchError,
     CRSTransformError,
+    InvalidBboxError,
     NoGeometryError,
     RewriteFidelityError,
 )
@@ -1156,6 +1158,7 @@ def _item_bbox(
     output_path: Path,
     *,
     created_output: bool,
+    collection_level: bool,
 ) -> list[float]:
     """Return the WGS84 bbox of an item, or remove a new output and raise.
 
@@ -1166,6 +1169,7 @@ def _item_bbox(
         NoGeometryError: The file has no bbox.
         CRSTransformError: The bbox cannot be transformed to WGS84.
         CRSMismatchError: The bbox does not match the declared CRS.
+        InvalidBboxError: The transformed bbox is not valid WGS84.
     """
     try:
         if not metadata.bbox:
@@ -1173,8 +1177,10 @@ def _item_bbox(
                 path=metadata.id if hasattr(metadata, "id") else path.stem,
                 reason="The source file may have no valid geometry.",
             )
-        return wgs84_bbox(metadata, output_path)
-    except (NoGeometryError, CRSTransformError, CRSMismatchError):
+        bbox = wgs84_bbox(metadata, output_path)
+        # Collection extents filter invalid asset bboxes when they aggregate (#516).
+        return bbox if collection_level else _require_wgs84(bbox)
+    except (NoGeometryError, CRSTransformError, CRSMismatchError, InvalidBboxError):
         if created_output:
             _cleanup_orphaned_output(output_path, path)
         raise
@@ -1228,6 +1234,7 @@ def prepare_item(
         NoGeometryError: If the file has no valid geometry.
         CRSTransformError: The bbox cannot be transformed to WGS84.
         CRSMismatchError: The bbox does not match the declared CRS.
+        InvalidBboxError: The transformed bbox is not valid WGS84.
         OutputExistsError: Both output names hold a file that the source did
             not write.
     """
@@ -1307,10 +1314,16 @@ def prepare_item(
             )
 
     # Step 4: Extract and transform bbox
-    bbox = _item_bbox(metadata, path, output_path, created_output=created_output)
+    collection_level = is_collection_level_asset and handler.asset_level == "collection"
+    bbox = _item_bbox(
+        metadata,
+        path,
+        output_path,
+        created_output=created_output,
+        collection_level=collection_level,
+    )
 
     # Step 5: Scan assets and compute statistics
-    collection_level = is_collection_level_asset and handler.asset_level == "collection"
     try:
         stac_assets, asset_files, _asset_paths = _scan_item_assets(
             item_dir=item_dir,

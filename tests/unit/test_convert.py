@@ -12,7 +12,7 @@ from typing import Any, Self
 
 import pytest
 
-from portolan_core.errors import CRSMismatchError, CRSTransformError
+from portolan_core.errors import CRSMismatchError, CRSTransformError, InvalidBboxError
 
 # =============================================================================
 # Phase 1: ConversionStatus Enum Tests
@@ -2918,8 +2918,16 @@ class TestPartitionedOutputWithGeoparquetIO:
         assert layer.exists() is existed
 
     @pytest.mark.unit
+    @pytest.mark.parametrize(
+        "failure",
+        [
+            CRSTransformError("EPSG:999999", "crs not found"),
+            InvalidBboxError("south (10.0) > north (-10.0)"),
+        ],
+        ids=["transform", "invalid-bbox"],
+    )
     def test_a_failed_layer_cleanup_keeps_the_other_layers(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: Exception
     ) -> None:
         """An OSError on the removal of a failed layer file stops nothing (#928).
 
@@ -2933,6 +2941,7 @@ class TestPartitionedOutputWithGeoparquetIO:
         gpkg = coll / "multi.gpkg"
         gpkg.write_bytes(b"x")
         roads, rivers = coll / "roads.parquet", coll / "rivers.parquet"
+        removed: list[Path] = []
 
         def _convert(source: Path, out: Path, settings: Any = None, **_: Any) -> list[Any]:
             roads.write_bytes(b"PAR1")
@@ -2944,10 +2953,11 @@ class TestPartitionedOutputWithGeoparquetIO:
 
         def _prepare(path: Path, **_: Any) -> Any:
             if path == roads:
-                raise CRSTransformError("EPSG:999999", "crs not found")
+                raise failure
             return self._prepared(path, created_output=False)
 
         def _locked(self: Path, *_args: Any, **_kwargs: Any) -> None:
+            removed.append(self)
             raise PermissionError(13, "locked", str(self))
 
         monkeypatch.setattr(add, "convert_multilayer_file", _convert)
@@ -2966,13 +2976,8 @@ class TestPartitionedOutputWithGeoparquetIO:
         prepared, failures, skips = add._prepare_multilayer_file(gpkg, "coll", opts)
 
         assert [p.item_id for p in prepared] == ["rivers"]
-        assert [(f.path, f.error) for f in failures] == [
-            (
-                roads,
-                "Layer roads: [PRTLN-CNV012] Cannot transform the bbox from EPSG:999999 "
-                "to WGS84: crs not found",
-            )
-        ]
+        assert removed == [roads]
+        assert [(f.path, f.error) for f in failures] == [(roads, f"Layer roads: {failure}")]
         assert skips == {}
 
     @pytest.mark.integration
@@ -3030,6 +3035,34 @@ class TestPartitionedOutputWithGeoparquetIO:
             preparation.prepare_item(path=source, catalog_root=tmp_path, collection_id="coll")
 
         assert sorted(p.name for p in coll.iterdir()) == ["points.geojson"]
+
+    @pytest.mark.integration
+    def test_prepare_item_removes_a_new_raster_with_an_invalid_bbox(self, tmp_path: Path) -> None:
+        """Builder validation must run before a new output leaves the bbox cleanup guard."""
+        import numpy as np
+        import rasterio
+        from rasterio.transform import from_origin
+
+        from portolan_cli.preparation import prepare_item
+
+        (tmp_path / ".portolan").mkdir()
+        (tmp_path / ".portolan" / "config.yaml").write_text("{}\n", encoding="utf-8")
+        item_dir = tmp_path / "coll" / "scene"
+        item_dir.mkdir(parents=True)
+        source = item_dir / "scene.jp2"
+        with rasterio.open(
+            source, "w", driver="JP2OpenJPEG", width=32, height=32, count=1, dtype="uint8",
+            crs="EPSG:4326", transform=from_origin(1e10, 50, 0.1, 0.1),
+        ) as dst:  # fmt: skip
+            dst.write(np.ones((1, 32, 32), dtype="uint8"))
+
+        with pytest.raises(InvalidBboxError, match="exceeds sane magnitude"):
+            prepare_item(path=source, catalog_root=tmp_path, collection_id="coll")
+
+        assert source.exists()
+        assert not (item_dir / "scene.tif").exists()
+        assert not (item_dir / "scene.json").exists()
+        assert not (tmp_path / "coll" / "versions.json").exists()
 
     @pytest.mark.integration
     def test_a_failed_add_keeps_the_user_files_beside_the_output(
