@@ -1,13 +1,4 @@
-"""Unit tests for multi-layer format support.
-
-Tests that Portolan correctly detects and handles multi-layer files
-(GeoPackage, FileGDB) per GitHub issue #265.
-
-These tests verify:
-1. Layer enumeration - detecting all layers in a multi-layer file
-2. Per-layer conversion - each layer becomes a separate output file
-3. Progress reporting - all layers reflected in output
-"""
+"""Unit tests for multi-layer format support."""
 
 from __future__ import annotations
 
@@ -210,7 +201,7 @@ class TestMultiLayerConversion:
 
 
 class TestGpkgNonSpatialLayers:
-    """gpkg_contents-based listing excludes non-spatial tables (issue #784)."""
+    """gpkg_contents-based listing excludes non-spatial tables."""
 
     def _gpkg_with_layer_styles(self, tmp_path: Path) -> Path:
         """Copy the multilayer fixture and register a QGIS layer_styles table."""

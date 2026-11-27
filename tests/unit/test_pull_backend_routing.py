@@ -1,8 +1,4 @@
-"""Tests for pull command routing with non-file backends.
-
-Verifies that the CLI routes to backend.pull() when the backend
-provides a pull method (generic protocol dispatch).
-"""
+"""Tests for pull command routing with non-file backends."""
 
 from __future__ import annotations
 

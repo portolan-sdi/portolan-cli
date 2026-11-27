@@ -1,11 +1,4 @@
-"""Tests for metadata.yaml data defaults (temporal, raster.nodata).
-
-These tests verify that metadata.yaml can specify default values for
-data properties that couldn't be auto-extracted from source files.
-
-Metadata.yaml is the human enrichment layer. This extends
-it to support "data defaults" for when auto-extraction fails.
-"""
+"""Tests for metadata.yaml data defaults (temporal, raster.nodata)."""
 
 from __future__ import annotations
 

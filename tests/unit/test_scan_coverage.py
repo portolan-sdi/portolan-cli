@@ -1,8 +1,4 @@
-"""Comprehensive unit tests to achieve 90%+ coverage on scan modules.
-
-This file tests edge cases and helper functions that aren't covered by
-the main feature tests.
-"""
+"""Comprehensive unit tests to achieve 90%+ coverage on scan modules."""
 
 from __future__ import annotations
 
@@ -38,9 +34,7 @@ from portolan_cli.scan.detect import (
     is_hive_partition_dir,
 )
 
-# =============================================================================
 # scan.py Helper Function Tests
-# =============================================================================
 
 
 @pytest.mark.unit
@@ -143,9 +137,7 @@ class TestHelperFunctions:
         assert is_windows_reserved_name("normal") is False
 
 
-# =============================================================================
 # scan_detect.py Serialization Tests
-# =============================================================================
 
 
 @pytest.mark.unit
@@ -203,9 +195,7 @@ class TestDualFormatPairSerialization:
         assert ".parquet" in result["format_types"]
 
 
-# =============================================================================
 # ScanResult Serialization Tests
-# =============================================================================
 
 
 @pytest.mark.unit
@@ -275,9 +265,7 @@ class TestScanResultSerialization:
         assert summary["geo_asset"] == 1
 
 
-# =============================================================================
 # Hive Partition Detection Edge Cases
-# =============================================================================
 
 
 @pytest.mark.unit
@@ -310,9 +298,7 @@ class TestHivePartitionEdgeCases:
         assert len(results) >= 1
 
 
-# =============================================================================
 # STAC Detection Edge Cases
-# =============================================================================
 
 
 @pytest.mark.unit
@@ -335,9 +321,7 @@ class TestSTACDetectionEdgeCases:
         assert "stac_collection" in types
 
 
-# =============================================================================
 # Scan Options Validation
-# =============================================================================
 
 
 @pytest.mark.unit
@@ -361,9 +345,7 @@ class TestScanOptionsValidation:
         ScanOptions(fix=True, dry_run=True)
 
 
-# =============================================================================
 # Symlink Handling Tests
-# =============================================================================
 
 
 @pytest.mark.unit
@@ -435,9 +417,7 @@ class TestSymlinkHandling:
         assert len(loop_issues) == 1
 
 
-# =============================================================================
 # Hypothesis Property-Based Tests
-# =============================================================================
 
 
 @pytest.mark.unit
@@ -555,9 +535,7 @@ class TestPropertyBasedScanResult:
             assert result.has_errors == (error_count > 0)
 
 
-# =============================================================================
-# _get_dir_size Error Path Tests (lines 872-875 coverage)
-# =============================================================================
+# _get_dir_size Error Path Tests
 
 
 @pytest.mark.unit
@@ -669,9 +647,7 @@ class TestGetDirSizeErrorPaths:
         assert result == 100  # Only top-level file
 
 
-# =============================================================================
 # Integration Tests for Edge Cases
-# =============================================================================
 
 
 @pytest.mark.integration

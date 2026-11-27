@@ -1,10 +1,4 @@
-"""Tests for Vector extension support (STAC v0.1.0).
-
-Tests the add_vector_extension() function that adds vector:geometry_types
-to STAC items from GeoParquet metadata.
-
-Use experimental extensions, accept migration cost.
-"""
+"""Tests for Vector extension support (STAC v0.1.0)."""
 
 from __future__ import annotations
 
@@ -69,7 +63,7 @@ class TestAddVectorExtension:
         assert sample_item.properties["vector:geometry_types"] == ["Polygon", "MultiPolygon"]
 
     def test_mixed_types_are_deduplicated_in_order(self, sample_item: pystac.Item) -> None:
-        """Issue #1010: every declared type is kept once, in footer order."""
+        """Every declared type is kept once, in footer order."""
 
         class MockMetadata:
             geometry_type: ClassVar[list[str]] = ["LineString", "MultiLineString", "LineString"]

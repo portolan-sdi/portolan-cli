@@ -1,7 +1,4 @@
-"""Unit tests for thumbnail module (Issue #13).
-
-Tests vector thumbnail generation from PMTiles and GeoParquet sources.
-"""
+"""Unit tests for thumbnail module."""
 
 from __future__ import annotations
 
@@ -19,9 +16,7 @@ from tests.perf.runner import STUB_TILE_RGBA
 if TYPE_CHECKING:
     from shapely.geometry.base import BaseGeometry
 
-# =============================================================================
-# Phase 1: ThumbnailConfig Tests
-# =============================================================================
+# ThumbnailConfig Tests
 
 
 class TestThumbnailConfig:
@@ -79,9 +74,7 @@ class TestThumbnailConfig:
             config.max_size = 100  # type: ignore[misc]
 
 
-# =============================================================================
-# Phase 2: PMTiles Thumbnail Generation Tests
-# =============================================================================
+# PMTiles Thumbnail Generation Tests
 
 
 class TestGenerateThumbnailFromPmtiles:
@@ -169,18 +162,11 @@ class TestGenerateThumbnailFromPmtiles:
             assert result == tmp_path / "my-data.thumb.jpg"
 
 
-# =============================================================================
-# Regression Tests: Basemap Ordering (PR #468)
-# =============================================================================
+# Regression Tests: Basemap Ordering
 
 
 class TestBasemapOrdering:
-    """The frame is set before the basemap reads it.
-
-    The basemap zoom and tile range come from the axes limits. If the basemap
-    ran before the limits were set it would fetch tiles for the default 0..1
-    extent (PR #468).
-    """
+    """The frame is set before the basemap reads it."""
 
     @pytest.mark.unit
     def test_render_geometries_sets_limits_before_basemap(self, tmp_path: Path) -> None:
@@ -233,9 +219,7 @@ class TestBasemapOrdering:
         assert xlim[1] > 2_226_389.8
 
 
-# =============================================================================
-# Phase 3: GeoParquet Thumbnail Generation Tests
-# =============================================================================
+# GeoParquet Thumbnail Generation Tests
 
 
 class TestGenerateThumbnailFromGeoparquet:
@@ -296,9 +280,7 @@ class TestGenerateThumbnailFromGeoparquet:
             assert result == tmp_path / "census.thumb.jpg"
 
 
-# =============================================================================
-# Phase 4: Vector Thumbnail Orchestrator Tests
-# =============================================================================
+# Vector Thumbnail Orchestrator Tests
 
 
 class TestGenerateVectorThumbnail:
@@ -306,7 +288,7 @@ class TestGenerateVectorThumbnail:
 
     @pytest.mark.unit
     def test_prefers_geoparquet_when_available(self, tmp_path: Path) -> None:
-        """Prefers the exact GeoParquet geometry over PMTiles (issue #786)."""
+        """Prefers the exact GeoParquet geometry over PMTiles."""
         from portolan_cli.viz.thumbnail import ThumbnailConfig, generate_vector_thumbnail
 
         pmtiles_path = tmp_path / "data.pmtiles"
@@ -438,9 +420,7 @@ class TestGenerateVectorThumbnail:
         assert result is None
 
 
-# =============================================================================
-# Phase 5: Basemap Integration Tests
-# =============================================================================
+# Basemap Integration Tests
 
 
 class TestAddBasemap:
@@ -500,9 +480,7 @@ class TestAddBasemap:
         assert "Unknown basemap provider 'No.SuchProvider'" in caplog.text
 
 
-# =============================================================================
-# Phase 6: Real PMTiles Fixture Test (Integration)
-# =============================================================================
+# Real PMTiles Fixture Test (Integration)
 
 
 class TestPmtilesThumbnailIntegration:
@@ -537,9 +515,7 @@ class TestPmtilesThumbnailIntegration:
             assert result.stat().st_size > 0
 
 
-# =============================================================================
-# Phase 7: Config Loading Tests
-# =============================================================================
+# Config Loading Tests
 
 
 class TestGetThumbnailConfig:
@@ -603,21 +579,14 @@ thumbnails:
         assert config.enabled is False
 
 
-# =============================================================================
-# Phase 8: CRS Reprojection and Metadata-Based Reading Tests (Issue #423)
-# =============================================================================
+# CRS Reprojection and Metadata-Based Reading Tests
 
 
 class TestPmtilesBoundsExtraction:
-    """Tests for PMTiles geometry bounds extraction (Issue #423 Bug 1)."""
+    """Tests for PMTiles geometry bounds extraction."""
 
     @pytest.mark.unit
     def test_process_tile_data_uses_geometry_bounds_not_tile_bounds(self) -> None:
-        """_process_tile_data accumulates geometry coordinate bounds, not tile bounds.
-
-        Bug: At z=0, tile (0,0) covers the entire world (-180 to 180, -85 to 85).
-        Using tile bounds causes basemap to render globally while data is invisible.
-        """
         from portolan_cli.viz.thumbnail import _process_tile_data, _tile_bounds
 
         mock_mvt_data = {
@@ -665,7 +634,7 @@ class TestPmtilesBoundsExtraction:
 
 
 class TestGeoparquetMetadataBounds:
-    """Tests for GeoParquet metadata-based bbox reading (Issue #423 Performance)."""
+    """Tests for GeoParquet metadata-based bbox reading."""
 
     @staticmethod
     def _write_parquet_with_geo(path: Path, geo_metadata: dict) -> Path:
@@ -685,8 +654,8 @@ class TestGeoparquetMetadataBounds:
         "bbox",
         [
             pytest.param([-60.5, -32.5, -60.0, -32.0], id="2d"),
-            # Distinct z values, so a slice of the first four cannot pass by coincidence.
-            # A 6-element 3D bbox reduces to 2D rather than keeping minz (issue #854).
+            # Distinct z values, so a slice of the first four cannot pass by coincidence. A
+            # 6-element 3D bbox reduces to 2D rather than keeping minz.
             pytest.param([-60.5, -32.5, 120.0, -60.0, -32.0, 480.0], id="3d"),
         ],
     )
@@ -736,13 +705,11 @@ class TestGeoparquetThumbnailIntegration:
         assert result.stat().st_size > 0
 
 
-# =============================================================================
-# Phase 5: Data-aware framing (#518 Track 1)
-# =============================================================================
+# Data-aware framing
 
 
 class TestFrameBounds:
-    """Tests for _frame_bounds aspect-cap + padding (Issue #518)."""
+    """Tests for _frame_bounds aspect-cap + padding."""
 
     @pytest.mark.unit
     def test_square_bounds_only_get_margin(self) -> None:
@@ -793,7 +760,7 @@ class TestFrameBounds:
 
 
 class TestComputeRenderParams:
-    """Tests for data-aware _compute_render_params (Issue #518)."""
+    """Tests for data-aware _compute_render_params."""
 
     @pytest.mark.unit
     def test_sparse_points_larger_than_dense(self) -> None:
@@ -815,11 +782,6 @@ class TestComputeRenderParams:
 
     @pytest.mark.unit
     def test_opacity_never_washed_out(self) -> None:
-        """Fill opacity stays >= 0.5 for every geometry type and density.
-
-        This is the anti-washout guarantee: the pale WFS default (0.2) must
-        never reach the canvas via these params.
-        """
         from portolan_cli.viz.thumbnail import _compute_render_params
 
         for geom in ("point", "line", "polygon"):
@@ -836,13 +798,6 @@ class TestComputeRenderParams:
     @pytest.mark.unit
     @pytest.mark.parametrize("geom", ["point", "line", "polygon"])
     def test_off_axis_dimensions_are_floored_not_zeroed(self, geom: str) -> None:
-        """Both marker_size and stroke_width stay > 0 for every geometry type.
-
-        A single RenderParams is applied to every feature in a layer, so a
-        mixed-geometry layer would render its minority type invisibly if the
-        off-axis dimension were zero (points need marker_size, lines/edges need
-        stroke_width). Regression for that: every type must keep both positive.
-        """
         from portolan_cli.viz.thumbnail import _compute_render_params
 
         params = _compute_render_params(geom, 100)
@@ -851,12 +806,7 @@ class TestComputeRenderParams:
 
 
 class TestThumbnailIgnoresPaleStylePaint:
-    """The matplotlib floor must NOT honor pale WFS paint (Issue #518).
-
-    Regression for the washed-out bug: a present style used to override the
-    punchy thumbnail defaults with its own opacity/edge (e.g. fill-opacity 0.2,
-    hairline outline, #dadada). These tests fail against that old behavior.
-    """
+    """The matplotlib floor must NOT honor pale WFS paint."""
 
     @staticmethod
     def _pale_style_file(tmp_path: Path) -> Path:
@@ -909,13 +859,6 @@ class TestThumbnailIgnoresPaleStylePaint:
 
     @pytest.mark.integration
     def test_pmtiles_path_uses_punchy_fill_not_pale_style(self, tmp_path: Path) -> None:
-        """_render_geometries (PMTiles twin) ignores a pale fill-only style.
-
-        Parity with the GeoParquet test above: the historically regression-prone
-        PMTiles path must also render the punchy preset (#3388ff), not the pale
-        WFS fill (#dadada). Pre-fix the old code read style.fill_color into the
-        default fill, so the polygon would render gray — this asserts blue.
-        """
         pytest.importorskip("matplotlib")
         np = pytest.importorskip("numpy")
         pil = pytest.importorskip("PIL.Image")
@@ -946,11 +889,7 @@ class TestThumbnailIgnoresPaleStylePaint:
 
 
 class TestThumbnailRendersVisibleGeometry:
-    """End-to-end render of a representative spread — assert non-blank output.
-
-    Pixel variance / a non-white minimum proves geometry actually drew, which
-    is the concrete regression for the washed-out bug (#514/#518).
-    """
+    """End-to-end render of a representative spread — assert non-blank output."""
 
     @staticmethod
     def _write_gdf(geometries: list, tmp_path: Path, name: str) -> Path:
@@ -1003,13 +942,6 @@ class TestThumbnailRendersVisibleGeometry:
 
     @pytest.mark.integration
     def test_mixed_geometry_minority_points_stay_visible(self, tmp_path: Path) -> None:
-        """Points in a polygon-dominant layer still render (visibility floor, #518).
-
-        One RenderParams is applied to the whole frame, keyed off the dominant
-        geometry type. With marker_size zeroed for polygons (the pre-fix
-        behavior), the minority points drew at size 0 and vanished. Polygons sit
-        bottom-left, points top-right; we assert the points' corner has ink.
-        """
         pytest.importorskip("geopandas")
         pytest.importorskip("matplotlib")
         np = pytest.importorskip("numpy")
@@ -1040,13 +972,6 @@ class TestThumbnailRendersVisibleGeometry:
 
     @pytest.mark.integration
     def test_renders_geographic_crs_with_projected_coords(self, tmp_path: Path) -> None:
-        """A layer declaring a geographic CRS but holding projected-magnitude
-        coords still renders (every collection gets a thumbnail, #518).
-
-        geopandas otherwise tries a latitude-corrected aspect on the mislabeled
-        coords and raises "aspect must be finite and positive", yielding no
-        thumbnail. We force an equal aspect to keep the floor robust.
-        """
         geopandas = pytest.importorskip("geopandas")
         pytest.importorskip("matplotlib")
         from shapely.geometry import Polygon
@@ -1078,16 +1003,11 @@ class TestThumbnailRendersVisibleGeometry:
 
 
 class TestGeoparquetSampling:
-    """A bounded render, since thumbnails are now generated on every add (#683)."""
+    """A bounded render, since thumbnails are now generated on every add."""
 
     @staticmethod
     def _write_geoparquet(path: Path, rows: int, row_group_size: int) -> None:
-        """A real GeoParquet whose points march west to east across the extent.
-
-        Spatially ordered on purpose: geoparquet-io writes spatially sorted
-        output, so a leading-N sample would draw only the western corner. The
-        ordering is what makes the stride assertion meaningful.
-        """
+        """A real GeoParquet whose points march west to east across the extent."""
         import geopandas
         import shapely
 
@@ -1100,7 +1020,7 @@ class TestGeoparquetSampling:
 
     @pytest.mark.unit
     def test_below_the_cap_reads_every_feature(self, tmp_path: Path) -> None:
-        """The guarantee from #423 still holds for ordinary files."""
+        """The guarantee still holds for ordinary files."""
         from portolan_cli.viz.thumbnail import _read_geoparquet_for_thumbnail
 
         gpq = tmp_path / "small.parquet"
@@ -1178,11 +1098,6 @@ class TestGeoparquetSampling:
 
 @pytest.mark.unit
 def test_the_render_leaves_the_global_backend_alone() -> None:
-    """The render draws on its own Agg canvas, so no pyplot state is involved.
-
-    TkAgg, the Windows default, can abort the process from a thread. Before the
-    fix the render switched the process-wide backend to Agg through pyplot.
-    """
     import matplotlib as mpl
     from matplotlib.backends.backend_agg import FigureCanvasAgg
 
@@ -1228,9 +1143,7 @@ def test_thumbnails_quality_reaches_the_geoparquet_render(tmp_path: Path) -> Non
     assert sizes[5] < sizes[95] / 2
 
 
-# =============================================================================
-# Cheap basemap, one draw, bulk geometry (Issues #993 and #1007)
-# =============================================================================
+# Cheap basemap, one draw, bulk geometry
 
 _STUB_TILE_RGBA = STUB_TILE_RGBA
 
@@ -1298,7 +1211,7 @@ def _stub_pixels(image_path: Path) -> int:
 
 
 class TestCheapBasemap:
-    """The basemap stays on by default and costs one draw and no warp (#993)."""
+    """The basemap stays on by default and costs one draw and no warp."""
 
     @pytest.mark.integration
     @pytest.mark.parametrize("name", ["fieldmaps-boundaries.parquet", "open-buildings.parquet"])
@@ -1309,12 +1222,6 @@ class TestCheapBasemap:
         stub_tiles: list[str],
         saved_figures: list[Any],
     ) -> None:
-        """One draw, the tiles of one fetch, and an image that fills the frame.
-
-        Before the fix, savefig with bbox_inches="tight" and contextily's
-        attribution each forced a draw (3 draws), and the axes filled about
-        396 of the 512 px because the figure kept the default subplot margins.
-        """
         from PIL import Image
 
         from portolan_cli.viz.thumbnail import ThumbnailConfig, generate_thumbnail_from_geoparquet
@@ -1349,11 +1256,6 @@ class TestCheapBasemap:
     def test_contextily_add_basemap_and_its_warp_never_run(
         self, tmp_path: Path, stub_tiles: list[str], monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """The render draws in EPSG:3857, so no tile is reprojected.
-
-        Before the fix the data stayed in its CRS and contextily warped the
-        tiles into it, which took 17 s of a 36 s 100-collection add.
-        """
         import contextily
         import contextily.plotting
         import contextily.tile
@@ -1427,12 +1329,6 @@ class TestCheapBasemap:
     def test_the_zoom_fetches_no_more_than_the_image_needs(
         self, tmp_path: Path, stub_tiles: list[str]
     ) -> None:
-        """The merged tiles cover the frame at 1x to 2x the output resolution.
-
-        One zoom level lower would give less than one tile pixel per output
-        pixel, so the basemap would blur. One level higher would fetch about
-        four times the tiles.
-        """
         from portolan_cli.viz.thumbnail import ThumbnailConfig, generate_thumbnail_from_geoparquet
 
         gpq = _copy_fixture("open-buildings.parquet", tmp_path)
@@ -1449,11 +1345,6 @@ class TestCheapBasemap:
     def test_a_tiny_extent_clamps_to_the_provider_max_zoom(
         self, tmp_path: Path, stub_tiles: list[str]
     ) -> None:
-        """A 1 m polygon would need zoom 20 or more. Esri serves up to 16.
-
-        contextily raises for a zoom above the provider maximum, so an
-        unclamped zoom would leave the thumbnail with no basemap.
-        """
         geopandas = pytest.importorskip("geopandas")
         from shapely.geometry import box
 
@@ -1624,11 +1515,6 @@ class TestBasemapApiKey:
     def test_keyless_carto_warns_once_and_draws_no_watermark(
         self, tmp_path: Path, stub_tiles: list[str], caplog: pytest.LogCaptureFixture
     ) -> None:
-        """CARTO without a key gives one warning per run and no basemap.
-
-        CARTO answers a keyless request with a tile that reads "API KEY
-        REQUIRED". Before the fix every thumbnail carried that watermark.
-        """
         from portolan_cli.viz.thumbnail import ThumbnailConfig, generate_thumbnail_from_geoparquet
 
         config = ThumbnailConfig(basemap_provider="CartoDB.Positron")
@@ -1660,7 +1546,7 @@ class TestBasemapApiKey:
 
 
 class TestBulkGeometry:
-    """One path per colour, not one matplotlib object per feature (#993 part 4)."""
+    """One path per colour, not one matplotlib object per feature."""
 
     @pytest.mark.integration
     def test_polygons_draw_as_one_path(self, tmp_path: Path, saved_figures: list[Any]) -> None:
@@ -1737,7 +1623,7 @@ class TestBulkGeometry:
 
 
 class TestGeometryOnlyReads:
-    """The thumbnail reads the geometry column and nothing else (#993)."""
+    """The thumbnail reads the geometry column and nothing else."""
 
     @staticmethod
     def _wide_parquet(path: Path, rows: int) -> None:
@@ -1803,9 +1689,7 @@ class TestGeometryOnlyReads:
         assert connects == []
 
 
-# =============================================================================
 # Extents at the edges of EPSG:3857, and the tile placement of PMTiles
-# =============================================================================
 
 #: EPSG:3857 metres per degree of longitude.
 _DEGREE = 111_319.49
@@ -1843,11 +1727,6 @@ class TestWebMercatorEdges:
     def test_longitudes_past_180_stay_east_of_the_antimeridian(
         self, tmp_path: Path, saved_figures: list[Any]
     ) -> None:
-        """A 0 to 360 longitude is not wrapped to the other side of the world.
-
-        Before the fix, longitude 190 projected to -170. The frame and the
-        drawn box spanned the whole world.
-        """
         from shapely.geometry import box
 
         from portolan_cli.viz.thumbnail import ThumbnailConfig, generate_thumbnail_from_geoparquet
@@ -1864,11 +1743,6 @@ class TestWebMercatorEdges:
     def test_an_antimeridian_bbox_frames_the_crossing(
         self, tmp_path: Path, saved_figures: list[Any]
     ) -> None:
-        """A footer bbox with minx > maxx crosses the antimeridian (GeoParquet 1.1).
-
-        Before the fix, the frame spanned the whole world and the data was two
-        slivers at its edges.
-        """
         import shapely
         from shapely.geometry import box
 
@@ -1915,11 +1789,6 @@ class TestWebMercatorEdges:
     def test_data_beyond_the_mercator_limit_is_drawn(
         self, polygon: tuple[float, float, float, float], tmp_path: Path, stub_tiles: list[str]
     ) -> None:
-        """Data that lies wholly past latitude 85.05 draws in its own CRS.
-
-        Before the fix, the clip to 85.05 collapsed it to a line, and the
-        thumbnail showed the basemap and no data.
-        """
         from shapely.geometry import box
 
         from portolan_cli.viz.thumbnail import ThumbnailConfig, generate_thumbnail_from_geoparquet
@@ -1956,11 +1825,6 @@ class TestPmtilesTilePlacement:
 
     @pytest.mark.integration
     def test_the_fixture_points_keep_their_latitude(self, fixtures_dir: Path) -> None:
-        """sample.pmtiles holds New York, Chicago, and San Francisco.
-
-        Before the fix the decoder flipped y, and the transform flipped it
-        again. Each point was mirrored in its tile: New York at latitude 22.
-        """
         pytest.importorskip("pmtiles")
         pytest.importorskip("mapbox_vector_tile")
         from portolan_cli.viz.thumbnail import _read_pmtiles_geometries
@@ -2017,12 +1881,6 @@ class TestBasemapKeyStaysPrivate:
     def test_the_written_files_hold_no_key(
         self, tmp_path: Path, stub_tiles: list[str], monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """An add with a keyed basemap writes the key into no catalog file.
-
-        The check reads every byte of every file, the JPEG metadata, README,
-        and collection.json included. The key comes from the environment, so
-        .portolan/config.yaml holds none.
-        """
         from click.testing import CliRunner
 
         from portolan_cli.cli import cli
@@ -2185,11 +2043,6 @@ class TestHungTileServer:
         monkeypatch: pytest.MonkeyPatch,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
-        """The thumbnail has no basemap after the deadline, and the run stops asking.
-
-        Before the fix each tile waited for the server with no limit. A new
-        run asks the server again.
-        """
         import threading
         import time
 
@@ -2255,11 +2108,7 @@ class TestHungTileServer:
 
 
 class TestContextilyPrivateParts:
-    """The basemap fetch uses private names of contextily 1.7.0.
-
-    A contextily release that changes one of them fails here, and not in the
-    add of a user.
-    """
+    """The basemap fetch uses private names of contextily 1.7.0."""
 
     @pytest.mark.unit
     @pytest.mark.parametrize(

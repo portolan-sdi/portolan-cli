@@ -1,11 +1,4 @@
-"""Tests for the README Bands section (#713).
-
-The CLI writes the STAC v1.1.0 unified ``bands`` array on the data asset
-(``stac.py:_set_bands_on_data_assets``), item-level for rasters. The Bands
-section used to read ``summaries["eo:bands"]`` / ``["raster:bands"]``, which
-nothing writes, so it never rendered. These tests pin the asset-level read,
-the item walk that reaches it, and the columns that drop when unpopulated.
-"""
+"""Tests for the README Bands section."""
 
 from __future__ import annotations
 
@@ -421,7 +414,7 @@ class TestBandsFromDisk:
 
     @pytest.mark.unit
     def test_item_bands_render_from_disk(self, tmp_path: Path) -> None:
-        """The regression: bands on disk reached no README before #713."""
+        """Bands on disk reach the README."""
         from portolan_cli.readme import generate_readme_for_collection
 
         catalog_root = tmp_path / "catalog"

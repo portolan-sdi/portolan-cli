@@ -1,19 +1,4 @@
-"""Unit tests for the scan module.
-
-These tests follow TDD: written FIRST, verified to FAIL, then implementation added.
-Tests are organized by user story for traceability to spec.md requirements.
-
-Test fixtures are in tests/fixtures/scan/:
-- clean_flat/: 3 valid files, no issues
-- complete_shapefile/: Valid shapefile with all sidecars
-- incomplete_shapefile/: Shapefile missing .dbf
-- invalid_chars/: Files with spaces and non-ASCII
-- multiple_primaries/: 3 GeoJSON files in one directory
-- mixed_formats/: Raster + vector together
-- nested/: Hierarchical directory structure
-- duplicate_basenames/: Same filename, different case
-- unsupported/: Mix of supported and unsupported formats
-"""
+"""Unit tests for the scan module."""
 
 from __future__ import annotations
 
@@ -34,9 +19,7 @@ def fixtures_dir() -> Path:
     return FIXTURES_DIR
 
 
-# =============================================================================
-# Phase 2: Foundational - Data Classes & Enums
-# =============================================================================
+# Foundational - Data Classes & Enums
 
 
 @pytest.mark.unit
@@ -91,30 +74,14 @@ class TestEnums:
 
 @pytest.mark.unit
 class TestOverviewExtensions:
-    """Tests for OVERVIEW_EXTENSIONS constant.
-
-    OVERVIEW_EXTENSIONS should only contain derivative/overview formats
-    that are genuinely NOT primary assets (e.g., spatial index files).
-    PMTiles is a primary cloud-native format and must NOT be in this set.
-    """
+    """Tests for OVERVIEW_EXTENSIONS constant."""
 
     def test_pmtiles_not_in_overview_extensions(self) -> None:
-        """.pmtiles must NOT be listed in OVERVIEW_EXTENSIONS.
-
-        Regression test for issue #198: PMTiles was incorrectly classified as
-        an overview/derivative format in scan.py, causing it to be skipped
-        during scanning. PMTiles is a primary cloud-native geospatial format.
-        """
         from portolan_cli.scan.core import OVERVIEW_EXTENSIONS
 
         assert ".pmtiles" not in OVERVIEW_EXTENSIONS
 
     def test_pmtiles_scanned_as_ready_file(self, tmp_path: Path) -> None:
-        """.pmtiles files appear in scan results as ready files, not skipped.
-
-        Regression test for issue #198: PMTiles was skipped during scan,
-        preventing 'portolan add' from tracking them as primary assets.
-        """
         from portolan_cli.scan.core import ScanOptions, scan_directory
 
         collection_dir = tmp_path / "my-collection"
@@ -763,9 +730,7 @@ class TestScanResultIsRelativeTo:
         assert result is True
 
 
-# =============================================================================
-# Phase 3: User Story 1 - Basic Directory Scan
-# =============================================================================
+# User Story 1 - Basic Directory Scan
 
 
 @pytest.mark.unit
@@ -790,12 +755,6 @@ class TestBasicScan:
             scan_directory(test_file)
 
     def test_scan_clean_flat_returns_three_files(self, fixtures_dir: Path) -> None:
-        """scan_directory on clean_flat fixture returns 3 ready files.
-
-        Note: The fixture contains 3 files in one directory, which correctly
-        triggers a "multiple primaries" warning per FR-014. This is expected
-        behavior, not an error in the scan.
-        """
         from portolan_cli.scan.core import IssueType, scan_directory
 
         result = scan_directory(fixtures_dir / "clean_flat")
@@ -849,9 +808,7 @@ class TestBasicScan:
         assert len(result.skipped) >= 3  # .dbf, .shx, .prj
 
 
-# =============================================================================
-# Phase 4: User Story 2 - Issue Detection
-# =============================================================================
+# User Story 2 - Issue Detection
 
 
 @pytest.mark.unit
@@ -935,11 +892,6 @@ class TestIssueDetection:
         assert long_issues[0].severity == Severity.WARNING
 
     def test_sibling_directories_same_filename_no_warning(self, fixtures_dir: Path) -> None:
-        """Sibling directories with same filename should NOT produce duplicate warning.
-
-        This is intentional organization (e.g., 2010/radios.parquet and 2022/radios.parquet).
-        Only duplicates within the SAME directory should warn.
-        """
         from portolan_cli.scan.core import IssueType, scan_directory
 
         result = scan_directory(fixtures_dir / "duplicate_basenames")
@@ -949,13 +901,6 @@ class TestIssueDetection:
         assert len(dup_issues) == 0
 
     def test_detect_duplicate_basenames_same_directory(self, tmp_path: Path) -> None:
-        """scan_directory detects duplicate basenames within the same directory.
-
-        This test creates two files with names that differ only in case (data.geojson
-        and DATA.geojson). On case-sensitive filesystems (Linux), both files exist and
-        the scan should detect them as duplicates. On case-insensitive filesystems
-        (macOS, Windows), only one file can exist, so we skip the test there.
-        """
         from portolan_cli.scan.core import IssueType, Severity, scan_directory
 
         # Create two files with same basename (case-insensitive) in SAME directory
@@ -1060,11 +1005,6 @@ class TestStructureValidation:
         assert mixed_issues[0].severity == Severity.INFO
 
     def test_mixed_flat_multiitem_detected(self, tmp_path: Path) -> None:
-        """Directory with files both at root and in subdirectories is flagged.
-
-        This indicates an unclear catalog structure - is the root a single item
-        with multiple files, or is each subdirectory a separate item?
-        """
         from portolan_cli.scan.core import IssueType, Severity, scan_directory
 
         # Create files at root level
@@ -1084,9 +1024,7 @@ class TestStructureValidation:
         assert mixed_structure_issues[0].severity == Severity.WARNING
 
 
-# =============================================================================
-# Phase 11: User Story 9 - Windows Reserved Names
-# =============================================================================
+# User Story 9 - Windows Reserved Names
 
 
 @pytest.mark.unit
@@ -1151,9 +1089,7 @@ class TestWindowsReservedNames:
         assert len(reserved_issues) >= 1
 
 
-# =============================================================================
-# Phase 5: User Story 3 - JSON Output
-# =============================================================================
+# User Story 3 - JSON Output
 
 
 @pytest.mark.unit
@@ -1193,9 +1129,7 @@ class TestJsonOutput:
             assert "message" in issue
 
 
-# =============================================================================
-# Phase 6: User Story 4 - Depth Control
-# =============================================================================
+# User Story 4 - Depth Control
 
 
 @pytest.mark.unit
@@ -1209,9 +1143,8 @@ class TestDepthControl:
         opts = ScanOptions(recursive=False)
         result = scan_directory(fixtures_dir / "nested", opts)
 
-        # nested/ has subdirectories, but non-recursive should only find root files
-        # The nested fixture has files in nested/census/2020/, nested/census/2022/, nested/imagery/2024/
-        # With non-recursive, we should find 0 files (all files are in subdirs)
+        # All files of the nested fixture are in subdirectories, so a non-recursive
+        # scan finds 0 files.
         assert result.directories_scanned == 1
 
     def test_max_depth_zero_scans_only_target(self, fixtures_dir: Path) -> None:
@@ -1246,9 +1179,7 @@ class TestDepthControl:
         assert len(result.ready) == 3
 
 
-# =============================================================================
-# Phase 7: User Story 5 - Hidden and Symlink Handling
-# =============================================================================
+# User Story 5 - Hidden and Symlink Handling
 
 
 @pytest.mark.unit
@@ -1335,9 +1266,7 @@ class TestHiddenAndSymlinks:
         assert loop_issues[0].severity == Severity.ERROR
 
 
-# =============================================================================
 # GeoParquet vs Regular Parquet Detection
-# =============================================================================
 
 
 @pytest.mark.unit
@@ -1417,9 +1346,7 @@ class TestGeoParquetDetection:
         assert len(result.skipped) == 2
 
 
-# =============================================================================
 # PMTiles as Overview Format
-# =============================================================================
 
 
 @pytest.mark.unit
@@ -1427,12 +1354,6 @@ class TestOverviewFormats:
     """Tests for overview/derivative format handling."""
 
     def test_pmtiles_files_are_accepted_as_primary_assets(self, tmp_path: Path) -> None:
-        """PMTiles files are primary cloud-native assets, not overviews.
-
-        Regression test for issue #198: PMTiles was incorrectly classified as
-        an overview/derivative and skipped. It is now treated as a primary
-        GEO_ASSET alongside FlatGeobuf (.fgb).
-        """
         from portolan_cli.scan.core import scan_directory
 
         # Create a PMTiles file (just needs to exist for extension detection)
@@ -1448,14 +1369,6 @@ class TestOverviewFormats:
         assert len(result.skipped) == 0
 
     def test_pmtiles_counts_as_primary_alongside_geoparquet(self, tmp_path: Path) -> None:
-        """PMTiles is a primary asset and triggers 'multiple primaries' when alongside GeoParquet.
-
-        Regression test for issue #198: since PMTiles is now a primary cloud-native
-        format (not an overview/derivative), having both a GeoParquet and a PMTiles
-        file in the same flat directory correctly produces a MULTIPLE_PRIMARIES warning.
-        The canonical workflow stores PMTiles inside an item subdirectory, not
-        alongside the GeoParquet at the collection level.
-        """
         import pyarrow as pa
         import pyarrow.parquet as pq
 
@@ -1478,31 +1391,15 @@ class TestOverviewFormats:
         assert len(multi_issues) == 1
 
 
-# =============================================================================
-# Permission and Symlink Edge Cases (Issue #64)
-# =============================================================================
+# Permission and Symlink Edge Cases
 
 
 @pytest.mark.unit
 @pytest.mark.skipif(sys.platform == "win32", reason="Permission tests not supported on Windows")
 class TestPermissionEdgeCases:
-    """Tests for permission error handling during scan.
-
-    These tests verify that scan emits warnings when encountering
-    directories that cannot be scanned due to permission errors.
-
-    Note: On Linux, os.scandir() can stat files with mode 000 as long as
-    the parent directory has execute permission. Permission errors primarily
-    occur when trying to list directory contents (no execute on directory).
-    """
+    """Tests for permission error handling during scan."""
 
     def test_scan_no_execute_directory_emits_warning(self, tmp_path: Path) -> None:
-        """Files in directories without execute permission emit warnings.
-
-        Directory execute permission is required to stat files inside.
-        On Linux, os.scandir may succeed (listing entries) but stat() fails.
-        This tests that stat() failures are properly reported.
-        """
         from portolan_cli.scan.core import IssueType, Severity, scan_directory
 
         # Create a subdirectory with a file, then remove execute permission
@@ -1528,28 +1425,9 @@ class TestPermissionEdgeCases:
 @pytest.mark.unit
 @pytest.mark.skipif(sys.platform == "win32", reason="Symlink tests not supported on Windows")
 class TestBrokenSymlinkEdgeCases:
-    """Tests for broken symlink handling during scan.
-
-    These tests verify that scan emits warnings when encountering
-    broken/dangling symlinks (symlinks pointing to non-existent targets).
-
-    Key insight: With follow_symlinks=True, a broken symlink has:
-    - entry.is_symlink() = True
-    - entry.is_file(follow_symlinks=True) = False (target doesn't exist)
-    - entry.is_dir(follow_symlinks=True) = False
-    - entry.stat(follow_symlinks=True) raises OSError
-
-    The current code silently skips because is_file() returns False.
-    We need to detect: is_symlink AND (not is_file AND not is_dir) = broken.
-    """
+    """Tests for broken symlink handling during scan."""
 
     def test_scan_broken_symlink_emits_warning(self, tmp_path: Path) -> None:
-        """A broken symlink emits a warning when follow_symlinks=True.
-
-        Bug: Broken symlinks are silently skipped because entry.is_file()
-        returns False for them, so they never enter the file processing branch.
-        Expected: Should emit BROKEN_SYMLINK issue.
-        """
         from portolan_cli.scan.core import IssueType, ScanOptions, Severity, scan_directory
 
         # Create a broken symlink (pointing to non-existent target)
@@ -1615,11 +1493,6 @@ class TestBrokenSymlinkEdgeCases:
         assert len(result.ready) == 2
 
     def test_scan_symlink_not_followed_by_default(self, tmp_path: Path) -> None:
-        """Symlinks are not followed by default (existing behavior).
-
-        When follow_symlinks=False, symlinks are simply skipped.
-        No warning is needed because this is intentional.
-        """
         from portolan_cli.scan.core import scan_directory
 
         real = tmp_path / "real.geojson"
@@ -1634,11 +1507,6 @@ class TestBrokenSymlinkEdgeCases:
         assert result.ready[0].basename == "real.geojson"
 
     def test_scan_broken_symlink_ignored_when_not_following(self, tmp_path: Path) -> None:
-        """Broken symlinks are silently skipped when follow_symlinks=False.
-
-        This is intentional - if user doesn't want to follow symlinks,
-        we don't need to warn about broken ones.
-        """
         from portolan_cli.scan.core import IssueType, scan_directory
 
         # Create a broken symlink

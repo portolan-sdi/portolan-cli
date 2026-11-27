@@ -1,14 +1,4 @@
-"""Tests for README generation.
-
-Tests README generation from STAC metadata + metadata.yaml:
-- Title/description from metadata.yaml override, else STAC, else id (#534, #502)
-- Columns from table:columns extension
-- Code examples based on format
-- Checksums from STAC assets
-- STAC links
-- Known issues from metadata.yaml
-- Check mode for CI freshness validation
-"""
+"""Tests for README generation."""
 
 from __future__ import annotations
 
@@ -63,12 +53,6 @@ class TestGenerateReadme:
 
     @pytest.mark.unit
     def test_title_from_metadata_overrides_stac(self) -> None:
-        """metadata.yaml title/description override STAC values (#534, #502).
-
-        A human-authored title in metadata.yaml is the highest-precedence source
-        (consistent with apply_human_titles), so ``readme`` honors it even when
-        the STAC title/description is still the slug-humanized default.
-        """
         from portolan_cli.readme import generate_readme
 
         stac = {
@@ -92,7 +76,7 @@ class TestGenerateReadme:
 
     @pytest.mark.unit
     def test_blank_metadata_title_falls_back_to_stac(self) -> None:
-        """A blank metadata.yaml title is treated as absent (#502); STAC wins."""
+        """A blank metadata.yaml title is treated as absent; STAC wins."""
         from portolan_cli.readme import generate_readme
 
         stac = {
@@ -130,7 +114,7 @@ class TestGenerateReadme:
 
     @pytest.mark.unit
     def test_explicit_null_stac_fields_do_not_render_none(self) -> None:
-        """Explicit nulls in STAC fall back, never render the string 'None' (#534)."""
+        """Explicit nulls in STAC fall back, never render the string 'None'."""
         from portolan_cli.readme import generate_readme
 
         stac = {"type": "Collection", "id": None, "title": None, "description": None}

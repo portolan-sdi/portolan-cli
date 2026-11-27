@@ -1,13 +1,4 @@
-"""Tests for `portolan push --verify` (Issue #966).
-
-Push decides to skip an asset from versions.json alone. A store that an older
-bug damaged keeps the wrong bytes forever, because the remote current snapshot
-records the local sha256. With ``--verify``, push sends a HEAD for each asset
-it would skip. It uploads the asset when the object is missing or its size
-differs from the ``size_bytes`` that the local current snapshot records.
-
-The tests use an in-memory obstore store, so they do no network I/O.
-"""
+"""Tests for `portolan push --verify`."""
 
 from __future__ import annotations
 
@@ -109,9 +100,7 @@ def _assert_one_repair(result: PushResult, store: MemoryStore, expected: bytes) 
     assert bytes(obs.get(store, f"{PREFIX}/test/a.parquet").bytes()) == expected
 
 
-# =============================================================================
 # The verify decision
-# =============================================================================
 
 
 class TestVerifySkippedAssets:
@@ -287,9 +276,7 @@ class TestReuploadOverridesSkip:
         assert assets == [a_file.resolve()]
 
 
-# =============================================================================
 # push_async with --verify
-# =============================================================================
 
 
 class TestPushAsyncVerify:
@@ -437,12 +424,7 @@ class TestPushAsyncVerify:
 
 
 class TestRepairOnlyPath:
-    """A repair without a new version uploads the flagged assets only.
-
-    Push then keeps the remote versions.json as is. The local manifest can
-    differ from the remote manifest with the same version list. A plain push
-    publishes none of that difference, so a repair must not publish it either.
-    """
+    """A repair without a new version uploads the flagged assets only."""
 
     @staticmethod
     def _push(root: Path, store: MemoryStore, **kwargs: Any) -> PushResult:
@@ -452,13 +434,6 @@ class TestRepairOnlyPath:
     def test_repair_keeps_the_remote_manifest_and_skips_unflagged_assets(
         self, tmp_path: Path
     ) -> None:
-        """Reviewer probe. Local current is 1.0.0, remote current is 1.0.1.
-
-        Both sides list the same versions. The store has no a.parquet. The
-        local b.parquet differs from the remote current b.parquet, but verify
-        does not flag it. Push must upload a.parquet only, and it must not
-        write versions.json.
-        """
         a = b"a bytes"
         b_one, b_two = b"b-one", b"b-two-longer"
         entries = (
@@ -638,9 +613,7 @@ class TestDryRunVerifyNetworkIsolation:
         assert result.verify is None
 
 
-# =============================================================================
 # CLI
-# =============================================================================
 
 
 def _invoke_push(tmp_path: Path, args: list[str]) -> Result:

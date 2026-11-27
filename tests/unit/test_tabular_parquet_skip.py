@@ -1,15 +1,4 @@
-"""Unit tests for tabular parquet (no geometry) handling (Issue #177).
-
-Tests that `portolan add` gracefully handles Parquet files without geometry:
-- Track non-geo parquet files as assets when in same dir as geo file
-- Skip non-geo parquet files that have no companion geo file (can't create STAC item)
-- Emit appropriate log messages
-- Support parquet files as auxiliary/tabular data assets
-
-This follows the same pattern as CSV/TSV handling (Issue #140).
-
-See: https://github.com/portolan-sdi/portolan-cli/issues/177
-"""
+"""Unit tests for tabular parquet (no geometry) handling."""
 
 from __future__ import annotations
 
@@ -57,11 +46,7 @@ def initialized_catalog(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def tabular_parquet(tmp_path: Path) -> Path:
-    """Create a Parquet file WITHOUT geometry (tabular data only).
-
-    This simulates a census metadata file or lookup table that contains
-    only tabular data without any geometry column.
-    """
+    """Create a Parquet file WITHOUT geometry (tabular data only)."""
     # Create item directory structure inside collection
     item_dir = tmp_path / "collection" / "item"
     item_dir.mkdir(parents=True, exist_ok=True)
@@ -97,18 +82,12 @@ class TestTabularParquetConstants:
 
 
 class TestTabularParquetSkip:
-    """Tests for skipping tabular parquet files without geometry (Issue #177)."""
+    """Tests for skipping tabular parquet files without geometry."""
 
     @pytest.mark.unit
     def test_add_files_fails_tabular_parquet_with_hint(
         self, initialized_catalog: Path, tabular_parquet: Path
     ) -> None:
-        """add_files should fail tabular parquet with hint when tabular.enabled=false.
-
-        Issue #432: When tabular.enabled=false (default), standalone tabular files
-        should fail with a helpful message about how to enable tabular support,
-        rather than silently skipping.
-        """
         added, _skipped, failures = add_files(
             paths=[tabular_parquet],
             catalog_root=initialized_catalog,
@@ -154,12 +133,6 @@ class TestTabularParquetWithGeoAsset:
     def test_tabular_parquet_added_as_auxiliary_asset(
         self, initialized_catalog: Path, tabular_parquet: Path
     ) -> None:
-        """Tabular parquet should be tracked as auxiliary asset when geo file exists.
-
-        Verifies the core feature: when a tabular parquet and a geo file exist
-        in the same directory, the tabular parquet is deferred and then tracked
-        as a non-geospatial asset alongside the primary geo-asset.
-        """
         # Create a valid GeoJSON file in the same directory as the tabular parquet
         item_dir = tabular_parquet.parent
         geo_file = item_dir / "boundaries.geojson"
@@ -189,8 +162,8 @@ class TestTabularParquetWithGeoAsset:
                     path=path.stem,
                     reason="The source file may have no valid geometry.",
                 )
-            # Succeed for the GeoJSON - explicitly set is_collection_level_asset=False
-            # so the deferred non-geo files go through item-level path (Issue #383)
+            # Succeed for the GeoJSON - explicitly set is_collection_level_asset=False so the
+            # deferred non-geo files go through item-level path
             return MagicMock(
                 item_id="item",
                 collection_id=collection_id,
@@ -199,10 +172,8 @@ class TestTabularParquetWithGeoAsset:
                 is_collection_level_asset=False,
             )
 
-        # Mock add to simulate the real flow:
-        # - GeoJSON succeeds (creates STAC item)
-        # - Tabular parquet raises NoGeometryError (deferred, then tracked)
-        # Per Issue #281: add_files now calls prepare_item + finalize_items
+        # The GeoJSON succeeds and creates an item. The tabular parquet raises
+        # NoGeometryError, is deferred, and then is tracked.
         with (
             patch("portolan_cli.add.prepare_item", side_effect=mock_add_side_effect) as mock_add,
             patch("portolan_cli.add.finalize_items") as mock_finalize,
@@ -280,9 +251,7 @@ class TestParquetGeometryDetection:
         assert b"geo" not in metadata, "Test fixture should not have geo metadata"
 
 
-# =============================================================================
 # NoGeometryError Unit Tests
-# =============================================================================
 
 
 class TestNoGeometryError:
@@ -328,13 +297,11 @@ class TestNoGeometryError:
         assert not isinstance(plain_err, NoGeometryError)
 
 
-# =============================================================================
 # Negative Case Tests (Non-Geometry ValueErrors Propagate)
-# =============================================================================
 
 
 class TestNonGeometryValueErrorsPropagation:
-    """Tests that non-geometry ValueErrors are captured in failures (Issue #175)."""
+    """Tests that non-geometry ValueErrors are captured in failures."""
 
     @pytest.mark.unit
     def test_non_geometry_valueerror_captured_in_failures(
@@ -352,7 +319,7 @@ class TestNonGeometryValueErrorsPropagation:
         with patch("portolan_cli.add.prepare_item") as mock_add:
             mock_add.side_effect = ValueError("Unsupported format: .xyz")
 
-            # Per Issue #175, errors are collected in failures instead of raised
+            # Errors are collected in failures instead of raised
             _added, _skipped, failures = add_files(
                 paths=[item_dir / "data.parquet"],
                 catalog_root=initialized_catalog,
@@ -372,7 +339,7 @@ class TestNonGeometryValueErrorsPropagation:
         bad_geojson = item_dir / "bad.geojson"
         bad_geojson.write_text("{invalid json content")
 
-        # Per Issue #175, errors are collected in failures instead of raised
+        # Errors are collected in failures instead of raised
         _added, _skipped, failures = add_files(
             paths=[bad_geojson],
             catalog_root=initialized_catalog,
@@ -383,9 +350,7 @@ class TestNonGeometryValueErrorsPropagation:
         assert "Invalid JSON" in failures[0].error or "json" in failures[0].error.lower()
 
 
-# =============================================================================
 # GeoParquet Success Path Regression Test
-# =============================================================================
 
 
 class TestGeoParquetSuccessPath:
@@ -393,11 +358,6 @@ class TestGeoParquetSuccessPath:
 
     @pytest.mark.unit
     def test_valid_geoparquet_not_deferred(self, initialized_catalog: Path) -> None:
-        """A valid GeoParquet file should be added normally, NOT deferred as tabular.
-
-        This is a regression test to ensure the NoGeometryError handling does
-        not accidentally intercept valid GeoParquet files.
-        """
         item_dir = initialized_catalog / "collection" / "item"
         item_dir.mkdir(parents=True, exist_ok=True)
 
@@ -428,9 +388,7 @@ class TestGeoParquetSuccessPath:
         table = table.replace_schema_metadata(new_meta)
         pq.write_table(table, geo_parquet)
 
-        # Mock prepare_item and finalize_items to simulate success
-        # Per Issue #281: add_files now calls prepare_item + finalize_items
-        # The added list is populated from finalize_items return value
+        # add_files fills the added list from the return value of finalize_items.
         from portolan_core.query import ItemInfo
 
         mock_item_info = ItemInfo(
@@ -464,23 +422,16 @@ class TestGeoParquetSuccessPath:
             assert len(added) == 1, "Valid GeoParquet should appear in added list"
 
 
-# =============================================================================
 # Warning Message Tests
-# =============================================================================
 
 
 class TestFailureMessages:
-    """Tests for failure message quality and consistency (Issue #432)."""
+    """Tests for failure message quality and consistency."""
 
     @pytest.mark.unit
     def test_failure_includes_actionable_hint(
         self, initialized_catalog: Path, tabular_parquet: Path
     ) -> None:
-        """Failure message should include actionable hint for enabling tabular support.
-
-        Issue #432: When tabular.enabled=false, the failure message should tell
-        users exactly how to enable tabular data support (via config setting).
-        """
         _added, _skipped, failures = add_files(
             paths=[tabular_parquet],
             catalog_root=initialized_catalog,
@@ -498,9 +449,7 @@ class TestFailureMessages:
         )
 
 
-# =============================================================================
 # Hypothesis Property-Based Tests (Consistent with CSV tests)
-# =============================================================================
 
 
 class TestTabularParquetHypothesis:

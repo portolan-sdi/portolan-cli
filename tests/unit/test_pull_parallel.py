@@ -1,8 +1,4 @@
-"""Tests for parallel pull functionality.
-
-This module tests the ability to pull collections in parallel using
-the --workers flag for catalog-wide pull operations.
-"""
+"""Tests for parallel pull functionality."""
 
 from __future__ import annotations
 
@@ -38,9 +34,7 @@ def _create_collection(catalog_root: Path, name: str) -> None:
     (collection_dir / "versions.json").write_text(json.dumps({"versions": []}))
 
 
-# =============================================================================
-# Tests for parallel pull_all_collections()
-# =============================================================================
+# Tests for parallel pull_all_collections
 
 
 class TestPullAllCollectionsParallel:
@@ -104,11 +98,6 @@ class TestPullAllCollectionsParallel:
     def test_workers_greater_than_1_executes_concurrently(
         self, mock_pull: MagicMock, tmp_path: Path
     ) -> None:
-        """workers > 1 executes collections concurrently using asyncio.gather().
-
-        Note: With async migration, concurrency is via asyncio.gather() + semaphore,
-        not ThreadPoolExecutor. We verify all collections are processed.
-        """
         _setup_valid_catalog(tmp_path)
         for name in ["col1", "col2", "col3", "col4"]:
             _create_collection(tmp_path, name)

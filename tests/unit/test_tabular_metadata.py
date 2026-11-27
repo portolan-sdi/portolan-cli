@@ -1,10 +1,4 @@
-"""Unit tests for plain-Parquet table metadata (issue #749).
-
-Covers the three pieces the tabular path needs to answer PTL-DAT-015:
-reading columns and temporal bounds from a Parquet footer, writing
-``table:columns`` to the right place in ``collection.json``, and filling a
-temporal extent without overwriting one that is already set.
-"""
+"""Unit tests for plain-Parquet table metadata."""
 
 from __future__ import annotations
 
@@ -30,11 +24,7 @@ def _write(path: Path, table: pa.Table) -> Path:
 
 
 def _naive_timestamps(values: list[str]) -> pa.Array:
-    """Build a timezone-naive timestamp column from ISO date strings.
-
-    A bare Parquet timestamp carries no zone. The extractor must promote it to
-    UTC, so the fixture keeps the column naive on purpose.
-    """
+    """Build a timezone-naive timestamp column from ISO date strings."""
     return pa.array(values, pa.string()).cast(pa.timestamp("us"))
 
 
@@ -56,11 +46,6 @@ class TestExtractTabularMetadata:
 
     @pytest.mark.unit
     def test_returns_none_for_geoparquet(self, tmp_path: Path) -> None:
-        """GeoParquet is not tabular: the geospatial storage rules own it.
-
-        A GeoParquet stamped here would overwrite the schema
-        ``add_table_extension`` derives from the same file during finalization.
-        """
         table = pa.table({"id": ["a"]}).replace_schema_metadata(
             {b"geo": b'{"version": "1.1.0", "primary_column": "geometry", "columns": {}}'}
         )
@@ -235,12 +220,6 @@ class TestDocumentTabularTable:
 
     @pytest.mark.unit
     def test_a_companion_csv_does_not_displace_the_collection(self, tmp_path: Path) -> None:
-        """Only another Parquet claims the collection level.
-
-        Converting a CSV tracks both files as data assets. Counting the CSV
-        would push the schema onto the asset on re-add and strand a stale copy
-        at collection level.
-        """
         source = _write(tmp_path / "census.parquet", pa.table({"tract_id": ["001"]}))
         metadata = extract_tabular_metadata(source)
         assert metadata is not None
@@ -296,7 +275,7 @@ class TestDocumentTabularTable:
     @pytest.mark.unit
     @pytest.mark.parametrize("strategy", [MergeStrategy.SMART, MergeStrategy.KEEP])
     def test_a_removed_column_is_dropped(self, tmp_path: Path, strategy: MergeStrategy) -> None:
-        """Issue #931: a column the data lost leaves table:columns, description and all."""
+        """A column the data lost leaves table:columns, description and all."""
         metadata, collection = _census(tmp_path, pa.table({"population": [5000]}))
         collection["table:columns"] = [
             {"name": "id", "type": "string", "description": "Dropped upstream"},

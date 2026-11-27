@@ -1,8 +1,4 @@
-"""Tests for PMTiles generation module.
-
-Tests the core PMTiles generation functionality. Integration tests that
-actually generate PMTiles require tippecanoe and are marked accordingly.
-"""
+"""Tests for PMTiles generation module."""
 
 from __future__ import annotations
 
@@ -129,9 +125,8 @@ class TestCheckPMTilesAvailable:
             check_pmtiles_available,
         )
 
-        # Setting sys.modules[name] = None makes `import name` raise ImportError,
-        # scoped to geoparquet_io.api.ops only. A global builtins.__import__
-        # patch also breaks every other import that runs during the call.
+        # Setting sys.modules[name] = None makes `import name` raise ImportError, scoped to
+        # geoparquet_io.api.ops only.
         with (
             patch.dict("sys.modules", {"geoparquet_io.api.ops": None}),
             patch("portolan_cli.viz.pmtiles.shutil.which", return_value="/usr/bin/tippecanoe"),
@@ -322,7 +317,7 @@ class TestAddPMTilesAssetToCollection:
 
     @pytest.mark.unit
     def test_reuses_the_key_that_already_holds_the_href(self, tmp_path: Path) -> None:
-        """Issue #933: a tracked PMTiles under another key gets no second entry."""
+        """A tracked PMTiles under another key gets no second entry."""
         from portolan_cli.viz.pmtiles import add_pmtiles_asset_to_collection
 
         collection_dir = tmp_path / "collection"
@@ -343,12 +338,6 @@ class TestAddPMTilesAssetToCollection:
 
     @pytest.mark.unit
     def test_stamps_file_fields_on_a_new_asset(self, tmp_path: Path) -> None:
-        """PORTO-CORE-028: the tiles asset claims its own size and checksum.
-
-        The style and thumbnail writers already did this. PMTiles was the one
-        visual artifact shipping without it, which cost two PTL-AST-003 warnings
-        nobody saw until the conformance gate started reading warnings (#746).
-        """
         from portolan_cli.viz.pmtiles import add_pmtiles_asset_to_collection
 
         collection_dir = tmp_path / "collection"
@@ -373,13 +362,6 @@ class TestAddPMTilesAssetToCollection:
 
     @pytest.mark.unit
     def test_regenerating_tiles_restamps_the_existing_asset(self, tmp_path: Path) -> None:
-        """A stale digest is a false claim about bytes, worse than no claim.
-
-        PORTO-CORE-030 makes a published ``file:checksum`` a statement about what
-        the href resolves to, and rashid's data pass reports a mismatch as an
-        error. Regeneration rewrites the tiles, so the asset already on disk has
-        to be restamped rather than left alone.
-        """
         from portolan_cli.viz.pmtiles import add_pmtiles_asset_to_collection
 
         collection_dir = tmp_path / "collection"
@@ -404,13 +386,6 @@ class TestAddPMTilesAssetToCollection:
 
     @pytest.mark.unit
     def test_a_dropped_file_extension_is_declared_again(self, tmp_path: Path) -> None:
-        """Declaring the extension is a conditional MUST, so it has to self-heal.
-
-        An asset carrying ``file:`` fields obliges its collection to declare
-        file/v2.1.0. Hand-editing or an older writer can leave the fields without
-        the declaration, and the next run has to put it back rather than assume
-        the first run got there.
-        """
         from portolan_cli.viz.pmtiles import add_pmtiles_asset_to_collection
 
         file_ext = "https://stac-extensions.github.io/file/v2.1.0/schema.json"
@@ -435,7 +410,7 @@ class TestAddPMTilesAssetToCollection:
 
 
 class TestAddPMTilesLinkToCollection:
-    """Tests for add_pmtiles_link_to_collection (Issue #569)."""
+    """Tests for add_pmtiles_link_to_collection."""
 
     @staticmethod
     def _collection(tmp_path: Path) -> Path:
@@ -500,16 +475,7 @@ class TestAddPMTilesLinkToCollection:
 
 
 class TestTrackGeneratedAssetsInVersions:
-    """Tests for versions.track_generated_assets (Issue #519).
-
-    Moved out of viz.pmtiles in #683: the collection-thumbnail orchestrator
-    records derived assets the same way, and viz may not reach the sync layer.
-
-    Generated side-step artifacts (PMTiles, thumbnail) must be tracked in
-    versions.json with a checksum, size, and mtime so sync can verify integrity
-    and skip unchanged files. PMTiles and its thumbnail share ONE version
-    snapshot, not two.
-    """
+    """Tests for versions.track_generated_assets."""
 
     @staticmethod
     def _write_versions(collection_dir: Path) -> None:
@@ -569,7 +535,7 @@ class TestTrackGeneratedAssetsInVersions:
 
     @pytest.mark.unit
     def test_pmtiles_and_thumbnail_share_one_version(self, tmp_path: Path) -> None:
-        """PMTiles + thumbnail tracked together land in a SINGLE version (Issue #519)."""
+        """PMTiles + thumbnail tracked together land in a SINGLE version."""
         from portolan_core.versions import read_versions, track_generated_assets
 
         collection_dir = tmp_path / "demographics"
@@ -720,11 +686,6 @@ class TestGeneratePMTiles:
 
     @pytest.mark.unit
     def test_does_not_import_deprecated_gpio_pmtiles(self, tmp_path: Path) -> None:
-        """Generation works when gpio-pmtiles is absent (Issue #754).
-
-        `sys.modules[name] = None` makes `import name` raise ImportError. The
-        deprecated package is therefore unreachable for the duration of the test.
-        """
         from portolan_cli.viz.pmtiles import generate_pmtiles
 
         parquet = tmp_path / "data.parquet"
@@ -764,7 +725,7 @@ class TestGeneratePMTilesForCollection:
 
     @pytest.mark.unit
     def test_prebuilt_tiles_need_no_tippecanoe(self, tmp_path: Path) -> None:
-        """Issue #934: the preflight ran before the up-to-date skip."""
+        """The preflight ran before the up-to-date skip."""
         from portolan_cli.viz.pmtiles import generate_pmtiles_for_collection
 
         collection_dir = self._collection_with_tiles(tmp_path, tiles_newer=True)
@@ -792,7 +753,7 @@ class TestGeneratePMTilesForCollection:
 
     @pytest.mark.unit
     def test_register_only_keeps_stale_tiles_and_builds_none(self, tmp_path: Path) -> None:
-        """Issue #929: without a request, tiles a user built are registered as they are."""
+        """Without a request, tiles a user built are registered as they are."""
         from portolan_cli.viz.pmtiles import generate_pmtiles_for_collection
 
         collection_dir = self._collection_with_tiles(tmp_path, tiles_newer=False)
@@ -883,12 +844,6 @@ class TestGeneratePMTilesForCollection:
 
     @pytest.mark.unit
     def test_cleans_up_partial_file_on_failure(self, tmp_path: Path) -> None:
-        """Partial PMTiles file is deleted when generation fails (Issue #385).
-
-        When geoparquet-io or tippecanoe fails mid-generation, it may leave a
-        partial output file. This test verifies that such files are cleaned
-        up to prevent phantom assets in versions.json on subsequent add runs.
-        """
         from portolan_cli.viz.pmtiles import (
             PMTilesGenerationError,
             generate_pmtiles_for_collection,
@@ -914,7 +869,7 @@ class TestGeneratePMTilesForCollection:
         assert len(result.failed) == 1
         assert "data.parquet" in str(result.failed[0][0])
 
-        # KEY ASSERTION: Partial file should be cleaned up (Issue #385)
+        # KEY ASSERTION: Partial file should be cleaned up
         assert not pmtiles_path.exists(), (
             "Partial PMTiles file should be deleted on generation failure. "
             "Leaving it causes phantom assets in versions.json on next add."
@@ -922,7 +877,7 @@ class TestGeneratePMTilesForCollection:
 
     @pytest.mark.unit
     def test_cleans_up_partial_file_on_unexpected_error(self, tmp_path: Path) -> None:
-        """Partial PMTiles file is deleted on unexpected errors too (Issue #385)."""
+        """Partial PMTiles file is deleted on unexpected errors too."""
         from portolan_cli.viz.pmtiles import generate_pmtiles_for_collection
 
         collection_dir = _data_collection(tmp_path)
@@ -945,11 +900,6 @@ class TestGeneratePMTilesForCollection:
 
     @pytest.mark.unit
     def test_cleans_up_partial_file_on_keyboard_interrupt(self, tmp_path: Path) -> None:
-        """Partial PMTiles file is deleted even on KeyboardInterrupt (Issue #385).
-
-        KeyboardInterrupt inherits from BaseException, not Exception.
-        The finally block ensures cleanup even when user hits Ctrl+C.
-        """
         from portolan_cli.viz.pmtiles import generate_pmtiles_for_collection
 
         collection_dir = _data_collection(tmp_path)
@@ -975,13 +925,6 @@ class TestGeneratePMTilesForCollection:
 
     @pytest.mark.unit
     def test_keeps_preexisting_pmtiles_when_generation_fails(self, tmp_path: Path) -> None:
-        """A valid pre-existing PMTiles file survives a failed rebuild (Issue #814).
-
-        tippecanoe refuses to overwrite an existing tileset. It exits with code
-        104 and writes nothing. The cleanup handler treated the untouched file
-        as its own partial output and deleted it. This test locks the file in
-        place across a failed generation.
-        """
         import os
 
         from portolan_cli.viz.pmtiles import (
@@ -1012,7 +955,7 @@ class TestGeneratePMTilesForCollection:
 
         assert len(result.failed) == 1
 
-        # KEY ASSERTION: the pre-existing tileset must survive (Issue #814).
+        # KEY ASSERTION: the pre-existing tileset must survive.
         assert pmtiles_path.exists(), (
             "A pre-existing PMTiles file must survive a failed rebuild. "
             "Exit code 104 means tippecanoe wrote nothing, so there is no "
@@ -1022,7 +965,7 @@ class TestGeneratePMTilesForCollection:
 
     @pytest.mark.unit
     def test_failed_rebuild_says_it_kept_the_old_tiles(self, tmp_path: Path) -> None:
-        """A failed rebuild names the tileset it kept (Issue #814)."""
+        """A failed rebuild names the tileset it kept."""
         import os
 
         from portolan_cli.report import reporting
@@ -1060,7 +1003,7 @@ class TestGeneratePMTilesForCollection:
             # tippecanoe refuses to overwrite a tileset (exit code 104), so the
             # rebuild failed unless the user passed --force-pmtiles.
             (True, [False], b"new tileset", True),
-            # Without a request, pre-built tiles stay as they are (#929).
+            # Without a request, pre-built tiles stay as they are.
             (False, [], b"old tileset", False),
         ],
     )
@@ -1097,14 +1040,6 @@ class TestGeneratePMTilesForCollection:
 
     @pytest.mark.unit
     def test_generated_thumbnail_tracked_in_versions(self, tmp_path: Path) -> None:
-        """PMTiles and thumbnail land in ONE versions.json snapshot (Issue #519).
-
-        Regression: the side-step registered the thumbnail in collection.json
-        but never tracked it in versions.json, so it shipped without a
-        checksum/size and sync could not verify it. A second regression had the
-        PMTiles and thumbnail each bump their own version (two snapshots for one
-        side-step); they must now share a single version snapshot.
-        """
         from portolan_cli.viz.pmtiles import generate_pmtiles_for_collection
         from portolan_core.versions import read_versions
 
@@ -1135,8 +1070,7 @@ class TestGeneratePMTilesForCollection:
         assert pmtiles_path in result.generated
 
         versions = read_versions(collection_dir / "versions.json")
-        # One side-step == one new version snapshot, not two (Issue #519).
-        # The old double-bump behavior produced 3 versions here.
+        # One side-step == one new version snapshot, not two.
         assert len(versions.versions) == 2, (
             "PMTiles + thumbnail must share a single version snapshot, not bump twice"
         )
@@ -1152,7 +1086,7 @@ class TestGeneratePMTilesForCollection:
 
     @pytest.mark.unit
     def test_generate_emits_pmtiles_link(self, tmp_path: Path) -> None:
-        """The generate path emits the rel='pmtiles' web-map-links link (#569)."""
+        """The generate path emits the rel='pmtiles' web-map-links link."""
         from portolan_cli.viz.pmtiles import generate_pmtiles_for_collection
         from portolan_cli.viz.pmtiles_links import WEB_MAP_LINKS_EXTENSION
 
@@ -1194,13 +1128,6 @@ class TestGeneratePMTilesForCollection:
 
     @pytest.mark.unit
     def test_skip_path_backfills_untracked_thumbnail(self, tmp_path: Path) -> None:
-        """Skip path backfills artifacts left untracked by the old code (Issue #519).
-
-        When PMTiles is up-to-date, generation is skipped. A thumbnail generated
-        before tracking existed (present on disk, in collection.json, but absent
-        from versions.json) must be backfilled — without forcing regeneration —
-        and in exactly one version bump.
-        """
         from portolan_cli.viz.pmtiles import generate_pmtiles_for_collection
         from portolan_core.versions import read_versions
 
@@ -1220,8 +1147,6 @@ class TestGeneratePMTilesForCollection:
         (collection_dir / "collection.json").write_text(json.dumps(collection_json))
 
         # Source parquet OLDER than pmtiles -> _should_generate returns False.
-        # A real GeoParquet, because the thumbnail orchestrator derives geospatial
-        # status by reading the `geo` schema metadata (#683).
         parquet = collection_dir / "data.parquet"
         shutil.copy(Path(__file__).parent.parent / "fixtures" / "simple.parquet", parquet)
         pmtiles = collection_dir / "data.pmtiles"
@@ -1250,10 +1175,7 @@ class TestGeneratePMTilesForCollection:
         assert "data.pmtiles" in latest, "Untracked PMTiles should be backfilled on skip"
         assert "data.thumb.jpg" in latest, "Untracked thumbnail should be backfilled on skip"
 
-        # Registering the STAC asset moved to collection_thumbnail in #683, which
-        # adopts this .thumb.jpg. Prove the pair still meets: the orchestrator
-        # picks up exactly what the backfill tracked, so the versions.json entry
-        # cannot be orphaned from collection.json.
+        # collection_thumbnail registers the STAC asset and adopts this .thumb.jpg.
         from portolan_cli.collection_thumbnail import ensure_collection_thumbnails
 
         ensure_collection_thumbnails(tmp_path, {"demographics"})
@@ -1348,7 +1270,7 @@ class TestGeneratePMTilesForCollection:
 
     @pytest.mark.unit
     def test_thumbnail_render_failure_tracks_only_pmtiles(self, tmp_path: Path) -> None:
-        """A failed thumbnail render must not block PMTiles tracking (Issue #13)."""
+        """A failed thumbnail render must not block PMTiles tracking."""
         from portolan_cli.viz.pmtiles import generate_pmtiles_for_collection
         from portolan_core.versions import read_versions
 
@@ -1390,7 +1312,7 @@ def _make_collection(catalog_root: Path, coll_id: str, config: str = "") -> Path
 
 
 class TestGetPMTilesSettings:
-    """Tests for get_pmtiles_settings config resolution (#620)."""
+    """Tests for get_pmtiles_settings config resolution."""
 
     @pytest.mark.unit
     def test_defaults_when_no_config(self, tmp_path: Path) -> None:
@@ -1427,7 +1349,7 @@ class TestGetPMTilesSettings:
 
 
 class TestGenerateOrSuggestPMTiles:
-    """Tests for the post-add PMTiles orchestration moved out of cli.py (#620)."""
+    """Tests for the post-add PMTiles orchestration."""
 
     @pytest.mark.unit
     def test_registers_only_when_disabled_and_not_flagged(self, tmp_path: Path) -> None:
@@ -1444,7 +1366,7 @@ class TestGenerateOrSuggestPMTiles:
                 generate_pmtiles=False,
                 force=False,
             )
-        # Issue #929: the step still registers tiles a user built, and builds none.
+        # The step still registers tiles a user built, and builds none.
         mock_gen.assert_called_once()
         assert mock_gen.call_args.kwargs["generate"] is False
 
@@ -1527,12 +1449,6 @@ class TestGenerateOrSuggestPMTiles:
 
     @pytest.mark.unit
     def test_force_alone_generates_when_config_disabled(self, tmp_path: Path) -> None:
-        """--force-pmtiles alone turns generation on (Issue #760).
-
-        Before the fix the gate read `--pmtiles` only. A catalog with
-        `pmtiles.enabled: false` therefore skipped the collection, and
-        `generate_pmtiles_for_collection` never ran.
-        """
         from portolan_cli.viz.pmtiles import PMTilesResult, generate_or_suggest_pmtiles
 
         coll_path = _make_collection(tmp_path, "roads", "pmtiles:\n  enabled: false\n")

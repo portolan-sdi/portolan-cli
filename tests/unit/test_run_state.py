@@ -1,4 +1,4 @@
-"""Unit tests for RunState, the run-scoped memo and version stage (issue #995)."""
+"""Unit tests for RunState, the run-scoped memo and version stage."""
 
 from __future__ import annotations
 
@@ -35,11 +35,7 @@ def _pin_mtime(path: Path) -> None:
 
 
 def _next_tick(path: Path) -> int:
-    """Move the mtime of ``path`` one file-system tick past the pinned base.
-
-    A tick is 1 ns where the file system keeps nanoseconds (ext4) and 100 ns
-    on NTFS. The step is the smallest one that the file system records.
-    """
+    """Move the mtime of ``path`` one file-system tick past the pinned base."""
     for step in (1, 100, 1_000, 1_000_000_000):
         os.utime(path, ns=(_BASE_NS + step, _BASE_NS + step))
         if path.stat().st_mtime_ns != _BASE_NS:
@@ -351,12 +347,6 @@ class TestStage:
     def test_a_stage_during_a_projection_is_not_lost(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Another thread stages while versions() projects. The next call sees the stage.
-
-        The wrapper runs the stage call after the projection is built and
-        before versions() stores it, which is the order a second thread can
-        take.
-        """
         from portolan_core.run_state import StagedVersion
 
         coll, a, b = self._two_files(tmp_path)
@@ -574,11 +564,6 @@ class TestConfigSeam:
     def test_threads_that_miss_one_directory_together_merge_it_once(
         self, catalog: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """The workers of one collection share one merge of its config.
-
-        The ``--workers 4`` scale gate sees this race only when the threads
-        meet in it, so this test makes them meet.
-        """
         from portolan_core import config
 
         (catalog / ".portolan" / "config.yaml").write_text("backend: root\n")

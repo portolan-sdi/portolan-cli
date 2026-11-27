@@ -1,14 +1,4 @@
-"""Unit tests for the scan --strict flag.
-
-These tests verify that --strict elevates warnings to errors,
-causing the command to exit with code 1 when warnings are present.
-
-Test cases:
-1. No --strict + warnings → exit 0 (warnings don't fail)
-2. --strict + warnings → exit 1 (warnings elevated to errors)
-3. --strict + clean (no issues) → exit 0
-4. JSON output includes fix_commands structure when --strict
-"""
+"""Unit tests for the scan --strict flag."""
 
 from __future__ import annotations
 
@@ -65,9 +55,7 @@ def dir_with_errors(tmp_path: Path) -> Path:
     return tmp_path
 
 
-# =============================================================================
-# Test: Exit codes without --strict
-# =============================================================================
+# Exit codes without --strict
 
 
 @pytest.mark.unit
@@ -75,11 +63,6 @@ class TestScanWithoutStrict:
     """Tests for scan command without --strict flag (default behavior)."""
 
     def test_warnings_exit_0(self, runner: CliRunner, dir_with_warnings: Path) -> None:
-        """Scan with warnings (no --strict) should exit 0.
-
-        Warnings are informational and don't cause failure by default.
-        This is the expected behavior for an informational scan.
-        """
         result = runner.invoke(cli, ["scan", str(dir_with_warnings)])
 
         assert result.exit_code == 0, f"Expected exit 0, got {result.exit_code}: {result.output}"
@@ -93,11 +76,6 @@ class TestScanWithoutStrict:
     def test_errors_without_strict_still_exit_0(
         self, runner: CliRunner, dir_with_errors: Path
     ) -> None:
-        """Scan with errors (no --strict) should still exit 0.
-
-        Even errors don't cause non-zero exit by default because scan
-        is informational. The --strict flag changes this behavior.
-        """
         result = runner.invoke(cli, ["scan", str(dir_with_errors)])
 
         # Note: Current behavior is exit 0 even with errors
@@ -105,9 +83,7 @@ class TestScanWithoutStrict:
         assert result.exit_code == 0, f"Expected exit 0, got {result.exit_code}: {result.output}"
 
 
-# =============================================================================
-# Test: Exit codes with --strict
-# =============================================================================
+# Exit codes with --strict
 
 
 @pytest.mark.unit
@@ -144,9 +120,7 @@ class TestScanWithStrict:
         assert result.exit_code == 1, f"Expected exit 1, got {result.exit_code}: {result.output}"
 
 
-# =============================================================================
-# Test: JSON output with --strict
-# =============================================================================
+# JSON output with --strict
 
 
 @pytest.mark.unit
@@ -177,11 +151,6 @@ class TestScanStrictJsonOutput:
     def test_json_includes_fix_commands_structure(
         self, runner: CliRunner, dir_with_warnings: Path
     ) -> None:
-        """JSON output should include fix_commands array for agent consumption.
-
-        fix_commands provides structured remediation commands that agents
-        can parse and execute automatically.
-        """
         result = runner.invoke(cli, ["scan", "--strict", "--json", str(dir_with_warnings)])
 
         output = json.loads(result.output)
@@ -194,11 +163,6 @@ class TestScanStrictJsonOutput:
     def test_fix_commands_structure_has_required_fields(
         self, runner: CliRunner, dir_with_warnings: Path
     ) -> None:
-        """Each fix_command should have command, args, and reason fields.
-
-        Structure per ADR:
-        {"command": "scan", "args": ["--fix"], "reason": "Invalid characters"}
-        """
         result = runner.invoke(cli, ["scan", "--strict", "--json", str(dir_with_warnings)])
 
         output = json.loads(result.output)
@@ -213,9 +177,7 @@ class TestScanStrictJsonOutput:
             assert "reason" in cmd, "fix_command missing 'reason' field"
 
 
-# =============================================================================
-# Test: Human-readable output with --strict
-# =============================================================================
+# Human-readable output with --strict
 
 
 @pytest.mark.unit
@@ -236,9 +198,7 @@ class TestScanStrictHumanOutput:
         ), f"Expected strict mode indication in output: {result.output}"
 
 
-# =============================================================================
-# Test: --strict interaction with --fix
-# =============================================================================
+# --strict interaction with --fix
 
 
 @pytest.mark.unit

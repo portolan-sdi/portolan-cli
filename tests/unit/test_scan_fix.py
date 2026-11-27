@@ -1,14 +1,4 @@
-"""Unit tests for portolan_cli/scan_fix.py.
-
-Tests fix mode implementations: safe fixes, unsafe fixes, dry-run.
-
-Test Strategy:
-- Test _compute_safe_rename for each issue type (INVALID_CHARACTERS, WINDOWS_RESERVED_NAME, LONG_PATH)
-- Test sidecar handling (shapefile sidecars must be renamed together)
-- Test collision detection (fail if target exists)
-- Test apply_safe_fixes with dry_run=True and dry_run=False
-- Test preview_fix for generating fix proposals
-"""
+"""Unit tests for portolan_cli/scan_fix.py."""
 
 from __future__ import annotations
 
@@ -43,21 +33,17 @@ class TestFixCategory:
         assert FixCategory.MANUAL.value == "manual"
 
 
-# =============================================================================
 # Tests for _compute_safe_rename
-# =============================================================================
 
 
 @pytest.mark.unit
 class TestComputeSafeRename:
     """Tests for _compute_safe_rename function."""
 
-    # -------------------------------------------------------------------------
-    # INVALID_CHARACTERS: spaces → dashes, uppercase → lowercase (issue #208)
-    # -------------------------------------------------------------------------
+    # INVALID_CHARACTERS: spaces → dashes, uppercase → lowercase
 
     def test_spaces_replaced_with_dashes(self, tmp_path: Path) -> None:
-        """Spaces in filename should be replaced with dashes (issue #208)."""
+        """Spaces in filename should be replaced with dashes."""
         path = tmp_path / "my file.geojson"
         path.touch()
 
@@ -164,16 +150,9 @@ class TestComputeSafeRename:
         result = _sanitize_filename("test/data")
         assert "/" not in result
 
-    # -------------------------------------------------------------------------
-    # WINDOWS_RESERVED_NAME: CON, PRN, etc. → _con, _prn (lowercase per issue #208)
-    # -------------------------------------------------------------------------
+    # WINDOWS_RESERVED_NAME: CON, PRN, etc. → _con, _prn (lowercase)
 
     def test_windows_reserved_con(self, tmp_path: Path) -> None:
-        """CON.shp should become _con.shp (lowercase per issue #208).
-
-        Note: No path.touch() - Windows cannot create files named CON, PRN, etc.
-        _compute_safe_rename only inspects the path string, not the filesystem.
-        """
         path = tmp_path / "CON.shp"
         # No touch() - Windows reserved names cannot be created on Windows
 
@@ -213,9 +192,7 @@ class TestComputeSafeRename:
         new_path, _ = result
         assert new_path.name == "_nul.gpkg"
 
-    # -------------------------------------------------------------------------
     # LONG_PATH: truncate to ~200 chars with hash
-    # -------------------------------------------------------------------------
 
     def test_long_filename_truncated(self, tmp_path: Path) -> None:
         """Long filenames should be truncated with hash suffix."""
@@ -290,9 +267,7 @@ class TestComputeSafeRename:
         assert result is None, "Should return None when directory path exceeds threshold"
 
 
-# =============================================================================
 # Tests for shapefile sidecar handling
-# =============================================================================
 
 
 @pytest.mark.unit
@@ -367,9 +342,7 @@ class TestSidecarHandling:
         assert ".qmd" in extensions
 
 
-# =============================================================================
 # Tests for apply_safe_fixes
-# =============================================================================
 
 
 @pytest.mark.unit
@@ -415,7 +388,7 @@ class TestApplySafeFixes:
 
         # Original should be gone, new should exist
         assert not path.exists()
-        new_path = tmp_path / "my-file.geojson"  # dashes per issue #208
+        new_path = tmp_path / "my-file.geojson"  # dashes
         assert new_path.exists()
         # Content should be preserved
         assert new_path.read_text() == '{"type": "FeatureCollection"}'
@@ -448,7 +421,7 @@ class TestApplySafeFixes:
     def test_collision_detection_fails_gracefully(self, tmp_path: Path) -> None:
         """If target filename already exists, should not overwrite."""
         source = tmp_path / "my file.geojson"
-        target = tmp_path / "my-file.geojson"  # dashes per issue #208
+        target = tmp_path / "my-file.geojson"  # dashes
         source.write_text("source content")
         target.write_text("target content")
 
@@ -487,7 +460,6 @@ class TestApplySafeFixes:
         assert len(applied) == 0
 
     def test_handles_missing_file(self, tmp_path: Path) -> None:
-        """Should handle files that no longer exist gracefully."""
         path = tmp_path / "deleted file.geojson"
         # Don't create the file
 
@@ -539,9 +511,7 @@ class TestApplySafeFixes:
         assert len(applied) == 0
 
 
-# =============================================================================
 # Tests for preview_fix
-# =============================================================================
 
 
 @pytest.mark.unit
@@ -566,7 +536,7 @@ class TestPreviewFix:
         assert fix is not None
         assert fix.category == FixCategory.SAFE
         assert fix.action == "rename"
-        assert "my-file.geojson" in fix.preview  # dashes per issue #208
+        assert "my-file.geojson" in fix.preview  # dashes
 
     def test_preview_windows_reserved(self, tmp_path: Path) -> None:
         """preview_fix should generate ProposedFix for Windows reserved names.
@@ -592,7 +562,7 @@ class TestPreviewFix:
         assert fix is not None
         assert fix.category == FixCategory.SAFE
         assert fix.action == "rename"
-        assert "_con.shp" in fix.preview  # lowercase per issue #208
+        assert "_con.shp" in fix.preview  # lowercase
 
     def test_preview_manual_issue_returns_none(self, tmp_path: Path) -> None:
         """preview_fix should return None for manual-only issues."""
@@ -676,9 +646,7 @@ class TestPreviewFix:
         assert "new_path" in fix.details or "target" in fix.details
 
 
-# =============================================================================
-# Tests for ProposedFix.to_dict (coverage improvement)
-# =============================================================================
+# Tests for ProposedFix.to_dict
 
 
 @pytest.mark.unit
@@ -761,9 +729,7 @@ class TestProposedFixToDict:
         assert isinstance(result["issue_path"], str)
 
 
-# =============================================================================
-# Tests for _apply_rename edge cases (coverage improvement)
-# =============================================================================
+# Tests for _apply_rename edge cases
 
 
 @pytest.mark.unit
@@ -786,15 +752,6 @@ class TestApplyRenameEdgeCases:
         assert new_path.read_text() == "content"
 
     def test_rename_returns_false_when_target_exists_on_windows(self, tmp_path: Path) -> None:
-        """On Windows, _apply_rename returns False when target already exists.
-
-        NOTE: On POSIX, os.rename atomically replaces the target (succeeds).
-        On Windows, os.rename raises FileExistsError which is caught.
-
-        Collision detection is done at apply_safe_fixes level BEFORE calling
-        _apply_rename, so this scenario shouldn't occur in production.
-        This test verifies the defensive behavior on Windows.
-        """
         import sys
 
         from portolan_cli.scan.fix import _apply_rename
@@ -875,9 +832,7 @@ class TestApplyRenameEdgeCases:
         assert result is False
 
 
-# =============================================================================
-# Tests for _apply_shapefile_rename edge cases (coverage improvement)
-# =============================================================================
+# Tests for _apply_shapefile_rename edge cases
 
 
 @pytest.mark.unit
@@ -930,11 +885,6 @@ class TestApplyShapefileRenameEdgeCases:
         assert dbf.exists()
 
     def test_shapefile_rename_collision_detected_preserves_originals(self, tmp_path: Path) -> None:
-        """Shapefile rename detects collision and preserves all original files.
-
-        When a collision is detected during the pre-check phase, no rename
-        is attempted and all original files remain in place.
-        """
         from portolan_cli.scan.fix import _apply_shapefile_rename
 
         # Create shapefile with sidecars
@@ -968,9 +918,7 @@ class TestApplyShapefileRenameEdgeCases:
         assert (tmp_path / "new.shx").read_text() == "collision", "Collision content preserved"
 
 
-# =============================================================================
-# Tests for _rollback_renames (coverage improvement)
-# =============================================================================
+# Tests for _rollback_renames
 
 
 @pytest.mark.unit
@@ -1009,11 +957,6 @@ class TestRollbackRenames:
         assert not new2.exists()
 
     def test_rollback_continues_on_error(self, tmp_path: Path) -> None:
-        """Rollback should continue even if some renames fail (best-effort).
-
-        This tests that _rollback_renames handles errors gracefully by
-        attempting to rollback files even when one rollback fails.
-        """
         from portolan_cli.scan.fix import _rollback_renames
 
         # Create files - only new2 exists, old1/new1 simulate a missing file scenario
@@ -1035,9 +978,7 @@ class TestRollbackRenames:
         assert not new2.exists()
 
 
-# =============================================================================
 # Tests for apply_safe_fixes additional coverage
-# =============================================================================
 
 
 @pytest.mark.unit

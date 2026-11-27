@@ -1,11 +1,4 @@
-"""Tests for scan progress reporting (Phase 5).
-
-Tests verify:
-1. Directory pre-counting for determinate progress
-2. Progress callback invocation during scan
-3. Progress suppression in JSON mode
-4. Timing measurement in scan results
-"""
+"""Tests for scan progress reporting."""
 
 from __future__ import annotations
 
@@ -52,11 +45,7 @@ class TestDirectoryPreCount:
     @pytest.mark.unit
     def test_count_nested_structure(self, tmp_path: Path) -> None:
         """Count all directories in nested structure."""
-        # Create nested structure:
-        # tmp_path/
-        #   ├── collection1/
-        #   └── collection2/
-        #       └── nested/
+        # Create collection1/, collection2/ and collection2/nested/.
         (tmp_path / "collection1").mkdir()
         (tmp_path / "collection1" / "data.parquet").touch()
         (tmp_path / "collection2").mkdir()

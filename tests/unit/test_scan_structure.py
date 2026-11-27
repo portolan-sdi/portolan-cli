@@ -1,19 +1,4 @@
-"""Unit tests for scan structure validation.
-
-These tests follow TDD: written FIRST, verified to FAIL, then implementation added.
-
-Tests cover structural validation of directory hierarchies:
-- Valid nested structures (no issues)
-- Mixed flat/multi-item structures (WARNING)
-- GeoParquet with plain Parquet companions (valid)
-- Multiple GeoParquet in same directory (WARNING)
-- Deep nesting without data at intermediate levels (valid)
-
-Test fixtures used:
-- geoparquet_with_companions/: 1 GeoParquet + 1 plain Parquet (valid)
-- multiple_geoparquet/: 2 GeoParquet files (should warn)
-- deep_nested/: Deep nesting with data only at leaves (valid)
-"""
+"""Unit tests for scan structure validation."""
 
 from __future__ import annotations
 
@@ -31,9 +16,7 @@ def fixtures_dir() -> Path:
     return FIXTURES_DIR
 
 
-# =============================================================================
-# Test Case 1: Valid Nested Structure (No Issues)
-# =============================================================================
+# Valid Nested Structure (No Issues)
 
 
 @pytest.mark.unit
@@ -41,11 +24,6 @@ class TestValidNestedStructure:
     """Tests for valid nested directory structures with no structural issues."""
 
     def test_nested_structure_with_leaf_data_only_is_valid(self, fixtures_dir: Path) -> None:
-        """Nested directories with data only at leaf levels produce no structure issues.
-
-        Uses nested/ fixture: census/2020/boundaries.geojson, census/2022/boundaries.geojson
-        This represents intentional year-based organization.
-        """
         from portolan_cli.scan.core import IssueType, scan_directory
 
         result = scan_directory(fixtures_dir / "nested")
@@ -71,25 +49,14 @@ class TestValidNestedStructure:
         assert len(mixed_issues) == 0
 
 
-# =============================================================================
-# Test Case 2: Data at Intermediate Level = WARNING (MIXED_FLAT_MULTIITEM)
-# =============================================================================
+# Data at Intermediate Level = WARNING (MIXED_FLAT_MULTIITEM)
 
 
 @pytest.mark.unit
 class TestMixedFlatMultiitem:
-    """Tests for detecting mixed flat/multi-item structures.
-
-    When a directory has BOTH files at root AND files in subdirectories,
-    this creates structural ambiguity that should produce a WARNING.
-    """
+    """Tests for detecting mixed flat/multi-item structures."""
 
     def test_files_at_root_and_in_subdirs_warns(self, tmp_path: Path) -> None:
-        """Directory with files at root AND in subdirectories triggers warning.
-
-        This is the classic MIXED_FLAT_MULTIITEM case: unclear whether the
-        directory represents a single collection (flat) or multiple items (nested).
-        """
         from portolan_cli.scan.core import IssueType, Severity, scan_directory
 
         # Create file at root level
@@ -130,18 +97,6 @@ class TestMixedFlatMultiitem:
         )
 
     def test_mixed_structure_deep_nesting_flags_correct_directory(self, tmp_path: Path) -> None:
-        """Issue #314: Mixed structure detection flags parent with files, not child.
-
-        Structure:
-            root/
-                data.geojson          <- files here
-                level1/
-                    level2/
-                        level3/
-                            deep.geojson  <- AND files here
-
-        Should flag root (has files AND descendant with files), not level3.
-        """
         from portolan_cli.scan.core import IssueType, scan_directory
 
         # Create file at root
@@ -163,20 +118,6 @@ class TestMixedFlatMultiitem:
         )
 
     def test_mixed_structure_multiple_levels_with_files(self, tmp_path: Path) -> None:
-        """Issue #314: When multiple levels have files, flag each parent correctly.
-
-        Structure:
-            root/
-                data.geojson          <- level 0
-                mid/
-                    mid_data.geojson  <- level 1
-                    deep/
-                        deep.geojson  <- level 2
-
-        Should flag root (has files + descendant mid has files)
-        Should flag mid (has files + descendant deep has files)
-        Should NOT flag deep (no descendants with files)
-        """
         from portolan_cli.scan.core import IssueType, scan_directory
 
         # Level 0: root
@@ -209,27 +150,14 @@ class TestMixedFlatMultiitem:
         assert len(mixed_issues) == 2, f"Expected 2 issues, got {len(mixed_issues)}"
 
 
-# =============================================================================
-# Test Case 3: One GeoParquet + Multiple Plain Parquet = VALID
-# =============================================================================
+# One GeoParquet + Multiple Plain Parquet = VALID
 
 
 @pytest.mark.unit
 class TestGeoparquetWithCompanions:
-    """Tests for GeoParquet files with plain Parquet companions.
-
-    A directory with ONE GeoParquet (primary geo-asset) plus multiple plain
-    Parquet files (lookup tables, metadata) is a valid pattern. Only the
-    GeoParquet is the primary; plain files are companions.
-    """
+    """Tests for GeoParquet files with plain Parquet companions."""
 
     def test_one_geoparquet_with_plain_parquet_companion_is_valid(self, fixtures_dir: Path) -> None:
-        """Directory with 1 GeoParquet + 1 plain Parquet produces no multiple-primary warning.
-
-        Uses geoparquet_with_companions/ fixture:
-        - data.parquet: GeoParquet (has geo metadata, geometry column)
-        - lookup.parquet: Plain Parquet (no geo metadata)
-        """
         from portolan_cli.scan.core import IssueType, scan_directory
 
         result = scan_directory(fixtures_dir / "geoparquet_with_companions")
@@ -241,12 +169,6 @@ class TestGeoparquetWithCompanions:
         assert len(multiple_primary_issues) == 0
 
     def test_geoparquet_companions_no_geo_primary_warning(self, fixtures_dir: Path) -> None:
-        """GeoParquet with companions should not trigger MULTIPLE_GEO_PRIMARIES.
-
-        The MULTIPLE_GEO_PRIMARIES issue type (distinct from MULTIPLE_PRIMARIES)
-        is specifically for multiple GeoParquet files in the same directory.
-        One geo + companions should not trigger this.
-        """
         from portolan_cli.scan.core import IssueType, scan_directory
 
         result = scan_directory(fixtures_dir / "geoparquet_with_companions")
@@ -267,32 +189,14 @@ class TestGeoparquetWithCompanions:
         assert "data.parquet" in ready_names
 
 
-# =============================================================================
-# Test Case 4: Multiple GeoParquet in Same Directory = WARNING
-# =============================================================================
+# Multiple GeoParquet in Same Directory = WARNING
 
 
 @pytest.mark.unit
 class TestMultipleGeoparquet:
-    """Tests for detecting multiple GeoParquet files in the same directory.
-
-    Multiple GeoParquet files in the same directory should produce a
-    MULTIPLE_GEO_PRIMARIES warning, which is distinct from the generic
-    MULTIPLE_PRIMARIES warning used for other formats.
-
-    NOTE: These tests are skipped until MULTIPLE_GEO_PRIMARIES is implemented.
-    Remove the skip markers when implementing the issue type.
-    """
+    """Tests for detecting multiple GeoParquet files in the same directory."""
 
     def test_multiple_geoparquet_triggers_warning(self, fixtures_dir: Path) -> None:
-        """Directory with 2+ GeoParquet files triggers MULTIPLE_GEO_PRIMARIES warning.
-
-        Uses multiple_geoparquet/ fixture:
-        - peilbuizen.parquet: GeoParquet (has geo metadata)
-        - milieuzone.parquet: GeoParquet (has geo metadata)
-
-        Both are primary geo-assets, so this is ambiguous for catalog structure.
-        """
         from portolan_cli.scan.core import IssueType, Severity, scan_directory
 
         result = scan_directory(fixtures_dir / "multiple_geoparquet")
@@ -306,12 +210,6 @@ class TestMultipleGeoparquet:
         assert geo_issues[0].severity == Severity.WARNING
 
     def test_multiple_geoparquet_distinct_from_multiple_primaries(self, fixtures_dir: Path) -> None:
-        """MULTIPLE_GEO_PRIMARIES is a distinct issue type from MULTIPLE_PRIMARIES.
-
-        This distinction matters because:
-        - MULTIPLE_PRIMARIES: Generic warning for any multiple primaries
-        - MULTIPLE_GEO_PRIMARIES: Specific to GeoParquet, enables targeted guidance
-        """
         from portolan_cli.scan.core import IssueType, scan_directory
 
         result = scan_directory(fixtures_dir / "multiple_geoparquet")
@@ -335,28 +233,14 @@ class TestMultipleGeoparquet:
         )
 
 
-# =============================================================================
-# Test Case 5: Deep Nesting Without Data at Intermediate = Valid
-# =============================================================================
+# Deep Nesting Without Data at Intermediate = Valid
 
 
 @pytest.mark.unit
 class TestDeepNesting:
-    """Tests for deeply nested directory structures.
-
-    Deep nesting is valid when intermediate directories contain no data
-    files, only serving as organizational hierarchy.
-    """
+    """Tests for deeply nested directory structures."""
 
     def test_deep_nesting_no_intermediate_data_is_valid(self, fixtures_dir: Path) -> None:
-        """Deeply nested directories with data only at leaves produce no issues.
-
-        Uses deep_nested/ fixture:
-        - level1/level2/shallow_collection/data.parquet
-        - level1/level2/level3/level4/level5/data.parquet
-
-        Intermediate directories (level1, level2, level3, level4) have no data.
-        """
         from portolan_cli.scan.core import IssueType, scan_directory
 
         result = scan_directory(fixtures_dir / "deep_nested")
@@ -380,14 +264,6 @@ class TestDeepNesting:
         assert "level1/level2/level3/level4/level5/data.parquet" in ready_paths
 
     def test_deep_nesting_mixed_depths_valid(self, fixtures_dir: Path) -> None:
-        """Mixed nesting depths (shallow + deep) in same tree is valid.
-
-        Uses mixed_depths/ fixture:
-        - shallow_collection/data.parquet (depth 1)
-        - theme/nested_collection/data.parquet (depth 2)
-
-        Different depths are fine as long as no intermediate has data.
-        """
         from portolan_cli.scan.core import IssueType, scan_directory
 
         result = scan_directory(fixtures_dir / "mixed_depths")
@@ -397,9 +273,7 @@ class TestDeepNesting:
         assert len(mixed_issues) == 0
 
 
-# =============================================================================
 # Edge Cases and Regression Tests
-# =============================================================================
 
 
 @pytest.mark.unit
@@ -407,11 +281,6 @@ class TestStructureValidationEdgeCases:
     """Edge cases for structure validation."""
 
     def test_flat_collection_no_subdirs_is_valid(self, fixtures_dir: Path) -> None:
-        """Flat collection (all files in root, no subdirs) is valid structure.
-
-        Uses flat_collection/ fixture: 3 parquet files, no subdirectories.
-        This is a valid "collection-level assets" pattern.
-        """
         from portolan_cli.scan.core import IssueType, scan_directory
 
         result = scan_directory(fixtures_dir / "flat_collection")

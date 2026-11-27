@@ -456,12 +456,7 @@ class TestFixStaleAndBreaking:
 
 
 class TestStripRemovedFields:
-    """`check --fix` deletes the portolan: fields the spec never defined (#654).
-
-    No rashid rule reports them — a rule fires on a requirement an object fails,
-    and no requirement names a field the spec does not have — so the sweep runs
-    from the fix workflow rather than from the fixer registry.
-    """
+    """`check --fix` deletes the portolan: fields the spec never defined."""
 
     @staticmethod
     def _catalog(root: Path, **extra: object) -> Path:

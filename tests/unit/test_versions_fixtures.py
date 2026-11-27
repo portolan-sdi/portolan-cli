@@ -108,11 +108,6 @@ class TestInvalidVersionsFixtures:
 
     @pytest.mark.unit
     def test_bad_checksum_is_valid_json(self) -> None:
-        """versions_bad_checksum.json should be valid JSON but semantically invalid.
-
-        Note: The versions module doesn't validate checksum length, so this
-        will parse. The semantic validation is for downstream consumers.
-        """
         fixture_path = FIXTURES_DIR / "invalid" / "versions_bad_checksum.json"
 
         # Should be valid JSON

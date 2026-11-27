@@ -1,9 +1,4 @@
-"""Unit tests for mandatory human-readable titles (Issue #502).
-
-Covers the check --fix repair helper, creation-time defaults, and the
-metadata.yaml override. The rule itself (PTL-TTL-001/002/003) now lives in
-rashid, which owns its tests.
-"""
+"""Unit tests for mandatory human-readable titles."""
 
 from __future__ import annotations
 
@@ -150,11 +145,6 @@ class TestEnsureLinkTitlesTraversal:
 @pytest.mark.unit
 class TestEnsureLinkTitlesUnicode:
     def test_accented_title_roundtrips(self, tmp_path: Path) -> None:
-        """Accented (UTF-8) titles backfill correctly regardless of OS locale.
-
-        Regression: STAC files are UTF-8; a bare read_text() uses the platform
-        locale (cp1252 on Windows) and chokes on byte 0x81 of e.g. 'Á'.
-        """
         # Write collection.json as UTF-8 with an accented Spanish title.
         coll_path = tmp_path / "areas" / "collection.json"
         coll_path.parent.mkdir(parents=True)

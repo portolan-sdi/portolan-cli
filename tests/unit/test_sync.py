@@ -1,18 +1,4 @@
-"""Unit tests for sync module - the sync orchestrator.
-
-Tests for the sync command that sequences: Pull -> Init -> Scan -> Check -> Push.
-All primitives already exist - sync is orchestration glue.
-
-Following TDD: these tests are written FIRST, before implementation.
-
-Test categories:
-- SyncResult dataclass
-- Orchestration sequence (all steps called in order)
-- Early exit on pull failure
-- Skip init if .portolan exists
-- Dry-run mode
-- Force mode
-"""
+"""Unit tests for sync module - the sync orchestrator."""
 
 from __future__ import annotations
 
@@ -27,9 +13,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
 
-# =============================================================================
 # Test Fixtures
-# =============================================================================
 
 
 @pytest.fixture
@@ -134,9 +118,7 @@ def _patched_sync_steps(
         yield mock_pull, mock_init, mock_scan, mock_check, mock_push
 
 
-# =============================================================================
 # SyncResult Tests
-# =============================================================================
 
 
 class TestSyncResult:
@@ -216,9 +198,7 @@ class TestSyncResult:
         assert result.push_result.versions_pushed == 1
 
 
-# =============================================================================
 # Orchestration Sequence Tests
-# =============================================================================
 
 
 class TestOrchestrationSequence:
@@ -298,9 +278,7 @@ class TestOrchestrationSequence:
         assert check_idx < push_idx, "Check must come before push"
 
 
-# =============================================================================
 # Early Exit Tests
-# =============================================================================
 
 
 class TestEarlyExit:
@@ -363,9 +341,7 @@ class TestEarlyExit:
         assert result.success is True
 
 
-# =============================================================================
 # Init Skip Tests
-# =============================================================================
 
 
 class TestInitSkip:
@@ -417,9 +393,7 @@ class TestInitSkip:
         assert result.init_performed is True
 
 
-# =============================================================================
 # Dry-Run Mode Tests
-# =============================================================================
 
 
 class TestDryRunMode:
@@ -467,9 +441,7 @@ class TestDryRunMode:
         assert call_kwargs.get("dry_run") is True
 
 
-# =============================================================================
 # Force Mode Tests
-# =============================================================================
 
 
 class TestForceMode:
@@ -517,9 +489,7 @@ class TestForceMode:
         assert call_kwargs.get("force") is True
 
 
-# =============================================================================
 # Fix Mode Tests
-# =============================================================================
 
 
 class TestFixMode:
@@ -552,9 +522,7 @@ class TestFixMode:
         assert call_kwargs.get("fix") is True
 
 
-# =============================================================================
 # Profile Passthrough Tests
-# =============================================================================
 
 
 class TestProfilePassthrough:
@@ -585,9 +553,7 @@ class TestProfilePassthrough:
         assert push_kwargs.get("profile") == "production"
 
 
-# =============================================================================
 # Error Handling Tests
-# =============================================================================
 
 
 class TestErrorHandling:
@@ -648,9 +614,7 @@ class TestErrorHandling:
         assert len(result.errors) > 0
 
 
-# =============================================================================
 # Clone Tests
-# =============================================================================
 
 
 class TestCloneResult:
@@ -881,31 +845,20 @@ class TestCloneFunction:
         assert result.pull_result.files_downloaded == 5
 
 
-# =============================================================================
 # Dry-Run Network Isolation Tests
-# =============================================================================
 
 
 class TestDryRunNetworkIsolation:
-    """Tests that sync dry-run mode never makes network calls.
-
-    Bug #137: sync --dry-run was indirectly making network calls through
-    pull() and push() subcommands. These tests verify end-to-end that
-    the dry_run flag correctly prevents all network I/O.
-    """
+    """Tests that sync dry-run mode never makes network calls."""
 
     @pytest.fixture
     def catalog_with_versions(self, tmp_path: Path) -> Path:
-        """Catalog with -compliant structure for dry-run tests.
-
-        push() needs versions.json at <catalog_root>/<collection>/versions.json.
-        The shared managed_catalog fixture puts it under .portolan/ instead.
-        """
+        """Catalog with a compliant structure for dry-run tests."""
         catalog_dir = tmp_path / "catalog_dry_run"
         catalog_dir.mkdir()
 
-        # .portolan sentinel: config.yaml alone is sufficient for MANAGED state (per issue #290)
-        # (per detect_state() in catalog.py which checks for both files)
+        # .portolan sentinel: config.yaml alone is sufficient for MANAGED state (per detect_state in
+        # catalog.py which checks for both files)
         portolan_dir = catalog_dir / ".portolan"
         portolan_dir.mkdir()
         (portolan_dir / "config.yaml").write_text("{}\n")
@@ -950,11 +903,6 @@ class TestDryRunNetworkIsolation:
 
     @pytest.mark.unit
     def test_sync_dry_run_makes_no_network_calls(self, catalog_with_versions: Path) -> None:
-        """sync(dry_run=True) makes no network call in the pull or the push step.
-
-        Regression test for bug #137: pull() called fetch_remote_versions
-        unconditionally even when dry_run=True.
-        """
         from portolan_cli.sync.core import sync
 
         with (
@@ -981,18 +929,11 @@ class TestDryRunNetworkIsolation:
         mock_push_fetch.assert_not_called()
 
 
-# =============================================================================
-# Nested Catalog Tests (Issue #324)
-# =============================================================================
+# Nested Catalog Tests
 
 
 class TestListRemoteCollectionsNestedCatalogs:
-    """Tests for list_remote_collections() with nested catalog structures.
-
-    Issue #324: clone fails on nested catalog structures because
-    list_remote_collections() only looks one level deep and doesn't
-    distinguish between subcatalog catalog.json and collection.json.
-    """
+    """Tests for list_remote_collections() with nested catalog structures."""
 
     @pytest.mark.unit
     def test_list_remote_collections_simple_flat_structure(self, tmp_path: Path) -> None:
@@ -1018,15 +959,6 @@ class TestListRemoteCollectionsNestedCatalogs:
 
     @pytest.mark.unit
     def test_list_remote_collections_nested_subcatalogs(self, tmp_path: Path) -> None:
-        """list_remote_collections should recurse into nested subcatalogs.
-
-        Structure being tested:
-            catalog.json
-            └── climate/
-                └── catalog.json (subcatalog)
-                    └── hittekaart/
-                        └── collection.json (actual collection)
-        """
         from portolan_cli.sync.transport import list_remote_collections
 
         # Root catalog points to subcatalog (NOT a collection)
@@ -1064,14 +996,6 @@ class TestListRemoteCollectionsNestedCatalogs:
 
     @pytest.mark.unit
     def test_list_remote_collections_deeply_nested(self) -> None:
-        """list_remote_collections should handle multiple levels of nesting.
-
-        Structure:
-            catalog.json
-            └── europe/catalog.json
-                └── netherlands/catalog.json
-                    └── amsterdam/collection.json
-        """
         from portolan_cli.sync.transport import list_remote_collections
 
         root_catalog = {
@@ -1113,14 +1037,6 @@ class TestListRemoteCollectionsNestedCatalogs:
 
     @pytest.mark.unit
     def test_list_remote_collections_mixed_structure(self) -> None:
-        """list_remote_collections should handle mixed subcatalogs and collections.
-
-        Structure:
-            catalog.json
-            ├── quick-data/collection.json (direct collection)
-            └── organized/catalog.json (subcatalog)
-                └── nested-data/collection.json
-        """
         from portolan_cli.sync.transport import list_remote_collections
 
         root_catalog = {
@@ -1198,15 +1114,6 @@ class TestListRemoteCollectionsNestedCatalogs:
 
     @pytest.mark.unit
     def test_list_remote_collections_circular_reference_detection(self) -> None:
-        """list_remote_collections should detect and handle circular references.
-
-        Structure (circular via absolute URL):
-            catalog.json
-            └── a/catalog.json
-                └── b/catalog.json
-                    └── s3://bucket/catalog/a/catalog.json (circular - absolute URL)
-                    └── ./real-data/collection.json
-        """
         from portolan_cli.sync.transport import list_remote_collections
 
         root_catalog = {
@@ -1299,11 +1206,6 @@ class TestListRemoteCollectionsNestedCatalogs:
 
     @pytest.mark.unit
     def test_list_remote_collections_preserves_collection_path(self) -> None:
-        """Collection names should include full path for nested collections.
-
-        When cloning nested catalogs, we need the full path to pull correctly:
-        e.g., 'climate/hittekaart' not just 'hittekaart'
-        """
         from portolan_cli.sync.transport import list_remote_collections
 
         root_catalog = {

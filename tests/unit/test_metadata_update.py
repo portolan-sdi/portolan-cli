@@ -1,10 +1,4 @@
-"""Tests for metadata update functions.
-
-Tests for Phase 2c: Update Functions
-- update_item_metadata(item_path, file_path)
-- prepare_missing_item(file_path, collection_path)
-- update_versions_tracking(file_path, versions_path)
-"""
+"""Tests for metadata update functions."""
 
 from __future__ import annotations
 
@@ -42,8 +36,7 @@ from portolan_core.versions import (
 FIXTURES_DIR = Path(__file__).parent.parent / "fixtures"
 REALDATA_FIXTURES = FIXTURES_DIR / "realdata"
 
-# The band-refresh rasters (#737). A 4-band int16 COG, and the 1-band uint8 COG
-# that replaces it on disk.
+# The band-refresh rasters. A 4-band int16 COG, and the 1-band uint8 COG that replaces it on disk.
 FOUR_BAND_RASTER = REALDATA_FIXTURES / "rapidai4eo-sample.tif"
 ONE_BAND_RASTER = FIXTURES_DIR / "raster" / "valid" / "singleband.tif"
 
@@ -51,9 +44,7 @@ ONE_BAND_RASTER = FIXTURES_DIR / "raster" / "valid" / "singleband.tif"
 # under the STAC field names the raster extension defines.
 REQUIRED_BAND_STATISTICS = frozenset({"minimum", "maximum", "mean", "stddev"})
 
-# The 4-band raster's band 1 statistics, as `add` records them. They are the
-# stale values a refresh must not carry onto a re-shaped file, and 302 is not
-# even representable in the 1-band raster's uint8 bands.
+# The 4-band raster's band 1 statistics, as `add` records them.
 STALE_BAND_1_STATISTICS = {
     "minimum": 302.0,
     "maximum": 1015.0,
@@ -63,11 +54,7 @@ STALE_BAND_1_STATISTICS = {
 
 
 def _raster_item(root: Path, source: Path) -> tuple[Path, Path]:
-    """Copy `source` into a collection under `root` and write its item.json.
-
-    Returns (item_path, data_path). Initializes a real catalog, because the
-    statistics enrichment only runs where its setting resolves.
-    """
+    """Copy `source` into a collection under `root` and write its item.json."""
     if not source.exists():
         pytest.skip(f"Raster fixture not available: {source.name}")
     init_catalog(root, license_id="CC-BY-4.0")
@@ -165,13 +152,6 @@ class TestUpdateItemMetadata:
 
     @pytest.mark.unit
     def test_update_item_metadata_keeps_the_recorded_datetime(self, tmp_path: Path) -> None:
-        """The refresh keeps the acquisition datetime the item already carries.
-
-        `datetime` records when the observation happened, which the refresh
-        cannot read off the bytes. Stamping the time of the run over it published
-        a fabricated acquisition date (#709). This test replaces one that
-        asserted the old behavior.
-        """
         collection_dir = tmp_path / "my-collection"
         collection_dir.mkdir()
 
@@ -275,7 +255,7 @@ class TestUpdateItemMetadata:
 
     @pytest.mark.unit
     def test_update_item_metadata_preserves_thumbnail_asset(self, tmp_path: Path) -> None:
-        """Non-data assets (e.g. the thumbnail from #657) survive the refresh (#659)."""
+        """Non-data assets (e.g. the thumbnail) survive the refresh."""
         collection_dir = tmp_path / "my-collection"
         collection_dir.mkdir()
 
@@ -309,7 +289,7 @@ class TestUpdateItemMetadata:
 
     @pytest.mark.unit
     def test_update_item_metadata_preserves_stac_extensions(self, tmp_path: Path) -> None:
-        """stac_extensions (projection, raster, ...) survive the refresh (#659)."""
+        """stac_extensions (projection, raster, ...) survive the refresh."""
         collection_dir = tmp_path / "my-collection"
         collection_dir.mkdir()
 
@@ -338,7 +318,7 @@ class TestUpdateItemMetadata:
 
     @pytest.mark.unit
     def test_update_item_metadata_preserves_data_asset_bands(self, tmp_path: Path) -> None:
-        """The data asset's bands / statistics survive the refresh (#659)."""
+        """The data asset's bands / statistics survive the refresh."""
         collection_dir = tmp_path / "my-collection"
         collection_dir.mkdir()
 
@@ -364,13 +344,6 @@ class TestUpdateItemMetadata:
 
     @pytest.mark.unit
     def test_update_item_metadata_preserves_cog_media_type(self, tmp_path: Path) -> None:
-        """The refresh must not downgrade a COG's media type (PORTO-CORE-026, #659).
-
-        PORTO-CORE-026 makes the ``profile=cloud-optimized`` suffix a MUST for a
-        COG data asset, and that is what ``portolan add`` writes. A metadata
-        refresh owns the asset's href and type, so it must re-derive the same
-        registry-backed string rather than the bare GeoTIFF one.
-        """
         cog_file = REALDATA_FIXTURES / "rapidai4eo-sample.tif"
         if not cog_file.exists():
             pytest.skip("COG fixture not available")
@@ -398,12 +371,6 @@ class TestUpdateItemMetadata:
     @pytest.mark.unit
     @pytest.mark.realdata
     def test_update_item_metadata_reextracts_reshaped_raster_bands(self, tmp_path: Path) -> None:
-        """A re-shaped raster gets a re-extracted bands array (#737).
-
-        Preserving the array verbatim (#659) leaves 4 int16 bands describing a
-        1-band uint8 file. formats.md makes the file the authority for band
-        statistics, so the raster refresh re-reads the bytes on disk.
-        """
         item_path, data_file = _raster_item(tmp_path, FOUR_BAND_RASTER)
         _record_bands(
             item_path,
@@ -434,12 +401,6 @@ class TestUpdateItemMetadata:
 
     @pytest.mark.unit
     def test_update_item_metadata_keeps_hand_authored_band_fields(self, tmp_path: Path) -> None:
-        """A same-shape refresh keeps the band name and description a human wrote (#737).
-
-        A name and a description are descriptive, not derivable from pixels, so
-        the refresh keeps them. The data type is derivable, so it comes from the
-        file.
-        """
         item_path, data_file = _raster_item(tmp_path, ONE_BAND_RASTER)
         _record_bands(
             item_path,
@@ -466,7 +427,6 @@ class TestUpdateItemMetadata:
     def test_update_item_metadata_drops_band_labels_when_count_changes(
         self, tmp_path: Path
     ) -> None:
-        """A hand-authored label never lands on a band it no longer describes (#737)."""
         item_path, data_file = _raster_item(tmp_path, FOUR_BAND_RASTER)
         _record_bands(
             item_path,
@@ -486,13 +446,6 @@ class TestUpdateItemMetadata:
 
     @pytest.mark.unit
     def test_update_item_metadata_ignores_statistics_sidecar(self, tmp_path: Path) -> None:
-        """A PAM sidecar cannot answer for the file's statistics (#737).
-
-        formats.md is explicit that an external ``.aux.xml`` sidecar does not
-        satisfy the embedded-statistics requirement. GDAL writes one when it
-        computes statistics and never invalidates it when the raster underneath
-        is replaced, so the refresh must read past it.
-        """
         item_path, data_file = _raster_item(tmp_path, ONE_BAND_RASTER)
         _record_bands(
             item_path,
@@ -526,11 +479,6 @@ class TestUpdateItemMetadata:
         monkeypatch: pytest.MonkeyPatch,
         failure: str,
     ) -> None:
-        """A failed re-extraction keeps the existing array rather than deleting it (#737).
-
-        The lesson of #659. A refresh that cannot read the file must not
-        destroy the record it cannot replace.
-        """
         item_path, data_file = _raster_item(tmp_path, ONE_BAND_RASTER)
         bands = [{"name": "band_1", "data_type": "int16", "statistics": STALE_BAND_1_STATISTICS}]
         _record_bands(item_path, bands)
@@ -548,15 +496,6 @@ class TestUpdateItemMetadata:
 
     @pytest.mark.unit
     def test_update_item_metadata_computes_statistics_from_pixels(self, tmp_path: Path) -> None:
-        """The refreshed statistics come from the pixels, not from the file's tags (#737).
-
-        This is what keeps the band refresh independent of #748, where a COG
-        Portolan writes carries its statistics in a PAM sidecar instead of
-        embedded in the file. The refresh reads with ``GDAL_PAM_ENABLED=NO`` and
-        the raster below embeds no statistics at all, so a refresh that only
-        read recorded values would write none. ``statistics.raster_mode``
-        defaults to ``approx``, which computes them, so a full set arrives.
-        """
         item_path, data_file = _raster_item(tmp_path, ONE_BAND_RASTER)
         _record_bands(item_path, [{"name": "band_1", "data_type": "int16"}])
 
@@ -576,14 +515,6 @@ class TestUpdateItemMetadata:
     def test_update_item_metadata_keeps_statistics_extraction_cannot_recompute(
         self, tmp_path: Path
     ) -> None:
-        """A same-shape refresh never trades recorded statistics for none (#737).
-
-        ``statistics.raster_mode`` defaults to ``approx``, which computes the
-        values. A catalog can set ``cached`` instead, and then the extractor
-        reads embedded tags only. The raster below has none and the refresh
-        disables PAM, so extraction returns no ``statistics`` key at all. The
-        merge must therefore keep the recorded object rather than drop it.
-        """
         item_path, data_file = _raster_item(tmp_path, ONE_BAND_RASTER)
         (tmp_path / ".portolan" / "config.yaml").write_text(
             "statistics:\n  enabled: true\n  raster_mode: cached\n"
@@ -605,14 +536,6 @@ class TestUpdateItemMetadata:
     def test_update_item_metadata_preserves_bands_for_unreadable_raster(
         self, tmp_path: Path
     ) -> None:
-        """A raster extension the COG reader cannot open preserves, it does not raise (#737).
-
-        The guard keys on ``RASTER_EXTENSIONS``, which is every extension that
-        routes as raster, so it is wider than the COGs ``extract_cog_metadata``
-        reads. A ``.jp2`` GDAL has no driver for, or any raster whose bytes are
-        unreadable, must therefore fall through to the preserve path rather than
-        failing the refresh.
-        """
         item_path, data_file = _raster_item(tmp_path, ONE_BAND_RASTER)
         unreadable = data_file.with_suffix(".jp2")
         data_file.rename(unreadable)
@@ -627,12 +550,7 @@ class TestUpdateItemMetadata:
 
 
 class TestPrepareMissingItem:
-    """Tests for prepare_missing_item function.
-
-    The caller passes the prepared item to ``finalize_items``, which sets the
-    collection field and the links. tests/integration/test_check_fix_no_regression.py
-    checks the finalized item byte for byte.
-    """
+    """Tests for prepare_missing_item function."""
 
     @pytest.mark.unit
     def test_prepare_missing_item_writes_the_item(self, tmp_path: Path) -> None:
@@ -689,7 +607,7 @@ class TestPrepareMissingItem:
         # Verify metadata was extracted
         assert len(item["bbox"]) == 4
         assert item["geometry"] is not None
-        # The datetime is unknown, as in the item add writes (issue #1046).
+        # The datetime is unknown, as in the item that add writes.
         assert item["properties"]["datetime"] is None
         assert item["properties"]["start_datetime"] == "1900-01-01T00:00:00Z"
 

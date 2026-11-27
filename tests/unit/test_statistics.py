@@ -1,8 +1,4 @@
-"""Tests for statistics extraction module.
-
-Tests raster band statistics (via rasterio) and parquet column statistics (via PyArrow).
-Stats enabled by default, approx mode for raster, PyArrow-only for parquet.
-"""
+"""Tests for statistics extraction module."""
 
 from __future__ import annotations
 

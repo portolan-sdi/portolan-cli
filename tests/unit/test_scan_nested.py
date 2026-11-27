@@ -1,21 +1,4 @@
-"""Unit tests for nested collection ID inference in the scan module.
-
-These tests follow TDD: written FIRST, verified to FAIL, then implementation added.
-Tests verify that ScannedFile.inferred_collection_id correctly derives collection IDs
-from the directory structure relative to the scan root.
-
-Test fixtures used:
-- flat_collection/: Single-level directory → ID "flat_collection"
-- nested/: Two-level nesting (census/2020/, census/2022/, imagery/2024/)
-- three_level_nested/: Three-level nesting (GAUL_L2/by_country/AFG/)
-- mixed_depths/: Mixed single and two-level in same catalog
-- deep_nested/: 5+ level nesting to verify deep paths work
-
-Collection ID inference rules:
-- ID is the relative directory path from scan root to the file's parent directory
-- Forward slashes as separators (POSIX-style, portable)
-- Files at root level have empty string or None as collection ID
-"""
+"""Unit tests for nested collection ID inference in the scan module."""
 
 from __future__ import annotations
 
@@ -33,26 +16,14 @@ def fixtures_dir() -> Path:
     return FIXTURES_DIR
 
 
-# =============================================================================
 # Nested Collection ID Inference Tests
-# =============================================================================
 
 
 @pytest.mark.unit
 class TestNestedCollectionIdInference:
-    """Tests for ScannedFile.inferred_collection_id field.
-
-    The inferred_collection_id should be derived from the directory structure,
-    allowing nested catalogs to automatically group files into collections
-    based on their location in the filesystem hierarchy.
-    """
+    """Tests for ScannedFile.inferred_collection_id field."""
 
     def test_single_level_collection_id(self, fixtures_dir: Path) -> None:
-        """Single-level directory yields simple collection ID.
-
-        Fixture: flat_collection/
-        Expected: Files in flat_collection/ have inferred_collection_id = "flat_collection"
-        """
         from portolan_cli.scan.core import ScanOptions, scan_directory
 
         result = scan_directory(fixtures_dir / "flat_collection", ScanOptions())
@@ -72,16 +43,6 @@ class TestNestedCollectionIdInference:
             )
 
     def test_two_level_collection_id(self, fixtures_dir: Path) -> None:
-        """Two-level nesting yields slash-separated collection ID.
-
-        Fixture: nested/
-        Structure: nested/census/2020/boundaries.geojson
-                   nested/census/2022/boundaries.geojson
-                   nested/imagery/2024/flood_depth.tif
-
-        When scanning nested/, files in census/2020/ should have
-        inferred_collection_id = "census/2020"
-        """
         from portolan_cli.scan.core import ScanOptions, scan_directory
 
         result = scan_directory(fixtures_dir / "nested", ScanOptions())
@@ -103,14 +64,6 @@ class TestNestedCollectionIdInference:
         )
 
     def test_three_level_collection_id(self, fixtures_dir: Path) -> None:
-        """Three-level nesting yields full path as collection ID.
-
-        Fixture: three_level_nested/
-        Structure: three_level_nested/GAUL_L2/by_country/AFG/AFG.parquet
-                   three_level_nested/GAUL_L2/by_country/ALB/ALB.parquet
-
-        Files should have inferred_collection_id = "GAUL_L2/by_country/AFG" etc.
-        """
         from portolan_cli.scan.core import ScanOptions, scan_directory
 
         result = scan_directory(fixtures_dir / "three_level_nested", ScanOptions())
@@ -123,14 +76,6 @@ class TestNestedCollectionIdInference:
         assert collection_ids.get("GAUL_L2/by_country/ALB/ALB.parquet") == "GAUL_L2/by_country/ALB"
 
     def test_mixed_depths_same_catalog(self, fixtures_dir: Path) -> None:
-        """Mixed nesting depths coexist in the same scan result.
-
-        Fixture: mixed_depths/
-        Structure: mixed_depths/shallow_collection/data.parquet (1-level)
-                   mixed_depths/theme/nested_collection/data.parquet (2-level)
-
-        Different depths should each get appropriate collection IDs.
-        """
         from portolan_cli.scan.core import ScanOptions, scan_directory
 
         result = scan_directory(fixtures_dir / "mixed_depths", ScanOptions())
@@ -153,14 +98,6 @@ class TestNestedCollectionIdInference:
         )
 
     def test_deep_nesting_five_plus_levels(self, fixtures_dir: Path) -> None:
-        """Deep nesting (5+ levels) correctly handles long paths.
-
-        Fixture: deep_nested/
-        Structure: deep_nested/level1/level2/level3/level4/level5/data.parquet
-                   deep_nested/level1/level2/shallow_collection/data.parquet
-
-        Tests that arbitrarily deep nesting doesn't break collection ID inference.
-        """
         from portolan_cli.scan.core import ScanOptions, scan_directory
 
         result = scan_directory(fixtures_dir / "deep_nested", ScanOptions())
@@ -233,21 +170,12 @@ class TestCollectionIdEdgeCases:
                 )
 
 
-# =============================================================================
 # Hypothesis Property Tests for Collection ID Invariants
-# =============================================================================
 
 
 @pytest.mark.unit
 class TestCollectionIdInvariantsHypothesis:
-    """Property-based tests for collection ID inference invariants.
-
-    These tests use Hypothesis to generate many random directory structures
-    and verify that collection ID inference maintains key invariants:
-    - No backslashes (always forward slashes)
-    - No leading slashes (relative paths)
-    - No trailing slashes (clean paths)
-    """
+    """Property-based tests for collection ID inference invariants."""
 
     @pytest.mark.parametrize(
         "relative_path",

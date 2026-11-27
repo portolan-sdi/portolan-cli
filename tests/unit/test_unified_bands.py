@@ -1,8 +1,4 @@
-"""Tests for STAC v1.1.0 unified bands array migration.
-
-Tests that COGMetadata.to_stac_properties() emits `bands` instead of `raster:bands`.
-This is a breaking change from STAC v1.0 to v1.1.
-"""
+"""Tests for STAC v1.1.0 unified bands array migration."""
 
 from __future__ import annotations
 

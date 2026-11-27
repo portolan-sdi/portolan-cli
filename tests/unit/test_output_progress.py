@@ -1,7 +1,4 @@
-"""Tests for progress output functionality.
-
-Issue #203: Add progress printing for file-level operations.
-"""
+"""Tests for progress output functionality."""
 
 from __future__ import annotations
 

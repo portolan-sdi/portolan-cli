@@ -1,13 +1,4 @@
-"""Tests for catalog state detection.
-
-The detect_state() function determines the current state of a directory:
-- MANAGED: A Portolan catalog exists (.portolan/config.yaml exists)
-- UNMANAGED_STAC: An existing STAC catalog (catalog.json exists but not managed)
-- FRESH: No catalog exists (neither .portolan/config.yaml nor catalog.json)
-
-Note: state.json was removed as a sentinel requirement per GitHub issue #290.
-config.yaml alone is now sufficient for MANAGED state.
-"""
+"""Tests for catalog state detection."""
 
 from __future__ import annotations
 
@@ -76,10 +67,7 @@ class TestDetectStateFresh:
 
     @pytest.mark.unit
     def test_portolan_with_only_state_is_fresh(self, tmp_path: Path) -> None:
-        """Partial .portolan (only state.json, no config.yaml) is FRESH.
-
-        Only config.yaml is required for MANAGED state (per issue #290).
-        """
+        """Partial .portolan (only state.json, no config.yaml) is FRESH."""
         portolan_dir = tmp_path / ".portolan"
         portolan_dir.mkdir()
         (portolan_dir / "state.json").write_text("{}")
@@ -176,10 +164,7 @@ class TestDetectStateUnmanagedStac:
 
     @pytest.mark.unit
     def test_catalog_json_with_config_yaml_is_managed(self, tmp_path: Path) -> None:
-        """catalog.json with .portolan/config.yaml is MANAGED.
-
-        Per issue #290, config.yaml alone is sufficient for MANAGED state.
-        """
+        """catalog.json with .portolan/config.yaml is MANAGED."""
         catalog_data = {
             "type": "Catalog",
             "stac_version": "1.0.0",
@@ -204,11 +189,7 @@ def is_case_sensitive_fs(tmp_path: Path) -> bool:
 
 
 class TestDetectStateConfigYamlSentinel:
-    """Tests for config.yaml as the sole sentinel file (updated per issue #290).
-
-    Per issue #290, config.yaml alone is sufficient for MANAGED state.
-    state.json was removed as a sentinel requirement.
-    """
+    """Tests for config.yaml as the sole sentinel file."""
 
     @pytest.mark.unit
     def test_config_yaml_with_state_json_is_managed(self, tmp_path: Path) -> None:
@@ -223,7 +204,7 @@ class TestDetectStateConfigYamlSentinel:
 
     @pytest.mark.unit
     def test_config_yaml_only_is_managed(self, tmp_path: Path) -> None:
-        """config.yaml alone is sufficient for MANAGED state (per issue #290)."""
+        """config.yaml alone is sufficient for MANAGED state."""
         portolan_dir = tmp_path / ".portolan"
         portolan_dir.mkdir()
         (portolan_dir / "config.yaml").write_text("# Portolan configuration\n")
@@ -244,17 +225,14 @@ class TestDetectStateConfigYamlSentinel:
 
     @pytest.mark.unit
     def test_old_config_json_not_recognized(self, tmp_path: Path) -> None:
-        """Old config.json (without config.yaml) should NOT be MANAGED.
-
-        We no longer recognize config.json as the sentinel.
-        """
+        """Old config.json (without config.yaml) should NOT be MANAGED."""
         portolan_dir = tmp_path / ".portolan"
         portolan_dir.mkdir()
         (portolan_dir / "config.json").write_text("{}")  # Old pattern
         (portolan_dir / "state.json").write_text("{}")
 
         state = detect_state(tmp_path)
-        # Old pattern is no longer recognized - should be FRESH
+        # The old pattern is not recognized, so the state is FRESH.
         assert state == CatalogState.FRESH
 
 
@@ -278,11 +256,6 @@ class TestDetectStateEdgeCases:
 
     @pytest.mark.unit
     def test_detect_state_handles_nonexistent_path(self, tmp_path: Path) -> None:
-        """detect_state() on non-existent path should raise or return FRESH.
-
-        Note: The spec says 'no network calls, no reading file contents'
-        but doesn't specify behavior for non-existent paths. We treat as FRESH.
-        """
         nonexistent = tmp_path / "does-not-exist"
 
         # Should treat as FRESH (no files exist)
@@ -291,12 +264,6 @@ class TestDetectStateEdgeCases:
 
     @pytest.mark.unit
     def test_detect_state_case_sensitive_filenames(self, tmp_path: Path) -> None:
-        """File detection should be case-sensitive (catalog.json != Catalog.json).
-
-        This test only runs on case-sensitive filesystems (e.g., Linux ext4).
-        On case-insensitive filesystems (e.g., macOS APFS, Windows NTFS),
-        Catalog.json and catalog.json refer to the same file.
-        """
         if not is_case_sensitive_fs(tmp_path):
             pytest.skip("Filesystem is case-insensitive")
 

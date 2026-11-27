@@ -1,9 +1,4 @@
-"""Tests for stac_parquet module - STAC GeoParquet generation.
-
-TDD-first tests for items.parquet generation (issue #319, reshaped by #654).
-These tests verify generation, the asset-only registration, and default-on
-orchestration with no item-count threshold.
-"""
+"""Tests for stac_parquet module - STAC GeoParquet generation."""
 
 from __future__ import annotations
 
@@ -16,9 +11,7 @@ import pytest
 if TYPE_CHECKING:
     from pathlib import Path
 
-# =============================================================================
 # Fixtures
-# =============================================================================
 
 
 @pytest.mark.unit
@@ -178,12 +171,7 @@ def collection_with_items(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def collection_with_organizing_catalogs(tmp_path: Path) -> Path:
-    """A collection whose items hang off organizing catalogs (core.md:168-170).
-
-    ``landsat/collection.json`` links two year catalogs by ``rel="child"``, and
-    each of those owns one item. The collection itself carries no ``rel="item"``
-    link, which is the shape that used to read as an empty collection.
-    """
+    """A collection whose items hang off organizing catalogs (core.md:168-170)."""
     catalog_root = tmp_path / "catalog"
     collection_dir = catalog_root / "landsat"
     collection_dir.mkdir(parents=True)
@@ -369,13 +357,11 @@ def collection_with_many_items(tmp_path: Path) -> Path:
     return collection_dir
 
 
-# =============================================================================
-# Test: Item Traversal
-# =============================================================================
+# Item Traversal
 
 
 class TestOwnedItemHrefs:
-    """The item walker is public so README generation can reuse it (#713)."""
+    """The item walker is public so README generation can reuse it."""
 
     @pytest.mark.unit
     def test_returns_href_and_resolved_path_pairs(self, collection_with_items: Path) -> None:
@@ -457,18 +443,11 @@ class TestOwnedItemHrefs:
         assert [href for href, _ in owned] == ["./s/s.json", "./s/s.json"]
 
 
-# =============================================================================
-# Test: Item Count and Threshold
-# =============================================================================
+# Item Count and Threshold
 
 
 class TestItemCount:
-    """Tests for counting items.
-
-    No item-count threshold exists: the spec states "No item-count threshold
-    applies" (formats.md), so the count only distinguishes empty collections
-    (no mirror) from item-bearing ones (#654).
-    """
+    """Tests for counting items."""
 
     @pytest.mark.unit
     def test_count_items_in_collection(self, collection_with_items: Path) -> None:
@@ -499,9 +478,7 @@ class TestItemCount:
         assert count_items(collection_with_organizing_catalogs) == 2
 
 
-# =============================================================================
-# Test: Generate items.parquet
-# =============================================================================
+# Generate items.parquet
 
 
 class TestGenerateItemsParquet:
@@ -609,9 +586,7 @@ class TestGenerateItemsParquet:
             generate_items_parquet(collection_dir)
 
 
-# =============================================================================
-# Test: Collection Link Management
-# =============================================================================
+# Collection Link Management
 
 
 def _scattered_collection(root: Path, side: int) -> Path:
@@ -673,12 +648,7 @@ def test_the_items_mirror_orders_its_rows_spatially(tmp_path: Path) -> None:
 
 
 class TestMirrorRegistration:
-    """Tests for registering the item mirror in collection.json.
-
-    Spec formats.md: "That single registration is the whole requirement; no
-    ``rel: 'items'`` link is needed." The asset is the only registration; a
-    legacy link from an older catalog is removed on refresh (#654).
-    """
+    """Tests for registering the item mirror in collection.json."""
 
     @pytest.mark.unit
     def test_register_mirror_writes_no_link(self, collection_with_items: Path) -> None:
@@ -790,9 +760,7 @@ class TestMirrorRegistration:
         assert has_mirror_asset(collection_with_items) is False
 
 
-# =============================================================================
-# Test: Full Workflow
-# =============================================================================
+# Full Workflow
 
 
 class TestFullWorkflow:
@@ -868,9 +836,7 @@ class TestFullWorkflow:
         assert len(table) == 6
 
 
-# =============================================================================
-# Test: Error Handling
-# =============================================================================
+# Error Handling
 
 
 class TestErrorHandling:
@@ -906,9 +872,7 @@ class TestErrorHandling:
             generate_items_parquet(collection_dir)
 
 
-# =============================================================================
-# Test: Collection-Level Asset
-# =============================================================================
+# Collection-Level Asset
 
 
 class TestCollectionLevelAsset:
@@ -963,12 +927,6 @@ class TestCollectionLevelAsset:
     def test_legacy_asset_is_upgraded_to_the_spec_role(
         self, collection_with_items: Path, legacy_roles: list[str]
     ) -> None:
-        """An asset written before the spec role existed is upgraded in place.
-
-        The mirror gets exactly the spec role ``collection-mirror``. That drops
-        the undefined community role ``stac-items``, and the ``data`` role that
-        the asset scan gave the mirror. Unrelated assets stay untouched.
-        """
         from portolan_cli.stac_parquet import (
             generate_items_parquet,
             register_mirror_asset,
@@ -1020,9 +978,7 @@ class TestCollectionLevelAsset:
         assert all(link.get("rel") != "items" for link in collection_json["links"])
 
 
-# =============================================================================
-# Test: file:size / file:checksum on the mirror asset (issue #710)
-# =============================================================================
+# file:size / file:checksum on the mirror asset
 
 
 def _mirror_asset(collection_dir: Path) -> dict[str, object]:
@@ -1067,14 +1023,7 @@ def _append_item(collection_dir: Path, item_id: str) -> None:
 
 
 class TestMirrorAssetFileFields:
-    """The mirror asset must publish file:size and file:checksum (issue #710).
-
-    PTL-AST-003 warns on their absence (PORTO-CORE-028 is a SHOULD), and
-    ``portolan check --strict`` escalates that warning to a non-zero exit.
-    PORTO-CORE-030 then makes a published value a claim about the bytes, and
-    rashid's data pass — on by default — reports a mismatch as an ERROR. So a
-    value left stale by a regeneration is worse than one that was never written.
-    """
+    """The mirror asset must publish file:size and file:checksum."""
 
     @pytest.mark.unit
     def test_asset_carries_file_size_and_checksum(self, collection_with_items: Path) -> None:
@@ -1113,11 +1062,6 @@ class TestMirrorAssetFileFields:
     def test_regenerating_the_parquet_refreshes_the_checksum(
         self, collection_with_items: Path
     ) -> None:
-        """The PORTO-CORE-030 guard: registration is idempotent by presence.
-
-        Stamping only the creation branch leaves the first run's digest sitting
-        against bytes the second run overwrote, which turns a warning into an error.
-        """
         import hashlib
 
         from portolan_cli.stac_parquet import (
@@ -1268,14 +1212,7 @@ class TestMirrorAssetFileFields:
 
 
 class TestUnverifiableHrefsAreLeftAlone:
-    """Only a missing local file proves a published claim is false.
-
-    A relative href that resolves to nothing is evidence. An absolute or remote
-    href is not: those bytes live somewhere this process cannot read, so the
-    values there may be correct and measured by whoever wrote them. Stripping
-    them would destroy true metadata. ``_local_asset_path`` in
-    ``validation.fixers`` skips the same hrefs.
-    """
+    """Only a missing local file proves a published claim is false."""
 
     @staticmethod
     def _write_mirror(collection_dir: Path, asset: dict[str, object]) -> None:
@@ -1396,12 +1333,6 @@ class TestFileExtensionDeclaration:
     def test_it_survives_while_item_assets_still_carry_the_fields(
         self, collection_with_items: Path
     ) -> None:
-        """The withdrawal reads the items themselves, not a tally beside them.
-
-        ``declare_file_extension`` redeclares from the collection *and* its
-        items, so withdrawing the URI while an item asset still carries
-        ``file:size`` would make the two writers fight over collection.json.
-        """
         from portolan_cli.stac import EXTENSION_URLS
         from portolan_cli.stac_parquet import (
             generate_items_parquet,
@@ -1425,7 +1356,7 @@ class TestFileExtensionDeclaration:
 
     @pytest.mark.unit
     def test_a_stale_asset_count_no_longer_keeps_the_uri(self, collection_with_items: Path) -> None:
-        """The removed tally is not evidence: only a live file: field is (issue #654)."""
+        """The removed tally is not evidence: only a live file: field is."""
         from portolan_cli.stac import EXTENSION_URLS
         from portolan_cli.stac_parquet import (
             generate_items_parquet,
@@ -1467,18 +1398,11 @@ class TestFileExtensionDeclaration:
         )
 
 
-# =============================================================================
-# Test: generate_parquet_mirrors (post-add orchestration, issues #620, #654)
-# =============================================================================
+# generate_parquet_mirrors (post-add orchestration)
 
 
 class TestGenerateParquetMirrors:
-    """Tests for the post-add mirror orchestration (#620, reshaped by #654).
-
-    The spec applies no item-count threshold and FMT-040 is a SHOULD, so the
-    mirror generates by default for every item-bearing collection. The only
-    gates left are ``parquet.enabled`` (opt-out) and an item count of zero.
-    """
+    """Tests for the post-add mirror orchestration."""
 
     @pytest.mark.unit
     def test_explicit_flag_generates_parquet(self, collection_with_items: Path) -> None:
@@ -1498,11 +1422,6 @@ class TestGenerateParquetMirrors:
 
     @pytest.mark.unit
     def test_default_generates_without_flag_or_config(self, collection_with_items: Path) -> None:
-        """A plain add publishes the mirror: enabled by default, no threshold.
-
-        Pre-#654 behavior gated this on parquet.enabled (default False) and a
-        100-item threshold, so a 5-item collection got nothing.
-        """
         from portolan_cli.stac_parquet import generate_parquet_mirrors
 
         catalog_root = collection_with_items.parent
@@ -1610,11 +1529,6 @@ class TestGenerateParquetMirrors:
     def test_mirror_folds_into_the_version_add_just_wrote(
         self, collection_with_items: Path
     ) -> None:
-        """A versioned collection's mirror amends that snapshot, not a new one.
-
-        Pre-fix behavior: track_parquet_in_versions bumped a patch version of
-        its own, so one `add` produced two versions (the #683 family).
-        """
         from portolan_cli.stac_parquet import generate_parquet_mirrors
         from portolan_core.versions import read_versions
 
@@ -1634,11 +1548,6 @@ class TestGenerateParquetMirrors:
 
     @pytest.mark.unit
     def test_unversioned_collection_gets_its_own_version(self, collection_with_items: Path) -> None:
-        """A skipped collection's backfilled mirror creates a new version.
-
-        Amending a snapshot that may already be published would rewrite
-        history, so only versions written in this run are amended.
-        """
         from portolan_cli.stac_parquet import generate_parquet_mirrors
         from portolan_core.versions import read_versions
 
@@ -1734,11 +1643,7 @@ _TABLE_URI = "https://stac-extensions.github.io/table/v1.2.0/schema.json"
 
 
 def _stale_collection(tmp_path: Path) -> Path:
-    """A collection whose README asset and item asset carry stale file fields.
-
-    An older ``add --force`` registered the README as a documentation asset
-    (issue #1041). ``readme`` then rewrote the file (issue #930).
-    """
+    """A collection whose README asset and item asset carry stale file fields."""
     collection_dir = tmp_path / "roads"
     item_dir = collection_dir / "scene"
     item_dir.mkdir(parents=True)
@@ -1786,7 +1691,7 @@ class TestRestampCollectionAssets:
         tif_fields = file_fields(collection_dir / "scene" / "scene.tif")
         assert {k: item["assets"]["data"][k] for k in tif_fields} == tif_fields
         assert collection["stac_extensions"] == [_FILE_URI]
-        # Issue #1037: the item declares the extensions of its own fields.
+        # The item declares the extensions of its own fields.
         assert item["stac_extensions"] == [_FILE_URI, _TABLE_URI]
         assert restamp_collection_assets(collection_dir) is False
 
@@ -1807,7 +1712,7 @@ class TestRestampCollectionAssets:
 
 
 class TestWriteReadme:
-    """Issue #930: ``readme`` left the documentation asset stale."""
+    """``readme`` left the documentation asset stale."""
 
     @pytest.mark.unit
     def test_writing_the_readme_restamps_its_asset(self, tmp_path: Path) -> None:
@@ -1850,7 +1755,7 @@ class TestWriteReadme:
         shutil.copy(fixture, collection_dir / "roads.parquet")
         add = ["add", "--portolan-dir", str(tmp_path), str(collection_dir / "roads.parquet")]
         assert runner.invoke(cli, add).exit_code == 0
-        # An older add --force registered the README (issue #1041).
+        # An older add --force registered the README.
         collection_json = collection_dir / "collection.json"
         data = json.loads(collection_json.read_text())
         data["assets"]["documentation"] = {
@@ -1872,12 +1777,7 @@ class TestWriteReadme:
 
 
 class TestMirrorOnPluginBackend:
-    """A plugin backend never receives the item mirror as a data asset.
-
-    The Iceberg backend reads each ``.parquet`` asset that it gets and appends
-    the rows to the collection table. ``items.parquet`` holds STAC items, not
-    data rows. The mirror record stays in the local ``versions.json``.
-    """
+    """A plugin backend never receives the item mirror as a data asset."""
 
     @pytest.mark.unit
     def test_mirror_is_not_published_to_the_plugin(

@@ -1,12 +1,4 @@
-"""Tests for STAC metadata fixtures.
-
-These tests verify that the STAC fixtures (catalog, collection, item) are:
-1. Valid JSON that can be parsed
-2. Loadable by our models (CatalogModel, CollectionModel, ItemModel)
-3. Round-trippable (to_dict() -> from_dict() preserves data)
-
-Invalid fixtures are tested to ensure our models reject malformed data appropriately.
-"""
+"""Tests for STAC metadata fixtures."""
 
 from __future__ import annotations
 
@@ -399,9 +391,8 @@ class TestInvalidItemFixtures:
         path = INVALID_DIR / "item_no_geometry.json"
         with open(path, encoding="utf-8") as f:
             data = json.load(f)
-        # STAC spec allows null geometry in some cases, but our ItemModel
-        # requires a valid bbox for spatial operations. This is intentional -
-        # Portolan requires geometry for spatial indexing.
+        # STAC spec allows null geometry in some cases, but our ItemModel requires a valid bbox for
+        # spatial operations.
         with pytest.raises(TypeError):
             # Should fail because bbox is None
             ItemModel.from_dict(data)

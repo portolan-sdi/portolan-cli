@@ -1,11 +1,4 @@
-"""Unit tests for portolan_cli/scan_infer.py.
-
-Tests collection inference functionality including:
-- Common prefix extraction
-- Numeric suffix detection
-- Pattern marker detection
-- Temporal pattern detection
-"""
+"""Unit tests for portolan_cli/scan_infer.py."""
 
 from __future__ import annotations
 
@@ -20,9 +13,7 @@ from portolan_cli.scan.infer import (
     find_common_prefix,
 )
 
-# =============================================================================
 # CollectionSuggestion Tests
-# =============================================================================
 
 
 @pytest.mark.unit
@@ -100,9 +91,7 @@ class TestCollectionSuggestion:
         assert result["confidence"] == 0.9
 
 
-# =============================================================================
 # Common Prefix Tests
-# =============================================================================
 
 
 @pytest.mark.unit
@@ -150,9 +139,7 @@ class TestFindCommonPrefix:
         assert "region" in result
 
 
-# =============================================================================
 # Property-Based Tests
-# =============================================================================
 
 
 @pytest.mark.unit

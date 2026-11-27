@@ -143,7 +143,7 @@ def _catalog_with_collections(root: Path, *ids: str) -> Path:
 
 
 class TestTryBackendPull:
-    """Issue #977: pull is a typed protocol method, and a missing collection means all."""
+    """Pull is a typed protocol method, and a missing collection means all."""
 
     @pytest.mark.unit
     def test_no_collection_pulls_each_collection_of_the_catalog(self, tmp_path: Path) -> None:

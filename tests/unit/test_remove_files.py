@@ -1,21 +1,4 @@
-"""Unit tests for the `portolan rm` file-expansion and deletion helpers.
-
-Covers `_gather_removable_files`, `_remove_one_file`, and `remove_files`.
-Version-tracking behavior lives in `test_remove_versions.py`; these tests build
-catalogs without a `versions.json` unless the assertion needs one, so each one
-isolates the on-disk effect.
-
-The layout under test throughout:
-
-    tmp_path/
-      .portolan/config.yaml      catalog-root sentinel (ADR-0029)
-      mycoll/
-        collection.json          marks the collection dir
-        tunnels.parquet          collection-level asset (ADR-0031)
-        districts/               item dir
-          item.json
-          districts.parquet
-"""
+"""Unit tests for the `portolan rm` file-expansion and deletion helpers."""
 
 from __future__ import annotations
 
@@ -42,11 +25,7 @@ pytestmark = pytest.mark.unit
 
 @pytest.fixture
 def catalog(tmp_path: Path) -> Path:
-    """A managed catalog with one collection holding both asset levels.
-
-    The catalog sits in a subdirectory so `tmp_path` itself stays available as
-    genuinely-outside-the-catalog scratch space.
-    """
+    """A managed catalog with one collection holding both asset levels."""
     root = tmp_path / "catalog"
     portolan_dir = root / ".portolan"
     portolan_dir.mkdir(parents=True)
@@ -121,11 +100,6 @@ class TestGatherRemovableFiles:
         assert _gather_removable_files(parquet) == [parquet]
 
     def test_missing_file_still_yields_itself(self, tmp_path: Path) -> None:
-        """A path that does not exist is returned so it can be untracked.
-
-        `rm --keep` on an already-deleted file must still reach
-        `_remove_one_file` to drop the versions.json entry.
-        """
         missing = tmp_path / "gone.parquet"
 
         assert _gather_removable_files(missing) == [missing]
@@ -196,11 +170,6 @@ class TestRemoveOneFile:
         assert (item_dir / "districts.parquet").exists()
 
     def test_missing_and_untracked_file_is_skipped(self, catalog: Path) -> None:
-        """A file that is gone and never tracked is skipped, not reported removed.
-
-        The fixture writes no versions.json for ``mycoll``, so ``gone.parquet``
-        is neither on disk nor tracked. Removing it is a no-op (#803).
-        """
         removed = _remove_one_file(
             catalog / "mycoll" / "gone.parquet",
             catalog_root=catalog,
@@ -212,12 +181,6 @@ class TestRemoveOneFile:
 
     @pytest.mark.parametrize("keep", [False, True])
     def test_missing_but_tracked_file_is_untracked(self, catalog: Path, keep: bool) -> None:
-        """A tracked file that is gone from disk is untracked (#803).
-
-        This is the acceptance case: a user deletes an asset by hand, then runs
-        ``rm`` to drop the phantom versions.json entry. The ``keep`` flag makes
-        no difference because there is nothing on disk to preserve or delete.
-        """
         coll_dir = catalog / "mycoll"
         versions_path = coll_dir / "versions.json"
         write_versions(
@@ -301,11 +264,6 @@ class TestRemoveOneFile:
         assert removed is False
 
     def test_symlink_is_refused(self, catalog: Path) -> None:
-        """A symlink is left alone rather than followed into a delete.
-
-        The target here is inside the catalog, so nothing but the symlink guard
-        can account for the refusal.
-        """
         target = catalog / "mycoll" / "tunnels.parquet"
         link = catalog / "mycoll" / "link.parquet"
         link.symlink_to(target)
@@ -353,12 +311,6 @@ class TestRemoveOneFile:
         assert outside.exists()
 
     def test_removal_untracks_the_asset_in_versions_json(self, catalog: Path) -> None:
-        """Deleting a tracked file drops its entry from the collection's versions.json.
-
-        This is the only test that exercises the versions.json lookup by name,
-        so a wrong filename there shows up here rather than as silent no-op
-        untracking.
-        """
         coll_dir = catalog / "mycoll"
         versions_path = coll_dir / "versions.json"
         write_versions(
@@ -446,13 +398,6 @@ class TestRemoveFiles:
         assert skipped == [stray]
 
     def test_expands_a_directory_argument(self, catalog: Path) -> None:
-        """Passing an item dir accounts for every file inside it and clears the dir.
-
-        The first file removed takes the whole item dir with it (item-level
-        assets own their directory), so the remaining files report as skipped.
-        Which file comes first depends on `rglob` order, so assert the partition
-        covers both files rather than pinning either side.
-        """
         item_dir = catalog / "mycoll" / "districts"
         contents = {item_dir / "item.json", item_dir / "districts.parquet"}
 

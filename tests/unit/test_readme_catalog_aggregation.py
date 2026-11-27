@@ -1,8 +1,4 @@
-"""Tests for README catalog-level aggregation.
-
-Tests that catalog-level READMEs aggregate extent and collection info
-from child collections.
-"""
+"""Tests for README catalog-level aggregation."""
 
 from __future__ import annotations
 
@@ -202,12 +198,6 @@ class TestGenerateCatalogReadme:
 
     @pytest.mark.unit
     def test_omits_seeded_junk_keyword_wall(self, tmp_path: Path) -> None:
-        """A catalog seeded with a junk keyword dump renders no badge wall (#515).
-
-        Reproduces the IGN Argentina case: extraction seeds hundreds of WFS
-        layer ids / FACC codes into catalog .portolan/metadata.yaml. The catalog
-        README must not render them as badges and bury the description.
-        """
         (tmp_path / "catalog.json").write_text(
             json.dumps(
                 {
@@ -237,7 +227,7 @@ class TestGenerateCatalogReadme:
 
     @pytest.mark.unit
     def test_renders_curated_catalog_keywords(self, tmp_path: Path) -> None:
-        """A small curated keyword list still renders as badges (#515)."""
+        """A small curated keyword list still renders as badges."""
         (tmp_path / "catalog.json").write_text(
             json.dumps(
                 {
@@ -296,14 +286,6 @@ class TestGenerateCatalogReadme:
 
     @pytest.mark.unit
     def test_collection_link_includes_catalog_dir(self, tmp_path: Path) -> None:
-        """Collection links include the catalog directory name (#549).
-
-        Static hosts like source.coop serve the catalog README at a URL with no
-        trailing slash (e.g. ``/tyler/colombia-ecosystems-map``). A bare
-        ``./ecosistemas/`` link then resolves against ``/tyler/``, dropping the
-        catalog name and 404-ing. Prefixing the link with the catalog directory
-        name makes it resolve to ``/tyler/colombia-ecosystems-map/ecosistemas/``.
-        """
         catalog_dir = tmp_path / "colombia-ecosystems-map"
         catalog_dir.mkdir()
         (catalog_dir / "catalog.json").write_text(
@@ -341,12 +323,6 @@ class TestGenerateCatalogReadme:
 
     @pytest.mark.unit
     def test_collections_listing_uses_collection_metadata_yaml(self, tmp_path: Path) -> None:
-        """Collections listing uses each collection's metadata.yaml title/description (#534).
-
-        When a collection's STAC title/description is still the slug-humanized
-        default but its .portolan/metadata.yaml carries a human-authored
-        title/description, the catalog README must show the metadata.yaml values.
-        """
         (tmp_path / "catalog.json").write_text(
             json.dumps(
                 {
@@ -388,7 +364,7 @@ class TestGenerateCatalogReadme:
 
     @pytest.mark.unit
     def test_catalog_title_uses_metadata_yaml_override(self, tmp_path: Path) -> None:
-        """Catalog title/description come from metadata.yaml when set (#534)."""
+        """Catalog title/description come from metadata.yaml when set."""
         (tmp_path / "catalog.json").write_text(
             json.dumps(
                 {
@@ -462,11 +438,7 @@ class TestGenerateCatalogReadme:
 
 
 class TestCollapsibleCollections:
-    """Tests for collapsible collections list (#424).
-
-    Large catalogs (many collections) should use <details> tags to make
-    the collections list collapsible, improving README navigability.
-    """
+    """Tests for collapsible collections list."""
 
     def _create_collections(self, tmp_path: Path, count: int) -> None:
         """Helper to create N collections."""
