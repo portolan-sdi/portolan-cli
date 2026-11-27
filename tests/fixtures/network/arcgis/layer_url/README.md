@@ -12,7 +12,7 @@ producer provider of the copy. It is never the contact of the copy.
 
 - The upstream service is
   `https://gisportal.boston.gov/arcgis/rest/services/BaseServices/Open_Space_Public/MapServer`.
-- The responses date from 2026-10-23.
+- The responses date from 2026-11-27.
 - The feature page keeps 2 of 559 features. Each geometry keeps its largest
   ring, with 40 vertices or fewer.
 - The count response says 2.
