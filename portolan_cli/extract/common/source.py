@@ -734,7 +734,7 @@ def _report_kept(run: _Run, index: int, total: int, layer: LayerRef) -> None:
     run.emit(index, total, layer, "skipped", layer.skip_reason)
 
 
-def _fetch_parallel(
+def _fetch_parallel(  # noqa: PLR0914 - one ordered fetch sequence
     run: _Run, jobs: list[tuple[int, LayerRef]], total: int
 ) -> list[tuple[int, LayerResult]]:
     """Fetch layers on worker threads, with a deadline per started layer.

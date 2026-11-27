@@ -1372,7 +1372,7 @@ def _execute_parallel_uploads(
     return results
 
 
-def upload_directory(
+def upload_directory(  # noqa: PLR0913 - each upload option is an argument
     source: Path,
     destination: str,
     *,

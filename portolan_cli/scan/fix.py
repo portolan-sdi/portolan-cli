@@ -304,7 +304,7 @@ def _find_sidecars(shp_path: Path) -> list[Path]:
 # =============================================================================
 
 
-def _compute_safe_rename(path: Path) -> tuple[Path, str] | None:
+def _compute_safe_rename(path: Path) -> tuple[Path, str] | None:  # noqa: PLR0914 - each name transform of the path is a local
     """Compute safe rename for a file with normalization issues.
 
     Handles four types of issues:

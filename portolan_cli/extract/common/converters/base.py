@@ -244,7 +244,7 @@ def make_line_layer(
     }
 
 
-def make_symbol_layer(
+def make_symbol_layer(  # noqa: PLR0917 - one argument per Mapbox layer property
     layer_id: str,
     source_layer: str,
     text_field: str | Expression,

@@ -461,7 +461,7 @@ def convert_to_geoparquet() -> None:
     print(f"Generated {output.relative_to(FIXTURES_DIR)}")
 
 
-def generate_raster_fixtures() -> None:
+def generate_raster_fixtures() -> None:  # noqa: PLR0914, PLR0915 - writes each fixture file in one sequence
     """Generate raster (COG) fixtures using rasterio and rio-cogeo."""
     import rasterio
     from rasterio.transform import from_bounds

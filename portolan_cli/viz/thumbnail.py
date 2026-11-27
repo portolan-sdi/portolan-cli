@@ -1529,7 +1529,7 @@ def _basemap_zoom(ax: Axes, provider: Any, zoom_adjust: int) -> int:
     return int(min(max(zoom, provider.get("min_zoom", 0)), provider.get("max_zoom", 22)))
 
 
-def _fetch_basemap(
+def _fetch_basemap(  # noqa: PLR0914 - the tile grid, mosaic and bounds are locals
     ctx_module: Any,
     provider: Any,
     frame: tuple[float, float, float, float],
@@ -1716,7 +1716,7 @@ def _world_copies(left: float, right: float) -> list[tuple[float, float, float]]
     return copies
 
 
-def add_basemap(
+def add_basemap(  # noqa: PLR0914 - the tile grid, mosaic and bounds are locals
     ax: Axes,
     provider: str,
     opacity: float = 1.0,

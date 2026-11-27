@@ -319,18 +319,18 @@ def test_extract_wfs(parity: Parity, replay: Callable[[str | Path], ReplayServer
     url = server.url + "/geoserver/wfs"
     parity(
         "extract wfs",
-        [url, "out", *LICENSE, "--layers", "topp:states"],
+        [url, "out", *LICENSE, "--layers", "gs:us_states"],
         catalog=_empty,
         call=lambda _root: run_extract_command(
             extract_wfs_catalog,
             url,
             Path("out"),
             WFSOptions(license="CC-BY-4.0"),
-            layer_filter=["topp:states"],
+            layer_filter=["gs:us_states"],
         ),
     )
 
-    assert _extracted(parity.root / "out") == [(1, "topp:states", "success", 2)]
+    assert _extracted(parity.root / "out") == [(1, "gs:us_states", "success", 2)]
     assert _gets(server) == {"/geoserver/wfs", "/geoserver/wms"}
 
 

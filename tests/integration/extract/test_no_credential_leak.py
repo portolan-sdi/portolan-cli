@@ -156,9 +156,9 @@ CASES = {
             "wfs",
             "wfs/workspace_layer",
             f"/geoserver/wfs?{name}=SECRET",
-            ("--layers", "topp:states", *LICENSE),
+            ("--layers", "gs:us_states", *LICENSE),
             0,
-            _wfs("topp:states"),
+            _wfs("gs:us_states"),
         )
         for name in ("token", "key", "apikey")
     },
@@ -166,9 +166,9 @@ CASES = {
         "wfs",
         "wfs/workspace_layer",
         "/geoserver/wfs",
-        ("--layers", "topp:states", *LICENSE),
+        ("--layers", "gs:us_states", *LICENSE),
         0,
-        _wfs("topp:states"),
+        _wfs("gs:us_states"),
         userinfo=True,
     ),
 }
