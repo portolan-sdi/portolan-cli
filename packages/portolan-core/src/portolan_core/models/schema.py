@@ -1,12 +1,4 @@
-"""SchemaModel dataclass for column and band metadata.
-
-Schema describes the structure of data in a collection:
-- For GeoParquet: column names, types, nullability, geometry info
-- For COG: band names, data types, nodata values
-
-Supports user-editable fields (description, unit, semantic_type) for
-round-trip editing workflows.
-"""
+"""SchemaModel dataclass for column and band metadata."""
 
 from __future__ import annotations
 
@@ -20,18 +12,7 @@ SEMVER_PATTERN = re.compile(r"^\d+\.\d+\.\d+$")
 
 @dataclass
 class ColumnSchema:
-    """Column metadata for GeoParquet.
-
-    Attributes:
-        name: Column name (auto-extracted).
-        type: Data type string (auto-extracted).
-        nullable: Whether column allows nulls (auto-extracted).
-        geometry_type: Geometry type for geometry columns (auto-extracted).
-        crs: CRS as EPSG code (auto-extracted).
-        description: Human-readable description (user-editable).
-        unit: Unit of measurement (user-editable).
-        semantic_type: Semantic type from controlled vocabulary (user-editable).
-    """
+    """Column metadata for GeoParquet."""
 
     name: str
     type: str
@@ -78,15 +59,7 @@ class ColumnSchema:
 
 @dataclass
 class BandSchema:
-    """Band metadata for COG.
-
-    Attributes:
-        name: Band name or index (auto-extracted).
-        data_type: Data type string (auto-extracted).
-        nodata: Nodata value (auto-extracted).
-        description: Human-readable description (user-editable).
-        unit: Unit of measurement (user-editable).
-    """
+    """Band metadata for COG."""
 
     name: str
     data_type: str
@@ -122,17 +95,7 @@ class BandSchema:
 
 @dataclass
 class SchemaModel:
-    """Schema metadata for a collection.
-
-    Describes the structure of data files in the collection.
-
-    Attributes:
-        schema_version: Schema format version (semver).
-        format: Data format ("geoparquet" or "cog").
-        columns: Column definitions (list of ColumnSchema, BandSchema, or dicts).
-        crs: Coordinate reference system (EPSG code or WKT) for the schema.
-        statistics: Optional column statistics.
-    """
+    """Schema metadata for a collection."""
 
     schema_version: str
     format: str

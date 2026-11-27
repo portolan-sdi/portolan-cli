@@ -1,13 +1,6 @@
-"""Write a small Portolan catalog from Python with portolan-core.
+"""Write ./city-catalog with portolan-core, then remove its parks collection with a second plan.
 
-Run it. It writes the catalog into ./city-catalog in the current folder, then
-removes the parks collection again with a second plan:
-
-    uv run python examples/python-writer/write_catalog.py
-
-tests/docs/test_python_writer_guide.py runs this script and validates the
-catalog it writes. docs/guides/python-writer.md includes its sections, so
-each section runs after the ones before it.
+tests/docs/test_python_writer_guide.py runs this script and validates its catalog.
 """
 
 from __future__ import annotations

@@ -1,18 +1,4 @@
-"""Structured error codes for Portolan.
-
-All errors follow the format PRTLN-{category}{number}:
-- PRTLN-CAT*: Catalog errors
-- PRTLN-COL*: Collection errors
-- PRTLN-SCH*: Schema errors
-- PRTLN-ITM*: Item errors
-- PRTLN-VER*: Version errors
-- PRTLN-VAL*: Validation errors
-- PRTLN-CNV*: Conversion errors
-- PRTLN-LOG*: Catalog logo errors
-- PRTLN-CFG*: Configuration errors
-- PRTLN-EXT*: Extract / harvest errors
-- PRTLN-SYN*: Sync errors (push, pull)
-"""
+"""Structured error codes for Portolan."""
 
 from __future__ import annotations
 
@@ -24,15 +10,7 @@ _MAX_FAILURES_SHOWN = 5
 
 
 class PortolanError(Exception):
-    """Base class for all Portolan errors.
-
-    All errors have:
-    - code: Structured error code (e.g., PRTLN-CAT001)
-    - message: Human-readable error message
-
-    ``__init__`` sets each context key as an attribute. A subclass declares
-    those attributes, so mypy checks each read of them.
-    """
+    """Base class for all Portolan errors."""
 
     code: str = "PRTLN-000"
 
@@ -40,13 +18,7 @@ class PortolanError(Exception):
     _RESERVED_ATTRS = frozenset({"code", "message", "context", "args"})
 
     def __init__(self, message: str, **context: Any) -> None:
-        """Initialize a Portolan error.
-
-        Args:
-            message: Human-readable error message.
-            **context: Additional context stored as error attributes.
-                Reserved keys (code, message, context, args) are ignored.
-        """
+        """Initialize a Portolan error."""
         self.message = message
         self.context = context
         for key, value in context.items():
@@ -98,14 +70,7 @@ class CatalogNotFoundError(CatalogError):
 
 
 class UnmanagedStacCatalogError(CatalogError):
-    """Raised when an existing STAC catalog is found but not managed by Portolan.
-
-    Error code: PRTLN-CAT003
-
-    This occurs when a directory has a catalog.json file but is not managed
-    by Portolan (missing .portolan/config.yaml).
-    Use `portolan adopt` to bring an existing STAC catalog under management.
-    """
+    """Raised when an existing STAC catalog is found but not managed by Portolan."""
 
     code = "PRTLN-CAT003"
     path: str
@@ -332,14 +297,7 @@ class ValidationError(PortolanError):
 class NoGeometryError(ValueError):
     """Raised when a file lacks geometry needed to create a STAC item.
 
-    This is a ValueError subclass so it integrates naturally with existing
-    exception handling (callers catching ValueError will still catch this).
-    It replaces fragile string-pattern matching with a typed check:
-        ``isinstance(err, NoGeometryError)``
-
-    Used by ``_pre_validate_geometry`` and ``add`` when a file has
-    no geometry metadata (e.g., tabular parquet without ``geo`` key, GeoJSON
-    with no features, etc.).
+    A ValueError subclass, so callers that catch ValueError still catch it.
     """
 
     def __init__(self, path: str, reason: str) -> None:
@@ -351,9 +309,7 @@ class NoGeometryError(ValueError):
 class PathNotFoundError(FileNotFoundError):
     """Raised when a path that a command reads does not exist.
 
-    This is a FileNotFoundError subclass, not a PortolanError. Its message has
-    no ``[code]`` prefix, so the JSON error envelope keeps the message that
-    commands reported before the class existed.
+    Not a PortolanError, so its message in the JSON error envelope has no ``[code]`` prefix.
     """
 
 
@@ -384,15 +340,7 @@ class InvalidBboxError(ValidationError):
 
 
 class InvalidProvidersError(ValidationError):
-    """Raised when metadata.yaml declares a providers array Portolan cannot use.
-
-    Generation tolerates a missing providers block — the host is seeded from
-    ``contact`` and PTL-PRV-001 tells the human to name a producer. It cannot
-    tolerate input where no conformant array exists, such as two entries both
-    claiming the ``host`` role: nothing can choose between them.
-
-    Error code: PRTLN-VAL003
-    """
+    """Raised when metadata.yaml declares a providers array Portolan cannot use."""
 
     code = "PRTLN-VAL003"
     reason: str
@@ -402,15 +350,7 @@ class InvalidProvidersError(ValidationError):
 
 
 class MissingLicenseError(ValidationError):
-    """Raised when Portolan is about to write a collection with no usable license.
-
-    A license is a legal fact Portolan cannot invent, and a collection without
-    one fails PTL-LIC-001 or PTL-LIC-002 the moment ``portolan check`` reads it.
-    Rather than write a catalog it knows to be non-conformant, generation stops
-    and names what the human has to supply (issue #686).
-
-    Error code: PRTLN-VAL004
-    """
+    """Raised when Portolan is about to write a collection with no usable license."""
 
     code = "PRTLN-VAL004"
     target: str
@@ -507,15 +447,7 @@ class ValidationFailedError(ConversionError):
 
 
 class CRSMismatchError(ConversionError):
-    """Raised when bbox coordinates don't match the declared CRS.
-
-    Error code: PRTLN-CNV004
-
-    This indicates a common data quality issue where a file declares a projected
-    CRS (e.g., EPSG:28992) but actually contains WGS84 coordinates. This can
-    happen when ArcGIS services return WGS84 data but declare the original
-    projection.
-    """
+    """Raised when bbox coordinates don't match the declared CRS."""
 
     code = "PRTLN-CNV004"
     source_crs: str
@@ -542,10 +474,7 @@ class CRSMismatchError(ConversionError):
 class CRSTransformError(ConversionError):
     """Raised when a bbox cannot be transformed from its declared CRS to WGS84.
 
-    Error code: PRTLN-CNV012
-
-    pyproj cannot read the CRS, or the transform fails. The bbox is still in
-    the source CRS, so it must not go into STAC as a WGS84 bbox (#928).
+    The bbox is still in the source CRS, so it must not go into STAC as a WGS84 bbox.
     """
 
     code = "PRTLN-CNV012"
@@ -561,15 +490,7 @@ class CRSTransformError(ConversionError):
 class RewriteFidelityError(ConversionError):
     """Raised when an in-place rewrite would lose part of the source file.
 
-    Error code: PRTLN-CNV005
-
-    ``add`` rewrites a GeoParquet in place to give it a bbox covering column
-    (issue #805). That replaces the operator's own file, so the rewrite proves
-    it kept every row, every column, and the declared CRS before it swaps.
-    geoparquet-io writes no CRS, so a projected GeoParquet trips this check.
-
-    Portolan keeps the operator's file when this fires. It does not repair the
-    rewritten copy. The file stays non-conformant, and ``check`` reports it.
+    The rewrite must keep every row, every column, and the CRS, or the operator's file stays.
     """
 
     code = "PRTLN-CNV005"
@@ -603,11 +524,7 @@ class InvalidOutputError(ConversionError):
 class PartitionCollisionError(ConversionError):
     """Raised when a size partition would write into a directory that holds partitions.
 
-    Error code: PRTLN-CNV009
-
-    geoparquet-io names each Hive file after its cell and does not write over a
-    cell that exists. A second write into the same directory would lose the
-    rows in each shared cell, so Portolan keeps the converted file and stops.
+    geoparquet-io does not write over an existing cell, so a second write would lose rows.
     """
 
     code = "PRTLN-CNV009"
@@ -629,12 +546,7 @@ class PartitionCollisionError(ConversionError):
 
 
 class PartitionError(ConversionError):
-    """Raised when geoparquet-io fails to partition a GeoParquet file.
-
-    Error code: PRTLN-CNV011
-
-    The message is the message of the geoparquet-io error.
-    """
+    """Raised when geoparquet-io fails to partition a GeoParquet file."""
 
     code = "PRTLN-CNV011"
 
@@ -642,12 +554,7 @@ class PartitionError(ConversionError):
 class OutputExistsError(ConversionError):
     """Raised when a conversion would write over a file that its source did not make.
 
-    Error code: PRTLN-CNV010
-
-    A converter names its output after the source stem, so ``b1.csv`` and
-    ``b1.geojson`` both convert to ``b1.parquet``. When that name holds a file
-    and no earlier add tracked the source, the file belongs to the operator.
-    Portolan keeps it and does not convert.
+    That file belongs to the operator, so Portolan keeps it and does not convert.
     """
 
     code = "PRTLN-CNV010"
@@ -714,13 +621,7 @@ class LogoError(PortolanError):
 
 
 class UnsupportedLogoFormatError(LogoError):
-    """Raised when a logo's media type is outside the seven the spec permits.
-
-    Error code: PRTLN-LOG001
-
-    PORTO-CORE-075 fixes the enum because a client drops an icon whose media
-    type it does not recognize, so an unlisted type renders nowhere.
-    """
+    """Raised when a logo's media type is outside the seven the spec permits."""
 
     code = "PRTLN-LOG001"
     path: str
@@ -748,14 +649,7 @@ class LogoSourceNotFoundError(LogoError):
 
 
 class RemoteLogoSourceError(LogoError):
-    """Raised when the logo source is a URL rather than a local path.
-
-    Error code: PRTLN-LOG003
-
-    Portolan copies the image into the catalog so the published href stays
-    relative. Fetching a remote image is the caller's job: download it first,
-    then point at the downloaded file.
-    """
+    """Raised when the logo source is a URL rather than a local path."""
 
     code = "PRTLN-LOG003"
     source: str
@@ -856,10 +750,7 @@ class SyncError(PortolanError):
 class PushVerifyError(SyncError):
     """Raised when ``push --verify`` cannot safely check or repair an object.
 
-    A failed HEAD, missing ETag, or local checksum mismatch prevents a safe
-    repair. Push stops to keep the bytes consistent with the manifest.
-
-    Error code: PRTLN-SYN001
+    Push stops to keep the bytes consistent with the manifest.
     """
 
     code = "PRTLN-SYN001"

@@ -1,16 +1,6 @@
-"""Vulture whitelist.
+"""Vulture whitelist: vulture reads this file as source, so each name below counts as used.
 
-Vulture reads this file as source. Each name below counts as used. See
-https://github.com/jendrikseipp/vulture#whitelisting.
-
-``[tool.vulture]`` runs at ``min_confidence = 60``. The names below are
-vulture's own ``--make-whitelist`` output at 60 on 2026-10-23, deduplicated by
-name and grouped by package. Each comment keeps the first place vulture
-reported and the count of further places.
-
-``tests/docs/test_quality_config.py`` pins the name count. The list only
-shrinks. Delete a name when its code goes away or gains a caller, and lower
-the pinned count in the same commit. Do not add a name to hide new dead code.
+tests/docs/test_quality_config.py pins the name count, so the list only shrinks.
 """
 
 from __future__ import annotations

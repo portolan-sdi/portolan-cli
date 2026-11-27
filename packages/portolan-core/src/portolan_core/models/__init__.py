@@ -1,8 +1,4 @@
-"""Data models for Portolan metadata.
-
-This module exports all metadata model classes used throughout Portolan.
-Models are dataclasses with JSON serialization support.
-"""
+"""Data models for Portolan metadata."""
 
 from __future__ import annotations
 

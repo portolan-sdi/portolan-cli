@@ -1,16 +1,5 @@
 #!/usr/bin/env python3
-"""Validate AGENTS.md references match actual files.
-
-This script checks that:
-1. All file path references point to existing files
-2. All CLI command references match actual Click commands
-3. All test markers match pyproject.toml definitions
-4. All code import examples are valid
-
-Exit codes:
-    0: All validations pass
-    1: Validation failures found
-"""
+"""Validate that the file paths, CLI commands, test markers, and imports in AGENTS.md exist."""
 
 from __future__ import annotations
 
@@ -49,23 +38,8 @@ def get_project_root() -> Path:
     return Path.cwd()
 
 
-# =============================================================================
-# FilePathValidator - Check that referenced paths exist
-# =============================================================================
-
-
 def validate_file_paths(claude_md: str, root: Path) -> ValidationResult:
-    """Check that all backtick-quoted file paths in AGENTS.md exist.
-
-    Matches patterns like:
-    - `path/to/file.py`
-    - `pyproject.toml`
-
-    Excludes:
-    - URLs (http://, https://)
-    - Code snippets (function calls, imports, shell commands)
-    - Patterns with wildcards (*, ?)
-    """
+    """Check that all backtick-quoted file paths in AGENTS.md exist."""
     result = ValidationResult(validator="File Paths")
 
     # Match backtick-quoted paths that look like files
@@ -123,11 +97,6 @@ def validate_file_paths(claude_md: str, root: Path) -> ValidationResult:
     return result
 
 
-# =============================================================================
-# CLICommandValidator - Check that CLI commands exist
-# =============================================================================
-
-
 def _normalize_function_name(name: str) -> str:
     """Convert function name to CLI command name."""
     # Remove common suffixes
@@ -148,14 +117,7 @@ def _get_explicit_command_name(decorator: ast.Call) -> str | None:
 
 
 def _parse_click_decorator(decorator: ast.expr) -> tuple[str | None, str | None, bool]:
-    """Parse a Click decorator and extract command info.
-
-    Returns:
-        (decorator_type, parent_group, has_explicit_name)
-        decorator_type: "command" | "group" | None
-        parent_group: parent group name if this is a subcommand, else None
-        has_explicit_name: whether decorator has explicit name arg
-    """
+    """Parse a Click decorator and extract command info."""
     if not isinstance(decorator, ast.Call):
         return None, None, False
 
@@ -179,11 +141,7 @@ def _parse_click_decorator(decorator: ast.expr) -> tuple[str | None, str | None,
 
 
 def _extract_command_info(node: ast.FunctionDef) -> tuple[str | None, str | None, bool]:
-    """Extract command info from a function with Click decorators.
-
-    Returns:
-        (command_name, parent_group, is_group)
-    """
+    """Extract command info from a function with Click decorators."""
     for decorator in node.decorator_list:
         dec_type, parent, has_explicit = _parse_click_decorator(decorator)
         if dec_type is None:
@@ -234,13 +192,7 @@ def extract_cli_commands_from_source(root: Path) -> set[str]:
 
 
 def validate_cli_commands(claude_md: str, root: Path) -> ValidationResult:
-    """Check that CLI commands mentioned in AGENTS.md exist.
-
-    Matches patterns like:
-    - `portolan init`
-    - `portolan check --fix`
-    - portolan <command> in code blocks
-    """
+    """Check that CLI commands mentioned in AGENTS.md exist."""
     result = ValidationResult(validator="CLI Commands")
 
     # Extract actual commands from source (including grouped subcommands like config-set)
@@ -266,11 +218,6 @@ def validate_cli_commands(claude_md: str, root: Path) -> ValidationResult:
         )
 
     return result
-
-
-# =============================================================================
-# TestMarkerValidator - Check pytest markers match pyproject.toml
-# =============================================================================
 
 
 def extract_pytest_markers_from_pyproject(root: Path) -> dict[str, str]:
@@ -333,11 +280,6 @@ def validate_test_markers(claude_md: str, root: Path) -> ValidationResult:
         )
 
     return result
-
-
-# =============================================================================
-# CodeExampleValidator - Check import statements are valid
-# =============================================================================
 
 
 def _find_module_source(module_path: str, root: Path) -> Path | None:
@@ -403,10 +345,6 @@ def validate_code_examples(claude_md: str, root: Path) -> ValidationResult:
 
     return result
 
-
-# =============================================================================
-# Main Validation Runner
-# =============================================================================
 
 VALIDATORS: list[Callable[[str, Path], ValidationResult]] = [
     validate_file_paths,

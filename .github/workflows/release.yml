@@ -1,24 +1,5 @@
-# Tag-based release workflow using commitizen
-#
-# This workflow:
-# 1. Detects if the merged commit is a version bump (from `cz bump` in PR)
-# 2. If yes: extracts version, creates git tag, builds, publishes to PyPI
-#    portolan-core first, then portolan-cli, which pins portolan-core exactly
-# 3. If no: exits successfully (normal PR merge)
-#
-# Developer workflow:
-# 1. Accumulate changes via normal PR merges
-# 2. When ready to release, create a PR running: uv run cz bump --changelog
-# 3. Merge bump PR → this workflow creates tag and publishes
-#
-# Recovery workflow (when release fails after bump merge):
-# 1. Delete orphan tag if exists: git push origin :refs/tags/vX.Y.Z
-# 2. Trigger manually: gh workflow run release.yml --ref main
-# Each publish step skips the files that PyPI already holds. A re-run after a
-# release that published portolan-core and then failed publishes portolan-cli.
-# A re-run builds the tagged commit, not the branch head. Delete the tag only
-# when PyPI holds no file of the release. The digest check fails the run when
-# PyPI holds a file with other bytes than the new build.
+# Release on a `cz bump` commit to main: tag, build, publish portolan-core, then portolan-cli.
+# Recovery: `gh workflow run release.yml --ref main`. Delete the tag only when PyPI holds no file.
 name: Release
 on:
   push:
@@ -62,19 +43,13 @@ jobs:
       - name: Extract version from pyproject.toml
         id: version
         run: |
-          # Use head -1 because pyproject.toml has two version lines:
-          # 1. [project].version (the package version - what we want)
-          # 2. [tool.commitizen].version (kept in sync by cz bump)
-          # The workspace and sources tables hold no line that starts with
-          # "version = ". The next step checks this value against the others.
+          # head -1: [project].version comes before [tool.commitizen].version.
           VERSION=$(grep '^version = ' pyproject.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "tag=v$VERSION" >> $GITHUB_OUTPUT
           echo "Detected version: $VERSION (tag: v$VERSION)"
 
-      # The portolan-cli version, the portolan-core version and the
-      # portolan-core== pin of portolan-cli must agree. A mismatch stops the
-      # release before it pushes the tag.
+      # A version mismatch stops the release before it pushes the tag.
       - name: Check the package versions agree
         run: uv run pytest -q "tests/unit/test_core_package.py::test_the_versions_agree"
 
@@ -114,9 +89,7 @@ jobs:
           git tag -a "$TAG" -m "Release $TAG"
           git push origin "$TAG"
 
-      # main can move on after a partial release. A recovery run must build
-      # the commit that the first run published from. The digest script
-      # comes from this workflow revision, because an old tag can lack it.
+      # A recovery run builds the tagged commit. The digest script comes from this revision.
       - name: Check out the release tag
         if: steps.release_check.outputs.release_exists == 'false'
         env:
@@ -125,23 +98,16 @@ jobs:
           cp scripts/check_pypi_digests.py "$RUNNER_TEMP/"
           git checkout --quiet "$TAG"
 
-      # Each distribution builds into its own directory, so each publish step
-      # uploads one distribution. The directories are under dist/, which
-      # .gitignore excludes. Otherwise the portolan-cli sdist holds the
-      # portolan-core files. The build job in ci.yml runs the same commands
-      # and checks the sdists.
+      # One directory per distribution under dist/, so the portolan-cli sdist
+      # does not hold the portolan-core files.
       - name: Build packages
         if: steps.release_check.outputs.release_exists == 'false'
         run: |
           uv build --package portolan-core --out-dir dist/core
           uv build --package portolan-cli --out-dir dist/cli
 
-      # skip-existing keeps a file that PyPI holds. This step fails when PyPI
-      # holds a file of this version with other bytes than the local build.
-      # hatchling gives the same bytes for the same commit and the same
-      # hatchling version. The build backend is not pinned, so a hatchling
-      # release between the first run and a recovery run also fails here.
-      # Then compare the files by hand, or yank the release and bump.
+      # skip-existing keeps a file that PyPI holds, so fail on other bytes.
+      # hatchling is not pinned, so a hatchling release between runs also fails here.
       - name: Compare the built files with PyPI
         if: steps.release_check.outputs.release_exists == 'false'
         env:

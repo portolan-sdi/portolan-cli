@@ -1,40 +1,7 @@
 #!/usr/bin/env python3
-"""Select the tests that a change can affect.
+"""Select the tests that a change can affect, against the merge base with ``--base``.
 
-Run it while you work, then run the full suite once before you push:
-
-    uv run python scripts/affected_tests.py            # print pytest targets
-    uv run python scripts/affected_tests.py --run -n 4 # run them
-
-The change is the working tree, committed or not, against the merge base with
-``--base`` (default ``origin/main``), plus untracked files.
-
-Selection:
-
-- A changed ``portolan_cli`` or ``portolan_core`` module selects each test file that imports it or
-  imports a module that imports it, directly or indirectly. grimp builds the
-  import graph, and imports inside functions count. ``TYPE_CHECKING`` imports
-  do not, because they never run.
-- A test file imports a module through ``import``, ``from ... import``, a
-  string such as ``importlib.import_module("portolan_cli.cli")``, or a patch
-  target such as ``"portolan_cli.sync.push.obs.put_async"``.
-- A changed test file is always selected. A deleted one is not.
-- A changed ``conftest.py`` selects its directory. ``tests/conftest.py``,
-  ``pyproject.toml``, ``uv.lock``, and any file under ``tests/fixtures`` select
-  the full suite.
-- A deleted module selects the tests of each module that imported it at the
-  merge base, in any form: ``import portolan_cli.legacy``, ``from portolan_cli
-  import legacy``, or ``from .legacy import Item``.
-- Any other changed file selects the test files whose source names it, such as
-  a test that reads ``AGENTS.md``.
-- A change to a file in ``FOUNDATION_FILES`` also selects ``FOUNDATION_TESTS``.
-  Those tests run the real CLI on a generated catalog. They reach the
-  foundation through a subprocess or ``CliRunner``, so the import graph alone
-  does not select them (#1035).
-- A target that does not exist in the tree is dropped with a note on stderr,
-  so ``--run`` does not hand pytest a missing path. A test file that the
-  change deletes is never a target. When every target is missing, the script
-  exits 1, because an empty pytest run passes and checks nothing.
+Run ``uv run python scripts/affected_tests.py --run -n 4`` while you work, and the full suite before you push.
 """
 
 from __future__ import annotations
@@ -51,7 +18,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
 
-# Import name -> source folder. portolan-core is a workspace member (#1133).
+# Import name -> source folder.
 PACKAGES = {
     "portolan_cli": "portolan_cli",
     "portolan_core": "packages/portolan-core/src/portolan_core",
@@ -122,17 +89,7 @@ def _package_of(path: str | None) -> list[str] | None:
 
 
 def referenced_names(source: str, path: str | None = None) -> set[str]:
-    """Return the dotted names that a source file imports or names in a string.
-
-    Args:
-        source: Python source.
-        path: Repository path of the source. A ``portolan_cli`` path resolves
-            relative imports such as ``from .legacy import Item``.
-
-    Returns:
-        Each imported module, each ``module.name`` of a ``from`` import, and
-        each ``portolan_cli.`` string such as a patch target.
-    """
+    """Return the dotted names that a source file imports or names in a string."""
     try:
         tree = ast.parse(source)
     except SyntaxError:
@@ -165,17 +122,7 @@ def referenced_names(source: str, path: str | None = None) -> set[str]:
 
 
 def imported_modules(source: str, known: set[str]) -> set[str]:
-    """Return the package modules a test file's source refers to.
-
-    Args:
-        source: Python source of the test file.
-        known: Every module name in the package.
-
-    Returns:
-        Module names from imports, import strings, and patch targets. The bare
-        package name is left out, because the package root imports nothing at
-        run time.
-    """
+    """Return the package modules a test file's source refers to."""
     found = set()
     for name in referenced_names(source):
         if name.split(".")[0] not in PACKAGES:
@@ -202,20 +149,7 @@ def select(
     test_texts: dict[str, str],
     deleted_importers: Callable[[str], set[str]],
 ) -> Selection:
-    """Choose the pytest targets for a set of changed files.
-
-    Args:
-        changes: ``(status, path)`` pairs. Status ``D`` means deleted.
-        importers: Module name to every module that imports it, directly or
-            indirectly.
-        test_imports: Test file path to the package modules it imports.
-        test_texts: Test file path to its source, for name matches.
-        deleted_importers: Deleted module name to the modules and test files
-            that imported it at the merge base.
-
-    Returns:
-        The selection. A full selection has the single target ``tests``.
-    """
+    """Choose the pytest targets for a set of changed files."""
     targets: set[str] = set()
     directories: set[str] = set()
     modules: set[str] = set()

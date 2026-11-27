@@ -1,8 +1,4 @@
-"""CatalogModel dataclass for STAC Catalog metadata.
-
-The catalog is the top-level container in a Portolan workspace.
-It contains references to collections and follows the STAC Catalog spec.
-"""
+"""CatalogModel dataclass for STAC Catalog metadata."""
 
 from __future__ import annotations
 
@@ -19,16 +15,7 @@ ID_PATTERN = re.compile(r"^[a-zA-Z0-9_-]+$")
 
 @dataclass
 class Link:
-    """A STAC link object.
-
-    Links connect catalogs, collections, items, and external resources.
-
-    Attributes:
-        rel: Link relationship (e.g., "self", "root", "child", "item").
-        href: Link URL or relative path.
-        type: Media type of linked resource (optional).
-        title: Human-readable link title (optional).
-    """
+    """A STAC link object."""
 
     rel: str
     href: str
@@ -36,11 +23,7 @@ class Link:
     title: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        """Convert to JSON-serializable dict.
-
-        Returns:
-            Dict with non-None fields only.
-        """
+        """Convert to JSON-serializable dict."""
         result: dict[str, Any] = {
             "rel": self.rel,
             "href": self.href,
@@ -53,14 +36,7 @@ class Link:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Link:
-        """Create Link from dict.
-
-        Args:
-            data: Dictionary with link fields.
-
-        Returns:
-            Link instance.
-        """
+        """Create Link from dict."""
         return cls(
             rel=data["rel"],
             href=data["href"],
@@ -71,21 +47,7 @@ class Link:
 
 @dataclass
 class CatalogModel:
-    """STAC Catalog metadata model.
-
-    A Catalog is the top-level container in a Portolan workspace.
-    It references collections and provides metadata about the catalog itself.
-
-    Attributes:
-        id: Unique identifier (auto-extracted from directory name).
-        description: Catalog description (required by STAC).
-        type: Always "Catalog".
-        stac_version: STAC spec version (uses STAC_VERSION constant).
-        title: Human-readable title (optional best practice).
-        created: Creation timestamp (auto-generated).
-        updated: Last update timestamp (auto-generated).
-        links: STAC links to collections and self.
-    """
+    """STAC Catalog metadata model."""
 
     id: str
     description: str
@@ -102,11 +64,7 @@ class CatalogModel:
             raise ValueError(f"Invalid catalog id '{self.id}': must match pattern ^[a-zA-Z0-9_-]+$")
 
     def to_dict(self) -> dict[str, Any]:
-        """Convert to JSON-serializable dict.
-
-        Returns:
-            Dict with all fields, timestamps in ISO 8601 format.
-        """
+        """Convert to JSON-serializable dict."""
         result: dict[str, Any] = {
             "type": self.type,
             "stac_version": self.stac_version,
@@ -124,18 +82,7 @@ class CatalogModel:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> CatalogModel:
-        """Create CatalogModel from dict.
-
-        Args:
-            data: Dictionary with catalog fields.
-
-        Returns:
-            CatalogModel instance.
-
-        Note:
-            The `type` and `stac_version` fields from input data are applied
-            after construction to override defaults when present.
-        """
+        """Create CatalogModel from dict."""
         created = None
         if data.get("created"):
             created = datetime.fromisoformat(data["created"])
@@ -155,9 +102,8 @@ class CatalogModel:
             links=links,
         )
 
-        # Apply type and stac_version from input dict if present and valid
-        # These are init=False fields, so we set them after construction
-        # Only apply valid type values to prevent creating invalid STAC Catalogs
+        # init=False fields, so set them after construction. Only a valid type
+        # applies, so the result stays a valid STAC Catalog.
         if "type" in data and data["type"] == "Catalog":
             object.__setattr__(catalog, "type", data["type"])
         if "stac_version" in data:

@@ -22,18 +22,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class ItemInfo:
-    """Information about an item in the catalog.
-
-    Attributes:
-        item_id: STAC item identifier.
-        collection_id: Parent collection identifier.
-        format_type: Format family, for example "vector" or "raster". None if unknown.
-        bbox: Bounding box [min_x, min_y, max_x, max_y].
-        asset_paths: Paths to data assets.
-        title: Optional display title.
-        description: Optional description.
-        datetime: Acquisition/creation datetime.
-    """
+    """Information about an item in the catalog."""
 
     item_id: str
     collection_id: str
@@ -85,19 +74,7 @@ def list_items(
     catalog_root: Path,
     collection_id: str | None = None,
 ) -> list[ItemInfo]:
-    """List items in a Portolan catalog.
-
-    The collections come from the containment walk that ``check`` applies. The
-    items of each collection come from its ``item`` links, through any
-    catalogs that organize them (issue #944).
-
-    Args:
-        catalog_root: Root directory of the catalog.
-        collection_id: Optional collection to filter by.
-
-    Returns:
-        List of ItemInfo objects.
-    """
+    """List items in a Portolan catalog."""
     if not (catalog_root / "catalog.json").exists():
         return []
 
@@ -113,19 +90,7 @@ def get_item_info(
     catalog_root: Path,
     stac_id: str,
 ) -> ItemInfo:
-    """Get information about a specific item.
-
-    Args:
-        catalog_root: Root directory of the catalog.
-        stac_id: STAC identifier in format "collection/item". A nested
-            collection gives "parent/collection/item".
-
-    Returns:
-        ItemInfo for the requested item.
-
-    Raises:
-        KeyError: If the item doesn't exist.
-    """
+    """Get information about a specific item."""
     if "/" not in stac_id:
         raise KeyError(f"Item not found: {stac_id} (expected format: collection/item)")
 
@@ -145,23 +110,7 @@ def is_current(
     asset_key: str | None = None,
     state: RunState | None = None,
 ) -> bool:
-    """Check if a file is unchanged compared to versions.json.
-
-    The run state reads ``versions.json`` once per run, so a loop over many
-    candidate files costs one read (issue #995). ``RunState.unchanged`` checks
-    the size and mtime first and hashes only a same-size file with a new mtime.
-
-    Args:
-        path: Path to the file to check.
-        versions_path: Path to versions.json for this collection.
-        asset_key: Optional explicit key to look up in versions.json.
-            If not provided, looks up by filename alone (legacy behavior).
-        state: The run state. Without one, the call opens its own.
-
-    Returns:
-        True if file is unchanged (already tracked at current state),
-        False if new or modified.
-    """
+    """Check if a file is unchanged compared to versions.json."""
     collection_dir = versions_path.parent
     if state is None:
         state = RunState.open(collection_dir.parent)
@@ -176,11 +125,7 @@ def is_current(
 
 
 def _find_asset(assets: dict[str, Asset], path: Path, asset_key: str | None) -> Asset | None:
-    """Find the record of ``path`` under each key shape that ``add`` writes.
-
-    The order is the explicit key, ``{item_id}/{filename}``, the bare filename,
-    the converted ``{stem}.parquet``, and ``{item_id}/{stem}.parquet``.
-    """
+    """Find the record of ``path`` under each key shape that ``add`` writes."""
     item_id = path.parent.name
     parquet_name = f"{path.stem}.parquet"
     keys = (

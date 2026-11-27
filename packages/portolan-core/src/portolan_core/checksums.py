@@ -16,30 +16,14 @@ _SHA256_HEX_LEN = 64
 
 logger = logging.getLogger(__name__)
 
-#: Read size of :func:`compute_checksum`. Every file hash in Portolan goes
-#: through that function, so one chunk size holds for all of them (issue #995).
+#: Read size of :func:`compute_checksum`, the one file hasher in Portolan.
 CHUNK_SIZE = 1024 * 1024
 
 
 def multihash_sha256(digest_hex: str) -> str:
-    """Encode a hex SHA-256 digest as a hex multihash for ``file:checksum``.
+    """Encode a hex SHA-256 digest as the hex multihash that STAC ``file:checksum`` needs.
 
-    The STAC file extension types ``file:checksum`` as a multihash — the hash
-    function and digest length travel with the digest — so a bare hex digest (or
-    a ``sha256:``-prefixed one) is not a valid value (issue #654).
-
-    The encoding comes from rashid_core, which also decodes the value when
-    ``portolan check`` verifies it.
-
-    Args:
-        digest_hex: Hex-encoded SHA-256 digest, as returned by
-            :func:`compute_checksum`.
-
-    Returns:
-        The digest with the sha2-256 multihash prefix.
-
-    Raises:
-        ValueError: If ``digest_hex`` is not a 64-character hex string.
+    Raises ``ValueError`` if ``digest_hex`` is not a 64-character hex string.
     """
     if len(digest_hex) != _SHA256_HEX_LEN:
         raise ValueError(f"Not a 64-character SHA-256 hex digest: {digest_hex!r}")
@@ -51,13 +35,7 @@ def multihash_sha256(digest_hex: str) -> str:
 
 
 def compute_checksum(path: Path) -> str:
-    """Compute SHA-256 checksum of a file securely.
-
-    This is the one file hasher. It reads in 1 MiB chunks, so a large asset
-    never sits in memory whole.
-
-    Security: Validates the resolved path is a regular file to prevent
-    symlink attacks (MAJOR #5 - symlink security vulnerability).
+    """Compute the SHA-256 checksum of a file in 1 MiB chunks.
 
     Args:
         path: Path to the file.
@@ -66,11 +44,10 @@ def compute_checksum(path: Path) -> str:
         Hex-encoded SHA-256 checksum.
 
     Raises:
-        ValueError: If path is not a regular file (e.g., symlink to directory,
-            device file, or other non-regular file).
+        ValueError: If path does not resolve to a regular file.
         FileNotFoundError: If path does not exist.
     """
-    # Resolve symlinks and check it's a regular file (MAJOR #5)
+    # Security: hash only a resolved regular file, so a symlink cannot point at a device.
     resolved = path.resolve()
     if not resolved.exists():
         raise FileNotFoundError(f"File not found: {path}")
@@ -89,67 +66,25 @@ def compute_checksum(path: Path) -> str:
 
 
 def file_fields_from(digest_hex: str, size: int) -> dict[str, Any]:
-    """Build the STAC file-extension fields for bytes that are already measured.
+    """Build ``file:size`` and ``file:checksum`` from a measured digest and size.
 
-    Takes the digest and the size rather than a path, because a FileGDB asset is
-    a directory: :func:`compute_dir_checksum` and :func:`compute_dir_size` measure
-    it, and :func:`compute_checksum` would reject it as a non-regular file.
-
-    Args:
-        digest_hex: Hex-encoded SHA-256 digest of the asset's bytes.
-        size: Byte count to publish as ``file:size``.
-
-    Returns:
-        The ``file:size`` and ``file:checksum`` pair, ready to merge into an asset.
-
-    Raises:
-        ValueError: If ``digest_hex`` is not a 64-character hex string.
+    Takes no path, because a FileGDB asset is a directory that :func:`compute_checksum` rejects.
     """
     return {"file:size": size, "file:checksum": multihash_sha256(digest_hex)}
 
 
 def file_fields(path: Path) -> dict[str, Any]:
-    """Build the STAC file-extension fields for a regular file, from its bytes.
+    """Build ``file:size`` and ``file:checksum`` from the bytes of a regular file as it stands.
 
-    PORTO-CORE-030 makes a published ``file:size``/``file:checksum`` a claim about
-    the bytes the asset's href resolves to, so always read them from the file as it
-    stands rather than carrying a value forward from an earlier write.
-
-    Args:
-        path: Path to the asset file.
-
-    Returns:
-        The ``file:size`` and ``file:checksum`` pair, ready to merge into an asset.
-
-    Raises:
-        ValueError: If ``path`` is not a regular file.
-        FileNotFoundError: If ``path`` does not exist.
+    PORTO-CORE-030 makes these fields a claim about the current bytes, so never carry them forward.
     """
     return file_fields_from(compute_checksum(path), path.stat().st_size)
 
 
 def compute_dir_checksum(path: Path) -> str:
-    """Compute a stable fingerprint for a directory by hashing its contents' metadata.
+    """Fingerprint a directory asset (FileGDB) from the sorted path, size, and mtime of its files.
 
-    Used for directory-format assets such as FileGDB (.gdb). Rather than reading
-    all bytes (expensive for large catalogs), hashes the sorted list of
-    (relative_path, size, mtime) tuples for every file inside the directory.
-    This detects file additions, removals, and modifications within the directory.
-
-    Directories are not checksummed by content — the fingerprint is based on the
-    metadata of all contained files (recursively). This is consistent with how
-    ``is_current()`` uses mtime as a fast-path gate before falling back to this
-    checksum.
-
-    Args:
-        path: Path to the directory.
-
-    Returns:
-        Hex-encoded SHA-256 fingerprint of the directory contents.
-
-    Raises:
-        ValueError: If path is not a directory.
-        FileNotFoundError: If path does not exist.
+    It reads no file bytes, so it is fast on large directories.
     """
     resolved = path.resolve()
     if not resolved.exists():
@@ -180,21 +115,7 @@ def compute_dir_checksum(path: Path) -> str:
 
 
 def compute_dir_size(path: Path) -> int:
-    """Compute total size of all files in a directory.
-
-    Used for directory-format assets such as FileGDB (.gdb) to populate
-    the STAC file:size field.
-
-    Args:
-        path: Path to the directory.
-
-    Returns:
-        Total size in bytes of all files in the directory.
-
-    Raises:
-        ValueError: If path is not a directory.
-        FileNotFoundError: If path does not exist.
-    """
+    """Return the total byte size of all files in a directory asset, for ``file:size``."""
     resolved = path.resolve()
     if not resolved.exists():
         raise FileNotFoundError(f"Directory not found: {path}")

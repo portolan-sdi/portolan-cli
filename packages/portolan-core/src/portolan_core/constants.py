@@ -1,8 +1,4 @@
-"""Shared constants for the Portolan CLI.
-
-This module contains constants that are used across multiple modules
-to avoid duplication and ensure consistency.
-"""
+"""Shared constants for the Portolan CLI."""
 
 from __future__ import annotations
 
@@ -10,27 +6,14 @@ from rashid_core.api import newest_profile_version
 
 from portolan_core import extension_registry as _reg
 
-# Version of the Portolan specification this CLI validates against (issue #566).
-#
-# DERIVED from the profile schemas rashid bundles in its wheel, so
-# the CLI and the validator cannot drift: whichever spec version rashid can
-# actually validate against is the one `check` reports and the one generation
-# stamps. ``newest_profile_version()`` returns a tag like "v0.1.0". It sorts the
-# versions as numbers, so v0.10.0 follows v0.9.0. The leading "v" is dropped,
-# because the URI template below and the JSON payload both want a bare SemVer
-# triple.
-#
-# NOTE: This is the version of the *specification as a whole*. It is distinct
-# from versions.SPEC_VERSION, which versions the versions.json manifest schema.
+# Derived from the profile schemas rashid bundles, so the CLI and the validator cannot drift.
+# This versions the whole spec, not the versions.json schema (versions.SPEC_VERSION).
 PORTOLAN_SPEC_VERSION: str = newest_profile_version().removeprefix("v")
 
-# STAC version we generate (v1.1.0 has unified bands array, superseding
-# eo:bands/raster:bands). It lives here, not in stac.py, so the models package
-# can read it without loading pystac (issue #944).
+# Lives here, not in stac.py, so the models package can read it without loading pystac.
 STAC_VERSION: str = "1.1.0"
 
-# Files that Portolan writes into a collection directory. ``status`` and
-# ``list`` do not report one of them as untracked data (issue #944).
+# Files Portolan writes into a collection; ``status`` and ``list`` do not report them as untracked.
 MANAGED_FILES: frozenset[str] = frozenset(
     {
         "versions.json",
@@ -42,52 +25,25 @@ MANAGED_FILES: frozenset[str] = frozenset(
     }
 )
 
-# The versioned Portolan profile schema URI every catalog and collection
-# declares in ``stac_extensions`` (issue #654; rashid PTL-CNF-001/002). Its
-# shape is fixed by the validator's pattern
+# Its shape is fixed by the validator's pattern
 # ``^https://schemas\.portolan-sdi\.org/portolan/v\d+\.\d+\.\d+/schema\.json$``.
 PORTOLAN_SCHEMA_URI: str = (
     f"https://schemas.portolan-sdi.org/portolan/v{PORTOLAN_SPEC_VERSION}/schema.json"
 )
 
-# The collection property that once listed style asset keys in display order.
-# The spec removed it (issue #739): a client filters assets on the ``style``
-# role to find the styles and on ``default`` to find the one to draw first, so
-# a manifest would be a second copy of the same fact. Portolan wrote it through
-# 0.8.0, which is why both the generator (viz.style) and `check`
-# (validation.legacy) still name it — one to strip it, the other to report it.
+# A removed collection property; viz.style strips it and `check` reports it.
 LEGACY_STYLE_MANIFEST_FIELD: str = "portolan:styles"
 
-# The collection property that once listed legend asset keys in display order.
-# Removed for the same reason as the style manifest (issue #654): the ``legend``
-# asset role already identifies them, so the array was a second copy. viz.style
-# strips it on rewrite.
+# A removed collection property; the ``legend`` asset role replaces it.
 LEGACY_LEGEND_MANIFEST_FIELD: str = "portolan:legends"
 
-# The asset field that once said whether Portolan owned the bytes an asset
-# points at. The ``external`` role carries that now (issue #654). Never written;
-# read only so `check --fix` can give an old catalog's external assets the role
-# before it deletes the field.
+# A removed asset field; read only so `check --fix` can give the asset the ``external`` role.
 LEGACY_MANAGED_FIELD: str = "portolan:managed"
 
-# The asset field that once mirrored ``partition:glob`` while the Partition
-# Extension was landing. The transition ended with issue #654: push writes the
-# extension's field alone and drops this one from any asset that still has it.
+# A removed asset field; push writes ``partition:glob`` alone.
 LEGACY_GLOB_FIELD: str = "portolan:glob"
 
-# Fields Portolan wrote under the ``portolan:`` prefix that no spec version
-# defines. The spec reserves the prefix and declares nothing in it, so a catalog
-# carrying any of these is describing itself in a vocabulary no client reads
-# (issue #654). Generation emits none of them; `check` reports the survivors
-# (validation.legacy) and `check --fix` deletes them (metadata.fix).
-#
-# What replaced each one, in order: the profile schema URI says which Portolan
-# generation wrote the catalog; a geometry-less Parquet is tabular by
-# derivation; the ``style``/``default`` and ``legend`` asset roles carry the
-# style and legend lists; a consumer sums ``file:size`` itself; the sentinel
-# start/end range says the temporal extent is unknown; the ``external`` role
-# marks data referenced in place; ``partition:glob`` is the Partition
-# Extension's own field.
+# ``portolan:`` fields no spec version defines; `check` reports them and `check --fix` deletes them.
 REMOVED_PORTOLAN_FIELDS: tuple[str, ...] = (
     "portolan:version",
     "portolan:geospatial",
@@ -101,10 +57,7 @@ REMOVED_PORTOLAN_FIELDS: tuple[str, ...] = (
     LEGACY_GLOB_FIELD,
 )
 
-# The partition extension a Hive-partitioned collection declares.
-# rashid's PTL-PRT-001 recognizes the incubating URI namespace, so generation
-# and `check --fix` both emit this one; the older github.io URL it replaced was
-# never a URI the validator accepted.
+# rashid's PTL-PRT-001 accepts only the incubating URI namespace.
 PARTITION_EXTENSION_URI: str = (
     "https://schemas.portolan-sdi.org/incubating/partition/v1.0.0/schema.json"
 )
@@ -112,72 +65,49 @@ PARTITION_EXTENSION_URI: str = (
 # The extension vocabulary below is DERIVED from portolan_core.extension_registry
 # (the single source). Edit rows there, not these members.
 
-# Extensions we recognize as geospatial files (.gdb is a FileGDB directory,
-# handled specially in detection code).
+# .gdb is a FileGDB directory, which detection code handles separately.
 GEOSPATIAL_EXTENSIONS: frozenset[str] = _reg.extensions_where(is_geospatial=True)
 
-# Tabular data that may or may not carry geometry columns. Includes
-# .parquet (issue #177) and .xlsx/.xls (issue #432).
+# Tabular data that may or may not carry geometry columns.
 TABULAR_EXTENSIONS: frozenset[str] = _reg.extensions_where(is_tabular=True)
 
 # Cloud-native parquet extension
 PARQUET_EXTENSION: str = ".parquet"
 
-# Sidecar file patterns by primary file extension. Matched by appending each
-# pattern to the primary's stem, so compound forms (.shp.xml, .aux.xml) resolve.
+# Each pattern is appended to the primary's stem, so compound forms (.shp.xml) resolve.
 SIDECAR_PATTERNS: dict[str, list[str]] = {
     primary: list(patterns) for primary, patterns in _reg.SIDECAR_OF.items()
 }
 
-# STAC asset roles, as the spec names them. See portolan-spec
-# specs/portolan/core.md, section Assets. Every asset carries a `type` and at
-# least one role. Role `data` marks the primary GeoParquet, COG or Parquet. Role
-# `visual` marks the PMTiles derivative a client draws. Role `thumbnail` marks
-# the preview image. Role `style` marks a MapLibre style file, which the spec
-# itself defines. Role `default` marks the one style a client draws first. Role
-# `collection-mirror` marks the STAC-GeoParquet copy of a collection's items.
-# Role `source` marks an upstream original. One home keeps every writer and every
-# reader on the same vocabulary.
+# STAC asset roles; see portolan-spec specs/portolan/core.md, section Assets.
 ROLE_VISUAL: str = "visual"
 ROLE_THUMBNAIL: str = "thumbnail"
 ROLE_STYLE: str = "style"
 ROLE_DEFAULT: str = "default"
 ROLE_COLLECTION_MIRROR: str = "collection-mirror"
 
-# Roles the spec calls optional. Single-File Collections in core.md says a
-# collection "may optionally carry a `.pmtiles`, a `thumbnail.png`, and a
-# `styles/` directory". The item mirror in formats.md is a SHOULD and a derived
-# copy. The item JSON stays the normative representation. Portolan rebuilds each
-# artifact from data the catalog still holds. An absent one is a warning, not a
-# failed push (Issue #735). Roles `data`, `source` and `metadata` are absent on
-# purpose, because nothing can reconstruct them.
+# Derived artifacts the spec calls optional: an absent one is a warning, not a failed push.
+# Roles `data`, `source` and `metadata` are absent because nothing can rebuild them.
 OPTIONAL_DERIVATIVE_ROLES: frozenset[str] = frozenset(
     {ROLE_VISUAL, ROLE_THUMBNAIL, ROLE_STYLE, ROLE_COLLECTION_MIRROR}
 )
 
-# Change detection constants
 # 2 second tolerance for NFS/CIFS compatibility where mtime resolution is coarse
 MTIME_TOLERANCE_SECONDS: float = 2.0
 
 # The .portolan directory name (Portolan internal metadata directory)
 PORTOLAN_DIR: str = ".portolan"
 
-# Placeholder metadata_seeding writes for a required field the harvest could not
-# fill. It lives here rather than in metadata_seeding because licensing.py has to
-# recognize it too: a seeded license reaches collection.license verbatim, where
-# rashid reports it as PTL-LIC-001 (issue #686).
+# Lives here because licensing.py must also recognize it in a seeded license.
 TODO_MARKER: str = "TODO: Add value"
 
 # Maximum depth for catalog root discovery (prevent traversing to filesystem root)
 MAX_CATALOG_SEARCH_DEPTH: int = 20
 
-# Maximum depth for nested catalogs
-# Prevents excessive nesting which likely indicates misconfiguration
+# Deeper nesting likely indicates misconfiguration.
 MAX_CATALOG_DEPTH: int = 10
 
-# Windows reserved device names (case-insensitive)
-# Files with these names (with any extension) are problematic on Windows.
-# Used by scan.py and scan_fix.py for cross-platform compatibility checks.
+# Windows reserved device names (case-insensitive, with any extension).
 WINDOWS_RESERVED_NAMES: frozenset[str] = frozenset(
     {
         "con",

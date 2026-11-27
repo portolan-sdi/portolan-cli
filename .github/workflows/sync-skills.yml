@@ -5,8 +5,7 @@ on:
     - cron: '0 0 * * 0'  # Weekly on Sunday
   workflow_dispatch:  # Manual trigger
 
-# The PR comes from the org sync app, not GITHUB_TOKEN. GitHub starts no
-# workflow for a PR that GITHUB_TOKEN opens, so the checks never ran on it.
+# The org sync app opens the PR: GitHub starts no workflow for a GITHUB_TOKEN PR.
 # Auto-merge is armed, so the PR lands when the required checks pass.
 permissions:
   contents: read

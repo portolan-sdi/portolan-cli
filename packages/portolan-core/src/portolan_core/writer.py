@@ -1,71 +1,6 @@
-"""Write a Portolan catalog from STAC dictionaries held in memory (#1133).
+"""Write a Portolan catalog from STAC dictionaries held in memory.
 
-An application gives :func:`plan_catalog` its STAC documents and the text of
-each ``README.md`` and ``AGENTS.md``. It gets a :class:`WritePlan`: the objects
-to put and to delete, in the order to apply them. The application applies the
-plan with :func:`apply_plan` and a :class:`Sink`, or it loops over
-``plan.operations`` and writes through its own storage layer.
-
-Supported contract
-------------------
-The names in ``__all__`` are the supported interface. ``PutOperation``,
-``DeleteOperation``, and ``WritePlan`` are frozen dataclasses of plain values
-(``str``, ``bytes``, and tuples), so ``dataclasses.asdict`` gives plain data.
-The ``Sink`` protocol has two methods, ``put(key, content, media_type)`` and
-``delete(key)``. Any object with these two methods is a sink.
-
-What the planner does
----------------------
-- It adds the structural links ``root``, ``parent``, ``collection``,
-  ``child``, and ``item`` that rashid's ``expected_links`` gives. Each
-  ``child`` and ``item`` link gets the title of its target. An item without
-  ``properties.title`` gives its ``id``. It removes every relative structural
-  link the input had. An absolute structural link, such as a ``child`` link to
-  another host, passes through.
-- It sets the ``collection`` field of each item, as STAC 1.1.0 requires with
-  a ``collection`` link.
-- It adds an ``agents`` link to ``./AGENTS.md`` and a ``describedby`` link to
-  ``./README.md`` on each catalog and collection. An input link with the same
-  rel to the same file gives its other fields, such as ``title`` and
-  ``hreflang``. Every other link passes through after these.
-- It adds the newest Portolan profile URI that rashid bundles to a catalog or
-  collection that declares none.
-- It writes no ``self`` link. STAC requires a ``self`` link to be absolute,
-  and the planner does not know the published URL.
-
-What the planner never does
----------------------------
-- It never reads storage and never reads asset bytes. It writes only catalog
-  JSON and the documentation files. An asset passes through unchanged, so a
-  directory asset such as a Zarr store keeps the ``file:size`` the caller gave
-  and gets no ``file:checksum``.
-- It deletes only keys from ``prior_managed_keys``. Each prior key that is not
-  a new put key becomes a delete. A prior key must name a ``.json`` file, a
-  ``README.md``, or an ``AGENTS.md``. It must not be a ``versions.json``, and no
-  asset href of the new documents may resolve to it. The planner cannot know
-  whether another ``.json`` key is an item or a data file that nothing links,
-  so the caller must list only keys that a previous plan put.
-
-Keys are root-relative POSIX paths. ``key_prefix`` goes in front of every put
-key and every delete key. ``prior_managed_keys`` are root-relative and carry no
-prefix, the same form as the keys the caller passes in.
-
-Order: the puts come first. A put comes after the puts of every object it
-links down to, so a reader that starts at the root never meets a link to an
-object that is not written yet. The deletes come last, after the new tree no
-longer links to them.
-
-The same input gives the same operations, byte for byte. The JSON keeps the
-key order of the input documents.
-
-The planner refuses a plan in which two keys, or two directories of its keys,
-differ only by case. On a case-insensitive store, such as Windows or the
-default macOS file system, such keys name the same file or directory. The
-planner applies this rule on every host, so a plan does not depend on where
-it was made.
-
-Every check on the input runs before the planner makes any operation. A
-failure raises a :class:`CatalogWriteError` subclass.
+docs/guides/python-writer.md explains the planner to users.
 """
 
 from __future__ import annotations
@@ -174,35 +109,14 @@ def plan_catalog(
     """Plan the writes that publish a catalog.
 
     Args:
-        documents: STAC catalogs, collections, and items, keyed by
-            root-relative path (``catalog.json``,
-            ``boundaries/collection.json``, ``boundaries/item-1/item-1.json``).
-            The planner copies them and does not change them.
-        documentation: Markdown text keyed by the path of a ``README.md`` or
-            ``AGENTS.md``. Each file belongs to the catalog or collection in
-            its directory. Every catalog and collection needs both.
-        prior_managed_keys: Root-relative keys this writer put before. Each one
-            that the new plan does not put becomes a delete.
-        key_prefix: A prefix such as ``catalogs/demo`` for every put and
-            delete key.
-
-    A translated root counts as a language root only when the root catalog
-    links it with a relative ``alternate`` link of type ``application/json``.
-    Rashid does not follow an absolute ``alternate`` link, so such a tree gets
-    the containment links of an ordinary subdirectory.
+        documents: STAC catalogs, collections, and items, keyed by root-relative path. The planner does not change them.
+        documentation: Markdown text keyed by the path of a ``README.md`` or ``AGENTS.md`` beside its catalog or collection.
+        prior_managed_keys: Root-relative keys this writer put before. Each one that the new plan does not put becomes a delete.
+        key_prefix: A prefix such as ``catalogs/demo`` for every put and delete key.
 
     Raises:
-        InvalidKeyError: A key or the prefix is absolute, holds ``..``, a
-            backslash, a hidden directory, or an empty segment. A key starts
-            with a drive such as ``C:``, on any host. Two keys or two directories of
-            the plan differ only by case. A prior key names a file that the
-            writer does not manage, a ``versions.json``, or an asset.
-        InvalidDocumentError: A document is not the STAC object its file name
-            says, has links or assets of the wrong shape, lacks a title or
-            description, lacks its README.md or AGENTS.md, or is not inside
-            the tree. A collection holds another collection: core.md, "Nested
-            Catalogs, Flat Collections", says "A collection MUST NOT contain a
-            child collection" (PORTO-CORE-004, PORTO-CORE-018).
+        InvalidKeyError: A key or the prefix is unsafe, two keys differ only by case, or a prior key is not writer metadata.
+        InvalidDocumentError: A document is not the STAC object its key says, is malformed, lacks its docs, or nests a collection.
         MissingOwnerError: A documentation file has no owner.
     """
     documentation = documentation or {}
@@ -246,11 +160,11 @@ def plan_catalog(
     for key, text in documentation.items():
         content[key] = (text.encode(), _MARKDOWN)
 
-    def full(key: str) -> str:
+    def _full(key: str) -> str:
         return f"{prefix}/{key}" if prefix else key
 
-    puts = [PutOperation(full(k), *content[k]) for k in sorted(content, key=_order)]
-    deletes = [DeleteOperation(full(k)) for k in sorted(deleted, key=_order)]
+    puts = [PutOperation(_full(k), *content[k]) for k in sorted(content, key=_order)]
+    deletes = [DeleteOperation(_full(k)) for k in sorted(deleted, key=_order)]
     return WritePlan(operations=(*puts, *deletes))
 
 
@@ -290,9 +204,7 @@ class LocalSink:
         except FileNotFoundError:
             old = None
         keep = old is not None and stat.S_ISREG(old.st_mode)
-        # The temporary file opens with the mode of the file it replaces, so
-        # its content is never readable by more accounts than the final file.
-        # A new file gets 0o666 minus the umask, as open() gives.
+        # Security: the temp file takes the old file's mode, so no wider account can read it.
         mode = stat.S_IMODE(old.st_mode) if old is not None and keep else 0o666
         flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0)
         fd = os.open(tmp, flags, mode)
@@ -379,8 +291,7 @@ def _check_case(keys: set[str]) -> None:
 def _check_prior(key: str, assets: set[str]) -> str:
     """Refuse a prior key that is not writer metadata. ``assets`` holds casefolded paths.
 
-    The checks ignore case, because a case-insensitive store reads
-    ``Style.json`` and ``style.json`` as one file.
+    The checks ignore case, because a case-insensitive store reads two spellings as one file.
     """
     name = PurePosixPath(_check_key(key)).name
     # versions.json is the Portolan version record. The writer never manages it.
@@ -454,8 +365,7 @@ def _check_documentation(key: str, documents: Mapping[str, dict[str, Any]]) -> N
 def _strip(key: str, doc: dict[str, Any]) -> dict[str, dict[str, Any]]:
     """Drop the links the planner makes, and return the dropped sidecar links by rel.
 
-    The planner makes the local structural links and the links to the managed
-    README.md and AGENTS.md. Every other link stays, in its input order.
+    Every other link stays, in its input order.
     """
     path = PurePosixPath(key)
     owned = (

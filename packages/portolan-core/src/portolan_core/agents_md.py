@@ -1,19 +1,4 @@
-"""Framework-free helpers for the ``AGENTS.md`` AI/agent metadata file.
-
-Portolan requires every catalog and collection to carry an ``AGENTS.md`` file
-(Markdown, minimal) referenced by a ``rel="agents"`` link in its STAC JSON
-(rashid PTL-FIL-001/-002). ``AGENTS.md`` is a **link**, not an asset, and its
-content is human-authored — Portolan only scaffolds an empty template when the
-file is absent and never overwrites an existing one.
-
-This module is deliberately dependency-light: the stdlib, the shared atomic JSON
-writer, and the sidecar-link check from ``rashid_core.api``. It
-is imported by both the generation paths (``catalog.py``, ``add.py``,
-``metadata/fix.py``) and the ``check --fix`` adapter
-(``validation/fixers.py``). Keeping it free of ``click``/``rich``/``config`` /
-``output`` preserves the ``validation-is-an-adapter`` import-linter contract,
-the same reason ``pmtiles_links.py`` exists as a leaf.
-"""
+"""Framework-free helpers for the ``AGENTS.md`` AI/agent metadata file."""
 
 from __future__ import annotations
 
@@ -46,22 +31,7 @@ AGENTS_LINK_HREF = f"./{AGENTS_MD_FILENAME}"
 def markdown_link_gap(
     root: Path, stac_path: Path, data: dict[str, Any], *, rel: str, target: str
 ) -> bool:
-    """True when ``data`` fails rashid's sibling-markdown-link check for ``rel``.
-
-    The answer comes from ``sidecar_link_gaps``, the check behind PTL-FIL-002
-    for ``AGENTS.md`` and PTL-FIL-003 for ``README.md``. The graph holds only
-    ``data`` and the ``target`` file, so the call reads no other file.
-
-    Args:
-        root: The catalog root. Rashid resolves hrefs inside it.
-        stac_path: Path of the STAC JSON; its parent is the sibling directory.
-        data: The parsed STAC object.
-        rel: Link relation to grade (``"agents"`` / ``"describedby"``).
-        target: Sibling filename the link must resolve to.
-
-    Returns:
-        True when the object needs repair.
-    """
+    """True when ``data`` fails rashid's sibling-markdown-link check for ``rel``."""
     # The graph gives absolute node paths, so both sides resolve before the compare.
     root = root.resolve()
     document = (stac_path.parent.resolve() / stac_path.name).relative_to(root).as_posix()
@@ -73,12 +43,7 @@ def markdown_link_gap(
 
 
 def agents_link_gap(root: Path, stac_path: Path, data: dict[str, Any]) -> bool:
-    """True when ``data``'s ``AGENTS.md`` link does not satisfy rashid PTL-FIL-002.
-
-    The ``check --fix`` fixers call it with the parsed STAC dict. The agents
-    fixer repairs a gap with :func:`ensure_agents_md` and reports a gap that
-    survives the repair as skipped.
-    """
+    """True when ``data``'s ``AGENTS.md`` link does not satisfy rashid PTL-FIL-002."""
     return markdown_link_gap(root, stac_path, data, rel=AGENTS_LINK_REL, target=AGENTS_MD_FILENAME)
 
 
@@ -113,14 +78,7 @@ def agents_link_is_wellformed(link: dict[str, Any]) -> bool:
 
 
 def scaffold_content(title: str, *, is_catalog: bool) -> str:
-    """Return minimal ``AGENTS.md`` template text for a catalog or collection.
-
-    The template is intentionally sparse: it seeds the sections agents benefit
-    from most (things not already in the README — access snippets, schema notes,
-    data-quality caveats, example queries, related collections/join keys) as
-    prompts to be filled in. Content is open-ended; publishers replace or delete
-    prompts freely.
-    """
+    """Return minimal ``AGENTS.md`` template text for a catalog or collection."""
     heading = f"# AGENTS.md — {title}\n"
     scope = "catalog" if is_catalog else "collection"
     intro = (
@@ -180,23 +138,7 @@ def _title_for(data: dict[str, Any]) -> str:
 
 
 def ensure_agents_md(stac_json: Path) -> bool:
-    """Ensure a STAC object has an ``AGENTS.md`` file and a well-formed link.
-
-    Scaffolds ``AGENTS.md`` next to ``stac_json`` when it is absent (never
-    overwriting an existing, human-authored file) and injects or normalizes the
-    ``rel="agents"`` link in the STAC JSON. Idempotent — a compliant object is
-    left untouched.
-
-    Shared by the write paths (``init``/``add``) and ``check --fix`` so both
-    produce identical output.
-
-    Args:
-        stac_json: Path to a ``catalog.json`` or ``collection.json``.
-
-    Returns:
-        True if the file and/or link were created or normalized; False if
-        nothing changed (already compliant) or ``stac_json`` was unreadable.
-    """
+    """Ensure a STAC object has an ``AGENTS.md`` file and a well-formed link."""
     try:
         data = json.loads(stac_json.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError):
@@ -225,8 +167,7 @@ def ensure_agents_md(stac_json: Path) -> bool:
         # Normalize a hand-edited / malformed link in place.
         link.update(build_agents_link())
     else:
-        # The link is right, so the JSON stays as it is. A new AGENTS.md file
-        # does not change it (issue #995).
+        # The link is right, so a new AGENTS.md file leaves the JSON as it is.
         return changed
 
     write_json_atomic(stac_json, data)
@@ -234,19 +175,7 @@ def ensure_agents_md(stac_json: Path) -> bool:
 
 
 def ensure_agents_md_tree(catalog_root: Path) -> bool:
-    """Scaffold ``AGENTS.md`` and its link across a whole catalog tree.
-
-    The per-object :func:`ensure_agents_md` covers what a single write path
-    touches; this covers everything ``add`` walks past, so a catalog created
-    before (or by hand) gains its guide the next time it is written to
-    rather than only through ``check --fix`` (issue #654).
-
-    Args:
-        catalog_root: Root directory of the catalog.
-
-    Returns:
-        True if any file was created or modified.
-    """
+    """Scaffold ``AGENTS.md`` and its link across a whole catalog tree."""
     changed_any = False
     for stac_json in visible_stac_files(catalog_root):
         if ensure_agents_md(stac_json):

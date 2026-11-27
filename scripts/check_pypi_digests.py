@@ -1,18 +1,6 @@
-"""Fail when PyPI holds a file of this release with other bytes than the local build (#1133).
+"""Fail when PyPI holds a file of this release with other bytes than the local build.
 
-The release publishes with ``skip-existing``, so a publish step keeps each file
-that PyPI already holds. A recovery run that builds other bytes then publishes
-a mixed release, and the GitHub Release gets files that PyPI does not serve.
-This script compares the sha256 of each built file with the digest that PyPI
-reports for the same filename. A file that PyPI does not hold passes.
-
-hatchling writes the same bytes for the same commit and the same hatchling
-version, whatever the file times. So a mismatch means another commit or
-another hatchling version.
-
-Usage:
-
-    python scripts/check_pypi_digests.py PROJECT VERSION DIR
+Usage: ``python scripts/check_pypi_digests.py PROJECT VERSION DIR``.
 """
 
 from __future__ import annotations

@@ -1,13 +1,7 @@
 #!/usr/bin/env python3
-"""Sync installation instructions from the upstream portolan-skills repository.
+"""Sync the install section of the portolan-skills README to portolan_cli/skills/INSTALL.md.
 
-This script fetches the README from portolan-sdi/portolan-skills and extracts
-the installation section, writing it to portolan_cli/skills/INSTALL.md.
-
-Usage:
-    python scripts/sync_skills_readme.py           # Preview changes
-    python scripts/sync_skills_readme.py --update  # Apply changes
-    python scripts/sync_skills_readme.py --check   # CI mode (exit 1 if stale)
+Use ``--update`` to write the file and ``--check`` to exit 1 when it is stale.
 """
 
 from __future__ import annotations

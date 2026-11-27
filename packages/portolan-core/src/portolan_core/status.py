@@ -1,11 +1,4 @@
-"""Status module - shows local vs remote version state (Issue #389).
-
-Provides git-like status output showing:
-- Current local and remote versions
-- Modified files (checksum changed since last version)
-- Untracked files (on disk but not in versions.json)
-- Deleted files (in versions.json but missing from disk)
-"""
+"""Status module - shows local vs remote version state."""
 
 from __future__ import annotations
 
@@ -25,16 +18,7 @@ if TYPE_CHECKING:
 
 @dataclass
 class CollectionStatus:
-    """Status of a single collection.
-
-    Attributes:
-        collection: Collection ID/path.
-        local_version: Current local version string, or None if uninitialized.
-        remote_version: Current remote version string, or None if offline/unknown.
-        modified_files: Files with checksums different from versions.json.
-        untracked_files: Files on disk not in versions.json.
-        deleted_files: Files in versions.json but missing from disk.
-    """
+    """Status of a single collection."""
 
     collection: str
     local_version: str | None
@@ -45,15 +29,7 @@ class CollectionStatus:
 
     @property
     def sync_state(self) -> str:
-        """Compute sync state relative to remote.
-
-        Returns:
-            'in_sync': Local and remote versions match.
-            'ahead': Local version is newer than remote.
-            'behind': Remote version is newer than local.
-            'diverged': Versions differ but neither is clearly ahead.
-            'unknown': Remote version is unavailable.
-        """
+        """Compute sync state relative to remote."""
         if self.remote_version is None:
             return "unknown"
 
@@ -101,20 +77,7 @@ def detect_modified_files(
     *,
     state: RunState | None = None,
 ) -> list[str]:
-    """Detect files modified since last versioned state.
-
-    ``RunState.unchanged`` checks the size and mtime of each asset first. It
-    hashes only a same-size file with a new mtime, so a ``status`` on an
-    unchanged catalog hashes nothing (issue #995).
-
-    Args:
-        collection_path: Path to the collection directory.
-        versions_file: Parsed versions.json content.
-        state: The run state. Without one, the call opens its own.
-
-    Returns:
-        List of filenames whose content differs from versions.json.
-    """
+    """Detect files modified since last versioned state."""
     if not versions_file.versions:
         return []
 
@@ -140,17 +103,7 @@ def detect_deleted_files(
     collection_path: Path,
     versions_file: VersionsFile,
 ) -> list[str]:
-    """Detect files deleted since last versioned state.
-
-    Finds files that exist in versions.json but are missing from disk.
-
-    Args:
-        collection_path: Path to the collection directory.
-        versions_file: Parsed versions.json content.
-
-    Returns:
-        List of filenames that are in versions.json but missing from disk.
-    """
+    """Detect files deleted since last versioned state."""
     if not versions_file.versions:
         return []
 
@@ -166,18 +119,7 @@ def detect_deleted_files(
 
 
 def status_collections(catalog_root: Path) -> list[str]:
-    """The collections ``status`` reports: the ``check`` set and the ``push`` set.
-
-    ``check`` finds a collection by its ``collection.json``. ``push`` finds it by
-    its ``versions.json``. ``status`` previews ``push`` and must agree with
-    ``check``, so it reports both sets (issue #944).
-
-    Args:
-        catalog_root: Root directory of the catalog.
-
-    Returns:
-        Sorted collection IDs with forward slashes on every platform.
-    """
+    """The collections ``status`` reports: the ``check`` set and the ``push`` set."""
     return sorted({*catalog_collections(catalog_root), *versioned_collections(catalog_root)})
 
 
@@ -198,18 +140,7 @@ def detect_untracked_files(
     collection_path: Path,
     versions_file: VersionsFile,
 ) -> list[str]:
-    """Detect data files on disk not tracked in versions.json.
-
-    Excludes Portolan-managed files (STAC metadata, versions.json, README.md)
-    since those are derived/generated and managed separately from data versioning.
-
-    Args:
-        collection_path: Path to the collection directory.
-        versions_file: Parsed versions.json content.
-
-    Returns:
-        List of data filenames on disk but not in versions.json.
-    """
+    """Detect data files on disk not tracked in versions.json."""
     if not versions_file.versions:
         # No versions = everything is untracked
         tracked: set[str] = set()
@@ -247,24 +178,7 @@ def get_collection_status(
     fetch_remote_versions: Callable[[str, str], VersionsFile] | None = None,
     state: RunState | None = None,
 ) -> CollectionStatus:
-    """Get status for a single collection.
-
-    Args:
-        catalog_root: Path to catalog root directory.
-        collection: Collection ID/path relative to catalog root.
-        offline: If True, skip remote version check.
-        remote_url: Optional remote URL for fetching remote versions.json.
-        fetch_remote_versions: Reads the remote versions.json for
-            ``(remote_url, collection)``. The remote check runs only when the
-            caller passes both this and ``remote_url``. The caller supplies it
-            because the remote readers load Click and the write modules, and
-            this module must not (issue #944). The CLI passes
-            ``portolan_cli.sync.pull.fetch_remote_versions``.
-        state: The run state. Without one, the call opens its own.
-
-    Returns:
-        CollectionStatus with local/remote versions and file changes.
-    """
+    """Get status for a single collection."""
     collection_path = catalog_root / collection
     versions_path = collection_path / "versions.json"
     if state is None:
@@ -325,22 +239,7 @@ def get_catalog_status(
     remote_url: str | None = None,
     fetch_remote_versions: Callable[[str, str], VersionsFile] | None = None,
 ) -> CatalogStatus:
-    """Get the status of one collection, or of each collection in the catalog.
-
-    This is the library function of ``portolan status``.
-
-    Args:
-        catalog_root: Path to catalog root directory.
-        collection: The collection to report. None reports each collection
-            that ``status_collections`` finds.
-        offline: If True, skip remote version check.
-        remote_url: Optional remote URL for fetching remote versions.json.
-        fetch_remote_versions: Reads the remote versions.json. See
-            ``get_collection_status``.
-
-    Returns:
-        The status of each collection.
-    """
+    """Get the status of one collection, or of each collection in the catalog."""
     collections = [collection] if collection else status_collections(catalog_root)
     return CatalogStatus(
         [
@@ -361,16 +260,7 @@ def _fetch_remote_version(
     collection: str,
     fetch_remote_versions: Callable[[str, str], VersionsFile],
 ) -> str | None:
-    """Fetch current version from remote versions.json.
-
-    Args:
-        remote_url: Base URL of remote catalog.
-        collection: Collection ID.
-        fetch_remote_versions: Reads the remote versions.json.
-
-    Returns:
-        Remote version string, or None if fetch fails.
-    """
+    """Fetch current version from remote versions.json."""
     try:
         return fetch_remote_versions(remote_url, collection).current_version
     except Exception:

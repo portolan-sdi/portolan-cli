@@ -1,9 +1,6 @@
 """Generate the public CLI, Python API, and configuration reference wrappers.
 
-The generated pages expose only Portolan's supported public API. Run this
-script after changing the Click tree, an export list of ``portolan_cli``,
-``portolan_cli.api``, or ``portolan_cli.testing``, a hookspec, or the
-conversion settings dataclasses.
+Run it after a change to the Click tree, a public export list, a hookspec, or the conversion settings.
 """
 
 from __future__ import annotations
@@ -33,11 +30,8 @@ from portolan_cli.plugins.commands import PluginGroup
 if TYPE_CHECKING:
     from collections.abc import Iterator, Sequence
 
-# This module renders the Click tree itself. It replaces a third-party MkDocs
-# directive for two reasons. The directive dropped a line only when the line
-# held the backspace character, so the 47 two-character markers in this repo's
-# docstrings reached the built page. The directive also read the terminal width
-# at render time, which a checked-in page cannot depend on.
+# This module renders the Click tree itself: a third-party MkDocs directive leaked raw ``\b``
+# markers to the page and read the terminal width at render time.
 
 # A pipe ends a table cell, so every cell escapes it.
 _HTML_PIPE = "&#x7C;"
@@ -59,12 +53,7 @@ _OPAQUE_DEFAULT = re.compile(r"0x[0-9a-f]+|^/")
 
 
 def _slug(text: str) -> str:
-    """Return the anchor that Python-Markdown derives from a heading.
-
-    This reproduces ``markdown.extensions.toc.slugify(text, "-")`` without the
-    import, so the generator needs Click alone. A test asserts that the two
-    agree for every command in the shipped tree.
-    """
+    """Return the anchor that Python-Markdown derives from a heading."""
     ascii_text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")
     stripped = re.sub(r"[^\w\s-]", "", ascii_text).strip().lower()
     return re.sub(r"[-\s]+", "-", stripped)
@@ -76,11 +65,7 @@ def _walk(
     prog_name: str = "portolan",
     depth: int = _CLI_DEPTH,
 ) -> Iterator[tuple[click.Context, int]]:
-    """Yield a context and a heading depth for every visible command.
-
-    The bullet list and the full reference both read this walk. One walk means
-    the two cannot disagree about which commands ship.
-    """
+    """Yield a context and a heading depth for every visible command."""
     if command.hidden:
         return
 
@@ -92,9 +77,7 @@ def _walk(
     if not isinstance(command, click.Group):
         return
 
-    # Read the shipped commands rather than `Group.list_commands(ctx)`, which
-    # also lists commands from installed plugins. The reference documents what
-    # portolan-cli ships, including the commands it declares as entry points.
+    # `Group.list_commands(ctx)` would also list the commands of installed plugins.
     subcommands = (
         command.shipped_commands(ctx) if isinstance(command, PluginGroup) else command.commands
     )
@@ -125,23 +108,13 @@ def _fenced(block: list[str]) -> list[str]:
 
 
 def _command_title(ctx: click.Context, depth: int) -> list[str]:
-    """Return the heading for one command.
-
-    The heading text is the full command path, so every anchor is unique. The
-    table of contents shows the leaf name, because the tree already shows the
-    hierarchy.
-    """
+    """Return the heading for one command."""
     attributes = f"#{_slug(ctx.command_path)} data-toc-label='{ctx.info_name}'"
     return [f"{'#' * (depth + 1)} {ctx.command_path} {{ {attributes} }}", ""]
 
 
 def _command_description(ctx: click.Context) -> list[str]:
-    """Return the command help text, with each no-rewrap block fenced.
-
-    Click marks a preformatted paragraph with a marker on its own line.
-    Markdown has no equivalent, so the paragraph becomes a fenced block and the
-    marker line never reaches the page.
-    """
+    """Return the command help text, with each no-rewrap block fenced."""
     help_text = ctx.command.help or ctx.command.short_help
     if not help_text:
         return []
@@ -170,9 +143,7 @@ def _command_description(ctx: click.Context) -> list[str]:
 def _command_usage(ctx: click.Context) -> list[str]:
     """Return the usage line for one command.
 
-    This builds the formatter rather than call ``ctx.make_formatter()``, which
-    reads the terminal size. A checked-in page must not change with the window
-    that generated it.
+    It skips ``ctx.make_formatter()``, which reads the terminal size and would make the page vary.
     """
     formatter = click.HelpFormatter(width=_HELP_WIDTH, max_width=_HELP_MAX_WIDTH)
     formatter.write_usage(
@@ -205,11 +176,7 @@ def _option_type(option: click.Option) -> str:
 
 
 def _reject_opaque_default(ctx: click.Context, option: click.Option) -> None:
-    """Stop the generator when a default would differ between two machines.
-
-    A memory address or an absolute path ties the checked-in page to the
-    machine that wrote it. ``--check`` then fails in CI for no real reason.
-    """
+    """Stop the generator when a default would differ between two machines."""
     if option.default is None:
         return
     if _OPAQUE_DEFAULT.search(str(option.default)):
@@ -261,10 +228,7 @@ def _command_options(ctx: click.Context) -> list[str]:
 def _command_arguments(ctx: click.Context) -> list[str]:
     """Return the arguments table for one command.
 
-    Click holds no help text for an argument. ``Argument.get_help_record``
-    returns ``None`` by design. This table therefore gives the name, the type,
-    and whether the argument is required. Each command's own help text states
-    what the argument means.
+    Click keeps no help text for an argument, so the table gives name, type, and required.
     """
     arguments = [
         param for param in ctx.command.get_params(ctx) if isinstance(param, click.Argument)
@@ -322,12 +286,7 @@ This page is generated from the shipped Click command tree.
 
 
 def _api_groups() -> list[tuple[str, list[str]]]:
-    """Group the ``portolan_cli.api`` names as its module docstring does.
-
-    Each ``Groups:`` bullet names its members in double backticks. One bullet
-    may name no member. It receives every name that the other bullets leave
-    out, in ``__all__`` order. A name that no bullet places stops the build.
-    """
+    """Group the ``portolan_cli.api`` names as its module docstring does."""
     doc = inspect.getdoc(portolan_cli.api) or ""
     _, _, listing = doc.partition("Groups:\n")
     bullets: list[str] = []
@@ -433,11 +392,7 @@ def _reference_index() -> str:
 
 
 def _configuration_reference() -> str:
-    """Build the conversion configuration reference from the shipped defaults.
-
-    Every default is read from :class:`VectorSettings` rather than written out,
-    so a change to the dataclass cannot leave the page stale (issue #805).
-    """
+    """Build the conversion configuration reference from the shipped defaults."""
     defaults = VectorSettings()
     # A literal pipe would end the table cell, so the alternatives are escaped.
     indexes = r" \| ".join(sorted(VALID_SPATIAL_INDEXES))

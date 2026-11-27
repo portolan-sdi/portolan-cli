@@ -1,10 +1,5 @@
-# Daily security audit workflow
-# Found vulnerabilities open or update a GitHub issue, and the run stays green.
+# Daily security audit: a vulnerability opens or updates an issue, and the run stays green.
 # The run fails only when pip-audit cannot produce a report.
-#
-# Philosophy: Separate GATE (block PRs) from NOTIFICATION (alert on CVEs).
-# This workflow is the notification layer - it runs daily and manages
-# a tracking issue for any vulnerabilities found.
 name: Security Audit
 
 on:
@@ -53,17 +48,12 @@ jobs:
       - name: Run pip-audit
         id: audit
         run: |
-          # Export runtime deps (what we ship). The hashes let pip-audit
-          # audit the pinned list with no virtual environment, as in ci.yml.
-          # --no-emit-workspace drops the unhashed editable member lines.
+          # Export runtime deps with hashes. --no-emit-workspace drops the unhashed member lines.
           uv export --no-dev --no-emit-workspace \
             --extra iceberg --extra pmtiles --extra thumbnails \
             -o /tmp/runtime-deps.txt
 
-          # Run audit and capture output. Ignores come from the single-source
-          # .pip-audit-ignores file (expiry + reason per entry); the same file
-          # feeds ci.yml and nightly.yml, and its reasons render into the issue
-          # body below via `--json`.
+          # Ignores come from .pip-audit-ignores, and its reasons render into the issue body.
           IGNORES=$(uv run python scripts/pip_audit_ignores.py)
           # shellcheck disable=SC2086  # intentional word-splitting of the flag list
           AUDIT_OUTPUT=$(uv run pip-audit \
