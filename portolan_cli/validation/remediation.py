@@ -372,7 +372,7 @@ RULE_REMEDIATION: dict[str, Remediation] = {
     ),
     "PTL-DAT-001": _auto("checksum", "Recompute file:checksum from the asset's current bytes."),
     "PTL-DAT-002": _auto("checksum", "Recompute file:size from the asset's current bytes."),
-    "PTL-DAT-003": _auto("convert", "Convert the asset to the cloud-native format it declares."),
+    "PTL-DAT-003": _auto("media_type", "Declare the media type that the asset's bytes carry."),
     "PTL-DAT-004": _auto("convert", "Rewrite the raster as a valid COG."),
     "PTL-DAT-005": _instruct(
         "Reconcile the asset's bytes with the metadata describing them; they disagree about the "

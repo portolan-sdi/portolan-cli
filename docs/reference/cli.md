@@ -282,10 +282,10 @@ portolan check [OPTIONS] [PATH]
 | ---- | ---- | ----------- | ------- |
 | `--json` | boolean | Output results as JSON | `False` |
 | `--verbose`, `-v` | boolean | Show all validation rules, not just failures. For log messages, use the root flag: portolan -v check. | `False` |
-| `--fix` | boolean | Fix issues: convert geo-assets to cloud-native, update stale metadata | `False` |
+| `--fix` | boolean | Fix issues: convert geo-assets to cloud-native, rewrite the data files that a finding names, update stale metadata | `False` |
 | `--dry-run` | boolean | Preview what would be fixed (use with --fix) | `False` |
 | `--remove-legacy` | boolean | Remove source files after successful conversion (use with --fix) | `False` |
-| `--force` | boolean | Re-optimize already-valid COGs by re-applying current COG settings, e.g. to add missing overviews (use with --fix; rasters only) | `False` |
+| `--force` | boolean | Re-optimize every valid COG by re-applying current COG settings, also the COGs that no finding names (use with --fix; rasters only) | `False` |
 | `--workers`, `-w` | integer range (`1` and above) | Parallel worker processes for conversion (default: auto-detect from CPU count; use 1 for sequential). Applies to --fix. | None |
 | `--metadata` | boolean | Only check/fix STAC metadata (links, schema, staleness). With --fix this is the metadata refresh. It exits 1 while an error remains, and the JSON success field is false only when a fix fails, an auto-fixable error remains, or a file does not parse or breaks the STAC schema. --strict also exits 1 on a warning. | `False` |
 | `--geo-assets` | boolean | Only check/fix geospatial assets (cloud-native status, convertibility) | `False` |

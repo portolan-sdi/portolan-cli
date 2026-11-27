@@ -158,7 +158,8 @@ class FormatHandler(Protocol):
 #   partition(path, catalog_root) -> list[Path]
 #       Split a converted file into Hive partitions. Return [] to keep it whole.
 #   reoptimize(source, catalog_root) -> Path
-#       Rewrite a cloud-native file for ``check --fix --force`` (issue #530).
+#       Rewrite a cloud-native file that a ``check --fix`` finding names, or a
+#       raster under ``check --fix --force``.
 #   reconvert(source, catalog_root) -> Path
 #       Rewrite a file that is its own output for ``add --force --reconvert``.
 

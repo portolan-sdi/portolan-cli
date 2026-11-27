@@ -1415,9 +1415,9 @@ def _needs_spatial_rewrite(
       conformant file would cost time and change nothing.
 
     The footer says nothing about row order, so a file with the column but
-    unordered rows still fails PTL-DAT-006. ``reconvert`` is the operator's
-    answer to that, and to a sort-only configuration: ``add --force
-    --reconvert`` rewrites the file whatever its footer says.
+    unordered rows still fails PTL-DAT-006. ``check --fix`` rewrites a file
+    that check reports, and ``add --force --reconvert`` rewrites the file
+    whatever its footer says.
 
     Args:
         source: Source Parquet file, or the file open for its footer.

@@ -465,6 +465,62 @@ def _fix_assets(root: Path, dry_run: bool, _state: RunState | None = None) -> li
 
 
 # --------------------------------------------------------------------------
+# media_type — PTL-DAT-003
+# --------------------------------------------------------------------------
+
+#: The magic bytes of each format the data pass sniffs, and the media type they imply.
+_MAGIC_MEDIA_TYPES: tuple[tuple[bytes, str], ...] = (
+    (b"PAR1", _PARQUET_MEDIA_TYPE),
+    (b"II*\x00", "image/tiff; application=geotiff"),
+    (b"MM\x00*", "image/tiff; application=geotiff"),
+    (b"PMTiles", "application/vnd.pmtiles"),
+    (b"\x89PNG\r\n\x1a\n", "image/png"),
+    (b"\xff\xd8\xff", "image/jpeg"),
+)
+
+
+def _kind(media_type: str) -> str:
+    """The format a media type names, so that equivalent spellings compare equal."""
+    lowered = media_type.lower()
+    family = next((name for name in ("parquet", "pmtiles") if name in lowered), None)
+    return family or lowered.split(";")[0].strip().replace("image/jpg", "image/jpeg")
+
+
+def _sniffed_media_type(path: Path) -> str | None:
+    """The media type the file's magic bytes imply, preferring the extension's spelling."""
+    from portolan_cli.preparation import _get_media_type
+
+    with path.open("rb") as handle:
+        head = handle.read(8)
+    sniffed = next((kind for magic, kind in _MAGIC_MEDIA_TYPES if head.startswith(magic)), None)
+    if sniffed is None:
+        return None
+    by_extension = _get_media_type(path)
+    return by_extension if _kind(by_extension) == _kind(sniffed) else sniffed
+
+
+def _fix_media_types(root: Path, dry_run: bool, _state: RunState | None = None) -> list[FixResult]:
+    """Declare the media type that each local asset's bytes carry."""
+    known = {_kind(media_type) for _, media_type in _MAGIC_MEDIA_TYPES}
+    results: list[FixResult] = []
+    for node in _graph(root).iter("collection", "item"):
+        changed = False
+        for asset in _assets_of(node).values():
+            declared = asset.get("type")
+            path = _local_asset_path(node, asset)
+            if path is None or not isinstance(declared, str) or _kind(declared) not in known:
+                continue
+            sniffed = _sniffed_media_type(path)
+            if sniffed is not None and _kind(sniffed) != _kind(declared):
+                asset["type"] = sniffed
+                changed = True
+        if changed:
+            _write_node(node, dry_run=dry_run)
+            results.append(_updated(node, "Typed the assets from their bytes"))
+    return results
+
+
+# --------------------------------------------------------------------------
 # checksum — PTL-AST-003/004, PTL-DAT-001/002
 # --------------------------------------------------------------------------
 
@@ -878,22 +934,15 @@ def _fix_pmtiles(root: Path, dry_run: bool, _state: RunState | None = None) -> l
 
 
 def _fix_convert(root: Path, _dry_run: bool, _state: RunState | None = None) -> list[FixResult]:
-    """Registered but deliberately inert: conversion belongs to the geo-asset pass.
+    """Inert: the geo-asset pass converts, and rewrites the files that these findings name.
 
-    PTL-DAT-003 names this key, so the registry must carry it. Running a
-    conversion sweep from here was wrong twice over: ``--metadata --fix``
-    silently rewrote asset bytes the operator never asked about, and the sweep
-    ran without the worker and force settings the geo-asset pass is configured
-    with. Reporting the honest hand-off costs the operator one flag and costs
-    nobody their data.
+    ``--metadata --fix`` must not rewrite asset bytes, so this reports the hand-off.
     """
     return [
         _skipped(
             root,
             "Conversion runs in the geo-asset pass; re-run `portolan check --fix` "
-            "without --metadata. A GeoParquet that is already cloud-native but "
-            "unsorted or missing its bbox covering column is rewritten by "
-            "`portolan add --force --reconvert`",
+            "without --metadata",
         )
     ]
 
@@ -910,6 +959,7 @@ FIXERS: dict[str, Fixer] = {
     "links": _fix_links,
     "titles": _fix_titles,
     "assets": _fix_assets,
+    "media_type": _fix_media_types,
     "bbox": _fix_bbox,
     "partition": _fix_partition,
     "item_mirror": _fix_item_mirror,

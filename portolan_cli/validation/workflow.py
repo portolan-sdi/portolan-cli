@@ -8,6 +8,7 @@ from the result and decides the exit code from it.
 
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -355,6 +356,7 @@ def _run_fix_and_repairs(
             dry_run=dry_run,
             remove_legacy=remove_legacy,
             force=force,
+            reoptimize=_reoptimize_targets(state.catalog_root, findings),
             workers=workers,
             on_progress=on_progress,
             state=state,
@@ -388,6 +390,32 @@ def _run_fix_and_repairs(
         dry_run=dry_run,
     )
     return fix_data, legacy_failed or fixer_report.failure_count > 0
+
+
+def _reoptimize_targets(root: Path, findings: list[Any]) -> frozenset[Path]:
+    """The data files that AUTO ``convert`` findings name, for the geo-asset pass to rewrite."""
+    from rashid_core.api import is_absolute_href
+
+    from portolan_cli.validation.remediation import Bucket, remediation_of
+
+    targets: set[Path] = set()
+    for finding in findings:
+        remediation = remediation_of(finding)
+        if remediation.bucket is not Bucket.AUTO or remediation.fixer != "convert":
+            continue
+        match (finding.json_pointer or "").split("/"):
+            case ["", "assets", key, *_]:
+                key = key.replace("~1", "/").replace("~0", "~")
+            case _:
+                continue
+        node = root / finding.path
+        try:
+            href = json.loads(node.read_text(encoding="utf-8"))["assets"][key]["href"]
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+        if isinstance(href, str) and not is_absolute_href(href):
+            targets.add((node.parent / href).resolve())
+    return frozenset(targets)
 
 
 def _run_fixer_registry(
