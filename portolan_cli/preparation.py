@@ -1242,7 +1242,10 @@ def _means_wgs84(crs: Any) -> bool:
 def _assert_rewrite_kept_everything(
     source: Path, rewritten: Path | pq.ParquetFile, before: RewriteFidelity | None
 ) -> None:
-    """Refuse a rewrite that would replace good data with worse data."""
+    """Refuse a rewrite that would replace good data with worse data.
+
+    Keep it: it guards a destructive rewrite against any cause, not one fixed upstream bug.
+    """
     if before is None:
         return
     after = read_rewrite_fidelity(rewritten)

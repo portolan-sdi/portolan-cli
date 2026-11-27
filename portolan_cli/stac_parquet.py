@@ -104,7 +104,10 @@ _SOURCE_FINGERPRINT = "items.parquet.source_fingerprint"
 
 
 def _items_fingerprint(owned: list[tuple[str, Path]]) -> str | None:
-    """Hash each item's href, size, mtime and POSIX status-change time, in link order."""
+    """Hash each item's href, size, mtime and POSIX status-change time, in link order.
+
+    On Windows ctime is creation time, so a same-size edit with a restored mtime goes unseen.
+    """
     digest = hashlib.sha256()
     for href, item_path in owned:
         try:

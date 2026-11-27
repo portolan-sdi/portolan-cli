@@ -444,6 +444,8 @@ class _GuardedCredentialProvider:
             raise ProfileCredentialsError(self._profile, str(error)) from error
 
 
+# shortcut: keyed on the profile name only, so a later AWS env var change keeps the first
+# provider. Key on the config file paths too if a process changes them.
 @lru_cache(maxsize=8)
 def _boto3_credential_provider(profile: str | None) -> S3CredentialProvider | None:
     """Build the provider that botocore backs, once for each profile."""

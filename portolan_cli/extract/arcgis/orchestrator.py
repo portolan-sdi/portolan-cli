@@ -146,7 +146,10 @@ def list_services(
 
 
 def _service_output_dir(output_dir: Path, service_name: str) -> Path:
-    """Map a (possibly folder-qualified) service name to a nested directory."""
+    """Map a (possibly folder-qualified) service name to a nested directory.
+
+    Known limit: names that slugify alike (``Flood Risk``, ``flood_risk``) share one directory.
+    """
     parts = [slugify(p) for p in service_name.split("/") if p]
     result = output_dir
     for part in parts:

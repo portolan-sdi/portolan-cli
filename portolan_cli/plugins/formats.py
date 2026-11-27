@@ -195,7 +195,7 @@ def select_handler(
 ) -> tuple[str, FormatHandler] | None:
     """Pick the format handler for ``path`` and the plugin that gives it.
 
-    See ``handler_for`` for the precedence and the errors.
+    Raises AmbiguousFormatError when two plugins claim it unpinned, UnknownFormatHandlerError for a bad pin.
     """
     extension = extension_of(path)
     handlers = format_handlers()

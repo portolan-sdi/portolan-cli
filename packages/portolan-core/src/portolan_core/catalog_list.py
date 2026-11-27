@@ -227,7 +227,10 @@ def _get_format_display_name(filename: str, file_path: Path | None = None) -> st
 
 
 def _by_name(path: PurePath) -> str:
-    """Sort key that orders files the same way on every platform."""
+    """Sort key that orders files the same way on every platform.
+
+    A Windows ``Path`` compares without case, so sorting Paths would differ per OS.
+    """
     return path.name
 
 

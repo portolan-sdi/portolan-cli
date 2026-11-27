@@ -87,7 +87,7 @@ def resolve_token(
         "password": creds.password,
         "client": "referer",
         "referer": referer,
-        "expiration": "60",  # TODO: make configurable, long runs can exceed 60 min
+        "expiration": "60",  # TODO: make configurable, https://github.com/portolan-sdi/portolan-cli/issues/311
         "f": "json",
     }
 
