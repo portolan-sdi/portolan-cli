@@ -101,7 +101,13 @@ from portolan_core.checksums import (
 )
 from portolan_core.config import get_ignored_files, get_setting, load_merged_metadata
 from portolan_core.constants import ROLE_VISUAL
-from portolan_core.errors import AssetKeyCollisionError, NoGeometryError, RewriteFidelityError
+from portolan_core.errors import (
+    AssetKeyCollisionError,
+    CRSMismatchError,
+    CRSTransformError,
+    NoGeometryError,
+    RewriteFidelityError,
+)
 from portolan_core.format_families import RASTER, VECTOR
 from portolan_core.run_state import RunState
 from portolan_core.stac_links import GDAL_PAM_SUFFIX
@@ -1152,6 +1158,32 @@ def describe_vector_item(
     add_vector_extension(item, metadata)
 
 
+def _item_bbox(
+    metadata: AllMetadata, path: Path, output_path: Path, *, created_output: bool
+) -> list[float]:
+    """Return the WGS84 bbox of an item, or remove a new output and raise.
+
+    The add stops here before any STAC write, so a file this run converted
+    goes too.
+
+    Raises:
+        NoGeometryError: The file has no bbox.
+        CRSTransformError: The bbox cannot be transformed to WGS84.
+        CRSMismatchError: The bbox does not match the declared CRS.
+    """
+    try:
+        if not metadata.bbox:
+            raise NoGeometryError(
+                path=metadata.id if hasattr(metadata, "id") else path.stem,
+                reason="The source file may have no valid geometry.",
+            )
+        return wgs84_bbox(metadata, output_path)
+    except (NoGeometryError, CRSTransformError, CRSMismatchError):
+        if created_output:
+            _cleanup_orphaned_output(output_path, path.parent, path)
+        raise
+
+
 def prepare_item(
     *,
     path: Path,
@@ -1198,6 +1230,8 @@ def prepare_item(
         ValueError: If the format is unsupported or collection_id is invalid.
         FileNotFoundError: If the source file doesn't exist.
         NoGeometryError: If the file has no valid geometry.
+        CRSTransformError: The bbox cannot be transformed to WGS84.
+        CRSMismatchError: The bbox does not match the declared CRS.
         OutputExistsError: Both output names hold a file that the source did
             not write.
     """
@@ -1277,14 +1311,7 @@ def prepare_item(
             )
 
     # Step 4: Extract and transform bbox
-    if not metadata.bbox:
-        if created_output:
-            _cleanup_orphaned_output(output_path, item_dir, path)
-        raise NoGeometryError(
-            path=metadata.id if hasattr(metadata, "id") else path.stem,
-            reason="The source file may have no valid geometry.",
-        )
-    bbox = wgs84_bbox(metadata, output_path)
+    bbox = _item_bbox(metadata, path, output_path, created_output=created_output)
 
     # Step 5: Scan assets and compute statistics
     collection_level = is_collection_level_asset and handler.asset_level == "collection"

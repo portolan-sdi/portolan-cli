@@ -12,6 +12,8 @@ from typing import Any, Self
 
 import pytest
 
+from portolan_core.errors import CRSMismatchError, CRSTransformError
+
 # =============================================================================
 # Phase 1: ConversionStatus Enum Tests
 # =============================================================================
@@ -2935,6 +2937,41 @@ class TestPartitionedOutputWithGeoparquetIO:
 
         assert first.created_output is True
         assert kept.created_output is False
+
+    @pytest.mark.integration
+    @pytest.mark.parametrize(
+        "failure",
+        [
+            CRSTransformError("EPSG:999999", "crs not found"),
+            CRSMismatchError("EPSG:32610", (-122.5, 37.5, -122.0, 38.0)),
+        ],
+        ids=["transform", "mismatch"],
+    )
+    def test_prepare_item_removes_a_new_output_when_the_crs_fails(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: Exception
+    ) -> None:
+        """A CRS that cannot transform stops the add and leaves no converted file (#928)."""
+        import shutil
+
+        from portolan_cli import preparation
+
+        (tmp_path / ".portolan").mkdir()
+        (tmp_path / ".portolan" / "config.yaml").write_text("{}\n", encoding="utf-8")
+        coll = tmp_path / "coll"
+        coll.mkdir()
+        fixtures = Path(__file__).parents[1] / "fixtures" / "vector" / "valid"
+        source = coll / "points.geojson"
+        shutil.copy(fixtures / "points.geojson", source)
+
+        def unreadable(*_args: object) -> list[float]:
+            raise failure
+
+        monkeypatch.setattr(preparation, "wgs84_bbox", unreadable)
+
+        with pytest.raises(type(failure)):
+            preparation.prepare_item(path=source, catalog_root=tmp_path, collection_id="coll")
+
+        assert sorted(p.name for p in coll.iterdir()) == ["points.geojson"]
 
     @pytest.mark.integration
     def test_single_file_kdtree_index(self, tmp_path: Path) -> None:
