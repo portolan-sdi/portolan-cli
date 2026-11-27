@@ -97,12 +97,8 @@ jobs:
         # - no-commit-to-branch: meaningless in CI and fails on push-to-main
         #   (HEAD is `main`).
         # - fast-tests: the full matrix runs in the `test` job below.
-        # - update-freshness: stamps today's date into freshness markers, so it
-        #   is non-deterministic across days — a validation gate, not a mutation,
-        #   is what CI needs. Reference drift is still caught by
-        #   validate-agents-md (non-mutating), which DOES run here.
         env:
-          SKIP: no-commit-to-branch,fast-tests,update-freshness
+          SKIP: no-commit-to-branch,fast-tests
         run: uvx prek run --all-files --show-diff-on-failure
 
   security:

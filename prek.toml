@@ -124,14 +124,6 @@ hooks = [
     files = { glob = ["AGENTS.md", "pyproject.toml", "portolan_cli/cli.py"] },
     pass_filenames = false,
   },
-  {
-    id = "update-freshness",
-    name = "auto-update freshness markers",
-    entry = "uv run python scripts/update_freshness.py",
-    language = "system",
-    files = { glob = ["portolan_cli/output.py", "packages/portolan-core/src/portolan_core/errors.py", "packages/portolan-core/src/portolan_core/constants.py", "portolan_cli/json_output.py", "portolan_cli/cli.py"] },
-    pass_filenames = true,
-  },
 
   # === VALIDATION HOOKS ===
   {
