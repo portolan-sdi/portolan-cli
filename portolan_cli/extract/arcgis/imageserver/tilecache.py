@@ -496,7 +496,7 @@ def _load_lerc() -> Any:
         "package."
     )
     try:
-        import lerc  # type: ignore[import-untyped]
+        import lerc
     except ImportError as exc:
         raise TileCacheError(f"{reason} Install it with 'pip install lerc'. {exc}") from exc
     except OSError as exc:

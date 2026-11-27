@@ -99,7 +99,7 @@ from portolan_core.checksums import (
     compute_dir_size,
     file_fields_from,
 )
-from portolan_core.config import get_ignored_files, get_setting, load_merged_metadata
+from portolan_core.config import get_ignored_files, get_setting
 from portolan_core.constants import ROLE_VISUAL
 from portolan_core.errors import AssetKeyCollisionError, NoGeometryError, RewriteFidelityError
 from portolan_core.format_families import RASTER, VECTOR
@@ -1252,17 +1252,13 @@ def prepare_item(
         )
     created_output = created_output and output_path == target
     source_paths = {output_path: versions_asset_key(path, collection_dir)}
-    if state is not None and isinstance(metadata, GeoParquetMetadata) and output_path.is_file():
+    if isinstance(metadata, GeoParquetMetadata) and output_path.is_file():
         # The handler API takes no state. Give the run the footer the handler
         # read, so finalization does not read it again.
         state.memo("geoparquet.metadata", output_path, lambda _path: metadata)
 
     # Step 3b: Load metadata.yaml defaults (for temporal/nodata when source lacks them)
-    metadata_yaml = (
-        state.metadata(collection_dir)
-        if state is not None
-        else load_merged_metadata(collection_dir, catalog_root)
-    )
+    metadata_yaml = state.metadata(collection_dir)
     defaults = metadata_yaml.get("defaults", {})
 
     # Validate defaults section if present (fail fast on invalid config)
@@ -1479,7 +1475,7 @@ def convert_vector(
         Path to the output GeoParquet file, or ``partition_dir`` when the
         table was written as partitions.
     """
-    import geoparquet_io as gpio  # type: ignore[import-untyped]
+    import geoparquet_io as gpio
 
     from portolan_cli.convert import _write_partitioned, repair_shapefile_encoding_sidecar
 

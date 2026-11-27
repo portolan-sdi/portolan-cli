@@ -19,6 +19,10 @@ import re
 import sys
 import tempfile
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 logger = logging.getLogger(__name__)
 
@@ -200,7 +204,7 @@ def compress_with_distill(content: str) -> str:
     return content
 
 
-def process_hook_input(hook_input: dict[str, object], session_id: str) -> dict[str, str] | None:
+def process_hook_input(hook_input: Mapping[str, object], session_id: str) -> dict[str, str] | None:
     """Process hook input and return docs for detected libraries.
 
     Args:

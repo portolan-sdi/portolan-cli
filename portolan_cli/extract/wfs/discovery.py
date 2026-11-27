@@ -15,7 +15,7 @@ import xml.etree.ElementTree as ET  # only for ParseError, this module parses wi
 from dataclasses import dataclass, field
 from typing import Any
 
-import requests  # type: ignore[import-untyped]
+import requests
 
 from portolan_cli.extract.common.urls import redact_credentials
 
@@ -93,17 +93,17 @@ def gpio_list_layers(service_url: str, version: str = "1.1.0") -> list[dict[str,
     This function exists to make mocking easier in tests.
     """
     try:
-        from geoparquet_io.core.wfs import (  # type: ignore[import-untyped]
+        from geoparquet_io.core.wfs import (
             WFSError,
             list_available_layers,
         )
-
-        result: list[dict[str, Any]] = list_available_layers(service_url, version=version)
-        return result
     except ImportError as e:
         raise WFSDiscoveryError(
             "geoparquet-io is required for WFS extraction. Install with: pip install geoparquet-io"
         ) from e
+    try:
+        result: list[dict[str, Any]] = list_available_layers(service_url, version=version)
+        return result
     except (WFSError, *_NETWORK_ERRORS) as e:
         raise WFSDiscoveryError(redact_credentials(f"Failed to list WFS layers: {e}")) from e
 
@@ -224,7 +224,11 @@ def discover_layers(
     """
     try:
         from geoparquet_io.core.wfs import WFSError, get_wfs_capabilities
-
+    except ImportError as e:
+        raise WFSDiscoveryError(
+            "geoparquet-io is required for WFS extraction. Install with: pip install geoparquet-io"
+        ) from e
+    try:
         wfs = get_wfs_capabilities(service_url, version)
         svc = _extract_service_metadata(wfs)
 
@@ -243,11 +247,6 @@ def discover_layers(
             access_constraints=svc["access_constraints"],
             fees=svc["fees"],
         )
-
-    except ImportError as e:
-        raise WFSDiscoveryError(
-            "geoparquet-io is required for WFS extraction. Install with: pip install geoparquet-io"
-        ) from e
     except (WFSError, *_NETWORK_ERRORS) as e:
         # geoparquet-io and requests quote the service URL with its key (#981).
         raise WFSDiscoveryError(redact_credentials(f"Failed to discover WFS layers: {e}")) from e

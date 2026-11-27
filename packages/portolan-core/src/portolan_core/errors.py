@@ -25,6 +25,9 @@ class PortolanError(Exception):
     All errors have:
     - code: Structured error code (e.g., PRTLN-CAT001)
     - message: Human-readable error message
+
+    ``__init__`` sets each context key as an attribute. A subclass declares
+    those attributes, so mypy checks each read of them.
     """
 
     code: str = "PRTLN-000"
@@ -71,6 +74,7 @@ class CatalogAlreadyExistsError(CatalogError):
     """
 
     code = "PRTLN-CAT001"
+    path: str
 
     def __init__(self, path: str) -> None:
         super().__init__(f"Catalog already exists at {path}", path=path)
@@ -83,6 +87,7 @@ class CatalogNotFoundError(CatalogError):
     """
 
     code = "PRTLN-CAT002"
+    path: str
 
     def __init__(self, path: str) -> None:
         super().__init__(f"No catalog found at {path}", path=path)
@@ -99,6 +104,7 @@ class UnmanagedStacCatalogError(CatalogError):
     """
 
     code = "PRTLN-CAT003"
+    path: str
 
     def __init__(self, path: str) -> None:
         super().__init__(
@@ -130,6 +136,7 @@ class CollectionAlreadyExistsError(CollectionError):
     """
 
     code = "PRTLN-COL001"
+    collection_id: str
 
     def __init__(self, collection_id: str) -> None:
         super().__init__(
@@ -144,6 +151,7 @@ class CollectionNotFoundError(CollectionError):
     """
 
     code = "PRTLN-COL002"
+    collection_id: str
 
     def __init__(self, collection_id: str) -> None:
         super().__init__(f"Collection '{collection_id}' not found", collection_id=collection_id)
@@ -156,6 +164,10 @@ class AssetKeyCollisionError(CollectionError):
     """
 
     code = "PRTLN-COL003"
+    collection_id: str
+    asset_key: str
+    existing_href: str
+    new_href: str
 
     def __init__(
         self, collection_id: str, asset_key: str, existing_href: str, new_href: str
@@ -185,6 +197,8 @@ class SchemaExtractionError(SchemaError):
     """
 
     code = "PRTLN-SCH001"
+    path: str
+    reason: str
 
     def __init__(self, path: str, reason: str) -> None:
         super().__init__(f"Cannot extract schema from {path}: {reason}", path=path, reason=reason)
@@ -197,6 +211,9 @@ class SchemaTypeConflictError(SchemaError):
     """
 
     code = "PRTLN-SCH002"
+    column: str
+    current_type: str
+    new_type: str
 
     def __init__(self, column: str, current_type: str, new_type: str) -> None:
         super().__init__(
@@ -214,6 +231,7 @@ class SchemaColumnNotFoundError(SchemaError):
     """
 
     code = "PRTLN-SCH003"
+    column: str
 
     def __init__(self, column: str) -> None:
         super().__init__(f"Column '{column}' not found in schema", column=column)
@@ -233,6 +251,8 @@ class ItemNotFoundError(ItemError):
     """
 
     code = "PRTLN-ITM001"
+    item_id: str
+    collection_id: str
 
     def __init__(self, item_id: str, collection_id: str) -> None:
         super().__init__(
@@ -249,6 +269,8 @@ class ItemAlreadyExistsError(ItemError):
     """
 
     code = "PRTLN-ITM002"
+    item_id: str
+    collection_id: str
 
     def __init__(self, item_id: str, collection_id: str) -> None:
         super().__init__(
@@ -272,6 +294,8 @@ class VersionNotFoundError(VersionError):
     """
 
     code = "PRTLN-VER001"
+    version: str
+    collection_id: str
 
     def __init__(self, version: str, collection_id: str) -> None:
         super().__init__(
@@ -288,6 +312,7 @@ class InvalidVersionError(VersionError):
     """
 
     code = "PRTLN-VER002"
+    version: str
 
     def __init__(self, version: str) -> None:
         super().__init__(f"Invalid semantic version: '{version}'", version=version)
@@ -335,6 +360,7 @@ class MissingGeometryError(ValidationError):
     """
 
     code = "PRTLN-VAL001"
+    path: str
 
     def __init__(self, path: str) -> None:
         super().__init__(f"No geometry column found in {path}", path=path)
@@ -347,6 +373,7 @@ class InvalidBboxError(ValidationError):
     """
 
     code = "PRTLN-VAL002"
+    reason: str
 
     def __init__(self, reason: str) -> None:
         super().__init__(f"Invalid bounding box: {reason}", reason=reason)
@@ -364,6 +391,7 @@ class InvalidProvidersError(ValidationError):
     """
 
     code = "PRTLN-VAL003"
+    reason: str
 
     def __init__(self, reason: str) -> None:
         super().__init__(f"Invalid providers in metadata.yaml: {reason}", reason=reason)
@@ -381,6 +409,8 @@ class MissingLicenseError(ValidationError):
     """
 
     code = "PRTLN-VAL004"
+    target: str
+    reason: str
 
     def __init__(self, target: str, reason: str) -> None:
         super().__init__(f"No usable license for {target}: {reason}", target=target, reason=reason)
@@ -393,6 +423,7 @@ class InvalidLiveUrlError(ValidationError):
     """
 
     code = "PRTLN-VAL005"
+    source: str
 
     def __init__(self, source: str) -> None:
         super().__init__(
@@ -415,6 +446,8 @@ class UnsupportedFormatError(ConversionError):
     """
 
     code = "PRTLN-CNV001"
+    path: str
+    format_type: str
 
     def __init__(self, path: str, format_type: str) -> None:
         super().__init__(
@@ -431,6 +464,9 @@ class ConversionFailedError(ConversionError):
     """
 
     code = "PRTLN-CNV002"
+    path: str
+    original_error_type: str
+    original_error_message: str
 
     def __init__(self, path: str, original_error: Exception) -> None:
         # Store serializable representations for to_dict()/JSON
@@ -451,6 +487,8 @@ class ValidationFailedError(ConversionError):
     """
 
     code = "PRTLN-CNV003"
+    path: str
+    validation_errors: list[str]
 
     def __init__(self, path: str, validation_errors: list[str]) -> None:
         error_count = len(validation_errors)
@@ -476,6 +514,9 @@ class CRSMismatchError(ConversionError):
     """
 
     code = "PRTLN-CNV004"
+    source_crs: str
+    bbox: tuple[float, float, float, float]
+    likely_actual_crs: str
 
     def __init__(
         self,
@@ -509,6 +550,8 @@ class RewriteFidelityError(ConversionError):
     """
 
     code = "PRTLN-CNV005"
+    path: str
+    lost: str
 
     def __init__(self, path: str, lost: str) -> None:
         super().__init__(
@@ -526,6 +569,8 @@ class InvalidOutputError(ConversionError):
     """
 
     code = "PRTLN-CNV008"
+    path: str
+    reason: str
 
     def __init__(self, path: str, reason: str) -> None:
         super().__init__(f"{path} failed validation: {reason}", path=path, reason=reason)
@@ -543,6 +588,9 @@ class PartitionCollisionError(ConversionError):
     """
 
     code = "PRTLN-CNV009"
+    path: str
+    directory: str
+    existing: list[str]
 
     def __init__(self, path: str, directory: str, existing: list[str]) -> None:
         shown = ", ".join(existing[:3]) + (", ..." if len(existing) > 3 else "")
@@ -578,6 +626,8 @@ class OutputExistsError(ConversionError):
     """
 
     code = "PRTLN-CNV010"
+    source: str
+    output: str
 
     def __init__(self, source: str, output: str) -> None:
         super().__init__(
@@ -595,6 +645,9 @@ class AmbiguousFormatError(ConversionError):
     """
 
     code = "PRTLN-CNV006"
+    path: str
+    extension: str
+    handlers: list[str]
 
     def __init__(self, path: str, extension: str, handlers: list[str]) -> None:
         names = ", ".join(f"'{name}'" for name in handlers)
@@ -614,6 +667,9 @@ class UnknownFormatHandlerError(ConversionError):
     """
 
     code = "PRTLN-CNV007"
+    extension: str
+    handler: str
+    available: list[str]
 
     def __init__(self, extension: str, handler: str, available: list[str]) -> None:
         super().__init__(
@@ -642,6 +698,8 @@ class UnsupportedLogoFormatError(LogoError):
     """
 
     code = "PRTLN-LOG001"
+    path: str
+    allowed: list[str]
 
     def __init__(self, path: str, allowed: list[str]) -> None:
         super().__init__(
@@ -658,6 +716,7 @@ class LogoSourceNotFoundError(LogoError):
     """
 
     code = "PRTLN-LOG002"
+    path: str
 
     def __init__(self, path: str) -> None:
         super().__init__(f"Logo source is not a file: {path}", path=path)
@@ -674,6 +733,7 @@ class RemoteLogoSourceError(LogoError):
     """
 
     code = "PRTLN-LOG003"
+    source: str
 
     def __init__(self, source: str) -> None:
         super().__init__(
@@ -697,6 +757,8 @@ class ConfigParseError(ConfigError):
     """
 
     code = "PRTLN-CFG001"
+    path: str
+    parse_error: str
 
     def __init__(self, path: str, parse_error: str) -> None:
         super().__init__(
@@ -713,6 +775,8 @@ class ConfigInvalidStructureError(ConfigError):
     """
 
     code = "PRTLN-CFG002"
+    path: str
+    detail: str
 
     def __init__(self, path: str, detail: str) -> None:
         super().__init__(
@@ -729,6 +793,7 @@ class InsecureS3EndpointError(ConfigError):
     """
 
     code = "PRTLN-CFG003"
+    endpoint: str
 
     def __init__(self, endpoint: str) -> None:
         super().__init__(
@@ -745,6 +810,8 @@ class ProfileCredentialsError(ConfigError):
     """
 
     code = "PRTLN-CFG004"
+    profile: str
+    reason: str
 
     def __init__(self, profile: str, reason: str) -> None:
         super().__init__(
@@ -771,6 +838,7 @@ class PushVerifyError(SyncError):
     """
 
     code = "PRTLN-SYN001"
+    failures: list[str]
 
     def __init__(self, failures: list[str]) -> None:
         shown = "; ".join(failures[:5])

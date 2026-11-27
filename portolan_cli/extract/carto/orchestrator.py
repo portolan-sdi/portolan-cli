@@ -216,7 +216,7 @@ class CartoLayerSource:
         becomes plain Parquet through gpio's ``geometry=False`` path, with no
         bbox filter, because a bounding-box filter needs a geometry.
         """
-        from geoparquet_io.core import carto as gpio_carto  # type: ignore[import-untyped]
+        from geoparquet_io.core import carto as gpio_carto
 
         table: CartoTableInfo = layer.data
         options = self.options

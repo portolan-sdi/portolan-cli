@@ -34,7 +34,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Iterator, Mapping
 
 
 @dataclass(frozen=True)
@@ -70,7 +70,7 @@ class TileSpec:
 
 
 def _compute_grid_dimensions(
-    extent: dict[str, float],
+    extent: Mapping[str, float],
     pixel_size_x: float,
     pixel_size_y: float,
     tile_size: int,
@@ -105,7 +105,7 @@ def _compute_grid_dimensions(
 
 
 def tile_count(
-    extent: dict[str, float],
+    extent: Mapping[str, float],
     pixel_size_x: float,
     pixel_size_y: float,
     tile_size: int = 4096,
@@ -134,7 +134,7 @@ def tile_count(
 
 
 def compute_tile_grid(
-    extent: dict[str, float],
+    extent: Mapping[str, float],
     pixel_size_x: float,
     pixel_size_y: float,
     tile_size: int = 4096,

@@ -189,8 +189,9 @@ def _build_metadata_dict(
         metadata["attribution"] = extracted.attribution
 
     if extracted.keywords:
-        # Ensure all keywords are strings (defensive - ExtractedMetadata types this as list[str])
-        metadata["keywords"] = [str(k) for k in extracted.keywords if k is not None]
+        # An extractor can put None in the list at runtime. Drop it and make each keyword a string.
+        keywords: list[object] = list(extracted.keywords)
+        metadata["keywords"] = [str(k) for k in keywords if k is not None]
 
     if extracted.processing_notes:
         metadata["processing_notes"] = extracted.processing_notes

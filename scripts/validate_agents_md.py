@@ -21,6 +21,10 @@ import sys
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 # Repo-specific instructions live in AGENTS.md. CLAUDE.md only imports it,
 # because Claude Code reads CLAUDE.md and every other agent reads AGENTS.md.
@@ -188,7 +192,11 @@ def _extract_command_info(node: ast.FunctionDef) -> tuple[str | None, str | None
             continue
 
         # Get command name: explicit from decorator or derived from function name
-        cmd_name = _get_explicit_command_name(decorator) if has_explicit else None
+        cmd_name = (
+            _get_explicit_command_name(decorator)
+            if has_explicit and isinstance(decorator, ast.Call)
+            else None
+        )
         if not cmd_name:
             cmd_name = _normalize_function_name(node.name)
 
@@ -473,7 +481,7 @@ def validate_freshness(claude_md: str, _root: Path, stale_days: int = 30) -> Val
 # Main Validation Runner
 # =============================================================================
 
-VALIDATORS = [
+VALIDATORS: list[Callable[[str, Path], ValidationResult]] = [
     validate_file_paths,
     validate_cli_commands,
     validate_test_markers,

@@ -669,7 +669,7 @@ class ArcGISLayerSource:
         options = self.options
         import inspect
 
-        import geoparquet_io as gpio  # type: ignore[import-untyped]
+        import geoparquet_io as gpio
 
         # Check which optional parameters gpio.extract_arcgis supports (feature-detected
         # so older gpio versions continue to work without modification).

@@ -19,7 +19,7 @@ import json
 from dataclasses import dataclass, field
 from urllib.parse import urlparse, urlunparse
 
-import requests  # type: ignore[import-untyped]
+import requests
 
 from portolan_cli.extract.common.urls import redact_credentials
 

@@ -339,7 +339,7 @@ class ScanResult:
                     "format_type": f.format_type or "unknown",
                     "size_bytes": f.size_bytes,
                     "inferred_collection_id": f.inferred_collection_id or None,
-                    "format_status": f.format_status.value if f.format_status else None,
+                    "format_status": f.format_status.value,
                     "format_display_name": f.format_display_name or None,
                     "metadata": f.metadata,
                 }

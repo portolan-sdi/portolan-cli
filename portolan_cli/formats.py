@@ -728,7 +728,7 @@ def list_layers(path: Path) -> list[str] | None:
         >>> list_layers(Path("single.geojson"))
         None
     """
-    import geoparquet_io as gpio  # type: ignore[import-untyped]
+    import geoparquet_io as gpio
 
     if not path.exists():
         raise FileNotFoundError(f"File not found: {path}")

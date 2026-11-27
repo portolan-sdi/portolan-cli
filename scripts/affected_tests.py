@@ -93,12 +93,11 @@ def module_name(path: str) -> str | None:
     pure = PurePosixPath(path)
     if pure.suffix != ".py":
         return None
-    for package, folder in PACKAGES.items():
-        if pure.is_relative_to(folder):
-            parts = [package, *pure.relative_to(folder).with_suffix("").parts]
-            break
-    else:
+    owner = next((item for item in PACKAGES.items() if pure.is_relative_to(item[1])), None)
+    if owner is None:
         return None
+    package, folder = owner
+    parts = [package, *pure.relative_to(folder).with_suffix("").parts]
     if parts[-1] == "__init__":
         parts.pop()
     return ".".join(parts)
