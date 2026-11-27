@@ -231,7 +231,7 @@ class TestCommitRunPluginBackend:
     def test_one_publish_per_collection(
         self, catalog: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        import portolan_cli.version_ops as version_ops
+        from portolan_cli import version_ops
 
         (catalog / ".portolan" / "config.yaml").write_text("backend: fake\n")
         calls: list[tuple[str, dict[str, str], set[str] | None, str]] = []
@@ -267,9 +267,13 @@ class TestOwnedRun:
         assert (catalog / "c" / "versions.json").exists()
 
     def test_exception_commits_nothing(self, catalog: Path) -> None:
-        with pytest.raises(RuntimeError), owned_run(catalog) as state:
-            state.stage("c", assets={"a.bin": _asset(catalog, "c/a.bin", b"a")})
-            raise RuntimeError("boom")
+        def fail_after_stage() -> None:
+            with owned_run(catalog) as state:
+                state.stage("c", assets={"a.bin": _asset(catalog, "c/a.bin", b"a")})
+                raise RuntimeError("boom")
+
+        with pytest.raises(RuntimeError, match="boom"):
+            fail_after_stage()
         assert not (catalog / "c" / "versions.json").exists()
 
     def test_caller_state_is_not_committed(self, catalog: Path) -> None:

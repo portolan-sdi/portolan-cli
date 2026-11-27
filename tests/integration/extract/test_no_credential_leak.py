@@ -255,7 +255,7 @@ def test_no_credential_reaches_any_output(
         library_out = tmp_path / "library"
         try:
             library_result = case.library(url, library_out)
-        except Exception as err:  # noqa: BLE001 - any error type must hold no credential
+        except Exception as err:  # any error type must hold no credential
             shown = [str(err), repr(err)]
         else:
             shown = [repr(library_result), json.dumps(library_result.to_dict())]

@@ -35,33 +35,49 @@ if TYPE_CHECKING:
     from matplotlib.axes import Axes
 
     from portolan_core.config import ConfigSource
+from http import HTTPStatus
+
+from portolan_core.bbox import BBOX_2D_LEN, LAT_MAX
+
+_MAX_GEOMETRY_DEPTH = 6
+_XY_LEN = 2
+_MAX_WORLD_SPAN = 2
+# Shapely geometry type ids.
+_SHAPELY_LINESTRING = 1
+_SHAPELY_LINEARRING = 2
+_SHAPELY_POLYGON = 3
 
 logger = logging.getLogger(__name__)
 
+
+def _is_coord_pair(coords: Any) -> bool:
+    """Return True when ``coords`` is one [x, y] position."""
+    return (
+        isinstance(coords, (list, tuple))
+        and len(coords) >= _XY_LEN
+        and isinstance(coords[0], (int, float))
+        and isinstance(coords[1], (int, float))
+    )
+
+
 # Thread-safe lazy import for optional contextily dependency
 _ctx_lock = threading.Lock()
-_ctx_module: Any = None
-_ctx_loaded = False
 
 
+@functools.cache
 def _ensure_contextily() -> Any:
     """Lazy-load contextily, returning module or None if unavailable.
 
-    Thread-safe: every call takes the lock, so only one thread runs the import.
-    The lock is cheap next to a thumbnail render.
+    Thread-safe: the lock lets only one thread run the import. The cache
+    keeps the result, so later calls do not take the lock.
     """
-    global _ctx_module, _ctx_loaded
     with _ctx_lock:
-        if not _ctx_loaded:
-            try:
-                import contextily as ctx
-
-                _ctx_module = ctx
-            except ImportError:
-                logger.debug("contextily not available, basemaps disabled")
-                _ctx_module = None
-            _ctx_loaded = True
-        return _ctx_module
+        try:
+            import contextily as ctx
+        except ImportError:
+            logger.debug("contextily not available, basemaps disabled")
+            return None
+        return ctx
 
 
 # =============================================================================
@@ -380,19 +396,14 @@ def _transform_coords(
     # - GeometryCollection containing MultiPolygon: 4
     # - Nested GeometryCollection edge cases: 5-6
     # Beyond 6 is almost certainly malformed data.
-    if depth > 6:
+    if depth > _MAX_GEOMETRY_DEPTH:
         return coords
 
     if not coords:
         return coords
 
     # Check if this is a coordinate pair [x, y]
-    if (
-        isinstance(coords, (list, tuple))
-        and len(coords) >= 2
-        and isinstance(coords[0], (int, float))
-        and isinstance(coords[1], (int, float))
-    ):
+    if _is_coord_pair(coords):
         lon, lat = _transform_coord(coords[0], coords[1], tile_bounds)
         return [lon, lat]
 
@@ -429,16 +440,11 @@ def _extract_coord_bounds(
         lats: List to append latitude values to.
         depth: Recursion depth (safety limit).
     """
-    if depth > 6 or not coords:
+    if depth > _MAX_GEOMETRY_DEPTH or not coords:
         return
 
     # Check if this is a coordinate pair [lon, lat]
-    if (
-        isinstance(coords, (list, tuple))
-        and len(coords) >= 2
-        and isinstance(coords[0], (int, float))
-        and isinstance(coords[1], (int, float))
-    ):
+    if _is_coord_pair(coords):
         lons.append(float(coords[0]))
         lats.append(float(coords[1]))
         return
@@ -819,7 +825,7 @@ def _explode(geoms: Any) -> tuple[Any, Any]:
     index = np.flatnonzero(keep)
     parts = geoms[keep]
     # A collection can hold multi-part members, so split until none is left.
-    while len(parts) and (shapely.get_type_id(parts) > 3).any():
+    while len(parts) and (shapely.get_type_id(parts) > _SHAPELY_POLYGON).any():
         parts, part_index = shapely.get_parts(parts, return_index=True)
         index = index[part_index]
     return parts, index
@@ -854,8 +860,8 @@ def _draw_features(ax: Any, geoms: Any, colors: Any, params: RenderParams) -> No
         part_colors = np.asarray(colors, dtype=object)[index]
     type_ids = shapely.get_type_id(parts)
 
-    polygons = type_ids == 3
-    lines = (type_ids == 1) | (type_ids == 2)
+    polygons = type_ids == _SHAPELY_POLYGON
+    lines = (type_ids == _SHAPELY_LINESTRING) | (type_ids == _SHAPELY_LINEARRING)
     points = type_ids == 0
     for color in dict.fromkeys(part_colors[polygons]):
         # The nonzero fill rule needs the shell and the holes wound in
@@ -958,7 +964,9 @@ def _to_web_mercator(
         # not a latitude, so it stays and fails the finite test below.
         if not geographic:
             return lat
-        return np.where(np.abs(lat) <= 90, np.clip(lat, -_MERCATOR_MAX_LAT, _MERCATOR_MAX_LAT), lat)
+        return np.where(
+            np.abs(lat) <= LAT_MAX, np.clip(lat, -_MERCATOR_MAX_LAT, _MERCATOR_MAX_LAT), lat
+        )
 
     def project(xy: Any) -> Any:
         if not geographic:
@@ -1128,7 +1136,7 @@ def _bbox_from_geo(geo_meta: dict[str, Any]) -> tuple[float, float, float, float
 
     for col_meta in get_dict(geo_meta, "columns").values():
         bbox = col_meta.get("bbox") if isinstance(col_meta, dict) else None
-        if bbox and len(bbox) >= 4:
+        if bbox and len(bbox) >= BBOX_2D_LEN:
             bbox_list = to_2d_bbox(bbox)
             if is_finite_bbox(bbox_list):
                 return (bbox_list[0], bbox_list[1], bbox_list[2], bbox_list[3])
@@ -1181,7 +1189,7 @@ def _geo_frame(table: Any, primary: str, encoding: str, crs: Any) -> Any:
     leave the name out of the Arrow schema. The table comes from the open
     file, so the read opens the file once.
     """
-    import geopandas as gpd
+    import geopandas
 
     if encoding == "wkb":
         return _wkb_frame(table, primary, crs)
@@ -1190,7 +1198,9 @@ def _geo_frame(table: Any, primary: str, encoding: str, crs: Any) -> Any:
         {b"ARROW:extension:name": f"geoarrow.{encoding}".encode()}
     )
     table = table.set_column(index, field, table.column(index))
-    return gpd.GeoDataFrame.from_arrow(table, geometry=primary).set_crs(crs, allow_override=True)
+    return geopandas.GeoDataFrame.from_arrow(table, geometry=primary).set_crs(
+        crs, allow_override=True
+    )
 
 
 def _declared_crs(geo_meta: dict[str, Any], primary: str) -> Any:
@@ -1214,12 +1224,14 @@ def _wkb_frame(table: Any, primary: str, crs: Any) -> Any:
     A GeoParquet table is a WKB column plus `geo` file metadata, not GeoArrow
     extension types, so GeoDataFrame.from_arrow cannot read it.
     """
-    import geopandas as gpd
+    import geopandas
 
-    geometry = gpd.GeoSeries.from_wkb(table.column(primary).to_numpy(zero_copy_only=False), crs=crs)
+    geometry = geopandas.GeoSeries.from_wkb(
+        table.column(primary).to_numpy(zero_copy_only=False), crs=crs
+    )
     frame = table.drop_columns([primary]).to_pandas()
     frame[primary] = geometry
-    return gpd.GeoDataFrame(frame, geometry=primary, crs=crs)
+    return geopandas.GeoDataFrame(frame, geometry=primary, crs=crs)
 
 
 def _read_geoparquet_for_thumbnail(
@@ -1615,7 +1627,7 @@ def _get_tile(url: str) -> Any:
 
     for attempt in range(_TILE_RETRIES + 1):
         response = requests.get(url, headers={"user-agent": USER_AGENT}, timeout=_TILE_TIMEOUT_S)
-        if response.status_code == 404 or attempt == _TILE_RETRIES:
+        if response.status_code == HTTPStatus.NOT_FOUND or attempt == _TILE_RETRIES:
             response.raise_for_status()
         if response.ok:
             break
@@ -1655,7 +1667,7 @@ def _get_tiles(urls: list[str], deadline: float) -> list[Any]:
             except (requests.Timeout, requests.ConnectionError):
                 errors.append(_TileServerDownError(url))
                 stop.set()
-            except Exception as error:  # noqa: BLE001 - the caller raises it
+            except Exception as error:  # the caller raises it
                 errors.append(error)
                 stop.set()
 
@@ -1690,7 +1702,7 @@ def _world_copies(left: float, right: float) -> list[tuple[float, float, float]]
     world = 2 * _MERCATOR_LIMIT
     first = math.floor((left + _MERCATOR_LIMIT) / world)
     last = math.ceil((right + _MERCATOR_LIMIT) / world) - 1
-    if last - first > 2:  # No frame of a geographic source is this wide.
+    if last - first > _MAX_WORLD_SPAN:  # No frame of a geographic source is this wide.
         return [(0.0, left, right)]
     copies = []
     for turn in range(first, last + 1):

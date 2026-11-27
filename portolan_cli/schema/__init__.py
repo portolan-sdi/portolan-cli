@@ -25,13 +25,13 @@ from portolan_cli.schema.import_ import (
 )
 
 __all__: list[str] = [
-    "export_schema_json",
-    "export_schema_csv",
-    "export_schema_parquet",
-    "import_schema_json",
-    "import_schema_csv",
-    "import_schema_parquet",
     "BreakingChange",
     "detect_breaking_changes",
+    "export_schema_csv",
+    "export_schema_json",
+    "export_schema_parquet",
+    "import_schema_csv",
+    "import_schema_json",
+    "import_schema_parquet",
     "is_breaking",
 ]

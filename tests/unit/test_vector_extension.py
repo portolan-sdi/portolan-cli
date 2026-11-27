@@ -8,6 +8,8 @@ Use experimental extensions, accept migration cost.
 
 from __future__ import annotations
 
+from typing import ClassVar
+
 import pystac
 import pytest
 
@@ -60,7 +62,7 @@ class TestAddVectorExtension:
         """Should preserve geometry_types when already a list."""
 
         class MockMetadata:
-            geometry_type = ["Polygon", "MultiPolygon"]
+            geometry_type: ClassVar[list[str]] = ["Polygon", "MultiPolygon"]
 
         add_vector_extension(sample_item, MockMetadata())
 
@@ -70,7 +72,7 @@ class TestAddVectorExtension:
         """Issue #1010: every declared type is kept once, in footer order."""
 
         class MockMetadata:
-            geometry_type = ["LineString", "MultiLineString", "LineString"]
+            geometry_type: ClassVar[list[str]] = ["LineString", "MultiLineString", "LineString"]
 
         add_vector_extension(sample_item, MockMetadata())
 
@@ -80,7 +82,7 @@ class TestAddVectorExtension:
         """GeoParquet reads an empty list as unknown, so no field is written."""
 
         class MockMetadata:
-            geometry_type: list[str] = []
+            geometry_type: ClassVar[list[str]] = []
 
         add_vector_extension(sample_item, MockMetadata())
 

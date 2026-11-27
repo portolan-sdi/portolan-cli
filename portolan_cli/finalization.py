@@ -437,7 +437,7 @@ def _read_wgs84_bbox(
 
     try:
         return state.memo("wgs84_bbox", path, _load) if state is not None else _load(path)
-    except Exception:  # noqa: BLE001 - an unreadable file contributes no footprint
+    except Exception:  # an unreadable file contributes no footprint
         logger.debug("Cannot read the footprint of %s", path, exc_info=True)
         return None
 
@@ -450,13 +450,13 @@ def _linked_items(collection: pystac.Collection) -> list[pystac.Item]:
     """
     try:
         return list(collection.get_items(recursive=True))
-    except Exception:  # noqa: BLE001 - fall back to resolving each link alone
+    except Exception:  # fall back to resolving each link alone
         logger.debug("Collection '%s' links an unreadable item", collection.id, exc_info=True)
     items: list[pystac.Item] = []
     for link in collection.get_links(pystac.RelType.ITEM):
         try:
             target = link.resolve_stac_object(root=collection.get_root()).target
-        except Exception:  # noqa: BLE001 - a dead link contributes no member
+        except Exception:  # a dead link contributes no member
             logger.debug("Skipping the dead item link %s", link.href)
             continue
         if isinstance(target, pystac.Item):

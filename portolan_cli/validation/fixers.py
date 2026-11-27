@@ -319,7 +319,7 @@ def _wgs84_bbox_from_asset(node: Node, asset: dict[str, Any]) -> list[float] | N
     try:
         extract = getattr(importlib.import_module(module_name), attribute)
         return _extract_bbox_wgs84(extract(path))
-    except Exception:  # noqa: BLE001 - any extractor failure is an honest skip
+    except Exception:  # any extractor failure is an honest skip
         return None
 
 
@@ -1006,7 +1006,7 @@ def repair_written_items(
     for key in POST_ITEM_WRITE_FIXERS:
         try:
             results.extend(FIXERS[key](root, dry_run, state))
-        except Exception as exc:  # noqa: BLE001 - one bad fixer must not strand the rest
+        except Exception as exc:  # one bad fixer must not strand the rest
             results.append(
                 FixResult(root, FixAction.SKIPPED, False, f"Fixer '{key}' failed: {exc}")
             )
@@ -1101,7 +1101,7 @@ def apply_fixers(
     for key in selected:
         try:
             outcome = FIXERS[key](root, dry_run, state)
-        except Exception as exc:  # noqa: BLE001 - one bad fixer must not strand the rest
+        except Exception as exc:  # one bad fixer must not strand the rest
             outcome = [FixResult(root, FixAction.SKIPPED, False, f"Fixer '{key}' failed: {exc}")]
         results.extend(outcome)
         if any(result.action in (FixAction.CREATED, FixAction.UPDATED) for result in outcome):

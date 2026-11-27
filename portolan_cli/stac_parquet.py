@@ -50,6 +50,8 @@ if TYPE_CHECKING:
 
     from portolan_core.run_state import RunState
 
+_MAX_HREFS_SHOWN = 5
+
 # Constants
 PARQUET_FILENAME = "items.parquet"
 PARQUET_MEDIA_TYPE = "application/vnd.apache.parquet"
@@ -138,9 +140,9 @@ def _load_item_dicts(collection_path: Path, owned: list[tuple[str, Path]]) -> li
 
     # Fail fast on stale links - items.parquet must be in sync with collection.json
     if missing_hrefs:
-        missing_list = ", ".join(missing_hrefs[:5])
-        if len(missing_hrefs) > 5:
-            missing_list += f" ... and {len(missing_hrefs) - 5} more"
+        missing_list = ", ".join(missing_hrefs[:_MAX_HREFS_SHOWN])
+        if len(missing_hrefs) > _MAX_HREFS_SHOWN:
+            missing_list += f" ... and {len(missing_hrefs) - _MAX_HREFS_SHOWN} more"
         raise ValueError(
             f"collection.json at {collection_path} has stale item links. "
             f"Missing items: {missing_list}"

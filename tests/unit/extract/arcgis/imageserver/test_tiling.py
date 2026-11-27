@@ -128,12 +128,16 @@ class TestComputeTileGrid:
         assert len(tiles) == 4
 
         # Row 0
-        assert tiles[0].x == 0 and tiles[0].y == 0
-        assert tiles[1].x == 1 and tiles[1].y == 0
+        assert tiles[0].x == 0
+        assert tiles[0].y == 0
+        assert tiles[1].x == 1
+        assert tiles[1].y == 0
 
         # Row 1
-        assert tiles[2].x == 0 and tiles[2].y == 1
-        assert tiles[3].x == 1 and tiles[3].y == 1
+        assert tiles[2].x == 0
+        assert tiles[2].y == 1
+        assert tiles[3].x == 1
+        assert tiles[3].y == 1
 
     @pytest.mark.unit
     def test_tile_bbox_values(self) -> None:

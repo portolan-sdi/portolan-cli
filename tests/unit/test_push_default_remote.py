@@ -446,7 +446,8 @@ class TestPushDefaultRemoteIntegration:
                         "current_version": "1.0.0",
                         "versions": [],
                     }
-                )
+                ),
+                encoding="utf-8",
             )
 
             # Push without destination - should use PORTOLAN_REMOTE env var

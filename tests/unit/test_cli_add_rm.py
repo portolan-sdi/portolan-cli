@@ -1347,7 +1347,7 @@ class TestSideStepExitAfterAdd:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """``--pmtiles`` without tippecanoe exits 1 and keeps the version of the add."""
-        import portolan_cli.viz.pmtiles as pmtiles
+        from portolan_cli.viz import pmtiles
 
         def missing_tippecanoe(*_args: object, **_kwargs: object) -> None:
             raise pmtiles.TippecanoeNotFoundError
@@ -1370,7 +1370,7 @@ class TestSideStepExitAfterAdd:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """A ``--stac-geoparquet`` failure still raises and keeps the version of the add."""
-        import portolan_cli.stac_parquet as stac_parquet
+        from portolan_cli import stac_parquet
 
         def broken_mirror(*_args: object, **_kwargs: object) -> None:
             raise RuntimeError("mirror broke")
@@ -1395,7 +1395,7 @@ class TestSideStepExitAfterAdd:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """An exception in the thumbnail step still raises and keeps the version of the add."""
-        import portolan_cli.collection_thumbnail as collection_thumbnail
+        from portolan_cli import collection_thumbnail
 
         def broken_thumbnails(*_args: object, **_kwargs: object) -> None:
             raise RuntimeError("thumbnail broke")
@@ -1448,7 +1448,7 @@ class TestBackendOfEachCollection:
 
     @staticmethod
     def _catalog(root: Path, parquet: Path, monkeypatch: pytest.MonkeyPatch) -> _RecordingBackend:
-        import portolan_cli.backends as backends
+        from portolan_cli import backends
         from portolan_cli.backends.json_file import JsonFileBackend
 
         fake = _RecordingBackend()

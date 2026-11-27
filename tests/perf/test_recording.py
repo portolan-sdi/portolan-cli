@@ -36,5 +36,5 @@ def test_record_rejects_failed_scenarios(
         }
 
     monkeypatch.setattr(gates, "measure", measure)
-    with pytest.raises(RuntimeError, match="add-one-collection.*failed"):
+    with pytest.raises(RuntimeError, match=r"add-one-collection.*failed"):
         gates._record("add-one-collection", tmp_path)

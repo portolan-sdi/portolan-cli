@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import shutil
 from pathlib import Path
+from typing import ClassVar
 
 import pyarrow.parquet as pq
 import pytest
@@ -291,7 +292,7 @@ class TestSameStemGeoParquetAndPMTiles:
     filesystem, so the pre-fix code loses the GeoParquet in some of them.
     """
 
-    _STEMS = [f"zone{i}" for i in range(8)]
+    _STEMS: ClassVar[list[str]] = [f"zone{i}" for i in range(8)]
 
     def _make_collections(self, catalog: Path, fixtures_dir: Path, sample_pmtiles: Path) -> None:
         parquet = fixtures_dir / "realdata" / "road-detections.parquet"
@@ -1030,7 +1031,9 @@ class TestNoConversionReplacesAForeignFile:
             }
             for i in range(count)
         ]
-        path.write_text(json.dumps({"type": "FeatureCollection", "features": features}))
+        path.write_text(
+            json.dumps({"type": "FeatureCollection", "features": features}), encoding="utf-8"
+        )
 
     @staticmethod
     def _tracked(collection_dir: Path) -> dict[str, dict[str, object]]:
@@ -1432,12 +1435,12 @@ class TestALegacyOutputIsItsSourceOwn:
         self, runner: CliRunner, initialized_catalog: Path
     ) -> None:
         """0.8.0 tracked the layer outputs of a GeoPackage, not the GeoPackage."""
-        import geopandas as gpd
+        import geopandas
         from shapely.geometry import Point
 
         def write(path: Path, count: int) -> None:
             path.unlink(missing_ok=True)
-            frame = gpd.GeoDataFrame(
+            frame = geopandas.GeoDataFrame(
                 {"i": list(range(count))},
                 geometry=[Point(i, i) for i in range(count)],
                 crs=4326,

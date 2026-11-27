@@ -180,7 +180,8 @@ class TestSetCatalogLogo:
         result = set_catalog_logo(tmp_path, source)
 
         assert result.media_type == SVG_MEDIA_TYPE
-        assert result.warnings and "svg" in result.warnings[0].lower()
+        assert result.warnings
+        assert "svg" in result.warnings[0].lower()
         assert _icon(tmp_path)["type"] == SVG_MEDIA_TYPE
 
     def test_rejects_unsupported_extension_without_touching_the_catalog(

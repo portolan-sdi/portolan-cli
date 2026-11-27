@@ -307,7 +307,7 @@ def _claims(plugin_name: str, handler: FormatHandler, path: Path) -> bool:
         return handler.claims(path)
     try:
         return handler.claims(path)
-    except Exception as err:  # noqa: BLE001 - one broken plugin must not stop the CLI
+    except Exception as err:  # one broken plugin must not stop the CLI
         from portolan_cli.plugins.manager import warn_hook_failure
 
         warn_hook_failure(plugin_name, f"{handler.name}.claims", err)

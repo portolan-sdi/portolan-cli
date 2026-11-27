@@ -292,7 +292,7 @@ class TestCollectionRootLinks:
 
         # Load collection
         collection_path = catalog_root / collection_id / "collection.json"
-        with open(collection_path) as f:
+        with open(collection_path, encoding="utf-8") as f:
             collection_data = json.load(f)
 
         # Count item links

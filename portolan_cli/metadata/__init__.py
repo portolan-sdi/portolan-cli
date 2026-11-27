@@ -98,48 +98,48 @@ if TYPE_CHECKING:
     )
 
 __all__ = [
-    # Extraction
-    "COGMetadata",
-    "FlatGeobufMetadata",
-    "GeoParquetMetadata",
-    "PMTilesMetadata",
-    "TabularMetadata",
-    "extract_cog_metadata",
-    "extract_flatgeobuf_metadata",
-    "extract_geoparquet_metadata",
-    "extract_pmtiles_metadata",
-    "RewriteFidelity",
-    "SpatialLayout",
-    "read_rewrite_fidelity",
-    "read_spatial_layout",
-    "extract_tabular_metadata",
     # Statistics
     "BandStatistics",
+    # Extraction
+    "COGMetadata",
     "ColumnStatistics",
-    "extract_band_statistics",
-    "extract_parquet_statistics",
-    # Detection
-    "StoredMetadata",
-    "check_file_metadata",
-    "compute_schema_fingerprint",
-    "detect_changes",
-    "get_current_metadata",
-    "get_stored_metadata",
-    "is_stale",
+    # Check models
+    "FileMetadataState",
     # Fix functions
     "FixAction",
     "FixReport",
     "FixResult",
-    "fix_metadata",
-    # Update functions
-    "prepare_missing_item",
-    "update_item_metadata",
-    "update_versions_tracking",
-    # Check models
-    "FileMetadataState",
+    "FlatGeobufMetadata",
+    "GeoParquetMetadata",
     "MetadataCheckResult",
     "MetadataReport",
     "MetadataStatus",
+    "PMTilesMetadata",
+    "RewriteFidelity",
+    "SpatialLayout",
+    # Detection
+    "StoredMetadata",
+    "TabularMetadata",
+    "check_file_metadata",
+    "compute_schema_fingerprint",
+    "detect_changes",
+    "extract_band_statistics",
+    "extract_cog_metadata",
+    "extract_flatgeobuf_metadata",
+    "extract_geoparquet_metadata",
+    "extract_parquet_statistics",
+    "extract_pmtiles_metadata",
+    "extract_tabular_metadata",
+    "fix_metadata",
+    "get_current_metadata",
+    "get_stored_metadata",
+    "is_stale",
+    # Update functions
+    "prepare_missing_item",
+    "read_rewrite_fidelity",
+    "read_spatial_layout",
+    "update_item_metadata",
+    "update_versions_tracking",
 ]
 
 # Python runs this file before any submodule. An eager re-export here makes

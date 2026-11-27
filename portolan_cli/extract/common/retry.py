@@ -38,6 +38,9 @@ from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+from http import HTTPStatus
+
+_STATUS_SERVER_ERROR_END = 600
 
 T = TypeVar("T")
 
@@ -59,7 +62,10 @@ def is_transient_status(code: object) -> bool:
         status = int(str(code))
     except ValueError:
         return False
-    return status in (408, 429) or 500 <= status < 600
+    return (
+        status in (HTTPStatus.REQUEST_TIMEOUT, HTTPStatus.TOO_MANY_REQUESTS)
+        or HTTPStatus.INTERNAL_SERVER_ERROR <= status < _STATUS_SERVER_ERROR_END
+    )
 
 
 def permanent_status(error: BaseException) -> str | None:

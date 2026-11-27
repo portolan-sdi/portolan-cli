@@ -52,7 +52,8 @@ class TestProgress:
         result = output.getvalue()
 
         # Should contain "2 of 7" or similar
-        assert "2" in result and "7" in result
+        assert "2" in result
+        assert "7" in result
 
     def test_progress_with_context(self) -> None:
         """Progress can include additional context."""
@@ -84,7 +85,7 @@ class TestProgress:
         assert "/very/long/path" not in result
 
     @pytest.mark.parametrize(
-        "current,total",
+        ("current", "total"),
         [
             (1, 1),
             (1, 100),

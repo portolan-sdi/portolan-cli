@@ -46,7 +46,7 @@ except SystemExit:
     pass
 from portolan_cli.plugins import manager
 print("PLUGIN_MODULES", sorted(m for m in sys.modules if m.startswith("fake_plugin")))
-print("MANAGER_BUILT", manager._manager is not None)
+print("MANAGER_BUILT", manager.get_plugin_manager.cache_info().currsize > 0)
 """
 
 
@@ -127,7 +127,7 @@ def test_validation_import_loads_no_heavy_dependency() -> None:
 
 def test_metadata_package_resolves_every_public_name() -> None:
     """Each name in `portolan_cli.metadata.__all__` resolves to its definition."""
-    import portolan_cli.metadata as metadata
+    from portolan_cli import metadata
 
     for name in metadata.__all__:
         value = getattr(metadata, name)

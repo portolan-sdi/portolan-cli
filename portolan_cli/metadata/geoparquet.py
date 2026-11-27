@@ -25,6 +25,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     import pyarrow as pa
+from portolan_core.bbox import BBOX_2D_LEN
 
 T = TypeVar("T")
 
@@ -231,7 +232,7 @@ def open_footer(path: Path) -> pq.ParquetFile | None:
     """
     try:
         return parquet_footer(path)
-    except Exception:  # noqa: BLE001 - an unreadable file has no footer to read
+    except Exception:  # an unreadable file has no footer to read
         return None
 
 
@@ -476,7 +477,7 @@ def _extract_bbox(column_meta: dict[str, Any]) -> tuple[float, float, float, flo
     logger = logging.getLogger(__name__)
 
     bbox = column_meta.get("bbox")
-    if bbox and len(bbox) >= 4:
+    if bbox and len(bbox) >= BBOX_2D_LEN:
         try:
             bbox_list = to_2d_bbox([float(value) for value in bbox])
         except (ValueError, TypeError):

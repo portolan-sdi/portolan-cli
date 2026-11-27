@@ -77,7 +77,7 @@ class CollectionStatus:
     def _parse_version(version: str) -> tuple[int, int, int]:
         """Parse semver string to comparable tuple."""
         try:
-            parts = version.split("-")[0].split("+")[0].split(".")
+            parts = version.split("-", maxsplit=1)[0].split("+", maxsplit=1)[0].split(".")
             return (int(parts[0]), int(parts[1]), int(parts[2]))
         except (IndexError, ValueError):
             return (0, 0, 0)

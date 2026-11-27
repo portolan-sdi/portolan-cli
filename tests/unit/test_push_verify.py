@@ -263,7 +263,7 @@ class TestVerifySkippedAssets:
 
         with (
             patch("portolan_cli.sync.push.obs.head_async", denied_head),
-            pytest.raises(PushVerifyError, match="test/a.parquet"),
+            pytest.raises(PushVerifyError, match=r"test/a.parquet"),
         ):
             self._run(MemoryStore(), data, data)
 
@@ -329,7 +329,7 @@ class TestPushAsyncVerify:
     @pytest.mark.unit
     def test_verify_with_matching_store_uploads_no_asset(self, tmp_path: Path) -> None:
         """When every object matches, the no-version path stays metadata only."""
-        root, store, good, _ = self._seeded(tmp_path, b"good bytes of version 1.0.5")
+        root, store, _good, _ = self._seeded(tmp_path, b"good bytes of version 1.0.5")
         puts: list[str] = []
         real_put = obs.put_async
 
@@ -420,7 +420,7 @@ class TestPushAsyncVerify:
         """A conflict stops the push before any HEAD request."""
         from portolan_cli.sync.push import PushConflictError
 
-        root, store, good, data = self._seeded(tmp_path, b"stale")
+        root, store, _good, data = self._seeded(tmp_path, b"stale")
         remote = dict(data)
         remote["versions"] = [*data["versions"], _snapshot("1.0.6", {"a.parquet": b"z"})]
         remote["current_version"] = "1.0.6"
@@ -754,7 +754,7 @@ class TestRepairSafety:
 
         with (
             patch("portolan_cli.sync.push.put_object_async") as upload,
-            pytest.raises(PushVerifyError, match="b.parquet.*checksum"),
+            pytest.raises(PushVerifyError, match=r"b.parquet.*checksum"),
         ):
             TestPushAsyncVerify._push(root, store, verify=True)
 

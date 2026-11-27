@@ -68,7 +68,7 @@ class TestConvertWorkflowIntegration:
         # Verify output is valid COG
         from rio_cogeo.cogeo import cog_validate
 
-        is_cog, errors, warnings = cog_validate(str(result.output))
+        is_cog, errors, _warnings = cog_validate(str(result.output))
         assert is_cog, f"Output not a valid COG: {errors}"
 
     def test_skip_already_cloud_native_parquet(

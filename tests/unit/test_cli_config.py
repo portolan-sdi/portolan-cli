@@ -45,7 +45,7 @@ class TestConfigSet:
             result = runner.invoke(cli, ["config", "set", "backend", "iceberg"])
 
             assert result.exit_code == 0
-            content = Path(".portolan/config.yaml").read_text()
+            content = Path(".portolan/config.yaml").read_text(encoding="utf-8")
             assert "iceberg" in content
 
     @pytest.mark.unit
@@ -87,7 +87,7 @@ class TestConfigSet:
             )
 
             assert result.exit_code == 0
-            content = Path(".portolan/config.yaml").read_text()
+            content = Path(".portolan/config.yaml").read_text(encoding="utf-8")
             assert "collections:" in content
             assert "demographics:" in content
 
@@ -383,7 +383,7 @@ class TestConfigUnset:
             result = runner.invoke(cli, ["config", "unset", "remote"])
 
             assert result.exit_code == 0
-            content = Path(".portolan/config.yaml").read_text()
+            content = Path(".portolan/config.yaml").read_text(encoding="utf-8")
             assert "s3://bucket/" not in content
 
     @pytest.mark.unit

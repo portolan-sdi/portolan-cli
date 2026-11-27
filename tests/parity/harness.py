@@ -111,7 +111,8 @@ def drop_path(data: Any, path: str) -> None:
 def _drop(node: Any, keys: list[str], path: str) -> None:
     key, *rest = keys
     if key == "*":
-        assert isinstance(node, list) and rest, f"ignore path {path!r}: '*' must select list items"
+        assert isinstance(node, list), f"ignore path {path!r}: '*' must select list items"
+        assert rest, f"ignore path {path!r}: '*' must select list items"
         for child in node:
             _drop(child, rest, path)
         return

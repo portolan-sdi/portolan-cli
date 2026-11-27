@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     from portolan_cli.extract.common.progress import ExtractionProgress, LayerProgressCallback
     from portolan_cli.extract.common.report import ExtractRunResult
     from portolan_core.errors import MissingLicenseError
+from portolan_core.bbox import BBOX_2D_LEN
 
 
 def parse_filter_patterns(pattern_str: str | None) -> list[str] | None:
@@ -182,7 +183,7 @@ def parse_extract_bbox(
     except ValueError as e:
         output_extract_error(use_json, "InvalidBBoxError", str(e), url, command=command)
         raise SystemExit(1) from None
-    if len(parts) != 4:
+    if len(parts) != BBOX_2D_LEN:
         output_extract_error(
             use_json,
             "InvalidBBoxError",

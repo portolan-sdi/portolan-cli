@@ -52,7 +52,8 @@ def _write_catalog_json(path: Path, catalog_id: str) -> None:
                 "description": f"Catalog: {catalog_id}",
                 "links": [],
             }
-        )
+        ),
+        encoding="utf-8",
     )
 
 

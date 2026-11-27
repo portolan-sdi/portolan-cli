@@ -1551,7 +1551,7 @@ class TestCompleteStyleSources:
         import json
 
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(style))
+        path.write_text(json.dumps(style), encoding="utf-8")
 
     @pytest.mark.unit
     def test_fills_missing_url_and_zoom(self, tmp_path: Path) -> None:

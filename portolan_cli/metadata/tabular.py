@@ -58,7 +58,7 @@ def extract_tabular_metadata(path: Path) -> TabularMetadata | None:
         return None
     try:
         parquet = parquet_footer(path)
-    except Exception:  # noqa: BLE001 - unreadable Parquet: the format checks own it
+    except Exception:  # unreadable Parquet: the format checks own it
         return None
     if read_geo_metadata(parquet) is not None:
         return None

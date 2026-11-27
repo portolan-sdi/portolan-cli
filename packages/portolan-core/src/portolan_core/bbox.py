@@ -25,6 +25,10 @@ LON_MAX = 180.0
 LAT_MIN = -90.0
 LAT_MAX = 90.0
 
+# Bbox lengths. 2D is [west, south, east, north]. 3D adds min and max elevation.
+BBOX_2D_LEN = 4
+BBOX_3D_LEN = 6
+
 # How far past a WGS84 bound a coordinate may sit and still count as that bound.
 # A whole-world extent rarely lands on exactly 180.0 after a reprojection or a
 # bbox union: the specification's own natural-earth-countries.parquet carries
@@ -66,7 +70,7 @@ def snap_to_wgs84_range(bbox: list[float]) -> list[float]:
 
 def _wgs84_bounds(length: int) -> list[tuple[float, float]]:
     """The lon/lat bound pairs for each position of a 4- or 6-element bbox."""
-    if length == 6:
+    if length == BBOX_3D_LEN:
         # Order: west, south, min elevation, east, north, max elevation.
         return [
             (LON_MIN, LON_MAX),
@@ -129,7 +133,7 @@ def to_2d_bbox(bbox: Sequence[float]) -> list[float]:
         nor 6 elements are passed through as ``list(bbox[:4])`` (their validity
         is the caller's concern; see :func:`is_valid_bbox`).
     """
-    if len(bbox) == 6:
+    if len(bbox) == BBOX_3D_LEN:
         return [bbox[0], bbox[1], bbox[3], bbox[4]]
     return list(bbox[:4])
 
@@ -297,7 +301,7 @@ def is_antimeridian_crossing(bbox: list[float]) -> bool:
     Returns:
         True if the bbox crosses the antimeridian.
     """
-    if len(bbox) < 4:
+    if len(bbox) < BBOX_2D_LEN:
         return False
     reduced = to_2d_bbox(bbox)
     west, east = reduced[0], reduced[2]

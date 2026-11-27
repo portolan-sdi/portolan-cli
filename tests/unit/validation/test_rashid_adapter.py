@@ -60,7 +60,7 @@ class TestLoadRulesConfig:
                 "check": {"disabled": ["PTL-TMP-001"]},
             },
         )
-        with pytest.warns(DeprecationWarning):
+        with pytest.warns(DeprecationWarning, match=r"is ignored"):
             config = load_rules_config(tmp_path)
         assert config.disabled == frozenset({"PTL-TMP-001"})
 
@@ -111,7 +111,7 @@ class TestLiveBaseUrl:
         nested = tmp_path / "roads"
         nested.mkdir()
         with pytest.raises(
-            InvalidLiveUrlError, match="Set publish.public_url to a valid https URL"
+            InvalidLiveUrlError, match=r"Set publish.public_url to a valid https URL"
         ):
             validate_live_base_url(nested, None)
 

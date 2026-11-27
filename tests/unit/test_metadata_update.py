@@ -81,14 +81,16 @@ def _raster_item(root: Path, source: Path) -> tuple[Path, Path]:
 
 def _record_bands(item_path: Path, bands: list[dict[str, Any]]) -> None:
     """Write `bands` onto the item's data asset, as a previous `add` would have."""
-    item_json = json.loads(item_path.read_text())
+    item_json = json.loads(item_path.read_text(encoding="utf-8"))
     item_json["assets"]["data"]["bands"] = bands
-    item_path.write_text(json.dumps(item_json, indent=2))
+    item_path.write_text(json.dumps(item_json, indent=2), encoding="utf-8")
 
 
 def _read_bands(item_path: Path) -> list[dict[str, Any]]:
     """The data asset's bands array as it stands on disk."""
-    bands: list[dict[str, Any]] = json.loads(item_path.read_text())["assets"]["data"]["bands"]
+    bands: list[dict[str, Any]] = json.loads(item_path.read_text(encoding="utf-8"))["assets"][
+        "data"
+    ]["bands"]
     return bands
 
 

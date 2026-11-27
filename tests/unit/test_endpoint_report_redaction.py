@@ -19,7 +19,8 @@ def test_the_endpoint_line_holds_no_credential(monkeypatch: pytest.MonkeyPatch) 
         None, None, report=lambda level, text: lines.append((level, text))
     )
 
-    assert endpoint is not None and "hunter2" in endpoint  # The store still gets the real URL.
+    assert endpoint is not None
+    assert "hunter2" in endpoint
     assert len(lines) == 1
     assert "hunter2" not in lines[0][1]
     assert "private" not in lines[0][1]

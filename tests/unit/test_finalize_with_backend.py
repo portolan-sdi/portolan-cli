@@ -59,7 +59,7 @@ def _make_item(
     """
     item_dir = tmp_path / collection_id
     if not is_collection_level:
-        item_dir = item_dir / item_id
+        item_dir /= item_id
     item_dir.mkdir(parents=True, exist_ok=True)
     asset_path = item_dir / filename
     asset_path.write_bytes(b"fake data")

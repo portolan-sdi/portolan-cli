@@ -35,13 +35,15 @@ MODES = {
 
 def _shapefiles(directory: Path, names: list[str]) -> None:
     """Write one Latin-1 shapefile with no .cpg sidecar for each name."""
-    import geopandas as gpd
+    import geopandas
     from shapely.geometry import Point
 
     directory.mkdir(parents=True, exist_ok=True)
     for name in names:
         shp = directory / f"{name}.shp"
-        frame = gpd.GeoDataFrame({"name": ["Zürich"]}, geometry=[Point(8.5, 47.4)], crs="EPSG:4326")
+        frame = geopandas.GeoDataFrame(
+            {"name": ["Zürich"]}, geometry=[Point(8.5, 47.4)], crs="EPSG:4326"
+        )
         frame.to_file(shp, encoding="latin1")
         shp.with_suffix(".cpg").unlink(missing_ok=True)
 

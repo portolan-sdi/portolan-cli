@@ -409,7 +409,7 @@ class TestPmtilesCoordinateTransformation:
         if not pmtiles_path.exists():
             pytest.skip("PMTiles fixture not available")
 
-        geometries, bounds = _read_pmtiles_geometries(pmtiles_path)
+        _geometries, bounds = _read_pmtiles_geometries(pmtiles_path)
 
         # May have no geometries at low zoom, that's ok
         if bounds is not None:

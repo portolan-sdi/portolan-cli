@@ -57,7 +57,7 @@ def nested_catalog(tmp_path: Path) -> Path:
             "keywords: [buildings, footprints, open data]\n",
             encoding="utf-8",
         )
-        level = level / f"level{depth + 1}"
+        level /= f"level{depth + 1}"
     return tmp_path
 
 

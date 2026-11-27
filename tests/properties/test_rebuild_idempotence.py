@@ -90,7 +90,7 @@ def append_rows(path: Path) -> None:
     for row in moved:
         box = row["bbox"]
         row["bbox"] = {k: v + 1.0 for k, v in box.items()}
-        row["id"] = row["id"] + 1000
+        row["id"] += 1000
         # The WKB point: byte order, type, then x and y as doubles.
         x, y = _point(row["geometry"])
         row["geometry"] = _wkb_point(x + 1.0, y + 1.0)

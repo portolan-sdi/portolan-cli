@@ -144,7 +144,7 @@ def s3_bucket(moto_server: str) -> Generator[tuple[str, str], None, None]:
         region_name="us-east-1",
     )
     client.create_bucket(Bucket=bucket_name)
-    yield bucket_name, moto_server
+    return bucket_name, moto_server
 
 
 # =============================================================================
@@ -996,7 +996,7 @@ class TestCorruptionRecovery:
         }
         versions_path.write_text(json.dumps(bad_data))
 
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match=r"Invalid versions\.json"):
             read_versions(versions_path)
 
     @pytest.mark.integration

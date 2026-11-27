@@ -25,6 +25,8 @@ if TYPE_CHECKING:
 
     from portolan_core.config import ConfigSource
 
+_RASTER_MIN_PATH_PARTS = 3
+
 # Pattern for valid collection IDs (supports path syntax):
 # - Start with lowercase letter or number (year-based organization like 2020/)
 # - Followed by lowercase letters, numbers, hyphens, underscores, or forward slashes
@@ -159,15 +161,13 @@ def normalize_collection_id(collection_id: str) -> str:
     # But hyphens/underscores at start still need fixing
     segments = result.split("/")
     fixed_segments = []
-    for segment in segments:
+    for raw_segment in segments:
         # Strip hyphens from segment boundaries
-        segment = segment.strip("-")
+        segment = raw_segment.strip("-")
         if segment:  # Skip empty segments
             # Prefix with 'n' if starts with non-alphanumeric (e.g., underscore)
             # Numbers are now valid at start, so only check isalnum()
-            if segment and not segment[0].isalnum():
-                segment = f"n{segment}"
-            fixed_segments.append(segment)
+            fixed_segments.append(segment if segment[0].isalnum() else f"n{segment}")
 
     if not fixed_segments:
         raise CollectionIdError(
@@ -295,7 +295,7 @@ def infer_nested_collection_id(
     if is_raster:
         # Raster files need item subdirectory: collection/item/data.tif
         # Minimum depth: 3 parts (collection, item_dir, filename)
-        if len(parts) < 3:
+        if len(parts) < _RASTER_MIN_PATH_PARTS:
             raise ValueError(
                 f"Raster file {path} must be in a subdirectory (collection/item/). "
                 f"Raster data requires item-level organization."

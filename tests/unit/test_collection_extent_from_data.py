@@ -11,6 +11,7 @@ which report the tighter, correct box.
 
 from __future__ import annotations
 
+import math
 from typing import TYPE_CHECKING
 
 import pytest
@@ -21,7 +22,7 @@ from portolan_cli.preparation import _extract_bbox_wgs84
 if TYPE_CHECKING:
     from pathlib import Path
 
-    import geopandas as gpd
+    import geopandas
 
 pytestmark = pytest.mark.unit
 
@@ -33,14 +34,14 @@ def _write_diamond(
     path: Path,
     crs: str = UTM30N,
     geometry_column: str = "geometry",
-) -> gpd.GeoDataFrame:
+) -> geopandas.GeoDataFrame:
     """A diamond whose bbox corners hold no data — the shape the bug overstates."""
-    import geopandas as gpd
+    import geopandas
     from shapely.geometry import Polygon
 
     # Spans ~200 km, centred on Extremadura; the bbox corners sit far outside it.
     diamond = Polygon([(600000, 4300000), (700000, 4400000), (600000, 4500000), (500000, 4400000)])
-    gdf = gpd.GeoDataFrame({"name": ["diamond"]}, geometry=[diamond], crs=crs)
+    gdf = geopandas.GeoDataFrame({"name": ["diamond"]}, geometry=[diamond], crs=crs)
     if geometry_column != "geometry":
         gdf = gdf.rename_geometry(geometry_column)
     gdf.to_parquet(path)
@@ -89,19 +90,19 @@ class TestMeasureWgs84Bbox:
 
     def test_null_geometries_are_skipped(self, tmp_path: Path) -> None:
         """NULL geometry is legal in GeoParquet and must not poison the extent."""
-        import geopandas as gpd
+        import geopandas
         from shapely.geometry import Polygon
 
         path = tmp_path / "with_nulls.parquet"
         diamond = Polygon(
             [(600000, 4300000), (700000, 4400000), (600000, 4500000), (500000, 4400000)]
         )
-        gdf = gpd.GeoDataFrame({"name": ["a", "b"]}, geometry=[diamond, None], crs=UTM30N)
+        gdf = geopandas.GeoDataFrame({"name": ["a", "b"]}, geometry=[diamond, None], crs=UTM30N)
         gdf.to_parquet(path)
 
         measured = measure_wgs84_bbox(path, "geometry", UTM30N)
         assert measured is not None
-        assert all(v == v for v in measured)  # no NaN
+        assert all(not math.isnan(v) for v in measured)  # no NaN
 
     def test_returns_none_for_wgs84_source(self, tmp_path: Path) -> None:
         """Already WGS84: the stored bbox is the answer, nothing to measure."""
@@ -159,13 +160,13 @@ class TestAntimeridian:
 
     def test_crossing_extent_keeps_west_greater_than_east(self, tmp_path: Path) -> None:
         """RFC 7946 writes a crossing bbox as west > east."""
-        import geopandas as gpd
+        import geopandas
         from shapely.geometry import Point
 
         path = tmp_path / "antimeridian.parquet"
         # Either side of 180: about 178.7E and 177.7W.
         points = [Point(3.2e6, -1.0e5), Point(3.6e6, 1.0e5)]
-        gpd.GeoDataFrame({"n": [1, 2]}, geometry=points, crs=self.PDC).to_parquet(path)
+        geopandas.GeoDataFrame({"n": [1, 2]}, geometry=points, crs=self.PDC).to_parquet(path)
 
         measured = measure_wgs84_bbox(path, "geometry", self.PDC)
         assert measured is not None
@@ -176,12 +177,12 @@ class TestAntimeridian:
 
     def test_crossing_extent_agrees_with_the_bbox_transform(self, tmp_path: Path) -> None:
         """The measurement must not contradict the fallback on the same data."""
-        import geopandas as gpd
+        import geopandas
         from shapely.geometry import Point
 
         path = tmp_path / "antimeridian.parquet"
         points = [Point(3.2e6, -1.0e5), Point(3.6e6, 1.0e5)]
-        gdf = gpd.GeoDataFrame({"n": [1, 2]}, geometry=points, crs=self.PDC)
+        gdf = geopandas.GeoDataFrame({"n": [1, 2]}, geometry=points, crs=self.PDC)
         gdf.to_parquet(path)
 
         measured = measure_wgs84_bbox(path, "geometry", self.PDC)
@@ -195,7 +196,8 @@ class TestAntimeridian:
 
         measured = measure_wgs84_bbox(path, "geometry", UTM30N)
         assert measured == pytest.approx(tuple(gdf.to_crs("EPSG:4326").total_bounds), abs=1e-9)
-        assert measured is not None and measured[0] < measured[2]
+        assert measured is not None
+        assert measured[0] < measured[2]
 
 
 class TestTransformerFailureFallsBack:

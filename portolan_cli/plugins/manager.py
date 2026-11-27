@@ -58,8 +58,6 @@ _BUILTIN_MODULES = {
 # group holds third-party backends, so a hook plugin wins a name over it.
 _TRAILING_BUILTINS = frozenset({f"{BUILTIN_PREFIX}legacy_backends"})
 
-_manager: pluggy.PluginManager | None = None
-
 
 class PluginWarning(UserWarning):
     """A plugin misbehaved. The CLI keeps running without its contribution."""
@@ -199,7 +197,7 @@ def _register_outside_plugins(pm: pluggy.PluginManager) -> None:
             continue
         try:
             plugin = ep.load()
-        except Exception as err:  # noqa: BLE001 - any import failure skips the plugin
+        except Exception as err:  # any import failure skips the plugin
             _warn(f"Plugin '{ep.name}' from {_describe(ep)} did not load: {err}")
             continue
         try:
@@ -225,16 +223,13 @@ def _drop_plugins_with_unknown_hooks(pm: pluggy.PluginManager) -> None:
             return
 
 
+@functools.cache
 def get_plugin_manager() -> pluggy.PluginManager:
     """Return the plugin manager. Build it on the first call.
 
     Returns:
         The cached manager with built-in and enabled outside plugins.
     """
-    global _manager
-    if _manager is not None:
-        return _manager
-
     pm = pluggy.PluginManager(hookspecs.PROJECT_NAME)
     pm.add_hookspecs(hookspecs)
     for name, module_name in _BUILTIN_MODULES.items():
@@ -242,7 +237,6 @@ def get_plugin_manager() -> pluggy.PluginManager:
     _warn_unknown_requested_names()
     _register_outside_plugins(pm)
     _drop_plugins_with_unknown_hooks(pm)
-    _manager = pm
     return pm
 
 
@@ -265,7 +259,7 @@ def call_each(hook_name: str, **kwargs: Any) -> list[tuple[str, Any]]:
     for plugin_name, call in hook_calls(hook_name):
         try:
             result = call(**kwargs)
-        except Exception as err:  # noqa: BLE001 - one broken plugin must not stop the CLI
+        except Exception as err:  # one broken plugin must not stop the CLI
             warn_hook_failure(plugin_name, hook_name, err)
             continue
         if result is not None:
@@ -330,6 +324,5 @@ def warn_hook_failure(plugin_name: str, hook_name: str, err: Exception) -> None:
 
 def reset_plugin_manager() -> None:
     """Drop the cached manager and entry points. The next call reads them again."""
-    global _manager
-    _manager = None
+    get_plugin_manager.cache_clear()
     _scan.cache_clear()

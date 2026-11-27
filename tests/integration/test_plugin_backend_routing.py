@@ -351,9 +351,14 @@ def test_plugin_owned_run_exception_commits_nothing(
     root = conformant_catalog
     _backend(root, "imagery", "recording")
     item = _raster(root, fixtures_dir)
-    with pytest.raises(RuntimeError, match="after add"), owned_run(root) as state:
-        add_files(paths=[item], catalog_root=root, state=state)
-        raise RuntimeError("after add")
+
+    def fail_after_add() -> None:
+        with owned_run(root) as state:
+            add_files(paths=[item], catalog_root=root, state=state)
+            raise RuntimeError("after add")
+
+    with pytest.raises(RuntimeError, match="after add"):
+        fail_after_add()
     assert recording.publishes == []
     assert recording.hooks == []
 

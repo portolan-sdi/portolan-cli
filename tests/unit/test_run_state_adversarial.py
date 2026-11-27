@@ -117,7 +117,7 @@ def test_memo_loader_can_reenter_same_key(tmp_path: Path) -> None:
 
     def inner(file: Path) -> str:
         loads.append(file)
-        return file.read_text()
+        return file.read_text(encoding="utf-8")
 
     def outer(file: Path) -> str:
         return state.memo("value", file, inner)

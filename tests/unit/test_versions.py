@@ -168,7 +168,7 @@ class TestReadVersions:
         versions_path = tmp_path / "versions.json"
         versions_path.write_text(json.dumps({"wrong": "schema"}))
 
-        with pytest.raises(ValueError, match="Invalid versions.json schema"):
+        with pytest.raises(ValueError, match=r"Invalid versions.json schema"):
             read_versions(versions_path)
 
 
@@ -1041,18 +1041,18 @@ class TestEdgeCases:
         backend = JsonFileBackend(catalog_root=tmp_path)
 
         # Empty string should raise ValueError
-        with pytest.raises(ValueError, match="[Ee]mpty|[Ii]nvalid"):
+        with pytest.raises(ValueError, match=r"[Ee]mpty|[Ii]nvalid"):
             backend.get_current_version("")
 
         # Whitespace-only should raise ValueError
-        with pytest.raises(ValueError, match="[Ee]mpty|[Ii]nvalid"):
+        with pytest.raises(ValueError, match=r"[Ee]mpty|[Ii]nvalid"):
             backend.get_current_version("   ")
 
         # Path traversal attempts should raise ValueError
-        with pytest.raises(ValueError, match="[Ii]nvalid"):
+        with pytest.raises(ValueError, match=r"[Ii]nvalid"):
             backend.get_current_version("..")
 
-        with pytest.raises(ValueError, match="[Ii]nvalid"):
+        with pytest.raises(ValueError, match=r"[Ii]nvalid"):
             backend.get_current_version(".")
 
     @pytest.mark.unit
@@ -1089,7 +1089,7 @@ class TestCorruptedVersionsJson:
         versions_path = tmp_path / "versions.json"
         versions_path.write_text(json.dumps(data))
 
-        with pytest.raises(ValueError, match="Invalid versions.json schema"):
+        with pytest.raises(ValueError, match=r"Invalid versions.json schema"):
             read_versions(versions_path)
 
     @pytest.mark.unit
@@ -1116,7 +1116,7 @@ class TestCorruptedVersionsJson:
         versions_path = tmp_path / "versions.json"
         versions_path.write_text(json.dumps(data))
 
-        with pytest.raises(ValueError, match="Invalid versions.json schema"):
+        with pytest.raises(ValueError, match=r"Invalid versions.json schema"):
             read_versions(versions_path)
 
 

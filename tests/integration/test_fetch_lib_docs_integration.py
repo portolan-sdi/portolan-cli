@@ -136,7 +136,7 @@ class TestHookEndToEnd:
         import sys
         from io import StringIO
 
-        import scripts.fetch_lib_docs as fetch_lib_docs
+        from scripts import fetch_lib_docs
 
         session_id = "test-e2e-main"
         cache_path = Path(tempfile.gettempdir()) / f"claude-libdocs-fetched-{session_id}"
@@ -177,7 +177,7 @@ class TestHookEndToEnd:
         import sys
         from io import StringIO
 
-        import scripts.fetch_lib_docs as fetch_lib_docs
+        from scripts import fetch_lib_docs
 
         # Use monkeypatch for exception-safe stdin/stdout replacement
         captured_output = StringIO()

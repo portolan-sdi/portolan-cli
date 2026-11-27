@@ -12,7 +12,7 @@ import json
 import os
 from pathlib import Path
 
-import geopandas as gpd
+import geopandas
 import pytest
 from click.testing import CliRunner
 from shapely.geometry import Point
@@ -50,7 +50,7 @@ def catalog_with_3857_geoparquet(tmp_path: Path) -> tuple[Path, Path, Path]:
     collection_dir.mkdir(parents=True)
 
     # Create a simple GeoDataFrame in EPSG:3857 (Web Mercator)
-    gdf = gpd.GeoDataFrame(
+    gdf = geopandas.GeoDataFrame(
         {"name": ["point1", "point2"]},
         geometry=[
             Point(-8238310, 4970072),  # ~NYC in EPSG:3857
@@ -81,7 +81,7 @@ class TestCRSChangeDetection:
         catalog_root, collection_dir, parquet_path = catalog_with_3857_geoparquet
 
         # Add the file initially
-        added, skipped, failures = add_files(
+        added, _skipped, failures = add_files(
             paths=[parquet_path],
             catalog_root=catalog_root,
         )
@@ -94,7 +94,7 @@ class TestCRSChangeDetection:
         assert is_current(parquet_path, versions_path), "File should be current after add"
 
         # Simulate external reprojection: read, reproject, overwrite
-        gdf = gpd.read_parquet(parquet_path)
+        gdf = geopandas.read_parquet(parquet_path)
         assert gdf.crs.to_epsg() == 3857, f"Expected EPSG:3857, got {gdf.crs}"
 
         # Capture original mtime before reprojection
@@ -112,7 +112,7 @@ class TestCRSChangeDetection:
         os.utime(parquet_path, (orig_mtime, orig_mtime))
 
         # Verify CRS actually changed in file
-        gdf_check = gpd.read_parquet(parquet_path)
+        gdf_check = geopandas.read_parquet(parquet_path)
         assert gdf_check.crs.to_epsg() == 4326, "File should now be EPSG:4326"
 
         # THE KEY TEST: is_current() should return False (file changed)
@@ -135,10 +135,10 @@ class TestCRSChangeDetection:
         so proj:epsg/proj:code won't appear in collection.json for collection-level
         GeoParquet assets. That's a potential enhancement for a future issue.
         """
-        catalog_root, collection_dir, parquet_path = catalog_with_3857_geoparquet
+        catalog_root, _collection_dir, parquet_path = catalog_with_3857_geoparquet
 
         # Add the collection-level file
-        added, skipped, failures = add_files(
+        added, _skipped, _failures = add_files(
             paths=[parquet_path],
             catalog_root=catalog_root,
         )
@@ -146,7 +146,7 @@ class TestCRSChangeDetection:
 
         # Reproject the file
         orig_mtime = Path(parquet_path).stat().st_mtime
-        gdf = gpd.read_parquet(parquet_path)
+        gdf = geopandas.read_parquet(parquet_path)
         gdf_4326 = gdf.to_crs("EPSG:4326")
         gdf_4326.to_parquet(parquet_path)
         os.utime(parquet_path, (orig_mtime, orig_mtime))  # Force mtime within tolerance
@@ -189,7 +189,7 @@ class TestCRSChangeDetection:
 
         # Reproject the file
         orig_mtime = Path(parquet_path).stat().st_mtime
-        gdf = gpd.read_parquet(parquet_path)
+        gdf = geopandas.read_parquet(parquet_path)
         gdf_4326 = gdf.to_crs("EPSG:4326")
         gdf_4326.to_parquet(parquet_path)
         os.utime(parquet_path, (orig_mtime, orig_mtime))  # Force mtime within tolerance

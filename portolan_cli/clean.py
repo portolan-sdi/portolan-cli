@@ -136,7 +136,7 @@ def remove_empty_directories(catalog_root: Path, removed_files: list[Path]) -> l
     parent_dirs = set()
     for file_path in removed_files:
         parent = file_path.parent
-        while parent != catalog_root and parent != catalog_root.parent:
+        while parent not in (catalog_root, catalog_root.parent):
             parent_dirs.add(parent)
             parent = parent.parent
 

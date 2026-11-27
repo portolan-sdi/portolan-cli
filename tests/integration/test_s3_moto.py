@@ -32,7 +32,7 @@ if TYPE_CHECKING:
 @pytest.fixture
 def catalog_with_data(tmp_path: Path, s3_bucket: tuple[str, str]) -> Path:
     """Create a local catalog with test data."""
-    bucket_name, endpoint_url = s3_bucket
+    bucket_name, _endpoint_url = s3_bucket
 
     catalog_dir = tmp_path / "catalog"
     catalog_dir.mkdir()
@@ -115,7 +115,7 @@ def catalog_with_data(tmp_path: Path, s3_bucket: tuple[str, str]) -> Path:
 @pytest.fixture
 def nested_catalog_with_data(tmp_path: Path, s3_bucket: tuple[str, str]) -> Path:
     """A nested catalog with intermediate catalog.json files (Issue #547, #552)."""
-    bucket_name, endpoint_url = s3_bucket
+    bucket_name, _endpoint_url = s3_bucket
 
     catalog_dir = tmp_path / "catalog"
     (catalog_dir / ".portolan").mkdir(parents=True)
@@ -134,7 +134,8 @@ def nested_catalog_with_data(tmp_path: Path, s3_bucket: tuple[str, str]) -> Path
                     "description": f"Catalog: {catalog_id}",
                     "links": [],
                 }
-            )
+            ),
+            encoding="utf-8",
         )
 
     _catalog_json(catalog_dir / "catalog.json", "root")
@@ -198,11 +199,11 @@ class TestPushS3Integration:
     """Integration tests for push to S3 using moto server."""
 
     @pytest.mark.integration
+    @pytest.mark.usefixtures("_aws_env")
     def test_push_uploads_files_to_s3(
         self,
         s3_bucket: tuple[str, str],
         catalog_with_data: Path,
-        _aws_env: None,
     ) -> None:
         """Push should upload files to the S3 bucket."""
         bucket_name, endpoint_url = s3_bucket
@@ -234,14 +235,14 @@ class TestPushS3Integration:
         assert any("data.parquet" in key for key in uploaded_keys)
 
     @pytest.mark.integration
+    @pytest.mark.usefixtures("_aws_env")
     def test_push_incremental_only_uploads_new_files(
         self,
         s3_bucket: tuple[str, str],
         catalog_with_data: Path,
-        _aws_env: None,
     ) -> None:
         """Issue #329: Push should only upload new/changed files."""
-        bucket_name, endpoint_url = s3_bucket
+        bucket_name, _endpoint_url = s3_bucket
 
         from portolan_cli.sync.push import push
 
@@ -305,11 +306,11 @@ class TestPushS3Integration:
         )
 
     @pytest.mark.integration
+    @pytest.mark.usefixtures("_aws_env")
     def test_push_restores_bytes_of_an_older_version_on_s3(
         self,
         s3_bucket: tuple[str, str],
         catalog_with_data: Path,
-        _aws_env: None,
     ) -> None:
         """Issue #962: bytes A, then B, then A again. The store must hold A.
 
@@ -381,11 +382,11 @@ class TestPushS3Integration:
         assert stored == bytes_a
 
     @pytest.mark.integration
+    @pytest.mark.usefixtures("_aws_env")
     def test_force_push_without_new_versions_restores_bytes_on_s3(
         self,
         s3_bucket: tuple[str, str],
         catalog_with_data: Path,
-        _aws_env: None,
     ) -> None:
         """Issue #962: a force push with no new local version must upload A.
 
@@ -454,11 +455,11 @@ class TestPushS3Integration:
         assert stored == bytes_a
 
     @pytest.mark.integration
+    @pytest.mark.usefixtures("_aws_env")
     def test_verify_push_repairs_a_damaged_object_without_new_version(
         self,
         s3_bucket: tuple[str, str],
         catalog_with_data: Path,
-        _aws_env: None,
         fault_store: PutFaults,
     ) -> None:
         """Issue #966: `push --verify` repairs an object that disagrees with the manifest.
@@ -573,11 +574,11 @@ class TestPushS3Integration:
             )
 
     @pytest.mark.integration
+    @pytest.mark.usefixtures("_aws_env")
     def test_push_uploads_intermediate_catalogs_to_s3(
         self,
         s3_bucket: tuple[str, str],
         nested_catalog_with_data: Path,
-        _aws_env: None,
     ) -> None:
         """Issue #547/#552: catalog-wide push lands intermediate catalog.json in the bucket.
 
@@ -617,11 +618,11 @@ class TestPushS3Integration:
         assert "catalog/tst/latest/adm1/collection.json" in uploaded_keys, uploaded_keys
 
     @pytest.mark.integration
+    @pytest.mark.usefixtures("_aws_env")
     def test_single_collection_push_uploads_intermediate_catalogs_to_s3(
         self,
         s3_bucket: tuple[str, str],
         nested_catalog_with_data: Path,
-        _aws_env: None,
     ) -> None:
         """Issue #547/#552: the SINGLE-collection push path also lands intermediates.
 
@@ -659,11 +660,11 @@ class TestPushS3Integration:
         assert "catalog/tst/latest/adm0/collection.json" in uploaded_keys, uploaded_keys
 
     @pytest.mark.integration
+    @pytest.mark.usefixtures("_aws_env")
     def test_force_refreshes_regenerated_collection_json_on_s3(
         self,
         s3_bucket: tuple[str, str],
         nested_catalog_with_data: Path,
-        _aws_env: None,
     ) -> None:
         """Issue #496: --force re-uploads regenerated metadata with NO version delta.
 
@@ -746,14 +747,14 @@ class TestPullS3Integration:
     """Integration tests for pull from S3 using moto server."""
 
     @pytest.mark.integration
+    @pytest.mark.usefixtures("_aws_env")
     def test_pull_downloads_files_from_s3(
         self,
         s3_bucket: tuple[str, str],
         catalog_with_data: Path,
-        _aws_env: None,
     ) -> None:
         """Pull should download files from S3."""
-        bucket_name, endpoint_url = s3_bucket
+        bucket_name, _endpoint_url = s3_bucket
 
         from portolan_cli.sync.pull import pull
         from portolan_cli.sync.push import push
@@ -801,14 +802,14 @@ class TestRestoreS3Integration:
     """Integration tests for --restore flag with S3."""
 
     @pytest.mark.integration
+    @pytest.mark.usefixtures("_aws_env")
     def test_restore_redownloads_missing_files(
         self,
         s3_bucket: tuple[str, str],
         catalog_with_data: Path,
-        _aws_env: None,
     ) -> None:
         """Issue #325: --restore should re-download missing local files."""
-        bucket_name, endpoint_url = s3_bucket
+        bucket_name, _endpoint_url = s3_bucket
 
         from portolan_cli.sync.pull import pull
         from portolan_cli.sync.push import push

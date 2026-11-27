@@ -20,7 +20,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
-@pytest.fixture()
+@pytest.fixture
 def runner() -> CliRunner:
     """Create a Click test runner."""
     return CliRunner()
@@ -112,7 +112,7 @@ def _create_item(
     )
 
 
-@pytest.fixture()
+@pytest.fixture
 def multi_asset_catalog(tmp_path: Path) -> Path:
     """Create a catalog with multiple collections, items, and assets.
 

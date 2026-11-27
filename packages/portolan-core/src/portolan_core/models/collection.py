@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
+from portolan_core.bbox import BBOX_3D_LEN, LAT_MAX, LAT_MIN, LON_MAX, LON_MIN
 from portolan_core.models._stac_version import get_stac_version
 from portolan_core.models.catalog import Link
 
@@ -71,17 +72,17 @@ class SpatialExtent:
             # A 6-element bbox is [west, south, min_z, east, north, max_z], so
             # east/north are at indices 3/4, not 2/3 (issue #592).
             west, south = box[0], box[1]
-            if len(box) == 6:
+            if len(box) == BBOX_3D_LEN:
                 east, north = box[3], box[4]
             else:
                 east, north = box[2], box[3]
 
             # Validate longitude range
-            if west < -180 or west > 180 or east < -180 or east > 180:
+            if west < LON_MIN or west > LON_MAX or east < LON_MIN or east > LON_MAX:
                 raise ValueError(f"longitude must be in [-180, 180], got west={west}, east={east}")
 
             # Validate latitude range
-            if south < -90 or south > 90 or north < -90 or north > 90:
+            if south < LAT_MIN or south > LAT_MAX or north < LAT_MIN or north > LAT_MAX:
                 raise ValueError(f"latitude must be in [-90, 90], got south={south}, north={north}")
 
             # Validate south <= north (latitude ordering must be correct)

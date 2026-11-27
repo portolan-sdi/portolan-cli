@@ -97,11 +97,11 @@ class TestSchemaJsonRoundtrip:
         # Simulate edit: add description and unit
         import json
 
-        with open(json_path) as f:
+        with open(json_path, encoding="utf-8") as f:
             data = json.load(f)
         data["columns"][0]["description"] = "Total population count"
         data["columns"][0]["unit"] = "people"
-        with open(json_path, "w") as f:
+        with open(json_path, "w", encoding="utf-8") as f:
             json.dump(data, f)
 
         # Import edited schema
@@ -220,10 +220,10 @@ class TestBreakingChangeWorkflow:
         # Simulate breaking edit: change type
         import json
 
-        with open(json_path) as f:
+        with open(json_path, encoding="utf-8") as f:
             data = json.load(f)
         data["columns"][0]["type"] = "string"  # Breaking change!
-        with open(json_path, "w") as f:
+        with open(json_path, "w", encoding="utf-8") as f:
             json.dump(data, f)
 
         # Import edited schema
@@ -254,10 +254,10 @@ class TestBreakingChangeWorkflow:
         # Simulate breaking edit: remove column
         import json
 
-        with open(json_path) as f:
+        with open(json_path, encoding="utf-8") as f:
             data = json.load(f)
         data["columns"] = [data["columns"][0]]  # Remove column b
-        with open(json_path, "w") as f:
+        with open(json_path, "w", encoding="utf-8") as f:
             json.dump(data, f)
 
         # Import edited schema

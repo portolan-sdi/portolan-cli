@@ -18,6 +18,10 @@ from __future__ import annotations
 
 from typing import Any
 
+_MAX_ERRORS_SHOWN = 3
+_MAX_EXISTING_SHOWN = 3
+_MAX_FAILURES_SHOWN = 5
+
 
 class PortolanError(Exception):
     """Base class for all Portolan errors.
@@ -455,7 +459,7 @@ class ValidationFailedError(ConversionError):
     def __init__(self, path: str, validation_errors: list[str]) -> None:
         error_count = len(validation_errors)
         errors_summary = "; ".join(validation_errors[:3])
-        if error_count > 3:
+        if error_count > _MAX_ERRORS_SHOWN:
             errors_summary += f"... and {error_count - 3} more"
         super().__init__(
             f"Validation failed for {path}: {errors_summary}",
@@ -545,7 +549,9 @@ class PartitionCollisionError(ConversionError):
     code = "PRTLN-CNV009"
 
     def __init__(self, path: str, directory: str, existing: list[str]) -> None:
-        shown = ", ".join(existing[:3]) + (", ..." if len(existing) > 3 else "")
+        shown = ", ".join(existing[:_MAX_EXISTING_SHOWN]) + (
+            ", ..." if len(existing) > _MAX_EXISTING_SHOWN else ""
+        )
         super().__init__(
             f"cannot partition {path}: {directory} already holds partitions ({shown}). "
             "Remove them, or put each large file in its own collection.",
@@ -774,7 +780,11 @@ class PushVerifyError(SyncError):
 
     def __init__(self, failures: list[str]) -> None:
         shown = "; ".join(failures[:5])
-        more = f" (and {len(failures) - 5} more)" if len(failures) > 5 else ""
+        more = (
+            f" (and {len(failures) - _MAX_FAILURES_SHOWN} more)"
+            if len(failures) > _MAX_FAILURES_SHOWN
+            else ""
+        )
         super().__init__(
             f"Could not verify {len(failures)} remote object(s): {shown}{more}",
             failures=failures,

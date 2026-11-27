@@ -36,6 +36,14 @@ from portolan_core.format_families import RASTER, VECTOR
 if TYPE_CHECKING:
     from portolan_cli.scan.infer import CollectionSuggestion
 
+_KIB = 1024
+_MAX_ISSUES_SHOWN = 10
+_MESSAGE_PARTS_MIN = 4
+_MESSAGE_MAX_LEN = 40
+_RASTER_ITEM_MIN_DEPTH = 2
+_MAX_COMMANDS_SHOWN = 5
+_MAX_FILES_SHOWN = 3
+
 
 # =============================================================================
 # Fixability Labels
@@ -496,7 +504,7 @@ def _format_size(size_bytes: int | None) -> str:
     if size_bytes is None:
         return ""
 
-    if size_bytes < 1024:
+    if size_bytes < _KIB:
         return f"{size_bytes} B"
     if size_bytes < 1024 * 1024:
         return f"{size_bytes / 1024:.1f} KB"
@@ -548,8 +556,8 @@ def _format_issues(result: ScanResult) -> list[str]:
         for issue in severity_issues[:10]:
             fix_label = get_fixability(issue.issue_type).label
             lines.append(f"  {fix_label} {issue.relative_path}: {issue.message}")
-        if len(severity_issues) > 10:
-            lines.append(f"  ... and {len(severity_issues) - 10} more")
+        if len(severity_issues) > _MAX_ISSUES_SHOWN:
+            lines.append(f"  ... and {len(severity_issues) - _MAX_ISSUES_SHOWN} more")
     return lines
 
 
@@ -651,7 +659,11 @@ def _shorten_message(message: str) -> str:
     # Handle special case: primary assets count (extract the number)
     if message.startswith("Directory has") and "primary assets" in message:
         parts = message.split()
-        return f"{parts[2]} primary assets" if len(parts) >= 4 else message[:37] + "..."
+        return (
+            f"{parts[2]} primary assets"
+            if len(parts) >= _MESSAGE_PARTS_MIN
+            else message[: _MESSAGE_MAX_LEN - 3] + "..."
+        )
 
     # Check simple substring patterns
     for pattern, short_form in _MESSAGE_PATTERNS:
@@ -659,7 +671,7 @@ def _shorten_message(message: str) -> str:
             return short_form
 
     # Default: truncate if too long
-    return message[:37] + "..." if len(message) > 40 else message
+    return message[: _MESSAGE_MAX_LEN - 3] + "..." if len(message) > _MESSAGE_MAX_LEN else message
 
 
 def _render_errors_tree(tree: dict[str, list[tuple[str, Severity, str]]]) -> list[str]:
@@ -934,8 +946,8 @@ def format_file_entry(file: ScannedFile) -> str:
     # Add format info
     parts.append(f"({format_name})")
 
-    # Add collection ID if nested
-    if collection_id and "/" in collection_id or collection_id:
+    # Add the collection ID when the file has one, nested or not.
+    if collection_id:
         parts.append(f"→ {collection_id}")
 
     return " ".join(parts)
@@ -1035,7 +1047,9 @@ def detect_structure_pattern(result: ScanResult) -> StructurePattern:
     elif has_raster and not has_vector:
         # Check if rasters are organized as items (subdirs per date/scene)
         # Raster items typically have deeper paths (collection/item/asset)
-        pattern_type = "raster_items" if avg_depth >= 2 else "raster_collection"
+        pattern_type = (
+            "raster_items" if avg_depth >= _RASTER_ITEM_MIN_DEPTH else "raster_collection"
+        )
     elif has_vector and not has_raster:
         # Vector collections have files at collection level
         pattern_type = "vector_collection"
@@ -1094,9 +1108,9 @@ def generate_structure_recommendation(result: ScanResult) -> str:
         lines.append("")
         lines.append("Suggested commands:")
         # Limit to 5
-        lines.extend(f"  $ {cmd}" for cmd in pattern.suggested_commands[:5])
-        if len(pattern.suggested_commands) > 5:
-            remaining = len(pattern.suggested_commands) - 5
+        lines.extend(f"  $ {cmd}" for cmd in pattern.suggested_commands[:_MAX_COMMANDS_SHOWN])
+        if len(pattern.suggested_commands) > _MAX_COMMANDS_SHOWN:
+            remaining = len(pattern.suggested_commands) - _MAX_COMMANDS_SHOWN
             lines.append(f"  ... and {remaining} more")
 
     return "\n".join(lines)
@@ -1367,11 +1381,11 @@ def format_enhanced_summary(
     for collection_id, files in sorted(grouped.items()):
         file_count = len(files)
         lines.append(f"  {collection_id} ({file_count} file{'s' if file_count != 1 else ''})")
-        for f in files[:3]:  # Show first 3 files
+        for f in files[:_MAX_FILES_SHOWN]:  # Show first 3 files
             format_name = _get_format_display_name(f)
             lines.append(f"    - {f.path.name} ({format_name})")
-        if file_count > 3:
-            lines.append(f"    ... and {file_count - 3} more")
+        if file_count > _MAX_FILES_SHOWN:
+            lines.append(f"    ... and {file_count - _MAX_FILES_SHOWN} more")
 
     # Tree view (if requested)
     if show_tree:
@@ -1400,8 +1414,8 @@ def format_enhanced_summary(
             else:
                 lines.append(f"  {format_issue_basic(issue)}")
 
-        if len(result.issues) > 10:
-            lines.append(f"  ... and {len(result.issues) - 10} more")
+        if len(result.issues) > _MAX_ISSUES_SHOWN:
+            lines.append(f"  ... and {len(result.issues) - _MAX_ISSUES_SHOWN} more")
 
     # Next steps
     steps = generate_next_steps(result)

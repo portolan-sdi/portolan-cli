@@ -279,10 +279,10 @@ def test_load_thumbnail_style_from_fixture():
 def test_resolve_colors_uniform():
     """Return uniform color when no color_map."""
     pytest.importorskip("geopandas")
-    import geopandas as gpd
+    import geopandas
     from shapely.geometry import Point
 
-    gdf = gpd.GeoDataFrame({"a": [1, 2, 3]}, geometry=[Point(0, 0)] * 3)
+    gdf = geopandas.GeoDataFrame({"a": [1, 2, 3]}, geometry=[Point(0, 0)] * 3)
     style = ThumbnailStyle(
         fill_color="#ff0000",
         fill_opacity=0.5,
@@ -300,10 +300,10 @@ def test_resolve_colors_uniform():
 def test_resolve_colors_categorical():
     """Resolve categorical colors from field values."""
     pytest.importorskip("geopandas")
-    import geopandas as gpd
+    import geopandas
     from shapely.geometry import Point
 
-    gdf = gpd.GeoDataFrame(
+    gdf = geopandas.GeoDataFrame(
         {"land_use": ["residential", "commercial", "residential"]},
         geometry=[Point(0, 0)] * 3,
     )
@@ -324,11 +324,11 @@ def test_resolve_colors_categorical():
 def test_resolve_colors_case_insensitive():
     """Match field names case-insensitively."""
     pytest.importorskip("geopandas")
-    import geopandas as gpd
+    import geopandas
     from shapely.geometry import Point
 
     # GDF has uppercase column, style expects lowercase
-    gdf = gpd.GeoDataFrame(
+    gdf = geopandas.GeoDataFrame(
         {"LAND_USE": ["residential", "commercial"]},
         geometry=[Point(0, 0)] * 2,
     )
@@ -349,10 +349,10 @@ def test_resolve_colors_case_insensitive():
 def test_resolve_colors_missing_field():
     """Use default color when field not in GDF."""
     pytest.importorskip("geopandas")
-    import geopandas as gpd
+    import geopandas
     from shapely.geometry import Point
 
-    gdf = gpd.GeoDataFrame(
+    gdf = geopandas.GeoDataFrame(
         {"other_field": ["a", "b"]},
         geometry=[Point(0, 0)] * 2,
     )
@@ -374,10 +374,10 @@ def test_resolve_colors_missing_field():
 def test_resolve_colors_unmapped_values():
     """Use default color for values not in color_map."""
     pytest.importorskip("geopandas")
-    import geopandas as gpd
+    import geopandas
     from shapely.geometry import Point
 
-    gdf = gpd.GeoDataFrame(
+    gdf = geopandas.GeoDataFrame(
         {"land_use": ["residential", "unknown_type"]},
         geometry=[Point(0, 0)] * 2,
     )
@@ -402,10 +402,10 @@ def test_resolve_colors_unmapped_uses_explicit_fallback():
     reaches the canvas (#518).
     """
     pytest.importorskip("geopandas")
-    import geopandas as gpd
+    import geopandas
     from shapely.geometry import Point
 
-    gdf = gpd.GeoDataFrame(
+    gdf = geopandas.GeoDataFrame(
         {"land_use": ["residential", "unknown_type"]},
         geometry=[Point(0, 0)] * 2,
     )

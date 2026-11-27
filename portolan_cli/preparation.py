@@ -1613,7 +1613,7 @@ def _rewrite_or_keep(
         _rewrite_parquet_in_place(source, settings, before)
     except RewriteFidelityError as err:
         emit("warn", f"Kept {source.name} as it is: it would lose {err.lost}")
-    except Exception as err:  # noqa: BLE001 - a copy is better than a failed add
+    except Exception as err:  # a copy is better than a failed add
         logger.info("Rewrite of %s failed: %s", source, err, exc_info=True)
         emit("warn", f"Kept {source.name} as it is: geoparquet-io could not rewrite it ({err})")
 
@@ -1697,7 +1697,7 @@ def _same_crs(before: Any, after: Any) -> bool:
         return True
     try:
         return bool(CRS.from_user_input(before) == CRS.from_user_input(after))
-    except Exception:  # noqa: BLE001 - an unparsable CRS is not a proven match
+    except Exception:  # an unparsable CRS is not a proven match
         return False
 
 
@@ -1720,7 +1720,7 @@ def _means_wgs84(crs: Any) -> bool:
     """
     try:
         return _is_wgs84(CRS.from_user_input(crs))
-    except Exception:  # noqa: BLE001 - an unparsable CRS is not provably WGS84
+    except Exception:  # an unparsable CRS is not provably WGS84
         return False
 
 
@@ -2016,7 +2016,7 @@ def _warn_on_failure(source: Path, step: Callable[[], Path]) -> Path | None:
     try:
         with span("convert.embed_statistics", file=source.name):
             return step()
-    except Exception as err:  # noqa: BLE001 - the original file stays usable
+    except Exception as err:  # the original file stays usable
         emit(
             "warn",
             f"{source.name} has no band statistics in the file (PTL-DAT-009), "

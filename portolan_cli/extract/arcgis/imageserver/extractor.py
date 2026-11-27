@@ -88,6 +88,11 @@ if TYPE_CHECKING:
 
     from portolan_cli.extract.arcgis.imageserver.discovery import ImageServerMetadata
     from portolan_cli.extract.common.progress import MessageCallback
+from http import HTTPStatus
+
+from portolan_core.bbox import LAT_MAX, LAT_MIN, LON_MAX, LON_MIN
+
+_TIFF_MAGIC_LEN = 4
 
 
 @dataclass
@@ -258,7 +263,7 @@ def _validate_tiff(data: bytes) -> bool:
     Returns:
         True if data appears to be a valid TIFF, False otherwise.
     """
-    if len(data) < 4:
+    if len(data) < _TIFF_MAGIC_LEN:
         return False
 
     header = data[:4]
@@ -484,7 +489,7 @@ async def download_tile(
         response = await client.get(export_url)
 
         # Handle rate limiting (429)
-        if response.status_code == 429:
+        if response.status_code == HTTPStatus.TOO_MANY_REQUESTS:
             retry_after = response.headers.get("Retry-After")
             retry_seconds = float(retry_after) if retry_after else None
             raise RateLimitError(retry_after=retry_seconds)
@@ -601,7 +606,12 @@ def _is_likely_wgs84(bbox: tuple[float, float, float, float]) -> bool:
         True if bbox appears to be in WGS84, False otherwise.
     """
     minx, miny, maxx, maxy = bbox
-    return -180 <= minx <= 180 and -180 <= maxx <= 180 and -90 <= miny <= 90 and -90 <= maxy <= 90
+    return (
+        LON_MIN <= minx <= LON_MAX
+        and LON_MIN <= maxx <= LON_MAX
+        and LAT_MIN <= miny <= LAT_MAX
+        and LAT_MIN <= maxy <= LAT_MAX
+    )
 
 
 def _reproject_bbox(
@@ -1009,6 +1019,22 @@ async def _download_one_tile(
     return result.bytes_downloaded, result.empty
 
 
+async def _wait_for_slot(
+    slot_id: str,
+    rate_limit_delay: float,
+    rate_limit_lock: asyncio.Lock,
+    last_request_time: dict[str, float],
+) -> None:
+    """Sleep until the slot is clear of the minimum delay since its last request."""
+    async with rate_limit_lock:
+        now = time.monotonic()
+        last_time = last_request_time.get(slot_id, 0)
+        wait_time = max(0, rate_limit_delay - (now - last_time))
+        if wait_time > 0:
+            await asyncio.sleep(wait_time)
+        last_request_time[slot_id] = time.monotonic()
+
+
 async def _process_tile(
     tile: TileSpec,
     url: str,
@@ -1070,13 +1096,9 @@ async def _process_tile(
                 attempts_made = attempt
                 try:
                     # Rate limiting: ensure minimum delay between requests
-                    async with rate_limit_lock:
-                        now = time.monotonic()
-                        last_time = last_request_time.get(slot_id, 0)
-                        wait_time = max(0, rate_limit_delay - (now - last_time))
-                        if wait_time > 0:
-                            await asyncio.sleep(wait_time)
-                        last_request_time[slot_id] = time.monotonic()
+                    await _wait_for_slot(
+                        slot_id, rate_limit_delay, rate_limit_lock, last_request_time
+                    )
 
                     # Download raw tile
                     bytes_downloaded, is_empty = await _download_one_tile(

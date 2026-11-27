@@ -48,7 +48,7 @@ def create_partitioned_parquet(
         partition_col: Name of the partition column.
         partition_values: List of partition values to create.
     """
-    import geopandas as gpd
+    import geopandas
     from shapely.geometry import Point
 
     for i, val in enumerate(partition_values):
@@ -56,7 +56,7 @@ def create_partitioned_parquet(
         partition_dir.mkdir(parents=True, exist_ok=True)
 
         # Create GeoDataFrame with point geometries
-        gdf = gpd.GeoDataFrame(
+        gdf = geopandas.GeoDataFrame(
             {
                 "id": [i * 10 + j for j in range(5)],
                 "name": [f"item_{i}_{j}" for j in range(5)],
@@ -84,7 +84,7 @@ def create_multilevel_partitioned_parquet(
         level2_col: Name of second partition level column.
         level2_values: Values for second partition level.
     """
-    import geopandas as gpd
+    import geopandas
     from shapely.geometry import Point
 
     for i, l1_val in enumerate(level1_values):
@@ -93,7 +93,7 @@ def create_multilevel_partitioned_parquet(
             partition_dir.mkdir(parents=True, exist_ok=True)
 
             # Create GeoDataFrame with point geometries
-            gdf = gpd.GeoDataFrame(
+            gdf = geopandas.GeoDataFrame(
                 {"id": [1, 2], "measurement": [1.5, 2.5]},
                 geometry=[Point(i, j), Point(i + 0.1, j + 0.1)],
                 crs="EPSG:4326",
@@ -449,7 +449,7 @@ class TestSchemaConsistencyValidation:
         initialized_catalog: Path,
     ) -> None:
         """portolan add warns when partition schemas are inconsistent."""
-        import geopandas as gpd
+        import geopandas
         from shapely.geometry import Point
 
         collection_dir = initialized_catalog / "mixed"
@@ -458,7 +458,7 @@ class TestSchemaConsistencyValidation:
         # Create partitions with inconsistent schemas (different columns)
         partition1 = collection_dir / "part=001"
         partition1.mkdir()
-        gdf1 = gpd.GeoDataFrame(
+        gdf1 = geopandas.GeoDataFrame(
             {"id": [1], "name": ["a"]},
             geometry=[Point(0, 0)],
             crs="EPSG:4326",
@@ -467,7 +467,7 @@ class TestSchemaConsistencyValidation:
 
         partition2 = collection_dir / "part=002"
         partition2.mkdir()
-        gdf2 = gpd.GeoDataFrame(
+        gdf2 = geopandas.GeoDataFrame(
             {"id": [2], "extra_col": [1.5]},  # Different column!
             geometry=[Point(1, 1)],
             crs="EPSG:4326",

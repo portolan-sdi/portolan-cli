@@ -34,6 +34,7 @@ from portolan_cli.extract.common.urls import merge_query, redact_credentials
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+from http import HTTPStatus
 
 logger = logging.getLogger(__name__)
 
@@ -192,7 +193,7 @@ class ArcGISClient:
             raise ArcGISTransientError(
                 redact_credentials(f"Failed to fetch from {shown}: {e}")
             ) from e
-        if response.status_code >= 400:
+        if response.status_code >= HTTPStatus.BAD_REQUEST:
             if is_transient_status(response.status_code):
                 raise ArcGISTransientError(
                     f"Failed to fetch from {shown}: HTTP {response.status_code}"
@@ -385,7 +386,7 @@ def discover_services_recursive(
         (services, traversal) where traversal records visited/skipped folders.
     """
     client = client or ArcGISClient()
-    root_base = url.split("?")[0].rstrip("/")
+    root_base = url.split("?", maxsplit=1)[0].rstrip("/")
     root_data = client.get_json(root_base)
 
     services = _build_service_list(root_data, service_types)

@@ -117,7 +117,7 @@ class TestFindCatalogRoot:
         # Create nested path deeper than MAX_CATALOG_SEARCH_DEPTH
         deep_path = tmp_path
         for i in range(MAX_CATALOG_SEARCH_DEPTH + 5):
-            deep_path = deep_path / f"level{i}"
+            deep_path /= f"level{i}"
         deep_path.mkdir(parents=True)
 
         # Act
@@ -141,7 +141,7 @@ class TestFindCatalogRoot:
         # Create nested path exactly at MAX_CATALOG_SEARCH_DEPTH - 1 (should find)
         deep_path = tmp_path
         for i in range(MAX_CATALOG_SEARCH_DEPTH - 1):
-            deep_path = deep_path / f"level{i}"
+            deep_path /= f"level{i}"
         deep_path.mkdir(parents=True)
 
         # Act

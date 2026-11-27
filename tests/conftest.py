@@ -461,7 +461,7 @@ def temp_catalog_dir(tmp_path: Path) -> Iterator[Path]:
     """
     catalog_dir = tmp_path / "test-catalog"
     catalog_dir.mkdir()
-    yield catalog_dir
+    return catalog_dir
 
 
 # =============================================================================

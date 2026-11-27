@@ -40,6 +40,8 @@ from typing import TextIO
 from portolan_cli.utils import redact_credentials
 from portolan_core import trace
 
+_DEBUG_VERBOSITY = 2
+
 LOG_ENV = "PORTOLAN_LOG"
 LOG_FILE_ENV = "PORTOLAN_LOG_FILE"
 GDAL_DEBUG_ENV = "PORTOLAN_GDAL_DEBUG"
@@ -132,7 +134,7 @@ class _JsonFormatter(logging.Formatter):
 def _resolve_level(verbosity: int, quiet: bool) -> int:
     if quiet:
         return logging.ERROR
-    if verbosity >= 2:
+    if verbosity >= _DEBUG_VERBOSITY:
         return logging.DEBUG
     if verbosity == 1:
         return logging.INFO
@@ -140,20 +142,22 @@ def _resolve_level(verbosity: int, quiet: bool) -> int:
     return _ENV_LEVELS.get(env, logging.WARNING)
 
 
-_saved_root_level: int | None = None
+class _Saved:
+    """Hold the root level that ``configure_logging`` replaced for ``--quiet``."""
+
+    root_level: int | None = None
 
 
 def reset_logging() -> None:
     """Remove the handlers and levels that ``configure_logging`` set."""
-    global _saved_root_level
     root = logging.getLogger()
     for handler in list(root.handlers):
         if getattr(handler, "_portolan", False):
             root.removeHandler(handler)
             handler.close()
-    if _saved_root_level is not None:
-        root.setLevel(_saved_root_level)
-        _saved_root_level = None
+    if _Saved.root_level is not None:
+        root.setLevel(_Saved.root_level)
+        _Saved.root_level = None
     for name in PACKAGE_LOGGERS:
         logging.getLogger(name).setLevel(logging.NOTSET)
     for name in (*THIRD_PARTY_LOGGERS, GDAL_LOGGER):
@@ -168,7 +172,6 @@ def configure_logging(*, verbosity: int = 0, quiet: bool = False) -> None:
         verbosity: The count of ``-v`` flags.
         quiet: True for ``--quiet``. It wins over ``verbosity``.
     """
-    global _saved_root_level
     reset_logging()
     level = _resolve_level(verbosity, quiet)
     gdal_debug = os.environ.get(GDAL_DEBUG_ENV, "").strip() in ("1", "true", "on", "yes")
@@ -200,10 +203,10 @@ def configure_logging(*, verbosity: int = 0, quiet: bool = False) -> None:
         for name in PACKAGE_LOGGERS:
             logging.getLogger(name).setLevel(level)
     if quiet:
-        _saved_root_level = root.level
+        _Saved.root_level = root.level
         root.setLevel(logging.ERROR)
 
-    if verbosity >= 2 and not quiet:
+    if verbosity >= _DEBUG_VERBOSITY and not quiet:
         for name in THIRD_PARTY_LOGGERS:
             logging.getLogger(name).setLevel(logging.DEBUG)
         logging.captureWarnings(True)

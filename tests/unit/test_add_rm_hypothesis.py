@@ -853,7 +853,7 @@ class TestAddFilesEdgeCases:
             )
             mock_finalize.return_value = []
 
-            added, skipped, failures = add_files(
+            _added, _skipped, _failures = add_files(
                 paths=[link],
                 catalog_root=catalog,
             )
@@ -894,7 +894,7 @@ class TestAddFilesEdgeCases:
             mock_prepare.side_effect = ValueError("original error")
 
             # Per Issue #175: errors are now collected instead of raised
-            added, skipped, failures = add_files(paths=[test_file], catalog_root=catalog)
+            _added, _skipped, failures = add_files(paths=[test_file], catalog_root=catalog)
 
             # Should have one failure with the raw error message
             assert len(failures) == 1
@@ -1018,7 +1018,7 @@ class TestRemoveFilesEdgeCases:
             )
         )
 
-        removed, skipped = remove_files(
+        _removed, _skipped = remove_files(
             paths=[shp],
             catalog_root=catalog,
             keep=False,
@@ -1254,7 +1254,7 @@ class TestMultiAssetProperties:
             (item_dir / ".hidden").write_text("hidden")
             (item_dir / ".DS_Store").write_bytes(b"junk")
 
-            stac_assets, asset_files, asset_paths = _scan_item_assets(
+            _stac_assets, asset_files, _asset_paths = _scan_item_assets(
                 item_dir=item_dir,
                 item_id="test",
                 primary_file=primary,
@@ -1285,7 +1285,7 @@ class TestMultiAssetProperties:
             # Create a regular file
             (item_dir / "readme.txt").write_text("hello")
 
-            stac_assets, asset_files, asset_paths = _scan_item_assets(
+            _stac_assets, asset_files, _asset_paths = _scan_item_assets(
                 item_dir=item_dir,
                 item_id="test",
                 primary_file=primary,
@@ -1328,9 +1328,7 @@ class TestCatalogRootAddProperties:
         with tempfile.TemporaryDirectory() as tmp:
             catalog_root = Path(tmp).resolve()
             # path == catalog_root → empty relative parts → ValueError
-            import pytest as _pytest
-
-            with _pytest.raises(ValueError, match="Cannot determine collection"):
+            with pytest.raises(ValueError, match="Cannot determine collection"):
                 resolve_collection_id(catalog_root, catalog_root)
 
     @pytest.mark.unit

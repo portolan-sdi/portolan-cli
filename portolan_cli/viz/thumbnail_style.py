@@ -18,6 +18,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+_MATCH_MIN_LEN = 4
+_GET_EXPR_LEN = 2
+_PAIRS_MIN_LEN = 2
+_INTERPOLATE_COLOR_INDEX = 4
+
 logger = logging.getLogger(__name__)
 
 
@@ -55,7 +60,7 @@ def parse_match_expression(
         Tuple of (field_name, {value: color}, default_color), or None if not
         a valid match expression.
     """
-    if not isinstance(expr, list) or len(expr) < 4:
+    if not isinstance(expr, list) or len(expr) < _MATCH_MIN_LEN:
         return None
 
     if expr[0] != "match":
@@ -63,7 +68,7 @@ def parse_match_expression(
 
     # expr[1] should be ["get", "field_name"]
     get_expr = expr[1]
-    if not isinstance(get_expr, list) or len(get_expr) != 2 or get_expr[0] != "get":
+    if not isinstance(get_expr, list) or len(get_expr) != _GET_EXPR_LEN or get_expr[0] != "get":
         return None
 
     field_name = get_expr[1]
@@ -72,7 +77,7 @@ def parse_match_expression(
     # value/color pairs, then the default color. Slice expr[2:] to get the
     # pairs and the default.
     pairs_and_default = expr[2:]
-    if len(pairs_and_default) < 2:
+    if len(pairs_and_default) < _PAIRS_MIN_LEN:
         return None
 
     default_color = pairs_and_default[-1]
@@ -138,16 +143,15 @@ def load_thumbnail_style(style_path: Path) -> ThumbnailStyle | None:
         match_result = parse_match_expression(fill_color_expr)
         if match_result:
             color_field, color_map, fill_color = match_result
+        # Not a match expression we understand (e.g., interpolate)
+        # Try to extract a reasonable default
+        elif len(fill_color_expr) > 0 and fill_color_expr[0] == "interpolate":
+            # An interpolate expression lists the operator, the
+            # interpolation type, the field expression, then stop/color
+            # pairs. Take the first color as the default.
+            fill_color = _extract_first_color_from_interpolate(fill_color_expr)
         else:
-            # Not a match expression we understand (e.g., interpolate)
-            # Try to extract a reasonable default
-            if len(fill_color_expr) > 0 and fill_color_expr[0] == "interpolate":
-                # An interpolate expression lists the operator, the
-                # interpolation type, the field expression, then stop/color
-                # pairs. Take the first color as the default.
-                fill_color = _extract_first_color_from_interpolate(fill_color_expr)
-            else:
-                fill_color = "#3388ff"
+            fill_color = "#3388ff"
     else:
         fill_color = "#3388ff"
 
@@ -166,7 +170,7 @@ def _extract_first_color_from_interpolate(expr: list[Any]) -> str:
     Format: ["interpolate", ["linear"], ["get", "x"], stop1, color1, stop2, color2, ...]
     """
     # Skip "interpolate", interpolation method, and input expression
-    if len(expr) >= 5:
+    if len(expr) >= _INTERPOLATE_COLOR_INDEX + 1:
         # expr[4] should be first color (after stop1)
         first_color = expr[4]
         if isinstance(first_color, str) and first_color.startswith("#"):

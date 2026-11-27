@@ -43,6 +43,9 @@ from portolan_cli.extract.common.converters.base import (
     make_symbol_layer,
 )
 
+_ANCHOR_LOW = 0.33
+_ANCHOR_HIGH = 0.66
+
 logger = logging.getLogger(__name__)
 
 
@@ -363,17 +366,17 @@ def _sld_anchor_to_mapbox(anchor_x: float, anchor_y: float) -> str:
         Mapbox GL text-anchor value.
     """
     # Map to horizontal position
-    if anchor_x < 0.33:
+    if anchor_x < _ANCHOR_LOW:
         h = "left"
-    elif anchor_x > 0.66:
+    elif anchor_x > _ANCHOR_HIGH:
         h = "right"
     else:
         h = ""
 
     # Map to vertical position
-    if anchor_y < 0.33:
+    if anchor_y < _ANCHOR_LOW:
         v = "top"
-    elif anchor_y > 0.66:
+    elif anchor_y > _ANCHOR_HIGH:
         v = "bottom"
     else:
         v = ""

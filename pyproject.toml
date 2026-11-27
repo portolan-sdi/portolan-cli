@@ -233,6 +233,11 @@ target-version = "py311"
 extend-exclude = [".claude"]
 
 [tool.ruff.lint]
+# With explicit-preview-rules, preview turns on only the preview rules that
+# select names. Preview also changes the defaults of stable rules. One such
+# default bans the `gpd` alias for geopandas.
+preview = true
+explicit-preview-rules = true
 # Ruff owns complexity, security, and docstring linting for this repo. It
 # replaces three separate tools that each re-walked the same source tree:
 # xenon/radon (C901), bandit (S), and pylint R0801 (now jscpd, see prek.toml).
@@ -273,6 +278,18 @@ select = [
     # Only the banned-api rule of flake8-tidy-imports. See banned-api below.
     "TID251",
     "YTT", # flake8-2020
+    "PT", # flake8-pytest-style
+    "RUF", # ruff-specific rules
+    "PL", # pylint
+    # Preview rules opt in by name. explicit-preview-rules keeps every other
+    # preview rule off. These add the pylint size limits and a few low-noise checks.
+    "PLR0914", # too many locals
+    "PLR0916", # too many Boolean expressions
+    "PLR0917", # too many positional arguments
+    "PLR1702", # too many nested blocks
+    "PLR6104", # use an augmented assignment
+    "PLW1514", # open() without an explicit encoding
+    "RUF052", # a used variable has a dummy name
 ]
 ignore = [
     "E501", # line too long (handled by formatter)
@@ -287,7 +304,15 @@ ignore = [
     # cannot move out of the loop, because that aborts the loop on the first
     # failure. The setup cost is free from Python 3.11 and negligible before it.
     "PERF203", # try-except within a loop
+    # Lazy imports of the heavy geospatial libraries keep CLI startup fast.
+    "PLC0415", # import outside top level
+    # `from x import y as y` marks an explicit re-export for mypy strict.
+    "PLC0414", # useless import alias
 ]
+# The CLI help text and docs/reference/cli.md use the multiplication sign of
+# "workers × concurrency". The scan output prints the information sign as its
+# notice icon.
+allowed-confusables = ["×", "ℹ"]
 
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]
@@ -296,6 +321,7 @@ ignore = [
 # naming, and simplification rules.
 "tests/**/*.py" = [
     "S101", # assert is the point of a test
+    "PLR2004", # an expected value in an assertion is clearest as a literal
     "S105", # "password"-shaped fixture literals
     "S106",
     "S108", # /tmp paths in fixtures
@@ -314,11 +340,42 @@ ignore = [
 ]
 "scripts/**/*.py" = [
     "T20", # scripts are CLIs of their own and print by design
+    "PLR2004", # a script compares against literal exit codes and thresholds
     "S310", # a script opens an https URL it writes itself
     "S603", # a script starts a tool or pytest with a literal argument list
     "S607", # the script resolves its tools from PATH
 ]
 "examples/**/*.py" = ["T20"] # an example prints its result for the reader
+# Pylint size limits, per file. Each line names a real outlier that no small,
+# safe refactor removes. Delete a line when its module drops below the limits.
+# A Click command takes one argument per option.
+"portolan_cli/**/*cli.py" = ["PLR0913", "PLR0917"]
+# add_files and run_add take each add option as a keyword argument.
+"portolan_cli/add.py" = ["PLR0913"]
+# The sync orchestrators thread every transport option through each layer.
+"portolan_cli/sync/*.py" = ["PLR0913", "PLR0914", "PLR0915"]
+# The tile worker and extract_imageserver each run one long ordered sequence.
+"portolan_cli/extract/arcgis/imageserver/extractor.py" = [
+    "PLR0913",
+    "PLR0914",
+    "PLR0915",
+    "PLR0917",
+]
+# prepare_item runs the whole per-file pipeline in one ordered sequence.
+"portolan_cli/preparation.py" = ["PLR0914", "PLR0915"]
+# The safe-rename rule holds each name transform of the path in a local.
+"portolan_cli/scan/fix.py" = ["PLR0914"]
+# run_check and the check workflow take each check option as a keyword argument.
+"portolan_cli/validation/runner.py" = ["PLR0913"]
+"portolan_cli/validation/workflow.py" = ["PLR0913"]
+# The PMTiles generator takes each tippecanoe option as a keyword argument.
+"portolan_cli/viz/pmtiles.py" = ["PLR0913", "PLR0915"]
+# The basemap fetch holds the tile grid, the mosaic, and its bounds in locals.
+"portolan_cli/viz/thumbnail.py" = ["PLR0914"]
+# The factory takes one default per ImageServer metadata field.
+"tests/integration/extract/test_imageserver_metadata_seeding.py" = ["PLR0913", "PLR0917"]
+# The fixture generator writes each fixture file in one ordered sequence.
+"tests/fixtures/generate.py" = ["PLR0915"]
 # vulture's whitelist format is bare names and `_.attr` expressions. They are
 # never executed, so the undefined `_` and the bare expressions are the format.
 "vulture_whitelist.py" = ["F821", "B018"]
@@ -385,6 +442,42 @@ convention = "google"
 # also checked the module average and the repo average. A single complex
 # function cannot move an average. This is the per-function ceiling instead.
 max-complexity = 15
+
+[tool.ruff.lint.flake8-pytest-style]
+# A bare pytest.raises of a broad Portolan error passes on any failure in the
+# block. A match pins the failure that the test is about.
+raises-extend-require-match-for = [
+    "portolan_core.errors.PortolanError",
+    "portolan_core.errors.CatalogError",
+    "portolan_core.errors.CollectionError",
+    "portolan_core.errors.SchemaError",
+    "portolan_core.errors.ItemError",
+    "portolan_core.errors.VersionError",
+    "portolan_core.errors.ValidationError",
+    "portolan_core.errors.ConversionError",
+    "portolan_core.errors.LogoError",
+    "portolan_core.errors.ConfigError",
+    "portolan_core.errors.SyncError",
+]
+
+[tool.ruff.lint.pylint]
+# Each limit sits near the 99th percentile of the functions in portolan_cli,
+# packages, and scripts, so that a rule fires only on a real outlier.
+# Measured distribution on 2026-11-27 (p50 / p90 / p99 / max):
+#   arguments 2 / 5 / 12 / 33, positional arguments 2 / 4 / 8 / 33,
+#   returns 1 / 4 / 6 / 10, branches 3 / 7 / 13 / 15,
+#   statements 6 / 19 / 40 / 69, locals 3 / 8 / 15 / 31,
+#   nested blocks 2 / 3 / 5 / 8, Boolean expressions 2 / 3 / 4 / 6.
+# max-branches equals mccabe max-complexity. A Click command takes one
+# argument per option, so the argument limits leave room for a real command.
+max-args = 12
+max-positional-args = 12
+max-returns = 8
+max-branches = 15
+max-statements = 50
+max-locals = 20
+max-nested-blocks = 5
+max-bool-expr = 5
 
 [tool.ruff.format]
 quote-style = "double"

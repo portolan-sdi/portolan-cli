@@ -57,9 +57,8 @@ class TestFileGDBDirectoryDiscovery:
 
         # Should NOT contain paths inside the .gdb directory
         for path in all_paths:
-            assert ".gdb/" not in str(path) and ".gdb\\" not in str(path), (
-                f"Scan walked into FileGDB directory: {path}"
-            )
+            assert ".gdb/" not in str(path), f"Scan walked into FileGDB directory: {path}"
+            assert ".gdb\\" not in str(path), f"Scan walked into FileGDB directory: {path}"
 
     def test_filegdb_sibling_files_still_scanned(self, tmp_path: Path) -> None:
         """Files next to FileGDB directory should still be scanned normally."""
@@ -314,9 +313,8 @@ class TestFileGDBPropertyBased:
             # No path should be inside a .gdb directory
             for path in all_paths:
                 path_str = str(path)
-                assert ".gdb/" not in path_str and ".gdb\\" not in path_str, (
-                    f"Scan returned internal FileGDB file: {path}"
-                )
+                assert ".gdb/" not in path_str, f"Scan returned internal FileGDB file: {path}"
+                assert ".gdb\\" not in path_str, f"Scan returned internal FileGDB file: {path}"
 
     @given(
         depth=st.integers(min_value=1, max_value=3),
@@ -333,7 +331,7 @@ class TestFileGDBPropertyBased:
             # Create nested directory structure
             current = tmp_path
             for i in range(depth):
-                current = current / f"level_{i}"
+                current /= f"level_{i}"
                 current.mkdir(exist_ok=True)
 
             # Create FileGDB at the deepest level

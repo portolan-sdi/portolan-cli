@@ -79,7 +79,7 @@ def docker_services():
 
 
 @pytest.fixture
-def rest_catalog(docker_services):  # noqa: ARG001
+def rest_catalog(docker_services):
     """PyIceberg catalog pointing at the dockerized REST catalog + RustFS."""
     _ = docker_services  # Fixture dependency: ensures Docker services are running
     return load_catalog(
@@ -101,7 +101,7 @@ def rest_iceberg_backend(rest_catalog):
 
 
 @pytest.fixture
-def rustfs_client(docker_services):  # noqa: ARG001
+def rustfs_client(docker_services):
     """boto3 S3 client for direct RustFS verification."""
     _ = docker_services  # Fixture dependency: ensures Docker services are running
     import boto3

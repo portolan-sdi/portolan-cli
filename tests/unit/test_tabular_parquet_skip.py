@@ -109,7 +109,7 @@ class TestTabularParquetSkip:
         should fail with a helpful message about how to enable tabular support,
         rather than silently skipping.
         """
-        added, skipped, failures = add_files(
+        added, _skipped, failures = add_files(
             paths=[tabular_parquet],
             catalog_root=initialized_catalog,
             collection_id="collection",
@@ -136,7 +136,7 @@ class TestTabularParquetSkip:
         """add_files should NOT raise an exception for tabular parquet."""
         # This should NOT raise - it should handle gracefully
         try:
-            added, skipped, failures = add_files(
+            added, _skipped, failures = add_files(
                 paths=[tabular_parquet],
                 catalog_root=initialized_catalog,
                 collection_id="collection",
@@ -210,7 +210,7 @@ class TestTabularParquetWithGeoAsset:
         ):
             mock_finalize.return_value = []
 
-            added, skipped, failures = add_files(
+            _added, _skipped, _failures = add_files(
                 paths=[item_dir],  # Add the entire item directory
                 catalog_root=initialized_catalog,
                 collection_id="collection",
@@ -254,7 +254,7 @@ class TestMixedParquetDirectory:
         pq.write_table(table2, item_dir / "data2.parquet")
 
         with caplog.at_level(logging.WARNING):
-            added, skipped, failures = add_files(
+            added, _skipped, _failures = add_files(
                 paths=[item_dir],
                 catalog_root=initialized_catalog,
                 collection_id="collection",
@@ -354,7 +354,7 @@ class TestNonGeometryValueErrorsPropagation:
             mock_add.side_effect = ValueError("Unsupported format: .xyz")
 
             # Per Issue #175, errors are collected in failures instead of raised
-            added, skipped, failures = add_files(
+            _added, _skipped, failures = add_files(
                 paths=[item_dir / "data.parquet"],
                 catalog_root=initialized_catalog,
                 collection_id="collection",
@@ -374,7 +374,7 @@ class TestNonGeometryValueErrorsPropagation:
         bad_geojson.write_text("{invalid json content")
 
         # Per Issue #175, errors are collected in failures instead of raised
-        added, skipped, failures = add_files(
+        _added, _skipped, failures = add_files(
             paths=[bad_geojson],
             catalog_root=initialized_catalog,
             collection_id="collection",
@@ -454,7 +454,7 @@ class TestGeoParquetSuccessPath:
             # finalize_items returns the list of successfully added ItemInfo objects
             mock_finalize.return_value = [mock_item_info]
 
-            added, skipped, failures = add_files(
+            added, _skipped, _failures = add_files(
                 paths=[geo_parquet],
                 catalog_root=initialized_catalog,
                 collection_id="collection",
@@ -482,7 +482,7 @@ class TestFailureMessages:
         Issue #432: When tabular.enabled=false, the failure message should tell
         users exactly how to enable tabular data support (via config setting).
         """
-        added, skipped, failures = add_files(
+        _added, _skipped, failures = add_files(
             paths=[tabular_parquet],
             catalog_root=initialized_catalog,
             collection_id="collection",
@@ -547,7 +547,7 @@ class TestTabularParquetHypothesis:
 
             # This should NOT raise - ever
             try:
-                added, skipped, failures = add_files(
+                added, _skipped, failures = add_files(
                     paths=[parquet_file],
                     catalog_root=tmp_path,
                     collection_id="collection",
@@ -648,7 +648,7 @@ class TestTabularParquetHypothesis:
 
             # Should not raise
             try:
-                added, skipped, failures = add_files(
+                added, _skipped, failures = add_files(
                     paths=[parquet_file],
                     catalog_root=tmp_path,
                     collection_id="collection",

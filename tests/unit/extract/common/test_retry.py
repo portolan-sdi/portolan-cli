@@ -187,8 +187,20 @@ class TestRetryClassification:
 
     @pytest.mark.parametrize(
         ("code", "transient"),
-        [(408, True), (429, True), (500, True), (503, True), (599, True), (400, False)]
-        + [(401, False), (403, False), (404, False), (498, False), (499, False), ("x", False)],
+        [
+            (408, True),
+            (429, True),
+            (500, True),
+            (503, True),
+            (599, True),
+            (400, False),
+            (401, False),
+            (403, False),
+            (404, False),
+            (498, False),
+            (499, False),
+            ("x", False),
+        ],
     )
     def test_transient_status(self, code: object, transient: bool) -> None:
         assert is_transient_status(code) is transient
@@ -198,13 +210,16 @@ class TestRetryClassification:
     )
     def test_status_in_the_chain(self, status: int, label: str | None) -> None:
         """geoparquet-io raises its own error ``from None``. The context keeps the status."""
-        try:
+
+        def wrap() -> None:
             try:
                 raise _http_error(status)
             except httpx.HTTPStatusError:
                 raise RuntimeError("Remote access error") from None
-        except RuntimeError as wrapped:
-            assert permanent_status(wrapped) == label
+
+        with pytest.raises(RuntimeError, match="Remote access error") as wrapped:
+            wrap()
+        assert permanent_status(wrapped.value) == label
 
     def test_requests_error_with_a_response(self) -> None:
         import requests  # type: ignore[import-untyped]

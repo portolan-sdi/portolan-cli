@@ -28,6 +28,8 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from portolan_cli.scan.core import ScannedFile
 
+_MIN_GROUP_SIZE = 2
+
 # Hive partition pattern: key=value where key starts with letter/underscore
 HIVE_PARTITION_PATTERN = re.compile(r"^([a-zA-Z_][a-zA-Z0-9_]*)=(.+)$")
 
@@ -353,7 +355,7 @@ def detect_dual_formats(files: list[ScannedFile]) -> list[DualFormatPair]:
 
     # Find groups with multiple files (same stem, same format type, same dir)
     for (_parent, stem, _format_type), group_files in groups.items():
-        if len(group_files) >= 2:
+        if len(group_files) >= _MIN_GROUP_SIZE:
             # Sort by extension for consistent ordering
             sorted_files = sorted(group_files, key=lambda x: x.extension)
             # Create pairs from first two files

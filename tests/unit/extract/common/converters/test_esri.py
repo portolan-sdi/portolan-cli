@@ -212,7 +212,7 @@ class TestConvertESRIRenderer:
     def test_convert_unknown_type_raises(self) -> None:
         """Unknown renderer type raises ESRIConverterError."""
         renderer = {"type": "unknownRenderer"}
-        with pytest.raises(ESRIConverterError, match="Unsupported.*unknownRenderer"):
+        with pytest.raises(ESRIConverterError, match=r"Unsupported.*unknownRenderer"):
             convert_esri_renderer(renderer, source_layer="data")
 
 

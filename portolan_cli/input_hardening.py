@@ -29,6 +29,9 @@ import re
 from pathlib import Path
 from urllib.parse import urlparse
 
+# ASCII control characters sit below the space character.
+_FIRST_PRINTABLE = 0x20
+
 
 class InputValidationError(ValueError):
     """Raised when input validation fails.
@@ -116,7 +119,7 @@ def validate_collection_id(collection_id: str) -> str:
         raise InputValidationError("Collection ID cannot be empty")
 
     # Reject control characters (< ASCII 0x20, including newlines/tabs)
-    if any(ord(c) < 0x20 for c in collection_id):
+    if any(ord(c) < _FIRST_PRINTABLE for c in collection_id):
         raise InputValidationError("Control characters not allowed in collection ID")
 
     # Reject query parameters and fragments (common agent hallucination)
@@ -168,7 +171,7 @@ def validate_item_id(item_id: str) -> str:
         raise InputValidationError("Item ID cannot be empty")
 
     # Same basic checks as collection ID
-    if any(ord(c) < 0x20 for c in item_id):
+    if any(ord(c) < _FIRST_PRINTABLE for c in item_id):
         raise InputValidationError("Control characters not allowed in item ID")
 
     if "?" in item_id or "#" in item_id:
@@ -286,7 +289,7 @@ def validate_remote_url(url: str) -> str:
 
     # Reject control characters in any URL component
     for component in [parsed.netloc, parsed.path, parsed.query, parsed.fragment]:
-        if component and any(ord(c) < 0x20 for c in component):
+        if component and any(ord(c) < _FIRST_PRINTABLE for c in component):
             raise InputValidationError(f"Control characters not allowed in URL: {url}")
 
     return url
@@ -308,7 +311,7 @@ def validate_config_key(key: str) -> str:
         raise InputValidationError("Config key cannot be empty")
 
     # Reject control characters
-    if any(ord(c) < 0x20 for c in key):
+    if any(ord(c) < _FIRST_PRINTABLE for c in key):
         raise InputValidationError("Control characters not allowed in config key")
 
     # Config keys should be simple identifiers
@@ -337,7 +340,7 @@ def validate_config_value(value: str, key: str) -> str:
         raise InputValidationError(f"Config value for '{key}' cannot be empty")
 
     # Reject control characters (except for multiline values)
-    if any(ord(c) < 0x20 and c != "\n" for c in value):
+    if any(ord(c) < _FIRST_PRINTABLE and c != "\n" for c in value):
         raise InputValidationError(f"Control characters not allowed in config value for '{key}'")
 
     # Key-specific validation

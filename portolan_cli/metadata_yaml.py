@@ -51,6 +51,9 @@ if TYPE_CHECKING:
 
     from portolan_core.config import ConfigSource
 
+_MIN_YEAR = 1800
+_MAX_YEAR = 2100
+
 logger = logging.getLogger(__name__)
 
 # =============================================================================
@@ -520,7 +523,7 @@ def _validate_temporal_defaults(temporal: dict[str, Any]) -> list[str]:
             errors.append(
                 f"Field 'defaults.temporal.year' must be an integer, got {type(year).__name__}"
             )
-        elif year < 1800 or year > 2100:
+        elif year < _MIN_YEAR or year > _MAX_YEAR:
             errors.append(
                 f"Field 'defaults.temporal.year' must be between 1800 and 2100, got {year}"
             )

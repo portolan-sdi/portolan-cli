@@ -89,7 +89,7 @@ def test_rewrite_invalidates_footer_when_stat_key_is_unchanged(
     import geoparquet_io as gpio
     from geoparquet_io.api.table import Table
 
-    import portolan_core.run_state as run_state
+    from portolan_core import run_state
 
     source = tmp_path / "points.parquet"
     table = gpio.convert(POINTS).add_bbox()
@@ -118,9 +118,9 @@ def test_copy_invalidates_destination_footer(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Copying an existing Parquet must drop reads of the previous output."""
-    import portolan_core.run_state as run_state
     from portolan_cli.conversion_config import VectorSettings
     from portolan_cli.convert import PROVENANCE_KEY, provenance_record
+    from portolan_core import run_state
 
     source = tmp_path / "points.parquet"
     table = pq.read_table(POINTS)
@@ -153,7 +153,7 @@ def test_reused_scratch_path_does_not_reuse_a_deleted_footer(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A prior scratch footer cannot supply the gate or replacement metadata."""
-    import portolan_core.run_state as run_state
+    from portolan_core import run_state
 
     source = tmp_path / "points.parquet"
     source.write_bytes(POINTS.read_bytes())
@@ -175,9 +175,14 @@ def test_run_scopes_restore_after_nested_exception_and_thread_work(tmp_path: Pat
     outer, inner = RunState.open(tmp_path), RunState.open(tmp_path)
     assert current_run() is None
     with in_run(outer):
-        with pytest.raises(RuntimeError, match="scope failure"), in_run(inner):
-            assert current_run() is inner
-            raise RuntimeError("scope failure")
+
+        def fail_in_inner_scope() -> None:
+            with in_run(inner):
+                assert current_run() is inner
+                raise RuntimeError("scope failure")
+
+        with pytest.raises(RuntimeError, match="scope failure"):
+            fail_in_inner_scope()
         with run_scope(None):
             assert current_run() is outer
         with ThreadPoolExecutor(max_workers=1) as pool:
@@ -289,11 +294,11 @@ def test_registered_nested_extensions_keep_raw_declarations(tmp_path: Path) -> N
 def test_registered_projjson_declaration_allows_a_lossless_rewrite(tmp_path: Path) -> None:
     """GeoArrow's CRS representation tag does not add semantics beyond ``geo``."""
     import geoarrow.pyarrow  # noqa: F401 - force extension-aware Arrow serialization
-    import geopandas as gpd
+    import geopandas
     from shapely.geometry import Point
 
     source = tmp_path / "points.parquet"
-    frame = gpd.GeoDataFrame(
+    frame = geopandas.GeoDataFrame(
         {"a": [1, 2, 3]}, geometry=[Point(0, 0), Point(1, 1), Point(2, 2)], crs=3857
     )
     frame.to_parquet(source)

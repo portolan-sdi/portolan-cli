@@ -348,9 +348,9 @@ class ObstoreSink:
 
 def _check_key(key: str) -> str:
     path = PurePosixPath(key)
+    malformed = not key or "\\" in key
     if (
-        not key
-        or "\\" in key
+        malformed
         or path.as_posix() != key
         or path.is_absolute()
         # Windows reads C:/x and C:x as drive paths. The writer refuses them on

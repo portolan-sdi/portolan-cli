@@ -48,7 +48,7 @@ def remote_catalog(
     monkeypatch.setattr(
         "portolan_cli.sync.download._setup_store_and_kwargs", lambda *_, **__: (memory, {})
     )
-    yield root
+    return root
 
 
 @pytest.mark.parametrize("flags", [[], ["--quiet"], ["-v"]])

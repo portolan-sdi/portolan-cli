@@ -68,9 +68,8 @@ def _matches_any_glob(
         if case_sensitive:
             if fnmatchcase(value, pattern):
                 return True
-        else:
-            if fnmatch(value.lower(), pattern.lower()):
-                return True
+        elif fnmatch(value.lower(), pattern.lower()):
+            return True
     return False
 
 

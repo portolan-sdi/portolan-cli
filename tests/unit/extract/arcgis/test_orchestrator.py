@@ -498,7 +498,7 @@ class TestOrchestratorIntegration:
                 url=TEST_FEATURE_SERVER_URL,
                 output_dir=tmp_path,
                 options=options,
-                on_progress=lambda p: progress_events.append(p),
+                on_progress=progress_events.append,
             )
 
             # Verify extraction was called for each layer
@@ -779,7 +779,7 @@ class TestServicesRootExtraction:
             ],
         )
 
-        result, mock_discover_layers, mock_extract = _extract_root(
+        result, _mock_discover_layers, mock_extract = _extract_root(
             tmp_path, mock_services, mock_census_layers
         )
 
@@ -812,7 +812,7 @@ class TestServicesRootExtraction:
             ],
         )
 
-        result, mock_discover_layers, mock_extract = _extract_root(
+        result, mock_discover_layers, _mock_extract = _extract_root(
             tmp_path, mock_services, mock_census_layers, service_filter=["Census*"]
         )
 
@@ -845,7 +845,7 @@ class TestServicesRootExtraction:
             ],
         )
 
-        result, mock_discover_layers, mock_extract = _extract_root(
+        result, _mock_discover_layers, mock_extract = _extract_root(
             tmp_path, mock_services, mock_single_layer
         )
 
@@ -890,7 +890,7 @@ class TestServicesRootExtraction:
             ],
         )
 
-        result, mock_discover_layers, mock_extract = _extract_root(
+        result, _mock_discover_layers, mock_extract = _extract_root(
             tmp_path, mock_services, mock_multi_layers
         )
 
@@ -932,7 +932,7 @@ class TestServicesRootExtraction:
             ],
         )
 
-        result, mock_discover_layers, mock_extract = _extract_root(
+        result, _mock_discover_layers, _mock_extract = _extract_root(
             tmp_path, mock_services, [mock_single, mock_multi]
         )
 
@@ -943,7 +943,7 @@ class TestServicesRootExtraction:
 
         # Single-layer service should be flattened
         # Expected: singlelayer/singlelayer.parquet (2 parts)
-        single_path = [p for p in output_paths if "singlelayer" in p][0]
+        single_path = next(p for p in output_paths if "singlelayer" in p)
         assert single_path.count("/") == 1, f"Single-layer should be flat: {single_path}"
 
         # Multi-layer service should keep nesting

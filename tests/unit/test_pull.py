@@ -846,7 +846,7 @@ class TestRemoteFetch:
             # Simulate download writing the file
             def write_versions(source: str, destination: Path, **kwargs) -> MagicMock:
                 destination.parent.mkdir(parents=True, exist_ok=True)
-                destination.write_text(json.dumps(remote_data))
+                destination.write_text(json.dumps(remote_data), encoding="utf-8")
                 result = MagicMock()
                 result.success = True
                 return result
@@ -872,7 +872,7 @@ class TestRemoteFetch:
             mock_result.errors = [(Path("versions.json"), FileNotFoundError("Not found"))]
             mock_download.return_value = mock_result
 
-            with pytest.raises(PullError, match="versions.json"):
+            with pytest.raises(PullError, match=r"versions.json"):
                 fetch_remote_versions(
                     remote_url="s3://bucket/catalog",
                     collection="test-collection",
@@ -998,7 +998,7 @@ class TestPathTraversalProtection:
             }
         }
 
-        with pytest.raises(ValueError, match="[Aa]bsolute|escapes"):
+        with pytest.raises(ValueError, match=r"[Aa]bsolute|escapes"):
             _download_assets(
                 remote_url="s3://bucket/catalog",
                 local_root=local_root,
@@ -1028,7 +1028,7 @@ class TestPathTraversalProtection:
             mock_download.return_value = mock_result
 
             # Should not raise
-            downloaded, failed = _download_assets(
+            _downloaded, failed = _download_assets(
                 remote_url="s3://bucket/catalog",
                 local_root=local_root,
                 files_to_download=["data.parquet"],
@@ -1444,7 +1444,7 @@ class TestValidateSafePathEdgeCases:
         """_validate_safe_path should reject Windows absolute paths."""
         from portolan_cli.sync.pull import _validate_safe_path
 
-        with pytest.raises(ValueError, match="[Aa]bsolute|escapes"):
+        with pytest.raises(ValueError, match=r"[Aa]bsolute|escapes"):
             _validate_safe_path(tmp_path, "C:\\Windows\\System32")
 
     @pytest.mark.unit
@@ -1453,7 +1453,7 @@ class TestValidateSafePathEdgeCases:
         from portolan_cli.sync.pull import _validate_safe_path
 
         # Try to escape using multiple traversal sequences
-        with pytest.raises(ValueError, match="path traversal|escapes"):
+        with pytest.raises(ValueError, match=r"path traversal|escapes"):
             _validate_safe_path(tmp_path, "subdir/../../etc/passwd")
 
 
@@ -1476,7 +1476,7 @@ class TestFetchRemoteVersionsErrors:
             mock_result.errors = [("file", Exception("Network error"))]
             mock_download.return_value = mock_result
 
-            with pytest.raises(PullError, match="versions.json"):
+            with pytest.raises(PullError, match=r"versions.json"):
                 fetch_remote_versions(
                     remote_url="s3://bucket/catalog",
                     collection="test",
@@ -1551,6 +1551,7 @@ class TestMalformedDataHandling:
             # Local versions.json is malformed (missing "versions" key)
             # This should either raise an error or handle gracefully
             # depending on whether it parses local versions
+            error: Exception | None = None
             try:
                 result = pull(
                     remote_url="s3://bucket/catalog",
@@ -1560,8 +1561,10 @@ class TestMalformedDataHandling:
                 # If it succeeds (e.g., treats empty local as fresh pull), that's OK
                 assert result is not None
             except (ValueError, KeyError) as e:
-                # If it fails due to malformed local, that's also valid behavior
-                assert "versions" in str(e).lower() or "missing" in str(e).lower()
+                error = e
+            # If it fails due to malformed local, that's also valid behavior
+            if error is not None:
+                assert "versions" in str(error).lower() or "missing" in str(error).lower()
 
     @pytest.mark.unit
     def test_pull_with_wrong_current_version_type(
@@ -1580,6 +1583,7 @@ class TestMalformedDataHandling:
 
             # Local has current_version as int instead of string
             # The code should either handle this gracefully or raise a clear error
+            error: Exception | None = None
             try:
                 result = pull(
                     remote_url="s3://bucket/catalog",
@@ -1589,8 +1593,10 @@ class TestMalformedDataHandling:
                 # If it succeeds, result should be valid
                 assert result is not None
             except (ValueError, TypeError) as e:
-                # If it fails, error should be informative
-                assert str(e)  # Error message should not be empty
+                error = e
+            # If it fails, error should be informative
+            if error is not None:
+                assert str(error)  # Error message should not be empty
 
     @pytest.mark.unit
     def test_fetch_remote_malformed_response(self, tmp_path: Path) -> None:
@@ -1603,7 +1609,7 @@ class TestMalformedDataHandling:
 
             def write_malformed(source: str, destination: Path, **kwargs) -> MagicMock:
                 destination.parent.mkdir(parents=True, exist_ok=True)
-                destination.write_text(malformed_json)
+                destination.write_text(malformed_json, encoding="utf-8")
                 result = MagicMock()
                 result.success = True
                 return result

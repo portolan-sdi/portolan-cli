@@ -42,7 +42,7 @@ class TestImportSchemaJson:
             ],
         }
         path = tmp_path / "schema.json"
-        with open(path, "w") as f:
+        with open(path, "w", encoding="utf-8") as f:
             json.dump(data, f)
 
         schema = import_schema_json(path)
@@ -64,7 +64,7 @@ class TestImportSchemaJson:
             ],
         }
         path = tmp_path / "schema.json"
-        with open(path, "w") as f:
+        with open(path, "w", encoding="utf-8") as f:
             json.dump(data, f)
 
         schema = import_schema_json(path)
@@ -88,7 +88,7 @@ class TestImportSchemaCsv:
     def test_import_geoparquet_schema_from_csv(self, tmp_path: Path) -> None:
         """Can import GeoParquet schema from CSV."""
         path = tmp_path / "schema.csv"
-        with open(path, "w", newline="") as f:
+        with open(path, "w", encoding="utf-8", newline="") as f:
             writer = csv.DictWriter(
                 f,
                 fieldnames=[
@@ -134,7 +134,7 @@ class TestImportSchemaCsv:
     def test_import_cog_schema_from_csv(self, tmp_path: Path) -> None:
         """Can import COG schema from CSV."""
         path = tmp_path / "schema.csv"
-        with open(path, "w", newline="") as f:
+        with open(path, "w", encoding="utf-8", newline="") as f:
             writer = csv.DictWriter(f, fieldnames=["name", "data_type", "nodata", "description"])
             writer.writeheader()
             writer.writerow(

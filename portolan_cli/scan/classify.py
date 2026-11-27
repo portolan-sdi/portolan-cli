@@ -131,6 +131,17 @@ def _is_in_junk_dir(path: Path) -> bool:
     return any(part.lower() in JUNK_DIRS for part in path.parts)
 
 
+def _classify_parquet(path: Path) -> tuple[FileCategory, SkipReasonType | None, str | None]:
+    """Tell GeoParquet (with 'geo' metadata) from plain Parquet (tabular data)."""
+    if is_geoparquet(path):
+        return (FileCategory.GEO_ASSET, None, None)
+    return (
+        FileCategory.TABULAR_DATA,
+        SkipReasonType.NOT_GEOSPATIAL,
+        "PARQUET is tabular data without GeoParquet metadata",
+    )
+
+
 def _classify_by_extension(
     ext: str, path: Path
 ) -> tuple[FileCategory, SkipReasonType | None, str | None] | None:
@@ -149,13 +160,7 @@ def _classify_by_extension(
     # Special handling for .parquet: peek at metadata to distinguish
     # GeoParquet (has 'geo' metadata) from plain Parquet (tabular data)
     if ext == ".parquet":
-        if is_geoparquet(path):
-            return (FileCategory.GEO_ASSET, None, None)
-        return (
-            FileCategory.TABULAR_DATA,
-            SkipReasonType.NOT_GEOSPATIAL,
-            "PARQUET is tabular data without GeoParquet metadata",
-        )
+        return _classify_parquet(path)
 
     if ext in SIDECAR_EXTENSIONS:
         return (
@@ -195,23 +200,19 @@ def _classify_by_extension(
     return None
 
 
-def classify_file(
-    path: Path,
-    size_bytes: int | None = None,
-) -> tuple[FileCategory, SkipReasonType | None, str | None]:
-    """Classify a file into one of 10 categories.
+def _classify_by_name(
+    path: Path, name: str, ext: str
+) -> tuple[FileCategory, SkipReasonType | None, str | None] | None:
+    """Classify a file by its directory and its name.
 
     Args:
         path: Path to the file.
-        size_bytes: File size in bytes (optional, will stat if not provided).
+        name: Lowercase file name.
+        ext: Lowercase file extension.
 
     Returns:
-        Tuple of (category, skip_reason_type, skip_reason_message).
-        If category is GEO_ASSET, skip_reason_type and message are None.
+        Classification tuple if the name is recognized, None otherwise.
     """
-    name = path.name.lower()
-    ext = path.suffix.lower()
-
     # Check junk directories first
     if _is_in_junk_dir(path):
         return (
@@ -253,6 +254,53 @@ def classify_file(
             f"{path.name} is a map style definition in styles/ directory",
         )
 
+    return None
+
+
+def _classify_image(
+    path: Path, size_bytes: int | None
+) -> tuple[FileCategory, SkipReasonType | None, str | None]:
+    """Classify an image file as a thumbnail or as an unknown raster by its size."""
+    # Get size if not provided
+    if size_bytes is None:
+        try:
+            size_bytes = path.stat().st_size
+        except OSError:
+            size_bytes = 0
+
+    if size_bytes < THUMBNAIL_MAX_SIZE:
+        return (
+            FileCategory.THUMBNAIL,
+            SkipReasonType.NOT_GEOSPATIAL,
+            f"Small image file ({size_bytes} bytes) - likely a thumbnail",
+        )
+    # Large image - might be a raster, but not our known formats
+    return (
+        FileCategory.UNKNOWN,
+        SkipReasonType.UNKNOWN_FORMAT,
+        "Large image file - unknown if geospatial raster",
+    )
+
+
+def classify_file(
+    path: Path,
+    size_bytes: int | None = None,
+) -> tuple[FileCategory, SkipReasonType | None, str | None]:
+    """Classify a file into one of 10 categories.
+
+    Args:
+        path: Path to the file.
+        size_bytes: File size in bytes (optional, will stat if not provided).
+
+    Returns:
+        Tuple of (category, skip_reason_type, skip_reason_message).
+        If category is GEO_ASSET, skip_reason_type and message are None.
+    """
+    ext = path.suffix.lower()
+    result = _classify_by_name(path, path.name.lower(), ext)
+    if result is not None:
+        return result
+
     # Check by extension (simple extension-based classification)
     result = _classify_by_extension(ext, path)
     if result is not None:
@@ -260,25 +308,7 @@ def classify_file(
 
     # Check images for thumbnail classification
     if ext in IMAGE_EXTENSIONS:
-        # Get size if not provided
-        if size_bytes is None:
-            try:
-                size_bytes = path.stat().st_size
-            except OSError:
-                size_bytes = 0
-
-        if size_bytes < THUMBNAIL_MAX_SIZE:
-            return (
-                FileCategory.THUMBNAIL,
-                SkipReasonType.NOT_GEOSPATIAL,
-                f"Small image file ({size_bytes} bytes) - likely a thumbnail",
-            )
-        # Large image - might be a raster, but not our known formats
-        return (
-            FileCategory.UNKNOWN,
-            SkipReasonType.UNKNOWN_FORMAT,
-            "Large image file - unknown if geospatial raster",
-        )
+        return _classify_image(path, size_bytes)
 
     # Unknown extension
     return (

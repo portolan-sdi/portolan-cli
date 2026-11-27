@@ -274,7 +274,7 @@ def read_geo_metadata(source: Path | pq.ParquetFile) -> dict[str, Any] | None:
     try:
         footer = parquet_footer(source) if isinstance(source, Path) else source
         geo = json.loads((footer.metadata.metadata or {}).get(b"geo", b"null"))
-    except Exception:  # noqa: BLE001 - an unreadable file is not a GeoParquet
+    except Exception:  # an unreadable file is not a GeoParquet
         logger.debug("Failed to read GeoParquet metadata from %s", source, exc_info=True)
         return None
     return geo if isinstance(geo, dict) else None
@@ -760,9 +760,9 @@ def list_layers(path: Path) -> list[str] | None:
         feature_layers = [
             layer
             for layer in layers
-            if layer
-            and layer not in ("", "Workspace")
-            and not layer.startswith("fd")  # feature dataset containers
+            if (
+                layer and layer not in ("", "Workspace") and not layer.startswith("fd")
+            )  # feature dataset containers
             or "_" in layer  # but keep fd1_lyr1 style names
         ]
         return feature_layers or None

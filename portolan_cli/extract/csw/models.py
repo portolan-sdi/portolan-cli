@@ -13,6 +13,8 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from portolan_cli.metadata_extraction import ExtractedMetadata
 
+_MIN_KEYWORDS = 3
+
 
 # Known license URL patterns mapped to SPDX identifiers (all lowercase for matching)
 LICENSE_URL_TO_SPDX: dict[str, str] = {
@@ -117,7 +119,7 @@ class ISOMetadata:
         ]
 
         has_strong = any(strong_fields)
-        has_sufficient_keywords = bool(self.keywords and len(self.keywords) >= 3)
+        has_sufficient_keywords = bool(self.keywords and len(self.keywords) >= _MIN_KEYWORDS)
 
         return has_strong or has_sufficient_keywords
 

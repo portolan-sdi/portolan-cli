@@ -174,7 +174,7 @@ def test_local_sink_gives_a_new_file_the_umask_default_mode(tmp_path: Path) -> N
 def test_local_sink_refuses_a_key_outside_its_root(tmp_path: Path) -> None:
     plan = WritePlan(operations=(PutOperation("../escape.json", b"{}", "application/json"),))
 
-    with pytest.raises(ValueError, match="escape.json"):
+    with pytest.raises(ValueError, match=r"escape.json"):
         apply_plan(plan, LocalSink(tmp_path / "root"))
     assert not (tmp_path / "escape.json").exists()
 
@@ -203,7 +203,7 @@ def test_obstore_sink_deletes_on_a_local_store_and_tolerates_a_missing_key(
     tmp_path: Path,
 ) -> None:
     store = LocalStore(tmp_path)
-    obstore.put(store, "removed/collection.json", b"{}")  # noqa: TID251 - test setup
+    obstore.put(store, "removed/collection.json", b"{}")  # test setup
 
     apply_plan(
         _plan(prior_managed_keys=["removed/collection.json", "never/written.json"]),
@@ -220,7 +220,7 @@ def test_obstore_sink_raises_when_a_404_leaves_the_object_in_place(
     # The Source Cooperative proxy answers a bulk delete on an account with
     # 404 NoSuchBucket. obstore reports that 404 as FileNotFoundError.
     store = MemoryStore()
-    obstore.put(store, "parks/collection.json", b"{}")  # noqa: TID251 - test setup
+    obstore.put(store, "parks/collection.json", b"{}")  # test setup
 
     def bucket_not_found(*_args: object, **_kwargs: object) -> None:
         raise FileNotFoundError("NoSuchBucket")

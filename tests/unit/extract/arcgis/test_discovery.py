@@ -248,7 +248,7 @@ class TestDiscoverServices:
             )
 
             # When return_folders=True, returns tuple (services, folders)
-            services, folders = result
+            _services, folders = result
             assert len(folders) == 2
             assert "Archived" in folders
             assert "Internal" in folders
@@ -419,7 +419,7 @@ def _mock_endpoints(monkeypatch: pytest.MonkeyPatch, responses: dict[str, dict])
     """Map base URL (without query) -> JSON body."""
 
     def fake_fetch(self: ArcGISClient, url: str) -> dict[str, Any]:
-        base = url.split("?")[0]
+        base = url.split("?", maxsplit=1)[0]
         if base not in responses:
             raise ArcGISDiscoveryError(f"ArcGIS error from {url}: 499 Token Required")
         return responses[base]

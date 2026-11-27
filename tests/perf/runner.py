@@ -219,7 +219,7 @@ def run(argv: list[str], *, mem: bool) -> dict[str, Any]:
             exit_code = result if isinstance(result, int) else 0
         except SystemExit as stop:
             exit_code = stop.code if isinstance(stop.code, int) else 1
-        except Exception as error:  # noqa: BLE001 - the record names the error
+        except Exception as error:  # the record names the error
             exit_code = f"{type(error).__name__}: {error}"
         wall_s = time.perf_counter() - start
         network = guard.collect()

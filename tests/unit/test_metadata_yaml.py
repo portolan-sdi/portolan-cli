@@ -453,7 +453,7 @@ class TestLoadAndValidate:
             "citation: Some citation\n"  # Missing required fields
         )
 
-        metadata, errors = load_and_validate_metadata(
+        _metadata, errors = load_and_validate_metadata(
             path=catalog_root,
             catalog_root=catalog_root,
         )

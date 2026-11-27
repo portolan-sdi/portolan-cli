@@ -145,8 +145,8 @@ def test_nonconforming_handler_lists_each_problem(tmp_path: Path) -> None:
     sample = tmp_path / "a.bad"
     sample.write_text("x", encoding="utf-8")
 
+    handler = StubHandler("bad", frozenset({".BAD"}), asset_level="layer")
     with pytest.raises(ConformanceError) as err:
-        handler = StubHandler("bad", frozenset({".BAD"}), asset_level="layer")
         check_format_handler(handler, sample, tmp_path)
 
     assert str(err.value).splitlines() == [

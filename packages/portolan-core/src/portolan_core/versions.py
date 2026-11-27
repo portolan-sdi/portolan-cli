@@ -49,6 +49,9 @@ if TYPE_CHECKING:
 
     from portolan_core.run_state import RunState
 
+_PRERELEASE_PARTS = 2
+_SEMVER_PARTS = 3
+
 # Spec version constant (MINOR #12)
 SPEC_VERSION = "1.0.0"
 
@@ -382,14 +385,8 @@ def add_version(
     # This prevents creating no-op versions when re-adding unchanged files
     # BUT: allow versions when metadata indicates explicit request (message, breaking, schema)
     # Only skip if truly a no-op: no message, not breaking, no schema change
-    if (
-        not changes
-        and not removed
-        and versions_file.versions
-        and not message
-        and not breaking
-        and not schema
-    ):
+    explicit_request = bool(message or breaking or schema)
+    if not changes and not removed and versions_file.versions and not explicit_request:
         return versions_file
 
     new_version = Version(
@@ -436,7 +433,7 @@ def parse_version(version_str: str) -> tuple[int, int, int]:
 
     # Strip pre-release (-beta, -alpha.1, etc.) and build metadata (+build.123)
     # Per semver spec: version = major.minor.patch[-prerelease][+buildmetadata]
-    base_version = version_str.split("-")[0].split("+")[0]
+    base_version = version_str.split("-", maxsplit=1)[0].split("+", maxsplit=1)[0]
 
     # Match major.minor.patch pattern
     match = re.match(r"^(\d+)\.(\d+)\.(\d+)$", base_version)
@@ -473,7 +470,7 @@ def _increment_version(version: str) -> str:
         base, prerelease = version.split("-", 1)
         # Try to increment the prerelease number
         prerelease_parts = prerelease.rsplit(".", 1)
-        if len(prerelease_parts) == 2 and prerelease_parts[1].isdigit():
+        if len(prerelease_parts) == _PRERELEASE_PARTS and prerelease_parts[1].isdigit():
             prerelease_parts[1] = str(int(prerelease_parts[1]) + 1)
             return f"{base}-{'.'.join(prerelease_parts)}"
         # No numeric suffix: 1.0.0-beta → 1.0.0-beta.1
@@ -482,12 +479,12 @@ def _increment_version(version: str) -> str:
 
     # Standard semver: increment patch
     parts = version.split(".")
-    if len(parts) >= 3 and parts[-1].isdigit():
+    if len(parts) >= _SEMVER_PARTS and parts[-1].isdigit():
         parts[-1] = str(int(parts[-1]) + 1)
         return ".".join(parts)
-    if len(parts) < 3:
+    if len(parts) < _SEMVER_PARTS:
         # Pad to 3 parts if needed
-        while len(parts) < 3:
+        while len(parts) < _SEMVER_PARTS:
             parts.append("0")
         parts[-1] = "1"
         return ".".join(parts)
