@@ -1,13 +1,4 @@
-"""Integration tests for add orchestration with real file conversions.
-
-These tests exercise the full add workflow with real fixtures,
-verifying that format conversion, metadata extraction, and STAC creation
-work end-to-end.
-
-Files must be INSIDE the catalog
-directory structure BEFORE calling add(). Tests copy fixtures
-into the catalog first, then call add() on the copied paths.
-"""
+"""Integration tests for add orchestration with real file conversions."""
 
 from __future__ import annotations
 
@@ -31,13 +22,7 @@ if TYPE_CHECKING:
 
 @pytest.fixture
 def initialized_catalog(tmp_path: Path) -> Path:
-    """Create an initialized Portolan catalog structure.
-
-    This creates all required files for a managed catalog:
-    - catalog.json at root (STAC entry point)
-    - .portolan/config.yaml (sentinel file for root detection)
-    (Note: state.json removed per issue #290)
-    """
+    """Create an initialized Portolan catalog structure."""
     # Create .portolan for internal state
     portolan_dir = tmp_path / ".portolan"
     portolan_dir.mkdir()
@@ -54,8 +39,6 @@ def initialized_catalog(tmp_path: Path) -> Path:
 
     # config.yaml is the sentinel for catalog root detection
     (portolan_dir / "config.yaml").write_text("version: 1\n")
-
-    # Note: state.json removed per issue #290
 
     return tmp_path
 
@@ -81,12 +64,7 @@ class TestConvertVector:
     def test_convert_preserves_conformant_parquet(
         self, valid_points_parquet: Path, tmp_path: Path
     ) -> None:
-        """convert_vector copies a GeoParquet that already carries the column.
-
-        Since #805 the copy is conditional. A file that already declares a bbox
-        covering column is copied byte for byte, so adding a large conformant
-        file stays cheap.
-        """
+        """convert_vector copies a GeoParquet that already carries the column."""
         import geoparquet_io as gpio
 
         source_dir = tmp_path / "source"
@@ -105,11 +83,7 @@ class TestConvertVector:
     def test_convert_rewrites_parquet_without_a_covering_column(
         self, valid_points_parquet: Path, tmp_path: Path
     ) -> None:
-        """A GeoParquet with no covering column is rewritten, not copied (#805).
-
-        Copying it through produced a catalog that failed PTL-DAT-007 on its own
-        ``portolan check``.
-        """
+        """A GeoParquet with no covering column is rewritten, not copied."""
         import json
 
         import pyarrow.parquet as pq
@@ -212,7 +186,7 @@ class TestComputeChecksum:
 
     @pytest.mark.integration
     def test_checksum_rejects_symlink_to_directory(self, tmp_path: Path) -> None:
-        """compute_checksum rejects symlinks pointing to directories (MAJOR #5)."""
+        """compute_checksum rejects symlinks pointing to directories."""
         target_dir = tmp_path / "target_dir"
         target_dir.mkdir()
         symlink = tmp_path / "symlink_to_dir"
@@ -243,12 +217,7 @@ class TestComputeChecksum:
 
 
 class TestAddIntegration:
-    """Integration tests for full add workflow.
-
-    Files must be inside the catalog
-    directory BEFORE calling add(). Tests copy fixtures into the
-    collection/item directory structure first.
-    """
+    """Integration tests for full add workflow."""
 
     @pytest.mark.integration
     def test_add_vector_end_to_end(
@@ -312,13 +281,7 @@ class TestAddIntegration:
     def test_add_raster_registers_thumbnail_asset(
         self, initialized_catalog: Path, valid_rgb_cog: Path
     ) -> None:
-        """add generates a COG thumbnail sidecar and registers it as an asset (Issue #657).
-
-        The add path converts via convert_raster(), which historically did not
-        generate a thumbnail, so COG items had only a "data" asset. This asserts
-        the thumbnail is both written to disk and registered with role
-        "thumbnail" in the item.json.
-        """
+        """add generates a COG thumbnail sidecar and registers it as an asset."""
         # Per ADR-0022: Copy file INTO catalog first
         collection_dir = initialized_catalog / "imagery"
         item_dir = collection_dir / valid_rgb_cog.stem
@@ -350,7 +313,7 @@ class TestAddIntegration:
     def test_add_raster_thumbnail_disabled_via_config(
         self, initialized_catalog: Path, valid_rgb_cog: Path
     ) -> None:
-        """generate_thumbnail=false suppresses the COG thumbnail sidecar (Issue #657)."""
+        """generate_thumbnail=false suppresses the COG thumbnail sidecar."""
         (initialized_catalog / ".portolan" / "config.yaml").write_text(
             "version: 1\nconversion:\n  cog:\n    generate_thumbnail: false\n"
         )
@@ -431,17 +394,11 @@ class TestAddIntegration:
         assert info.bbox == add_result.bbox
 
 
-# =============================================================================
-# Multi-Asset Integration Tests (Issue #133)
-# =============================================================================
+# Multi-asset integration tests
 
 
 class TestMultiAssetIntegration:
-    """Integration tests for multi-asset tracking (issue #133).
-
-    These tests verify the end-to-end workflow where ALL files in an item
-    directory are tracked as assets, not just geospatial files.
-    """
+    """Integration tests for multi-asset tracking."""
 
     @pytest.mark.integration
     def test_add_with_companion_files_tracks_all(
@@ -492,9 +449,7 @@ class TestMultiAssetIntegration:
         readme = item_dir / "README.md"
         readme.write_text("# Test Dataset\n\nThis is a test.")
 
-        # Re-add to pick up new files (simulating user workflow)
-        # In real usage, user would run `portolan add` again or files would
-        # be present before first add
+        # Re-add to pick up the new files, as a user runs `portolan add` again.
         result2 = add(
             path=geojson_path,
             catalog_root=initialized_catalog,

@@ -1,9 +1,4 @@
-"""Checks for the plugin author guide, docs/guides/plugins.md.
-
-The guide takes its code from the example plugin through pymdownx.snippets
-sections. These checks keep the guide inside its word budget and keep each
-hook documented.
-"""
+"""Check docs/guides/plugins.md: its word budget, and a section for each hook."""
 
 from __future__ import annotations
 

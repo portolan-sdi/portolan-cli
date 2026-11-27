@@ -74,6 +74,76 @@ the endpoint, such as `https://data.source.coop/my-account`. With the account as
 the bucket, puts succeed but deletes fail with `NoSuchBucket`. `ObstoreSink`
 raises that error and does not ignore it.
 
+## What the planner does
+
+The names in `portolan_core.writer.__all__` are the supported interface.
+`PutOperation`, `DeleteOperation`, and `WritePlan` are frozen dataclasses of
+plain values, so `dataclasses.asdict` gives plain data. Any object with the
+`put(key, content, media_type)` and `delete(key)` methods is a `Sink`.
+
+The planner changes your documents as follows:
+
+- It adds the `root`, `parent`, `collection`, `child`, and `item` links. Each
+  `child` and `item` link gets the title of its target, or the `id` of an item
+  that has no `properties.title`. It removes each relative structural link that
+  you supply. An absolute structural link, such as a `child` link to another
+  host, stays.
+- It sets the `collection` field of each item, as STAC 1.1.0 requires.
+- It adds an `agents` link to `./AGENTS.md` and a `describedby` link to
+  `./README.md` on each catalog and collection. If your link has the same rel
+  and file, the planner keeps its other fields, such as `title` and `hreflang`.
+  All other links stay after these links.
+- It adds the newest Portolan profile URI to a catalog or collection that
+  declares no profile.
+- It writes no `self` link. STAC requires an absolute `self` link, and the
+  planner does not know the URL where you publish.
+
+The planner does not do these things:
+
+- It does not read storage or asset files. It writes only the catalog JSON and
+  the Markdown files. Each asset stays as you supply it, so a directory asset,
+  such as a Zarr store, keeps your `file:size` and gets no `file:checksum`.
+- It deletes only keys from `prior_managed_keys`. A prior key must name a
+  `.json` file, a `README.md`, or an `AGENTS.md`. It must not be a
+  `versions.json` or the `href` of an asset in the new plan. The planner cannot
+  tell an item from a data file that has no links, so give only keys that an
+  earlier plan put.
+
+Keys are POSIX paths from the catalog root. The planner puts `key_prefix` in
+front of each put key and each delete key. Give `prior_managed_keys` without
+the prefix, in the same form as the keys of your documents.
+
+The puts come first. Each put comes after the puts of all objects that it
+links down to, so a reader that starts at the root never finds a link to a
+missing object. The deletes come last.
+
+The same input gives the same operations, byte for byte. The JSON keeps the
+key order of your documents.
+
+The planner refuses two keys, or two directories of keys, that differ only by
+case. On a case-insensitive store, such as Windows or the default macOS file
+system, these keys name the same file. The planner applies this rule on all
+hosts, so a plan does not change with the host that makes it.
+
+A translated root is a language root only when the root catalog links it with
+a relative `alternate` link of type `application/json`. Rashid does not follow
+an absolute `alternate` link, so the planner gives that tree the links of an
+ordinary subdirectory.
+
+The planner checks all input before it makes an operation. A failure raises a
+subclass of `CatalogWriteError`:
+
+- `InvalidKeyError`: a key or the prefix is absolute, holds `..`, a backslash,
+  a hidden directory, or an empty segment, or starts with a drive such as `C:`
+  on any host. Two keys or two directories differ only by case. A prior key is
+  not a catalog file, is a `versions.json`, or is an asset.
+- `InvalidDocumentError`: a document is not the STAC object that its file name
+  shows, has links or assets of the wrong shape, has no title or description,
+  has no `README.md` or `AGENTS.md`, or is outside the tree. A collection holds
+  another collection, which the spec forbids (PORTO-CORE-004, PORTO-CORE-018).
+- `MissingOwnerError`: a `README.md` or `AGENTS.md` has no catalog or
+  collection in its folder.
+
 ## Build STAC documents from data
 
 The STAC builders in `portolan_cli.api` make the Items and Collections for

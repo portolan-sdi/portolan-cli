@@ -1,13 +1,4 @@
-"""Metadata check data structures.
-
-This module provides dataclasses for tracking metadata state and validation results:
-- MetadataStatus: Enum for file metadata states (MISSING, FRESH, STALE, BREAKING)
-- FileMetadataState: Holds current vs stored metadata for comparison
-- MetadataCheckResult: Per-file validation result with status and fix hints
-- MetadataReport: Aggregate report with counts and issue lists
-
-These structures follow the pattern established in validation/results.py.
-"""
+"""Metadata check data structures."""
 
 from __future__ import annotations
 
@@ -30,17 +21,7 @@ def _bboxes_equal(
     bbox2: list[float] | None,
     tolerance: float = BBOX_TOLERANCE,
 ) -> bool:
-    """Compare two bounding boxes with floating-point tolerance.
-
-    Args:
-        bbox1: First bounding box [west, south, east, north], or None.
-        bbox2: Second bounding box [west, south, east, north], or None.
-        tolerance: Maximum allowed difference for each coordinate.
-
-    Returns:
-        True if bboxes are equal within tolerance, False otherwise.
-        Returns False if either bbox is None or lengths differ.
-    """
+    """Compare two bounding boxes with floating-point tolerance."""
     if bbox1 is None or bbox2 is None:
         return False
     if len(bbox1) != len(bbox2):
@@ -49,20 +30,7 @@ def _bboxes_equal(
 
 
 class MetadataStatus(Enum):
-    """Status of file metadata relative to stored state.
-
-    Attributes:
-        MISSING: Item directory has data but no item.json (auto-fixable).
-        FRESH: Metadata is up to date with file contents.
-        STALE: File has changed; metadata needs regeneration.
-        BREAKING: Schema has breaking changes (column removed, type changed, etc.).
-        ORPHANED: File on disk under a collection but not registered in any
-            STAC manifest (collection.json.assets or item.json.assets). Not
-            auto-fixable — user must register or delete.
-
-    The severity property allows sorting issues by importance:
-        BREAKING > MISSING > STALE > ORPHANED > FRESH
-    """
+    """Status of file metadata relative to stored state."""
 
     MISSING = "missing"
     FRESH = "fresh"
@@ -72,13 +40,7 @@ class MetadataStatus(Enum):
 
     @property
     def severity(self) -> int:
-        """Return numeric severity for ordering.
-
-        Higher values are more severe.
-
-        Returns:
-            int: Severity level (0-4).
-        """
+        """Return numeric severity for ordering."""
         severity_map = {
             MetadataStatus.FRESH: 0,
             MetadataStatus.ORPHANED: 1,
@@ -91,22 +53,7 @@ class MetadataStatus(Enum):
 
 @dataclass
 class FileMetadataState:
-    """Comparison state for a single file's metadata.
-
-    Holds both current (extracted from file) and stored (from versions.json/STAC)
-    metadata values for change detection.
-
-    Attributes:
-        file_path: Path to the geo-asset file.
-        current_mtime: Current file modification time (Unix timestamp).
-        stored_mtime: Stored modification time from versions.json, or None if new.
-        current_bbox: Current bounding box [west, south, east, north].
-        stored_bbox: Stored bounding box, or None if new.
-        current_feature_count: Current feature/row count (or pixel count for raster).
-        stored_feature_count: Stored count, or None if new.
-        current_schema_fingerprint: Hash/fingerprint of current schema.
-        stored_schema_fingerprint: Stored schema fingerprint, or None if new.
-    """
+    """Comparison state for a single file's metadata."""
 
     file_path: Path
     current_mtime: float
@@ -120,33 +67,15 @@ class FileMetadataState:
 
     @property
     def mtime_changed(self) -> bool:
-        """Check if file modification time has changed.
-
-        Uses ``run_state.file_mtime_matches``, so only two whole-second
-        timestamps get the coarse file system's 2.0 s window.
-
-        Returns:
-            True if mtime differs or no stored mtime exists.
-        """
+        """Check if file modification time has changed."""
         if self.stored_mtime is None:
             return True
         return not file_mtime_matches(self.current_mtime, self.stored_mtime)
 
     @property
     def heuristics_changed(self) -> bool:
-        """Check if quick heuristics (bbox, feature count) have changed.
-
-        This is a fast check that catches most real data changes without
-        full content hashing. Uses tolerance-based comparison for floats
-        to avoid false positives from floating-point precision issues.
-
-        Returns:
-            True if bbox or feature count differs, or if no stored values exist.
-        """
-        # Collection-level assets pass None for both stored_bbox and
-        # current_bbox (no item.json bbox source); treat that as
-        # "no bbox signal" and fall through to feature-count + schema
-        # checks rather than flagging it as a change.
+        """Check if quick heuristics (bbox, feature count) have changed."""
+        # Collection-level assets pass None bboxes, which means no bbox signal.
         bbox_unavailable = self.stored_bbox is None and self.current_bbox is None
         if not bbox_unavailable:
             if self.stored_bbox is None:
@@ -167,21 +96,13 @@ class FileMetadataState:
 
     @property
     def schema_changed(self) -> bool:
-        """Check if schema fingerprint has changed.
-
-        Returns:
-            True if schema fingerprint differs or no stored fingerprint exists.
-        """
+        """Check if schema fingerprint has changed."""
         if self.stored_schema_fingerprint is None:
             return True
         return self.current_schema_fingerprint != self.stored_schema_fingerprint
 
     def to_dict(self) -> dict[str, Any]:
-        """Convert to JSON-serializable dict.
-
-        Returns:
-            Dictionary with all state values.
-        """
+        """Convert to JSON-serializable dict."""
         return {
             "file_path": str(self.file_path),
             "current_mtime": self.current_mtime,
@@ -200,15 +121,7 @@ class FileMetadataState:
 
 @dataclass
 class MetadataCheckResult:
-    """Result from checking a single file's metadata.
-
-    Attributes:
-        file_path: Path to the checked file.
-        status: Metadata status (FRESH, STALE, MISSING, BREAKING).
-        message: Human-readable description of the result.
-        changes: List of what changed (e.g., ["mtime", "bbox", "schema"]).
-        fix_hint: Optional suggestion for fixing the issue.
-    """
+    """Result from checking a single file's metadata."""
 
     file_path: Path
     status: MetadataStatus
@@ -218,19 +131,11 @@ class MetadataCheckResult:
 
     @property
     def is_ok(self) -> bool:
-        """Check if metadata is up to date.
-
-        Returns:
-            True if status is FRESH.
-        """
+        """Check if metadata is up to date."""
         return self.status == MetadataStatus.FRESH
 
     def to_dict(self) -> dict[str, Any]:
-        """Convert to JSON-serializable dict.
-
-        Returns:
-            Dictionary with result data. Omits fix_hint if None.
-        """
+        """Convert to JSON-serializable dict."""
         result: dict[str, Any] = {
             "file_path": str(self.file_path),
             "status": self.status.value,
@@ -244,110 +149,56 @@ class MetadataCheckResult:
 
 @dataclass
 class MetadataReport:
-    """Aggregate report of metadata check results.
-
-    Collects results from checking multiple files and provides
-    summary statistics and filtering.
-
-    Attributes:
-        results: List of individual check results.
-    """
+    """Aggregate report of metadata check results."""
 
     results: list[MetadataCheckResult] = field(default_factory=list)
 
     @property
     def total_count(self) -> int:
-        """Total number of files checked.
-
-        Returns:
-            Number of results.
-        """
+        """Total number of files checked."""
         return len(self.results)
 
     @property
     def fresh_count(self) -> int:
-        """Count of files with FRESH status.
-
-        Returns:
-            Number of up-to-date files.
-        """
+        """Count of files with FRESH status."""
         return sum(1 for r in self.results if r.status == MetadataStatus.FRESH)
 
     @property
     def stale_count(self) -> int:
-        """Count of files with STALE status.
-
-        Returns:
-            Number of files needing metadata regeneration.
-        """
+        """Count of files with STALE status."""
         return sum(1 for r in self.results if r.status == MetadataStatus.STALE)
 
     @property
     def missing_count(self) -> int:
-        """Count of files with MISSING status.
-
-        Returns:
-            Number of files without STAC metadata.
-        """
+        """Count of files with MISSING status."""
         return sum(1 for r in self.results if r.status == MetadataStatus.MISSING)
 
     @property
     def breaking_count(self) -> int:
-        """Count of files with BREAKING status.
-
-        Returns:
-            Number of files with breaking schema changes.
-        """
+        """Count of files with BREAKING status."""
         return sum(1 for r in self.results if r.status == MetadataStatus.BREAKING)
 
     @property
     def orphaned_count(self) -> int:
-        """Count of files with ORPHANED status.
-
-        Returns:
-            Number of files unregistered in any STAC manifest.
-        """
+        """Count of files with ORPHANED status."""
         return sum(1 for r in self.results if r.status == MetadataStatus.ORPHANED)
 
     @property
     def passed(self) -> bool:
-        """Check if all files have fresh metadata.
-
-        ORPHANED is *not* a pass — the rule emits passed=False with a
-        WARNING when only orphans are present, so this property must agree
-        for any other consumer (e.g. JSON callers) to read the same truth.
-
-        Returns:
-            True if all results are FRESH (or no results exist).
-        """
+        """Check if all files have fresh metadata."""
         return all(r.status == MetadataStatus.FRESH for r in self.results)
 
     @property
     def issues(self) -> list[MetadataCheckResult]:
-        """Get all non-FRESH results.
-
-        Returns:
-            List of results that need attention.
-        """
+        """Get all non-FRESH results."""
         return [r for r in self.results if r.status != MetadataStatus.FRESH]
 
     def filter_by_status(self, status: MetadataStatus) -> list[MetadataCheckResult]:
-        """Filter results by status.
-
-        Args:
-            status: Status to filter by.
-
-        Returns:
-            List of results with the specified status.
-        """
+        """Filter results by status."""
         return [r for r in self.results if r.status == status]
 
     def to_dict(self) -> dict[str, Any]:
-        """Convert to JSON-serializable dict for --json output.
-
-        Returns:
-            Dictionary with summary statistics and all results.
-        """
+        """Convert to JSON-serializable dict for --json output."""
         return {
             "passed": self.passed,
             "total_count": self.total_count,

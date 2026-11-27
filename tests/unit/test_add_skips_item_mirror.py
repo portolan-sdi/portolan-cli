@@ -1,12 +1,4 @@
-"""The add flow never re-ingests the item mirror it publishes (issue #654).
-
-With mirror generation on by default, every item-bearing collection gains an
-``items.parquet`` in its collection root after the first add. A re-add used
-to collect that derived file as vector data, which broke metadata
-aggregation on partitioned collections ("no items have valid bboxes"). The
-spec reserves ``items.parquet`` in the collection root for the mirror, so
-discovery skips the name outright.
-"""
+"""The add flow never re-ingests the item mirror it publishes."""
 
 from __future__ import annotations
 
@@ -50,13 +42,6 @@ class TestAddSkipsItemMirror:
 
     @pytest.mark.unit
     def test_mirror_asset_excluded_from_table_aggregation(self, tmp_path: Path) -> None:
-        """The tracked mirror never joins parquet metadata aggregation.
-
-        On a partitioned collection the data is tracked by a glob href, so
-        the mirror was the only asset the disk scan matched. Its metadata
-        carries no bbox, and aggregation then failed with "no items have
-        valid bboxes".
-        """
         import pyarrow as pa
         import pyarrow.parquet as pq
         import pystac

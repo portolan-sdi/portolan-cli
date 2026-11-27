@@ -1,11 +1,4 @@
-"""Tests for ArcGIS ImageServer discovery.
-
-ImageServer discovery fetches raster service metadata from ArcGIS REST API
-endpoints. This enables Portolan to understand raster data capabilities
-before extraction (band count, pixel type, extent, resolution).
-
-TDD: These tests are written FIRST, before implementation.
-"""
+"""Tests for ArcGIS ImageServer discovery."""
 
 from __future__ import annotations
 
@@ -25,9 +18,7 @@ from portolan_cli.extract.arcgis.imageserver.discovery import (
 pytestmark = pytest.mark.unit
 
 
-# =============================================================================
 # Fixtures
-# =============================================================================
 
 
 @pytest.fixture
@@ -111,20 +102,13 @@ def _mock_httpx_response(data: dict[str, Any]) -> MagicMock:
 
 
 def _setup_async_client_mock(mock_client_class: MagicMock, response: MagicMock) -> None:
-    """Configure an AsyncMock for httpx.AsyncClient context manager.
-
-    Args:
-        mock_client_class: The patched httpx.AsyncClient class
-        response: The mock response to return from client.get()
-    """
+    """Configure an AsyncMock for httpx.AsyncClient context manager."""
     mock_client = AsyncMock()
     mock_client.get.return_value = response
     mock_client_class.return_value.__aenter__.return_value = mock_client
 
 
-# =============================================================================
 # ImageServerMetadata dataclass tests
-# =============================================================================
 
 
 class TestImageServerMetadata:
@@ -238,9 +222,7 @@ class TestImageServerMetadata:
         assert metadata.service_data_type == "esriImageServiceDataTypeGeneric"
 
 
-# =============================================================================
 # discover_imageserver tests (async)
-# =============================================================================
 
 
 class TestDiscoverImageserver:
@@ -388,9 +370,7 @@ class TestDiscoverImageserver:
             assert "f=json" in url_called
 
 
-# =============================================================================
 # Error handling tests (async)
-# =============================================================================
 
 
 class TestDiscoverImageserverErrors:
@@ -508,9 +488,7 @@ class TestDiscoverImageserverErrors:
                 await discover_imageserver("https://services.arcgis.com/test/ImageServer")
 
 
-# =============================================================================
 # Edge cases (async)
-# =============================================================================
 
 
 class TestDiscoverImageserverEdgeCases:
@@ -676,19 +654,11 @@ class TestDiscoverImageserverEdgeCases:
             assert result.pixel_type == "F64"
 
 
-# =============================================================================
-# Optional image size limits (issue #870)
-# =============================================================================
+# Optional image size limits
 
 
 class TestOptionalImageSizeLimits:
-    """Hosted tiled imagery layers omit maxImageHeight and maxImageWidth.
-
-    Issue #870 reports a tiled imagery layer on ArcGIS Online that fails
-    discovery with "Missing required field 'maxImageHeight'". The fields are
-    optional. When a service omits them, discovery applies the ArcGIS Server
-    defaults instead of refusing the service.
-    """
+    """Hosted tiled imagery layers omit maxImageHeight and maxImageWidth."""
 
     def _without_limits(self, response: dict[str, Any]) -> dict[str, Any]:
         return {
@@ -787,12 +757,7 @@ class TestOptionalImageSizeLimits:
 
 
 class TestTilesOnlyServices:
-    """A hosted tiled imagery layer serves only its cache (issue #870).
-
-    The service reports `capabilities: "Image,TilesOnly"` and answers
-    exportImage with HTTP 400 at every size. Discovery must report the cache
-    grid so the extractor can read the tiles instead.
-    """
+    """A hosted tiled imagery layer serves only its cache."""
 
     @staticmethod
     def _tiles_only(response: dict[str, Any]) -> dict[str, Any]:
@@ -874,7 +839,6 @@ class TestTilesOnlyServices:
 
 @pytest.mark.asyncio
 async def test_fetch_error_names_the_service_without_its_userinfo() -> None:
-    """#981: the error names the service, not the password in its URL."""
     with patch("portolan_cli.extract.arcgis.imageserver.discovery.httpx.AsyncClient") as cls:
         mock_client = AsyncMock()
         mock_client.get.side_effect = httpx.ConnectError("refused")

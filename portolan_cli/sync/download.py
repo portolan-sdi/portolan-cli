@@ -1,54 +1,4 @@
-"""Download files from cloud object storage (S3, GCS, Azure).
-
-This module provides functionality to download files and directories from cloud
-object storage using the obstore library. It supports:
-
-- S3 (including S3-compatible endpoints like MinIO)
-- Google Cloud Storage (GCS)
-- Azure Blob Storage
-
-Credentials come from ``portolan_cli.sync.upload._setup_store_and_kwargs``, which
-this module calls. That module documents where it reads them.
-
-Basic Usage:
-    from portolan_cli.sync.download import download_file, download_directory
-    from portolan_cli.sync.upload import check_credentials
-
-    # Check credentials before download
-    valid, hint = check_credentials("s3://mybucket/path")
-    if not valid:
-        print(hint)
-
-Return:
-    # Download a single file
-    result = download_file(
-        source="s3://mybucket/data.parquet",
-        destination=Path("data.parquet"),
-    )
-
-    # Download a directory
-    result = download_directory(
-        source="s3://mybucket/dataset/",
-        destination=Path("output/"),
-        pattern="*.parquet",  # Optional filter
-    )
-
-Custom S3 Endpoints (MinIO, source.coop):
-    result = download_file(
-        source="s3://mybucket/data.parquet",
-        destination=Path("data.parquet"),
-        s3_endpoint="minio.example.com:9000",
-        s3_region="us-east-1",
-    )
-
-Note:
-    This module provides internal library functionality only. It does not
-    include a CLI command - that will be added as part of the sync command
-    (issue #16).
-
-    Credential checking and store setup are reused from upload.py to maintain
-    consistency and avoid duplication.
-"""
+"""Download files from cloud object storage (S3, GCS, Azure)."""
 
 from __future__ import annotations
 
@@ -83,8 +33,7 @@ if TYPE_CHECKING:
 _MAX_FILES_LISTED = 10
 
 # Transfer progress is a diagnostic. Each caller reports its own outcome from
-# the DownloadResult. download_file sends its lines to a report callback when
-# the caller passes one.
+# the DownloadResult.
 logger = logging.getLogger(__name__)
 
 
@@ -96,9 +45,7 @@ ObjectStore = S3Store | GCSStore | AzureStore | HTTPStore | LocalStore | MemoryS
 DownloadResultFuture = Future[tuple[Path, Exception | None, int]]
 
 
-# =============================================================================
 # Exceptions
-# =============================================================================
 
 
 class DownloadIntegrityError(Exception):
@@ -109,23 +56,12 @@ class PathTraversalError(ValueError):
     """Raised when a remote key contains path traversal attempt."""
 
 
-# =============================================================================
 # Data Classes
-# =============================================================================
 
 
 @dataclass
 class DownloadResult:
-    """Result of a download operation.
-
-    Attributes:
-        success: True if all files were downloaded successfully.
-        files_downloaded: Number of files successfully downloaded.
-        files_failed: Number of files that failed to download.
-        total_bytes: Total bytes downloaded (only successful files).
-        errors: List of (local_path, exception) tuples for failed downloads.
-                Uses Path type for consistency with UploadResult.
-    """
+    """Result of a download operation."""
 
     success: bool
     files_downloaded: int
@@ -134,24 +70,11 @@ class DownloadResult:
     errors: list[tuple[Path, Exception]] = field(default_factory=list)
 
 
-# =============================================================================
 # Security Validation
-# =============================================================================
 
 
 def _validate_local_path(local_path: Path, destination: Path) -> None:
-    """Validate that local path is within destination directory.
-
-    Protects against path traversal attacks where remote keys contain '..'
-    sequences that could escape the destination directory.
-
-    Args:
-        local_path: The computed local file path
-        destination: The intended destination directory
-
-    Raises:
-        PathTraversalError: If local_path escapes destination directory
-    """
+    """Validate that local path is within destination directory."""
     # Resolve both paths to absolute paths (resolves symlinks and ..)
     resolved_local = local_path.resolve()
     resolved_dest = destination.resolve()
@@ -165,22 +88,11 @@ def _validate_local_path(local_path: Path, destination: Path) -> None:
         ) from err
 
 
-# =============================================================================
 # Target Path Building
-# =============================================================================
 
 
 def _build_local_path(remote_key: str, prefix: str, destination: Path) -> Path:
-    """Build local file path preserving directory structure.
-
-    Args:
-        remote_key: Full remote object key (e.g., "data/subdir/file.parquet")
-        prefix: Prefix from source URL (e.g., "data/")
-        destination: Local destination directory
-
-    Returns:
-        Local file path preserving relative structure
-    """
+    """Build local file path preserving directory structure."""
     # Remove prefix from key to get relative path
     if prefix and remote_key.startswith(prefix):
         relative_path = remote_key[len(prefix) :].lstrip("/")
@@ -193,16 +105,7 @@ def _build_local_path(remote_key: str, prefix: str, destination: Path) -> Path:
 def _get_local_path_for_file(
     source_prefix: str, destination: Path, is_dir_destination: bool
 ) -> Path:
-    """Determine the local path for a single file download.
-
-    Args:
-        source_prefix: Prefix extracted from source URL
-        destination: Local destination path
-        is_dir_destination: True if destination is/should be a directory
-
-    Returns:
-        Local file path for the download
-    """
+    """Determine the local path for a single file download."""
     if is_dir_destination or destination.is_dir():
         # Destination is a directory, use filename from source
         filename = source_prefix.rsplit("/", 1)[-1] if "/" in source_prefix else source_prefix
@@ -211,9 +114,7 @@ def _get_local_path_for_file(
     return destination
 
 
-# =============================================================================
 # Download Functions
-# =============================================================================
 
 
 def _download_one_file(
@@ -222,18 +123,7 @@ def _download_one_file(
     local_path: Path,
     file_size: int,
 ) -> tuple[Path, Exception | None, int]:
-    """Download a single file and return result tuple for parallel processing.
-
-    Args:
-        store: Object store instance
-        remote_key: Remote object key to download
-        local_path: Local path to save the file
-        file_size: Expected file size in bytes
-
-    Returns:
-        Tuple of (local_path, error_or_none, bytes_downloaded)
-        Uses Path for consistency with UploadResult.
-    """
+    """Download a single file and return result tuple for parallel processing."""
     try:
         size_mb = file_size / (1024 * 1024)
         start_time = time.time()
@@ -302,19 +192,13 @@ def download_file(
         s3_region: S3 region (default: auto-detected)
         s3_use_ssl: Whether to use HTTPS for S3 endpoint (default: True)
         chunk_concurrency: Max concurrent chunks per file (default: 4)
-        report: Receives each line of the download, with its level. Without
-            it, the lines go to the log.
+        report: Receives each line of the download. Without it, the lines go to the log.
 
     Returns:
         DownloadResult with download statistics
 
     Raises:
         ValueError: If source or destination is empty/invalid
-
-    Example:
-        >>> result = download_file("s3://bucket/data.parquet", Path("data.parquet"))
-        >>> if result.success:
-        ...     print(f"Downloaded {result.files_downloaded} file(s)")
     """
     # Input validation
     if not source or not source.strip():
@@ -416,16 +300,7 @@ def download_file(
 def _list_remote_files(
     store: ObjectStore, prefix: str, pattern: str | None = None
 ) -> list[dict[str, int | str]]:
-    """List files from remote prefix, optionally filtering by pattern.
-
-    Args:
-        store: Object store instance
-        prefix: Remote prefix to list
-        pattern: Optional glob pattern for filtering files (e.g., "*.parquet")
-
-    Returns:
-        List of file metadata dicts with 'path' and 'size' keys
-    """
+    """List files from remote prefix, optionally filtering by pattern."""
     files: list[dict[str, int | str]] = []
 
     for batch in obs.list(store, prefix=prefix):
@@ -466,20 +341,7 @@ def _execute_parallel_downloads(
     fail_fast: bool,
     overwrite: bool = True,
 ) -> list[tuple[Path, Exception | None, int]]:
-    """Execute parallel downloads using ThreadPoolExecutor.
-
-    Args:
-        store: Object store instance
-        files: List of file metadata to download
-        prefix: Source prefix for relative path calculation
-        destination: Local destination directory
-        max_files: Max concurrent file downloads
-        fail_fast: Stop on first error if True
-        overwrite: If False, skip existing files
-
-    Returns:
-        List of (local_path, error_or_none, bytes_downloaded) tuples
-    """
+    """Execute parallel downloads using ThreadPoolExecutor."""
     results: list[tuple[Path, Exception | None, int]] = []
 
     # Pre-filter files: validate paths and check for existing files
@@ -592,38 +454,7 @@ def download_directory(
     s3_region: str | None = None,
     s3_use_ssl: bool | None = None,
 ) -> DownloadResult:
-    """Download a directory from S3/GCS/Azure with parallel downloads.
-
-    Progress goes to the module logger.
-
-    Args:
-        source: Object store URL (e.g., s3://bucket/prefix/)
-        destination: Local directory path
-        pattern: Optional glob pattern for filtering files (e.g., "*.parquet")
-        profile: AWS profile name (for S3 only)
-        max_files: Max number of files to download in parallel (default: 4)
-        chunk_concurrency: Max concurrent chunks per file (default: 4)
-        fail_fast: If True, stop on first error; otherwise continue and report at end
-        dry_run: If True, log the files it would download and download nothing
-        overwrite: If False, skip existing files (default: True)
-        s3_endpoint: Custom S3-compatible endpoint (e.g., "minio.example.com:9000")
-        s3_region: S3 region (default: auto-detected)
-        s3_use_ssl: Whether to use HTTPS for S3 endpoint (default: True)
-
-    Returns:
-        DownloadResult with download statistics
-
-    Raises:
-        ValueError: If destination is an existing file (not a directory)
-
-    Example:
-        >>> result = download_directory(
-        ...     "s3://bucket/dataset/",
-        ...     Path("output/"),
-        ...     pattern="*.parquet",
-        ... )
-        >>> print(f"Downloaded {result.files_downloaded} files")
-    """
+    """Download a directory from S3/GCS/Azure with parallel downloads."""
     # Input validation - destination must be a directory
     if destination.exists() and destination.is_file():
         raise ValueError(f"Destination must be a directory, not a file: {destination}")
@@ -634,9 +465,7 @@ def download_directory(
         bucket_url, profile, chunk_concurrency, s3_endpoint, s3_region, s3_use_ssl
     )
 
-    # Note: chunk_concurrency is stored in kwargs['max_concurrency'] but obstore.get
-    # doesn't support max_concurrency parameter. The kwargs are kept for potential
-    # future use with obstore enhancements.
+    # obstore.get takes no max_concurrency, so kwargs go unused.
     _ = kwargs  # Mark as intentionally unused for now
 
     # List remote files
@@ -684,28 +513,11 @@ def download_directory(
     )
 
 
-# =============================================================================
-# HTTP HEAD for Remote File Sizes (Issue #501)
-# =============================================================================
+# HTTP HEAD for Remote File Sizes
 
 
 def get_remote_file_size(url: str, timeout: float = 30.0) -> int | None:
-    """Get file size from a remote URL via HTTP HEAD request.
-
-    Public API for synchronous callers. The async version
-    (get_remote_file_size_async) is used internally by pull operations.
-
-    Used to populate file:size for STAC assets that lack size information
-    (e.g., remote catalogs during pull/clone).
-
-    Args:
-        url: HTTP(S) URL to check.
-        timeout: Request timeout in seconds.
-
-    Returns:
-        File size in bytes, or None if the size cannot be determined
-        (e.g., server doesn't support HEAD, no Content-Length header).
-    """
+    """Get file size from a remote URL via HTTP HEAD request."""
     import httpx
 
     try:
@@ -719,15 +531,7 @@ def get_remote_file_size(url: str, timeout: float = 30.0) -> int | None:
 
 
 async def get_remote_file_size_async(url: str, timeout: float = 30.0) -> int | None:
-    """Async version of get_remote_file_size.
-
-    Args:
-        url: HTTP(S) URL to check.
-        timeout: Request timeout in seconds.
-
-    Returns:
-        File size in bytes, or None if the size cannot be determined.
-    """
+    """Async version of get_remote_file_size."""
     import httpx
 
     try:

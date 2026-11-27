@@ -1,14 +1,7 @@
 #!/usr/bin/env python3
 """Fetch API documentation for core dependencies using gitingest.
 
-This module is used by the Claude hook system to auto-fetch current API docs
-when reading Python files that import geoparquet_io, rio_cogeo, or obstore.
-
-Usage as CLI:
-    python scripts/fetch_lib_docs.py <file_content> <session_id>
-
-Usage as module:
-    from scripts.fetch_lib_docs import detect_imports, fetch_docs
+A Claude hook runs it when a Python file imports geoparquet_io, rio_cogeo, or obstore.
 """
 
 from __future__ import annotations
@@ -38,26 +31,11 @@ TRACKED_LIBRARIES = frozenset(REPO_MAPPING.keys())
 
 
 def detect_imports(content: str) -> set[str]:
-    """Detect imports of tracked libraries in Python source code.
-
-    Args:
-        content: Python source code as a string.
-
-    Returns:
-        Set of library names that are imported in the content.
-    """
+    """Detect imports of tracked libraries in Python source code."""
     detected: set[str] = set()
 
     for lib in TRACKED_LIBRARIES:
-        # Match:
-        # - import lib
-        # - import lib.submodule
-        # - from lib import ...
-        # - from lib.submodule import ...
-        #
-        # But NOT:
-        # - # import lib (commented)
-        # - "import lib" (in string)
+        # Match `import lib[.sub]` and `from lib[.sub] import`, not in a comment or a string.
         pattern = rf"^(?!\s*#).*(?:^|\s)(?:import\s+{lib}|from\s+{lib})(?:\s|\.|$)"
 
         for line in content.split("\n"):
@@ -85,27 +63,12 @@ def detect_imports(content: str) -> set[str]:
 
 
 def get_session_cache_path(session_id: str) -> Path:
-    """Get the path to the session cache file.
-
-    Args:
-        session_id: Unique identifier for the current Claude session.
-
-    Returns:
-        Path to the cache file in the temp directory.
-    """
+    """Get the path to the session cache file."""
     return Path(tempfile.gettempdir()) / f"claude-libdocs-fetched-{session_id}"
 
 
 def is_library_fetched(library: str, session_id: str) -> bool:
-    """Check if a library's docs have already been fetched this session.
-
-    Args:
-        library: Name of the library (e.g., 'geoparquet_io').
-        session_id: Unique identifier for the current Claude session.
-
-    Returns:
-        True if the library was already fetched, False otherwise.
-    """
+    """Check if a library's docs have already been fetched this session."""
     cache_path = get_session_cache_path(session_id)
     if not cache_path.exists():
         return False
@@ -115,12 +78,7 @@ def is_library_fetched(library: str, session_id: str) -> bool:
 
 
 def mark_library_fetched(library: str, session_id: str) -> None:
-    """Mark a library as fetched in the session cache.
-
-    Args:
-        library: Name of the library (e.g., 'geoparquet_io').
-        session_id: Unique identifier for the current Claude session.
-    """
+    """Mark a library as fetched in the session cache."""
     cache_path = get_session_cache_path(session_id)
 
     # Append to existing cache or create new
@@ -133,39 +91,17 @@ def mark_library_fetched(library: str, session_id: str) -> None:
 
 
 def get_unfetched_libraries(detected: set[str], session_id: str) -> set[str]:
-    """Filter detected libraries to only those not yet fetched this session.
-
-    Args:
-        detected: Set of detected library imports.
-        session_id: Unique identifier for the current Claude session.
-
-    Returns:
-        Set of libraries that need to be fetched.
-    """
+    """Filter detected libraries to only those not yet fetched this session."""
     return {lib for lib in detected if not is_library_fetched(lib, session_id)}
 
 
 def get_repo_url(library: str) -> str | None:
-    """Get the GitHub repository URL for a library.
-
-    Args:
-        library: Name of the library (e.g., 'geoparquet_io').
-
-    Returns:
-        GitHub URL string, or None if library is not tracked.
-    """
+    """Get the GitHub repository URL for a library."""
     return REPO_MAPPING.get(library)
 
 
 def fetch_docs(library: str) -> str | None:
-    """Fetch documentation for a library using gitingest.
-
-    Args:
-        library: Name of the library (e.g., 'geoparquet_io').
-
-    Returns:
-        Documentation content as a string, or None on error.
-    """
+    """Fetch documentation for a library using gitingest."""
     url = get_repo_url(library)
     if url is None:
         return None
@@ -191,29 +127,14 @@ def fetch_docs(library: str) -> str | None:
 
 
 def compress_with_distill(content: str) -> str:
-    """Compress content using Distill MCP if available.
-
-    Args:
-        content: Documentation content to compress.
-
-    Returns:
-        Compressed content, or original if Distill unavailable.
-    """
+    """Compress content using Distill MCP if available."""
     # Distill MCP is called externally by the hook script
     # This is a placeholder for potential future Python-based compression
     return content
 
 
 def process_hook_input(hook_input: Mapping[str, object], session_id: str) -> dict[str, str] | None:
-    """Process hook input and return docs for detected libraries.
-
-    Args:
-        hook_input: JSON input from Claude hook system.
-        session_id: Unique identifier for the current Claude session.
-
-    Returns:
-        Dict with 'systemMessage' key containing docs, or None if no docs to inject.
-    """
+    """Process hook input and return docs for detected libraries."""
     # Extract file path and content from hook input
     tool_input = hook_input.get("tool_input", {})
     tool_result = hook_input.get("tool_result", {})

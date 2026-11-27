@@ -1,9 +1,4 @@
-"""Tests for IcebergBackend.pull() method.
-
-Moved from portolan-cli's test_pull_iceberg.py. The pull method uses
-backend.get_current_version() to get asset info, then downloads files
-from {remote_url}/{href}.
-"""
+"""Tests for IcebergBackend.pull() method."""
 
 from __future__ import annotations
 
@@ -120,12 +115,7 @@ def test_pull_reports_failed_downloads(iceberg_backend, parquet_file):
 
 @pytest.mark.integration
 def test_pull_without_collection_pulls_every_collection(tmp_path, monkeypatch):
-    """#977: `portolan pull <remote>` with no --collection exits 0 on Iceberg.
-
-    On main the backend got collection=None and raised "Collection name cannot
-    be empty". The catalog holds one collection with no Iceberg table yet, so
-    the pull reports it as having no versions.
-    """
+    """`portolan pull <remote>` with no --collection exits 0 on Iceberg."""
     import json
 
     from click.testing import CliRunner
@@ -151,7 +141,7 @@ def test_pull_without_collection_pulls_every_collection(tmp_path, monkeypatch):
 
 @pytest.mark.integration
 def test_pull_prints_each_download_line(iceberg_backend, parquet_file, tmp_path, capsys):
-    """pull() passes a report to download_file, so its download lines print, as before #1133."""
+    """pull() passes a report to download_file, so its download lines print."""
     publish_boundaries(iceberg_backend, parquet_file)
 
     def download(*, source: str, destination: Path, report: Any) -> MagicMock:

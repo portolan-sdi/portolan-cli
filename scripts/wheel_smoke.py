@@ -1,27 +1,6 @@
-"""Build the wheels and prove that the portolan-core wheel works on its own (#1133).
+"""Build the wheels and prove that the portolan-core wheel works on its own.
 
-The script builds both wheels with ``uv build``. It checks that the
-portolan-cli wheel pins portolan-core to the shared version. It installs only
-the portolan-core wheel in a fresh virtual environment, with the dependencies
-from the package index. Then it runs itself again inside that environment with
-``--inside``. That half checks four things:
-
-- No geospatial package and no portolan-cli is installed or importable.
-- The catalog of ``examples/python-writer/write_catalog.py``, with its
-  ``README.md`` and ``AGENTS.md`` files, applies to a ``LocalSink`` and to an
-  ``ObstoreSink`` over an obstore ``MemoryStore``.
-- ``python -m rashid_core check --no-data`` reports no error on each result.
-  The script reads the MemoryStore objects back to a folder to check them.
-- A second plan that drops a collection and lists the first plan's keys in
-  ``prior_managed_keys`` deletes that collection.
-
-The inside half imports only the standard library at the top, and it runs
-with ``python -I``. So it imports portolan_core from the installed wheel and
-never from the source tree.
-
-Run it from the repository root:
-
-    uv run python scripts/wheel_smoke.py
+The ``--inside`` half runs with ``python -I`` in a fresh venv, so it imports the installed wheel only.
 """
 
 from __future__ import annotations

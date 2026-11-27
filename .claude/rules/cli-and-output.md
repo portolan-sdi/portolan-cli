@@ -92,8 +92,11 @@ the executor.
 
 ## Where to investigate further
 
-- The `input_hardening.py` module docstring for the failure patterns it
-  defends against, and why it rejects valid-looking input.
+- `input_hardening.py` rejects path traversal, query parameters in ids,
+  pre-encoded strings, control characters, and bad URLs. The rules are stricter
+  than a human CLI needs and reject some valid input, such as an uppercase
+  collection id. Do not relax a validator for an edge case. The error class
+  name `InputValidationError` is part of the agent contract.
 
   and input hardening), 0040 (progress and summary).
 - `json_output.py` (`OutputEnvelope`, `ErrorDetail`), `errors.py` (the

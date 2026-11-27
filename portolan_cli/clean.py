@@ -1,21 +1,4 @@
-"""Clean command for removing Portolan metadata while preserving data files.
-
-This module provides functionality to remove all Portolan-generated metadata
-from a catalog while preserving user data files. Essential for testing
-workflows where you want to reset a catalog to a "clean slate" state.
-
-Files removed (metadata only):
-- .portolan/ directory (entire thing)
-- catalog.json (with "type": "Catalog")
-- */collection.json (with "type": "Collection")
-- */*/item.json or similar with "type": "Feature" (STAC items)
-- */versions.json (Portolan-specific schema)
-
-Files preserved (all data):
-- .parquet, .tif, .gpkg, .geojson, .shp, etc.
-- ANY file that isn't STAC metadata
-- Non-STAC JSON files (checked by "type" field)
-"""
+"""Clean command for removing Portolan metadata while preserving data files."""
 
 from __future__ import annotations
 
@@ -31,27 +14,7 @@ if TYPE_CHECKING:
 
 
 def is_stac_metadata(path: Path) -> bool:
-    """Check if a JSON file is STAC metadata (safe to remove).
-
-    STAC metadata files have a "type" field with one of:
-    - "Catalog" (root catalog.json)
-    - "Collection" (collection.json)
-    - "Feature" (item.json - STAC items are GeoJSON Features)
-
-    Args:
-        path: Path to the file to check.
-
-    Returns:
-        True if the file is STAC metadata, False otherwise.
-
-    Examples:
-        >>> is_stac_metadata(Path("catalog.json"))  # has type=Catalog
-        True
-        >>> is_stac_metadata(Path("style.json"))  # non-STAC JSON
-        False
-        >>> is_stac_metadata(Path("data.parquet"))
-        False
-    """
+    """Check if a JSON file is STAC metadata (safe to remove)."""
     # Only check JSON files
     if path.suffix.lower() != ".json":
         return False
@@ -67,32 +30,12 @@ def is_stac_metadata(path: Path) -> bool:
 
 
 def is_versions_json(path: Path) -> bool:
-    """Check if a file is versions.json (Portolan-specific, safe to remove).
-
-    Args:
-        path: Path to the file to check.
-
-    Returns:
-        True if the file is named versions.json, False otherwise.
-    """
+    """Check if a file is versions.json (Portolan-specific, safe to remove)."""
     return path.name == "versions.json"
 
 
 def collect_files_to_remove(catalog_root: Path) -> tuple[list[Path], list[Path]]:
-    """Collect all metadata files and directories to remove from a catalog.
-
-    Walks the catalog structure and identifies:
-    1. .portolan/ directory (always removed entirely)
-    2. STAC metadata files (catalog.json, collection.json, item.json with proper type)
-    3. versions.json files (Portolan-specific)
-
-    Args:
-        catalog_root: Path to the catalog root directory.
-
-    Returns:
-        Tuple of (files_to_remove, directories_to_remove).
-        Files are sorted for deterministic output.
-    """
+    """Collect all metadata files and directories to remove from a catalog."""
     files_to_remove: list[Path] = []
     directories_to_remove: list[Path] = []
 
@@ -118,18 +61,7 @@ def collect_files_to_remove(catalog_root: Path) -> tuple[list[Path], list[Path]]
 
 
 def remove_empty_directories(catalog_root: Path, removed_files: list[Path]) -> list[Path]:
-    """Remove directories that became empty after file removal.
-
-    Walks bottom-up from the deepest directories and removes any that are empty.
-    Stops at the catalog root.
-
-    Args:
-        catalog_root: Path to the catalog root directory.
-        removed_files: List of files that were removed.
-
-    Returns:
-        List of directories that were removed.
-    """
+    """Remove directories that became empty after file removal."""
     directories_removed: list[Path] = []
 
     # Get unique parent directories of removed files, sorted deepest first
@@ -162,18 +94,7 @@ def clean_catalog(
     *,
     dry_run: bool = False,
 ) -> tuple[list[Path], list[Path], int]:
-    """Remove all Portolan metadata from a catalog while preserving data.
-
-    Args:
-        catalog_root: Path to the catalog root directory.
-        dry_run: If True, only report what would be removed without deleting.
-
-    Returns:
-        Tuple of (files_removed, directories_removed, data_files_preserved).
-
-    Raises:
-        OSError: If file deletion fails (permission errors, etc.).
-    """
+    """Remove all Portolan metadata from a catalog while preserving data."""
     files_to_remove, directories_to_remove = collect_files_to_remove(catalog_root)
 
     # Count data files (files that are NOT being removed)
@@ -210,15 +131,7 @@ def clean_catalog(
 
 @dataclass(frozen=True)
 class CleanResult:
-    """The outcome of ``portolan clean``.
-
-    Attributes:
-        catalog_root: The catalog root. The envelope paths are relative to it.
-        files: The metadata files removed, or that a dry run would remove.
-        directories: The directories removed, or that a dry run would remove.
-        data_files_preserved: The number of data files that stay.
-        dry_run: True when nothing was removed.
-    """
+    """The outcome of ``portolan clean``."""
 
     catalog_root: Path
     files: list[Path]
@@ -245,19 +158,6 @@ class CleanResult:
 
 
 def clean_metadata(catalog_root: Path, *, dry_run: bool = False) -> CleanResult:
-    """Remove all Portolan metadata from a catalog while preserving data.
-
-    This is the library function of ``portolan clean``.
-
-    Args:
-        catalog_root: Path to the catalog root directory.
-        dry_run: If True, only report what would be removed without deleting.
-
-    Returns:
-        The removed files and directories, and the number of data files kept.
-
-    Raises:
-        OSError: If file deletion fails (permission errors, etc.).
-    """
+    """Remove all Portolan metadata from a catalog while preserving data."""
     files, directories, data_files = clean_catalog(catalog_root, dry_run=dry_run)
     return CleanResult(catalog_root, files, directories, data_files, dry_run)

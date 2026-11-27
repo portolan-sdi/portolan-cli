@@ -1,14 +1,4 @@
-"""``metadata validate`` and ``check`` must accept the same license identifiers.
-
-Issue #727: ``metadata_yaml`` kept a hand-written 26-identifier subset while
-rashid's PTL-LIC-001 validated against its full list. The two disagreed in both
-directions on the same file, so a user was told a real license was invalid, or
-shipped a catalog that failed validation after ``metadata validate`` passed.
-
-These tests assert the two now agree by construction. They compare against
-``rashid_core.api.SPDX_LICENSE_IDS``, the object the rule itself uses, so a future
-divergence has nowhere to hide.
-"""
+"""``metadata validate`` and ``check`` must accept the same license identifiers."""
 
 from __future__ import annotations
 
@@ -43,11 +33,6 @@ def test_every_sampled_spdx_identifier_is_accepted(license_id: str) -> None:
 
 
 def test_the_sample_reaches_past_the_old_26_entry_subset() -> None:
-    """A sample drawn only from the popular ids would prove nothing.
-
-    The removed subset held 26 identifiers. This asserts the sample is mostly
-    outside it, so the parametrized test above would have been red before #727.
-    """
     old_subset = {
         "CC0-1.0",
         "CC-BY-4.0",

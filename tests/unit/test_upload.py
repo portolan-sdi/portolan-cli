@@ -1,18 +1,4 @@
-"""Unit tests for upload module.
-
-Tests for cloud object storage upload functionality with mocked obstore.
-Following TDD: these tests are written FIRST, before implementation.
-
-Test categories:
-- URL parsing
-- Credential checking
-- Single file upload
-- Directory upload with parallel processing
-- Dry-run mode
-- Error handling (fail_fast behavior)
-- AWS profile loading
-- Region inference
-"""
+"""Unit tests for upload module."""
 
 from __future__ import annotations
 
@@ -34,9 +20,7 @@ if TYPE_CHECKING:
     from obstore.store import S3Credential
 
 
-# =============================================================================
 # Test fixtures
-# =============================================================================
 
 
 @pytest.fixture
@@ -98,9 +82,7 @@ region = eu-west-1
         yield aws_dir
 
 
-# =============================================================================
 # URL Parsing Tests
-# =============================================================================
 
 
 class TestParseObjectStoreUrl:
@@ -176,18 +158,10 @@ class TestParseObjectStoreUrl:
         with pytest.raises(ValueError, match="Unsupported URL scheme"):
             parse_object_store_url("ftp://server/path")
 
-    # =========================================================================
     # HTTP/HTTPS URL Handling Tests
-    # =========================================================================
 
     @pytest.mark.unit
     def test_http_url_returned_unchanged(self) -> None:
-        """HTTP URLs are returned unchanged with empty prefix.
-
-        HTTP stores are treated as read-only references to public data.
-        The full URL is returned as the bucket_url for obstore HTTPStore,
-        and no prefix manipulation is performed.
-        """
         from portolan_cli.sync.upload import parse_object_store_url
 
         bucket_url, prefix = parse_object_store_url("http://example.com/data/file.parquet")
@@ -205,12 +179,6 @@ class TestParseObjectStoreUrl:
 
     @pytest.mark.unit
     def test_http_url_no_trailing_slash_normalization(self) -> None:
-        """HTTP URLs do NOT have trailing slashes normalized.
-
-        Unlike cloud storage URLs (s3://, gs://, az://), HTTP URLs are passed
-        through without modification. This is intentional: HTTP URLs may point
-        to specific resources where the trailing slash is meaningful.
-        """
         from portolan_cli.sync.upload import parse_object_store_url
 
         # Trailing slash preserved (not normalized)
@@ -218,17 +186,10 @@ class TestParseObjectStoreUrl:
         assert bucket_url == "https://api.example.com/v1/"  # Preserved as-is
         assert prefix == ""
 
-    # =========================================================================
-    # Trailing Slash Normalization Tests (Issue #144)
-    # =========================================================================
+    # Trailing Slash Normalization Tests
 
     @pytest.mark.unit
     def test_s3_url_trailing_slash_normalized(self) -> None:
-        """S3 URL with trailing slash should have it stripped from prefix.
-
-        Regression test for issue #144: trailing slash in destination URL
-        causes double-slash in path construction, leading to parse errors.
-        """
         from portolan_cli.sync.upload import parse_object_store_url
 
         bucket_url, prefix = parse_object_store_url("s3://mybucket/prefix/")
@@ -276,15 +237,6 @@ class TestParseObjectStoreUrl:
 
     @pytest.mark.unit
     def test_s3_internal_double_slashes_preserved(self) -> None:
-        """Internal double slashes in path are preserved.
-
-        This documents intentional behavior: only TRAILING slashes are stripped.
-        Internal double slashes (e.g., s3://bucket/a//b/) are part of the user's
-        intended path structure and should be preserved as "a//b".
-
-        Note: While unusual, some object storage systems may interpret double
-        slashes differently. Portolan preserves user intent.
-        """
         from portolan_cli.sync.upload import parse_object_store_url
 
         bucket_url, prefix = parse_object_store_url("s3://mybucket/a//b/")
@@ -309,9 +261,7 @@ class TestParseObjectStoreUrl:
         assert bucket_url == "az://account/container"
         assert prefix == "a//b"
 
-    # =========================================================================
-    # Hypothesis Property-Based Tests (Issue #144)
-    # =========================================================================
+    # Hypothesis Property-Based Tests
 
     @pytest.mark.unit
     @given(
@@ -344,10 +294,7 @@ class TestParseObjectStoreUrl:
         path_segments: list[str],
         num_trailing_slashes: int,
     ) -> None:
-        """Property: prefix should NEVER end with a slash.
-
-        This is the core invariant that issue #144 violated.
-        """
+        """Property: prefix should NEVER end with a slash."""
         from portolan_cli.sync.upload import parse_object_store_url
 
         # Build URL with optional trailing slashes
@@ -403,11 +350,6 @@ class TestParseObjectStoreUrl:
         bucket: str,
         prefix_path: str,
     ) -> None:
-        """Property: constructing paths with prefix should never create double slashes.
-
-        Simulates the path construction in push.py:
-        key = f"{prefix}/{collection}/versions.json"
-        """
         from portolan_cli.sync.upload import parse_object_store_url
 
         # Build URL - Azure requires account/container structure
@@ -430,9 +372,7 @@ class TestParseObjectStoreUrl:
         )
 
 
-# =============================================================================
 # Credential Checking Tests
-# ==============================================================================
 
 
 class TestCheckCredentials:
@@ -608,9 +548,7 @@ class TestCheckCredentials:
         assert hint == ""
 
 
-# =============================================================================
 # Upload Result Tests
-# =============================================================================
 
 
 class TestUploadResult:
@@ -655,9 +593,7 @@ class TestUploadResult:
         assert len(result.errors) == 2
 
 
-# =============================================================================
 # Single File Upload Tests
-# =============================================================================
 
 
 class TestUploadFile:
@@ -825,9 +761,7 @@ class TestUploadFile:
             assert target_key.endswith(temp_file.name)
 
 
-# =============================================================================
 # Directory Upload Tests
-# =============================================================================
 
 
 class TestUploadDirectory:
@@ -1019,9 +953,7 @@ class TestUploadDirectory:
         assert "nested/file3.parquet" in nested_keys[0]
 
 
-# =============================================================================
 # AWS Profile Loading Tests
-# =============================================================================
 
 
 class TestLoadAwsCredentials:
@@ -1148,9 +1080,7 @@ class TestSetupStoreSessionToken:
         assert kwargs["aws_session_token"] == "env-session-token"
 
 
-# =============================================================================
 # Region Inference Tests
-# =============================================================================
 
 
 class TestRegionInference:
@@ -1197,9 +1127,7 @@ class TestRegionInference:
         assert region is None
 
 
-# =============================================================================
 # Target Key Building Tests
-# =============================================================================
 
 
 class TestBuildTargetKey:
@@ -1260,9 +1188,7 @@ class TestBuildTargetKey:
         assert "//" not in key
 
 
-# =============================================================================
 # Integration with output.py Tests
-# =============================================================================
 
 
 class TestOutputIntegration:
@@ -1297,9 +1223,7 @@ class TestOutputIntegration:
         assert notices[1][1].startswith("Upload complete (")
 
 
-# =============================================================================
 # Profile endpoint_url Tests
-# =============================================================================
 
 
 @pytest.fixture
@@ -1572,9 +1496,7 @@ class TestProfileEndpointStore:
             _create_s3_store("s3://mybucket", "plaintext", None, None, None)
 
 
-# =============================================================================
 # Delegated profile credential Tests
-# =============================================================================
 
 
 @pytest.fixture
@@ -1816,9 +1738,7 @@ class TestDelegatedCredentialProvider:
         assert hint == ""
 
 
-# =============================================================================
-# put_object: one helper for every write (issues #807, #908)
-# =============================================================================
+# put_object: one helper for every write
 
 MIB = 1024 * 1024
 
@@ -1866,11 +1786,6 @@ class TestPutObject:
     def test_xml_type_does_not_come_from_the_platform_registry(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """A .aux.xml sidecar is application/xml on Windows too.
-
-        The stdlib reads the Windows registry, which maps .xml to text/xml.
-        The table decides, not the registry.
-        """
         import mimetypes
 
         from portolan_cli.sync.upload import content_type_for
@@ -1907,7 +1822,7 @@ class TestPutObject:
 
     @pytest.mark.unit
     def test_file_put_passes_part_size_and_concurrency(self, tmp_path: Path) -> None:
-        """A file put sends chunk_size from the file size (issue #908)."""
+        """A file put sends chunk_size from the file size."""
         from portolan_cli.sync.upload import put_object
 
         src = tmp_path / "dem.tif"

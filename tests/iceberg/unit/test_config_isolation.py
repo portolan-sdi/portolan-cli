@@ -15,11 +15,7 @@ _LEAKED = "PYICEBERG_CATALOG__PORTOLAKE__URI"
 
 @pytest.fixture(scope="module", autouse=True)
 def _exported_catalog():
-    """Set the variable before the function-scoped isolation fixture runs.
-
-    pytest sets a module-scoped fixture up before a function-scoped one, so
-    this reproduces a developer who exports the catalog in the shell.
-    """
+    """Set the variable before the function-scoped isolation fixture runs."""
     os.environ[_LEAKED] = "https://example.invalid/rest"
     yield
     os.environ.pop(_LEAKED, None)

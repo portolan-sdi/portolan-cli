@@ -1,16 +1,4 @@
-"""Run the STAC enrichment hooks on a document on disk (#947).
-
-``portolan_enrich_item`` and ``portolan_enrich_collection`` change a STAC
-document before Portolan publishes it. The hooks run on the JSON file after
-Portolan writes it, because ``pystac.Collection.save`` serializes every item
-again from memory. A change made to an in-memory object before that save
-would be lost. pystac keeps unknown fields on a round trip, so a field a
-hook adds survives a later save.
-
-A hook may add fields. It may not change the fields that hold the catalog
-together. Portolan restores ``id``, ``type``, ``stac_version``, and ``links``
-after each hook and warns. A hook that raises leaves no partial change.
-"""
+"""Run the STAC enrichment hooks on a document on disk."""
 
 from __future__ import annotations
 
@@ -30,22 +18,12 @@ STRUCTURAL_FIELDS = ("id", "type", "stac_version", "links")
 
 
 def enrich_item_file(path: Path, context: EnrichContext) -> None:
-    """Run ``portolan_enrich_item`` on the item JSON at ``path``.
-
-    Args:
-        path: Item JSON file.
-        context: Where the item lives.
-    """
+    """Run ``portolan_enrich_item`` on the item JSON at ``path``."""
     _enrich_file(path, "portolan_enrich_item", "item", context)
 
 
 def enrich_collection_file(path: Path, context: EnrichContext) -> None:
-    """Run ``portolan_enrich_collection`` on the collection JSON at ``path``.
-
-    Args:
-        path: Collection JSON file.
-        context: Where the collection lives.
-    """
+    """Run ``portolan_enrich_collection`` on the collection JSON at ``path``."""
     _enrich_file(path, "portolan_enrich_collection", "collection", context)
 
 

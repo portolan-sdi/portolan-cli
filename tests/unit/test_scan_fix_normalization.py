@@ -1,14 +1,4 @@
-"""Unit tests for filename normalization in scan --fix.
-
-Issue #208: Filenames should be normalized to lowercase with dashes.
-
-Test Strategy:
-- Verify spaces are replaced with dashes (not underscores)
-- Verify filenames are lowercased
-- Verify special characters are replaced with dashes
-- Verify multiple consecutive dashes are collapsed
-- Hypothesis property tests for edge cases
-"""
+"""Unit tests for filename normalization in scan --fix."""
 
 from __future__ import annotations
 
@@ -26,11 +16,9 @@ if TYPE_CHECKING:
 
 @pytest.mark.unit
 class TestNormalizationUsesLowercaseAndDashes:
-    """Tests that normalization uses lowercase + dashes per issue #208."""
+    """Tests that normalization uses lowercase + dashes."""
 
-    # -------------------------------------------------------------------------
     # Core normalization: lowercase + dashes
-    # -------------------------------------------------------------------------
 
     def test_spaces_replaced_with_dashes(self, tmp_path: Path) -> None:
         """Spaces in filename should be replaced with dashes (not underscores)."""
@@ -123,9 +111,7 @@ class TestNormalizationUsesLowercaseAndDashes:
         # Both stem and extension lowercase
         assert new_path.name == "myfile.geojson"
 
-    # -------------------------------------------------------------------------
     # Edge cases
-    # -------------------------------------------------------------------------
 
     def test_already_normalized_returns_none(self, tmp_path: Path) -> None:
         """Already normalized filenames should return None (no rename needed)."""
@@ -171,14 +157,6 @@ class TestNormalizationUsesLowercaseAndDashes:
         assert not new_path.stem.endswith("-")
 
     def test_windows_reserved_prefix_uses_underscore(self, tmp_path: Path) -> None:
-        """Windows reserved names should still use underscore prefix (not dash).
-
-        This is intentional: _CON is a common convention, -CON looks wrong.
-
-        Note: We don't call path.touch() because Windows cannot create files
-        named CON, PRN, etc. The _compute_safe_rename function only inspects
-        the path string, not the filesystem.
-        """
         path = tmp_path / "CON.txt"
         # No touch() - Windows reserved names cannot be created on Windows
 
@@ -226,9 +204,7 @@ class TestSanitizeFilenameDirectly:
         assert result.lower() == result
 
 
-# =============================================================================
 # Property-based tests with Hypothesis
-# =============================================================================
 
 
 @pytest.mark.unit
@@ -253,12 +229,6 @@ class TestNormalizationProperties:
     @given(st.text(min_size=1, max_size=50))
     @settings(max_examples=100)
     def test_no_consecutive_dashes_in_stem(self, stem: str) -> None:
-        """Sanitized stem should not have consecutive dashes.
-
-        Note: We only check the stem portion, not the extension.
-        Edge case inputs with path separators (e.g., '0./\\') may produce
-        extensions like '.--' which is acceptable for malformed inputs.
-        """
         from pathlib import Path
 
         result = _sanitize_filename(stem)
@@ -310,23 +280,11 @@ class TestNormalizationProperties:
         assert result.lower().endswith(ext.lower())
 
 
-# =============================================================================
-# Regression tests for issue #208
-# =============================================================================
-
-
 @pytest.mark.unit
 class TestIssue208Regression:
-    """Regression tests for specific cases from issue #208."""
+    """Regression tests for specific cases."""
 
     def test_reserved_name_after_normalization(self, tmp_path: Path) -> None:
-        """Edge case: 'CON ()' normalizes to 'con' which is still reserved.
-
-        The Windows reserved check must happen AFTER normalization, not before.
-        Otherwise 'CON ()' → 'con' instead of '_con'.
-
-        Note: No path.touch() - Windows cannot create files named CON.
-        """
         path = tmp_path / "CON ().txt"
         # No touch() - Windows reserved names cannot be created on Windows
 
@@ -338,7 +296,6 @@ class TestIssue208Regression:
         assert new_path.name == "_con.txt"
 
     def test_radios_2010_example(self, tmp_path: Path) -> None:
-        """The exact example from issue #208."""
         path = tmp_path / "Radios 2010 v2025-1.shp"
         path.touch()
 

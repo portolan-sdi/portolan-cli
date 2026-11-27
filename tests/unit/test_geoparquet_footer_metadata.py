@@ -1,11 +1,4 @@
-"""GeoParquet detection reads the raw Parquet footer, not the Arrow schema.
-
-pyarrow rebuilds the Arrow schema metadata from the ``ARROW:schema`` footer blob
-when a file carries one, and drops every other footer key while it does so. A
-writer that appends ``geo`` at close produces a valid GeoParquet whose ``geo``
-key pyarrow hides. Portolan must still classify the file as GeoParquet
-(issue #864).
-"""
+"""GeoParquet detection reads the raw Parquet footer, not the Arrow schema."""
 
 from __future__ import annotations
 
@@ -38,12 +31,7 @@ GEO_METADATA: dict[str, Any] = {
 
 
 def _write_appended_geo_parquet(path: Path, *, extra: dict[str, str] | None = None) -> Path:
-    """Write a GeoParquet whose ``geo`` key lands after the writer opened.
-
-    ``store_schema`` stays at its default, so pyarrow writes ``ARROW:schema``.
-    ``add_key_value_metadata`` then appends ``geo`` at close, which is the only
-    point at which a writer knows bbox and geometry_types.
-    """
+    """Write a GeoParquet whose ``geo`` key lands after the writer opened."""
     table = pa.table(
         {
             "name": ["a", "b"],
@@ -64,11 +52,6 @@ def appended_geo_parquet(tmp_path: Path) -> Path:
 
 
 def test_footer_hides_geo_from_the_arrow_schema(appended_geo_parquet: Path) -> None:
-    """The fixture reproduces the shape the bug needs.
-
-    This guards the fixture itself. If pyarrow ever surfaces the appended key on
-    the reconstructed schema, the other tests stop covering issue #864.
-    """
     metadata = pq.read_metadata(str(appended_geo_parquet))
     assert metadata.metadata is not None
     assert b"geo" in metadata.metadata
@@ -154,11 +137,6 @@ def test_rewrite_fidelity_reads_the_crs(tmp_path: Path) -> None:
 
 
 def test_rewrite_fidelity_keeps_publisher_keys(tmp_path: Path) -> None:
-    """A publisher key in the footer counts. ``geo`` and ``ARROW:schema`` do not.
-
-    geoparquet-io writes a fresh ``geo`` key, and ``ARROW:schema`` describes the
-    columns the source had, not the ones the rewrite produced.
-    """
     from portolan_cli.metadata.geoparquet import read_rewrite_fidelity
 
     path = _write_appended_geo_parquet(tmp_path / "extra.parquet", extra={"source": "kiln"})
@@ -179,11 +157,6 @@ def test_tabular_metadata_skips_the_file(appended_geo_parquet: Path) -> None:
 def test_thumbnail_bounds_come_from_the_declared_bbox(
     appended_geo_parquet: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The thumbnail bbox comes from metadata, not from a data read.
-
-    The fallback is replaced by a raiser. Before the fix the metadata lookup
-    found no ``geo`` key and the fallback ran, so this test failed.
-    """
     pytest.importorskip("geopandas")
     from portolan_cli.viz import thumbnail
 
@@ -197,12 +170,6 @@ def test_thumbnail_bounds_come_from_the_declared_bbox(
 
 
 def test_thumbnail_sample_reads_the_crs(appended_geo_parquet: Path) -> None:
-    """The thumbnail sampler builds a frame.
-
-    This site is not affected. pyarrow merges the extra footer keys into the
-    table schema when it reads row groups, unlike ``schema_arrow``. The test
-    pins that difference so a later refactor does not lose it.
-    """
     pytest.importorskip("geopandas")
     from portolan_cli.viz.thumbnail import _read_geoparquet_for_thumbnail
 

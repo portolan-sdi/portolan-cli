@@ -1,16 +1,4 @@
-"""Unit tests for async pull functionality.
-
-Tests for the async migration of pull operations (Wave 2A).
-These tests verify concurrent download behavior, rate limiting,
-and error handling in the async pull implementation.
-
-Test categories:
-- Concurrent download execution
-- Concurrency limit enforcement
-- Rate limit handling (429 responses)
-- Circuit breaker on repeated failures
-- Progress reporting
-"""
+"""Unit tests for async pull functionality."""
 
 from __future__ import annotations
 
@@ -32,9 +20,7 @@ if TYPE_CHECKING:
 
     from portolan_core.versions import VersionsFile
 
-# =============================================================================
 # Test Fixtures
-# =============================================================================
 
 
 def _remote_with_files(count: int) -> VersionsFile:
@@ -120,9 +106,7 @@ def catalog_with_versions(tmp_path: Path) -> Path:
     return catalog_root
 
 
-# =============================================================================
-# Test: Concurrent Downloads
-# =============================================================================
+# Concurrent Downloads
 
 
 @pytest.mark.unit
@@ -130,13 +114,6 @@ def catalog_with_versions(tmp_path: Path) -> Path:
 async def test_pull_async_downloads_concurrently(
     catalog_with_versions: Path,
 ) -> None:
-    """Test that pull_async downloads multiple files concurrently.
-
-    Verifies that:
-    1. Multiple downloads can run at the same time
-    2. All files are downloaded successfully
-    3. The operation completes faster than sequential
-    """
     # Track concurrent execution
     concurrent_count = 0
     max_concurrent = 0
@@ -185,12 +162,6 @@ async def test_pull_async_downloads_concurrently(
 async def test_pull_async_respects_concurrency_limit(
     catalog_with_versions: Path,
 ) -> None:
-    """Test that pull_async never exceeds the concurrency limit.
-
-    Verifies that:
-    1. At most `concurrency` downloads run simultaneously
-    2. Setting concurrency=1 forces sequential execution
-    """
     concurrent_count = 0
     max_concurrent = 0
     concurrency_violations: list[int] = []
@@ -237,13 +208,6 @@ async def test_pull_async_respects_concurrency_limit(
 async def test_pull_async_handles_rate_limit(
     catalog_with_versions: Path,
 ) -> None:
-    """Test that pull_async handles rate limiting (429 responses) with backoff.
-
-    Verifies that:
-    1. Rate-limited requests are retried after delay
-    2. Backoff increases on repeated rate limits
-    3. Eventually succeeds after rate limit clears
-    """
     call_count = 0
 
     async def mock_download_with_rate_limit(store: Any, key: str, path: Path) -> tuple[bool, int]:
@@ -303,13 +267,6 @@ async def test_pull_async_handles_rate_limit(
 async def test_pull_async_circuit_breaker_on_failures(
     catalog_with_versions: Path,
 ) -> None:
-    """Test that pull_async trips circuit breaker on repeated failures.
-
-    Verifies that:
-    1. After N consecutive failures, circuit breaker opens
-    2. Subsequent requests fail fast without attempting download
-    3. Error message indicates circuit breaker tripped
-    """
     call_count = 0
 
     async def mock_download_always_fails(store: Any, key: str, path: Path) -> tuple[bool, int]:
@@ -339,21 +296,13 @@ async def test_pull_async_circuit_breaker_on_failures(
     assert not result.success
 
 
-# =============================================================================
-# Test: Sync Wrapper
-# =============================================================================
+# Sync Wrapper
 
 
 @pytest.mark.unit
 def test_pull_uses_async_internally(
     catalog_with_versions: Path,
 ) -> None:
-    """Test that sync pull() function wraps pull_async().
-
-    Verifies that:
-    1. The sync pull() function calls pull_async internally
-    2. Results are properly returned from the async call
-    """
     with (
         patch("portolan_cli.sync.pull.pull_async") as mock_async,
     ):
@@ -380,9 +329,7 @@ def test_pull_uses_async_internally(
     assert result.files_downloaded == 5
 
 
-# =============================================================================
-# Test: Progress Reporting
-# =============================================================================
+# Progress Reporting
 
 
 @pytest.mark.unit
@@ -390,13 +337,6 @@ def test_pull_uses_async_internally(
 async def test_pull_async_reports_progress(
     catalog_with_versions: Path,
 ) -> None:
-    """Test that pull_async reports download progress.
-
-    Verifies that:
-    1. Progress callbacks are invoked for each file
-    2. Progress shows completed/total counts
-    """
-
     async def mock_download_file_async(store: Any, key: str, path: Path) -> tuple[bool, int]:
         return True, 1000
 

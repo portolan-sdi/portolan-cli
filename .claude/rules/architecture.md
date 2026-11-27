@@ -11,7 +11,7 @@ backend underneath (CLI-wraps-API, enforced by import-linter).
 Use this map to find where a behavior lives before you start editing. Line
 numbers drift, treat them as a starting point and confirm in the file.
 
-## Two distributions (#1133)
+## Two distributions
 
 The repo is a uv workspace. The root is `portolan-cli` (`portolan_cli/`, the
 Click shell and the geospatial stack). `packages/portolan-core` is
@@ -88,8 +88,8 @@ flowchart TD
 
 `portolan_cli/__init__.py` exports `cli` lazily through `__getattr__`. The Click
 group and every command live in `cli.py`. The package root imports nothing at
-module level, so `import portolan_cli.stac` does not load `cli.py` or Click
-(issue #944). The `project.scripts` entry point `portolan_cli:cli` resolves the
+module level, so `import portolan_cli.stac` does not load `cli.py` or Click.
+The `project.scripts` entry point `portolan_cli:cli` resolves the
 lazy export. Top-level commands: `init`, `list`, `status`, `info`,
 `check`, `scan`, `add`, `rm`, `push`, `pull`, `sync`, `clone`, `clean`,
 `readme`, `logo`, `stac-geoparquet`. Command groups with subcommands: `config`
@@ -112,7 +112,7 @@ subsystem table below and the path-scoped rules for each.
 - `backends/protocol.py` defines `@runtime_checkable class VersioningBackend`
   with `get_current_version`, `list_versions`, `publish`, `rollback`, `prune`,
   `check_drift`. `backends/__init__.py` `get_backend(name)` is the factory.
-  It resolves names through the `portolan_backends` hook (#947). Two built-in
+  It resolves names through the `portolan_backends` hook. Two built-in
   hook modules register `"file"` -> `JsonFileBackend` and `"iceberg"` ->
   `IcebergBackend` (needs the `[iceberg]` extra, in
   `backends/iceberg/hooks.py`). A plugin can add a name. A built-in name always
@@ -123,7 +123,7 @@ subsystem table below and the path-scoped rules for each.
   it). `version rollback` and `version prune` live in
   `backends/iceberg/cli.py` and load through `portolan.commands` entry points
   in `pyproject.toml`.
-- **Lifecycle hooks are Protocol methods (#977).** `on_post_add`, `pull`,
+- **Lifecycle hooks are Protocol methods.** `on_post_add`, `pull`,
   `supports_push`, `push_blocked_message` are members of `VersioningBackend`,
   and the core calls them without `hasattr`, so mypy checks each call.
   `JsonFileBackend` holds the neutral defaults. A new hook goes in the Protocol.
@@ -132,7 +132,7 @@ subsystem table below and the path-scoped rules for each.
 - The file backend is **single-writer** and not thread-safe, it relies on drift
   checking, not locking. Concurrency safety is an Iceberg-only property.
 - Import contracts (`uv run lint-imports`): `cli` must not import `backends`.
-- Three layer contracts (#944, #947). `layer-read` keeps the read modules
+- Three layer contracts. `layer-read` keeps the read modules
   (`portolan_core.versions`, `json_io`, `bbox`, `models`, `query`, `status`,
   `catalog_list`, `agents_md`, `run_state`) free of Click, rasterio, `cli`, and
   the write modules.
@@ -166,7 +166,7 @@ no directory listing exists. `validation/` uses rashid's own graph.
 `UNSUPPORTED`. A format **family** is a plain string: `vector` routes to
 geoparquet-io and `raster` to rio-cogeo (`format_families.VECTOR`/`RASTER`).
 A plugin format brings its own family string, so never treat the families as a
-closed set. There is no format enum any more (#947).
+closed set. There is no format enum.
 
 A **format handler** (`plugins/formats.py`) converts one format and reads its
 metadata. `handler_for(path, catalog_root)` picks one: a `conversion.handlers`

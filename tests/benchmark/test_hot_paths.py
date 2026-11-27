@@ -1,15 +1,5 @@
 """CodSpeed benchmarks for the pure-Python paths that every add or check runs.
-
-CodSpeed runs each benchmark under CPU simulation and counts instructions, so
-a constant-factor regression shows on a shared runner. The scale gates in
-``tests/perf`` count calls instead. These benchmarks catch a slower body of
-the same call. No benchmark here runs DuckDB, which the nightly scenario job
-times.
-
-- ``load_merged_config`` and ``load_merged_metadata`` for a collection three
-  levels below the root, as each add calls them per collection.
-- ``read_versions`` of a ``versions.json`` with 5,000 assets.
-- The vector thumbnail render of 1,000 polygons, with a stub basemap tile.
+They catch a slower body of the same call; the tests/perf gates count the calls.
 """
 
 from __future__ import annotations

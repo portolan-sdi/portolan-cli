@@ -1,24 +1,4 @@
-"""The provider model behind a collection's STAC ``providers`` array (issue #684).
-
-The spec requires every collection to name at least one provider with the
-``producer`` role and exactly one with ``host``, listed last, and requires the
-host to carry a ``url`` or an ``email``. Ordering and role arithmetic are
-mechanical, so the human writes a plain ``providers`` list in metadata.yaml and
-this module puts it in conformant shape:
-
-- the single host moves to the end, whatever order it was written in;
-- a missing host is seeded from ``contact``, which metadata.yaml already
-  requires and which is what the spec means by the maintainer contact;
-- ``processor`` and ``licensor`` roles pass through untouched, and one
-  organization may hold several roles.
-
-Producers cannot be invented. A collection whose human named no producer keeps
-firing PTL-PRV-001, which ``validation.remediation`` routes to INSTRUCT.
-
-``derive_provenance`` reads official-vs-mirror back off the finished array,
-matching ``rashid_core.rules.provenance.provenance_of`` field for field so generation
-and validation never disagree about which kind of catalog this is.
-"""
+"""The provider model behind a collection's STAC ``providers`` array."""
 
 from __future__ import annotations
 
@@ -50,11 +30,7 @@ def _text(value: object) -> str | None:
 
 
 def _contact_text(value: object) -> str | None:
-    """Return a contact value, or None for a seeded ``TODO`` placeholder (issue #1039).
-
-    ``metadata_seeding`` writes the placeholder to ask the human for a value.
-    The placeholder is not a maintainer, so it never becomes a published host.
-    """
+    """Return a contact value, or None for a seeded ``TODO`` placeholder."""
     text = _text(value)
     # The word TODO, not a name such as "Todos Santos" that starts with it.
     if text is None or re.match(r"todo\b", text, re.IGNORECASE):
@@ -139,12 +115,7 @@ def _host_from_contact_mapping(contact: Mapping[str, Any]) -> dict[str, Any] | N
 
 
 def _host_from_contact(contact: object) -> dict[str, Any] | None:
-    """Build a host provider from metadata.yaml's ``contact``.
-
-    The spec calls the host provider the maintainer-contact requirement for a
-    Portolan catalog, and ``contact`` is where metadata.yaml already records the
-    maintainer, so it is the same fact in two shapes.
-    """
+    """Build a host provider from metadata.yaml's ``contact``."""
     if isinstance(contact, str):
         text = _contact_text(contact)
         return _host_from_contact_text(text) if text is not None else None
@@ -165,19 +136,7 @@ def _declared_host(providers: list[dict[str, Any]]) -> dict[str, Any] | None:
 
 
 def resolve_providers(metadata: object) -> list[dict[str, Any]] | None:
-    """Build a collection's STAC providers array from merged metadata.yaml.
-
-    Args:
-        metadata: Merged metadata.yaml mapping (other types yield None).
-
-    Returns:
-        The providers array with the host last, or None when the metadata
-        declares no providers and carries no usable contact.
-
-    Raises:
-        InvalidProvidersError: When an entry is malformed, names an unknown role,
-            or when two entries both claim the ``host`` role.
-    """
+    """Build a collection's STAC providers array from merged metadata.yaml."""
     if not isinstance(metadata, Mapping):
         return None
 
@@ -200,21 +159,7 @@ def resolve_providers(metadata: object) -> list[dict[str, Any]] | None:
 
 
 def derive_provenance(providers: list[dict[str, Any]] | None) -> Provenance | None:
-    """Derive whether a collection is official or a mirror of someone else's data.
-
-    Official when the producer and the host are the same organization, mirror
-    when they differ. Mirrors what ``rashid_core.rules.provenance.provenance_of``
-    computes, including the case-folded name comparison, so a collection
-    Portolan generates is classified the same way ``portolan check`` classifies
-    it.
-
-    Args:
-        providers: A collection's providers array, as plain dicts.
-
-    Returns:
-        ``"official"``, ``"mirror"``, or None when the array names no producer
-        or does not name exactly one host.
-    """
+    """Derive whether a collection is official or a mirror of someone else's data."""
     if not providers:
         return None
 

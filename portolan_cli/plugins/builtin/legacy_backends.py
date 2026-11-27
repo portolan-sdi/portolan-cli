@@ -1,9 +1,4 @@
-"""Backends from the deprecated ``portolan.backends`` entry point group (#947).
-
-v0.8.0 and v1.0.0b0 found plugin backends in this group. The
-``portolan_backends`` hook replaces it. This module reads the group for one
-more minor release and warns for each backend it finds there.
-"""
+"""Backends from the deprecated ``portolan.backends`` entry point group."""
 
 from __future__ import annotations
 

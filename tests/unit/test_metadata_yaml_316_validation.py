@@ -1,12 +1,4 @@
-"""Tests for #316 schema fields validation.
-
-Tests the new metadata.yaml fields from GitHub issue #316:
-- authors (list of dicts with name, optional orcid/email)
-- related_dois (list of DOI strings)
-- citations (list of strings)
-- upstream_version (string)
-
-"""
+"""Tests for schema fields validation."""
 
 from __future__ import annotations
 

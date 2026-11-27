@@ -1,11 +1,4 @@
-"""The conversion notices print as on f7f8214, with one worker and with several (#1133).
-
-With ``--workers 2``, ``check --fix`` converts in spawned worker processes, and
-``add`` in threads. Each notice keeps its text, its marker, and its stream. A
-pool finishes the files in any order, so these tests sort the notices of a
-parallel run. In JSON mode the notices go to stderr. On f7f8214 a spawned
-worker wrote them to stdout before the envelope, which broke the JSON (#1005).
-"""
+"""The conversion notices print with one worker and with several."""
 
 from __future__ import annotations
 

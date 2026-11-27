@@ -1,13 +1,4 @@
-"""Unit tests for metadata file exclusion in catalog list.
-
-Tests that internal metadata files (versions.json, collection.json, etc.)
-are excluded from the list output, and that .json files use content
-inspection to distinguish GeoJSON from plain JSON.
-
-Related issues:
-- versions.json incorrectly shown as "GeoJSON" in list output
-- PR #261: GeoJSON content detection in .json files
-"""
+"""Unit tests for metadata file exclusion in catalog list."""
 
 from __future__ import annotations
 
@@ -36,11 +27,6 @@ class TestMetadataFileExclusion:
 
     @pytest.mark.unit
     def test_versions_json_in_stac_metadata_files(self) -> None:
-        """versions.json should be in _STAC_METADATA_FILES constant.
-
-        versions.json is internal Portolan metadata and should not appear
-        in the list output alongside user data files.
-        """
         assert "versions.json" in _STAC_METADATA_FILES
 
     @pytest.mark.unit
@@ -51,11 +37,6 @@ class TestMetadataFileExclusion:
 
     @pytest.mark.unit
     def test_is_ignored_excludes_item_id_json(self) -> None:
-        """_is_ignored should return True for {item_id}.json files.
-
-        STAC item JSON files are often named after the item ID (e.g., regions.json
-        for item "regions"). These are STAC metadata, not user data files.
-        """
         # Item JSON named after the item should be ignored
         assert _is_ignored("regions.json", "regions", []) is True
         assert _is_ignored("scene-001.json", "scene-001", []) is True
@@ -66,11 +47,6 @@ class TestMetadataFileExclusion:
 
     @pytest.mark.unit
     def test_stac_item_json_not_detected_as_geojson(self, tmp_path: Path) -> None:
-        """STAC item JSON should NOT be detected as GeoJSON.
-
-        STAC items have "type": "Feature" like GeoJSON, but they also have
-        "stac_version" which distinguishes them. They are JSON, not GeoJSON.
-        """
         from portolan_core.format_families import is_geojson
 
         # Create a STAC item JSON file
@@ -113,11 +89,6 @@ class TestMetadataFileExclusion:
 
     @pytest.mark.unit
     def test_list_excludes_versions_json(self, runner: CliRunner) -> None:
-        """portolan list should not show versions.json in output.
-
-        versions.json is internal metadata for tracking file versions.
-        It should never appear in the list output.
-        """
         with runner.isolated_filesystem():
             # Create catalog structure
             Path("catalog.json").write_text(
@@ -180,11 +151,6 @@ class TestJsonFormatDetection:
 
     @pytest.mark.unit
     def test_list_shows_plain_json_as_json(self, runner: CliRunner) -> None:
-        """portolan list should show plain .json files as 'JSON', not 'GeoJSON'.
-
-        Content inspection should be used to determine if a .json file
-        is actually GeoJSON or just plain JSON.
-        """
         with runner.isolated_filesystem():
             Path("catalog.json").write_text(
                 json.dumps(

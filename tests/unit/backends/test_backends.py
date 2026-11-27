@@ -1,9 +1,4 @@
-"""Unit tests for versioning backend protocol and plugin discovery.
-
-Tests the VersioningBackend protocol and get_backend() discovery function
-that allows external backends (like portolake) to integrate with portolan-cli.
-
-"""
+"""Unit tests for versioning backend protocol and plugin discovery."""
 
 from __future__ import annotations
 
@@ -27,11 +22,6 @@ class TestVersioningBackendProtocol:
 
     @pytest.mark.unit
     def test_json_file_backend_is_protocol_compliant(self) -> None:
-        """JsonFileBackend passes isinstance check against VersioningBackend protocol.
-
-        This uses @runtime_checkable to verify protocol compliance at runtime,
-        which is more meaningful than hasattr checks on the Protocol class itself.
-        """
         backend: VersioningBackend = JsonFileBackend()
         assert isinstance(backend, VersioningBackend)
 
@@ -182,7 +172,7 @@ class _RaisingPlugin:
 
 
 class TestGetBackendPlugins:
-    """`get_backend` finds backends through the `portolan_backends` hook (#947)."""
+    """`get_backend` finds backends through the `portolan_backends` hook."""
 
     @pytest.mark.unit
     def test_plugin_backend_receives_catalog_root(
@@ -303,13 +293,6 @@ class TestJsonFileBackend:
 
     @pytest.mark.unit
     def test_nested_collection_id_keeps_its_full_path(self, tmp_path: Any) -> None:
-        """A nested collection id resolves under every one of its segments (#723).
-
-        ``add`` creates collections under subcatalogs (``infer_nested_collection_id``,
-        ADR-0032), so ``climate/hittekaart`` is a real collection id. Flattening it
-        through ``Path(collection).name`` wrote ``{root}/hittekaart/versions.json``
-        and left the collection's own file untouched.
-        """
         from pathlib import Path
 
         backend = JsonFileBackend(catalog_root=Path(tmp_path))
@@ -356,14 +339,6 @@ class TestJsonFileBackend:
         ],
     )
     def test_absolute_collection_path_rejected(self, tmp_path: Any, collection: str) -> None:
-        """An absolute collection id raises instead of escaping the catalog root.
-
-        The guard must not depend on the host's path flavor. ``pathlib`` splits
-        by platform, so on Windows ``/etc/passwd`` is rooted but not absolute
-        (absolute needs a drive) and slipped through, while on POSIX every
-        backslash form is one filename and slipped through the other way. A
-        collection id is a slash-separated spec string, so both flavors judge it.
-        """
         from pathlib import Path
 
         backend = JsonFileBackend(catalog_root=Path(tmp_path))
@@ -693,11 +668,6 @@ class TestJsonFileBackendIntegration:
 
     @pytest.mark.integration
     def test_publish_produces_catalog_root_relative_hrefs(self, tmp_path: Any) -> None:
-        """publish() stores hrefs as collection/asset_key (catalog-root-relative).
-
-        pull.py resolves files via `catalog_root / asset.href`, so the href
-        must be relative to catalog root, not an absolute filesystem path.
-        """
         from pathlib import Path
 
         catalog_root = Path(tmp_path)
@@ -807,10 +777,7 @@ class TestGetBackendMisbehavingPlugins:
 
 
 class TestLegacyBackendsEntryPointGroup:
-    """`portolan.backends` still works for one minor release, with a warning (#947).
-
-    v0.8.0 and v1.0.0b0 found plugin backends in this group.
-    """
+    """`portolan.backends` still works for one minor release, with a warning."""
 
     @pytest.fixture
     def legacy(self, monkeypatch: pytest.MonkeyPatch) -> list[Any]:

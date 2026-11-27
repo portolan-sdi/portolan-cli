@@ -1,27 +1,4 @@
-"""Collection-level thumbnail assets (Issue #683).
-
-rashid's ``PTL-VIZ-001`` (spec ``PORTO-CORE-067`` / ``PORTO-FMT-033``) requires
-every geospatial collection to carry an asset with the ``thumbnail`` role. Until
-this module existed, ``portolan init`` followed by ``portolan add`` produced a
-catalog that failed its own ``portolan check``: vector rendering ran only inside
-the PMTiles side-step, which is gated on ``--pmtiles``, and rasters got an
-item-level sidecar that no collection asset ever pointed at.
-
-This is the orchestrator, not a renderer. It decides *whether* a collection
-needs a thumbnail and *where* one comes from, then delegates the drawing to
-``viz.thumbnail``. It lives at the package root rather than under ``viz/``
-because it reads STAC metadata and writes versions.json, and ``viz`` is a leaf
-that may not reach the sync layer (see the ``viz-is-a-leaf`` import contract).
-
-The ladder, cheapest rung first:
-
-1. Opt-out, via ``thumbnails.enabled`` or ``--no-thumbnails``.
-2. A ``thumbnail``-role asset is already registered.
-3. The collection is not geospatial, so the rule does not apply.
-4. A conventionally named image is on disk; adopt it.
-5. A raster item already carries a sidecar; point at it.
-6. Render from the collection's GeoParquet.
-"""
+"""Collection-level thumbnail assets."""
 
 from __future__ import annotations
 
@@ -96,32 +73,13 @@ def register_collection_thumbnail(
     title: str | None = None,
     state: RunState | None = None,
 ) -> bool:
-    """Register ``thumbnail_path`` as the collection's thumbnail asset.
-
-    The single writer of this asset. Emits ``file:size`` and ``file:checksum``
-    so the result does not trip ``PTL-AST-003``; the checksum is a hex multihash,
-    not a bare digest (Issue #654).
-
-    Args:
-        collection_path: Path to the collection directory.
-        thumbnail_path: Path to the image, inside the collection directory or one
-            of its item directories.
-        title: Optional human-facing title.
-        state: The run state, so STAC and version tracking share one checksum.
-
-    Returns:
-        True when collection.json was rewritten, False when nothing was written.
-    """
+    """Register ``thumbnail_path`` as the collection's thumbnail asset."""
     collection_json = collection_path / "collection.json"
     data = _load_collection(collection_path)
     if data is None:
         return False
 
-    # Resolve BOTH sides. `_item_paths` resolves its candidates, so comparing one
-    # resolved path against an unresolved collection directory raised ValueError
-    # for every catalog reached through a symlink — macOS `/var` -> `/private/var`
-    # among them — and silently dropped the raster branch. Resolving both keeps
-    # the containment check that rejects an href escaping the collection.
+    # Resolve both sides so a symlinked catalog (macOS /var) passes the containment check.
     try:
         href = PurePath(thumbnail_path.resolve().relative_to(collection_path.resolve())).as_posix()
     except (OSError, ValueError):
@@ -146,11 +104,6 @@ def register_collection_thumbnail(
 
     assets = data.setdefault("assets", {})
     assets[THUMBNAIL_ASSET_KEY] = asset
-    # Declaring the file extension is a conditional MUST once an asset carries
-    # `file:` fields. The other two writers that sync it — stac.py's
-    # `declare_file_extension` and stac_parquet's mirror path — both run
-    # before this side-step, so a collection whose only `file:`-bearing asset
-    # is the thumbnail would otherwise ship the fields undeclared (Issue #654).
     sync_file_extension(data, assets, collection_json)
     write_json_atomic(collection_json, data)
     return True
@@ -163,12 +116,7 @@ def _has_thumbnail_asset(data: dict[str, Any]) -> bool:
 
 
 def _claimed_hrefs(data: dict[str, Any]) -> set[str]:
-    """Every href spoken for by a non-thumbnail asset, collection-relative.
-
-    A thumbnail-role asset is excluded on purpose. It points at the very file
-    this module is deciding about, so counting it as claimed would make a forced
-    refresh refuse to re-adopt the image the user chose and render over it.
-    """
+    """Every href spoken for by a non-thumbnail asset, collection-relative."""
     claimed: set[str] = set()
     for asset in data.get("assets", {}).values():
         if ROLE_THUMBNAIL in asset.get("roles", []):
@@ -196,16 +144,7 @@ def _is_adoptable(path: Path) -> bool:
 def _find_adoptable_image(
     collection_path: Path, data: dict[str, Any], *, skip_generated: bool = False
 ) -> Path | None:
-    """The conventionally named image to adopt, if the collection holds one.
-
-    Args:
-        collection_path: Path to the collection directory.
-        data: Parsed collection.json.
-        skip_generated: Ignore our own ``*.thumb.*`` output. A forced refresh
-            passes True so it re-renders instead of re-adopting the stale render
-            it wrote last time. A human's ``thumbnail.png`` still wins, because
-            a force must not overwrite a picture somebody chose.
-    """
+    """The conventionally named image to adopt, if the collection holds one."""
     claimed = _claimed_hrefs(data)
     candidates = sorted(
         p
@@ -234,7 +173,7 @@ def _item_paths(collection_path: Path, data: dict[str, Any]) -> list[Path]:
 
 
 def _find_item_thumbnail(collection_path: Path, data: dict[str, Any]) -> Path | None:
-    """The sidecar `add` already writes beside a converted COG (Issue #657)."""
+    """The sidecar `add` already writes beside a converted COG."""
     for item_json in _item_paths(collection_path, data):
         try:
             item: dict[str, Any] = json.loads(item_json.read_text(encoding="utf-8"))
@@ -288,11 +227,7 @@ def _find_geoparquet(collection_path: Path, data: dict[str, Any]) -> Path | None
 
 
 def _is_geospatial(collection_path: Path, data: dict[str, Any]) -> bool:
-    """Mirror rashid's positive-signal test, cheaply and from disk.
-
-    A tabular collection — Parquet with no ``geo`` schema metadata — is not
-    geospatial, and ``PTL-VIZ-001`` skips it. Derive that status, never flag it.
-    """
+    """Mirror rashid's positive-signal test, cheaply and from disk."""
     for path in _collection_data_assets(collection_path, data):
         suffix = path.suffix.lower()
         if suffix == ".parquet":
@@ -313,17 +248,7 @@ def _is_geospatial(collection_path: Path, data: dict[str, Any]) -> bool:
 def _find_source(
     collection_path: Path, data: dict[str, Any], *, force: bool = False
 ) -> tuple[Path, str] | None:
-    """Pick the thumbnail source without drawing anything.
-
-    Split out of ``_resolve_for_collection`` so ``check --fix --dry-run`` can
-    answer "would this collection get a thumbnail?" using the same gates the
-    real run uses. Before the split, dry-run skipped straight to a "would
-    generate" line and promised work the real run then declined to do.
-
-    Returns:
-        (path, kind) where kind is ``adopt``, ``item``, or ``render``, or None
-        when the collection offers no source at all.
-    """
+    """Pick the thumbnail source without drawing anything."""
     adopted = _find_adoptable_image(collection_path, data, skip_generated=force)
     if adopted is not None:
         return adopted, "adopt"
@@ -363,8 +288,6 @@ def _resolve_for_collection(
         style_path=_discover_style_for_thumbnail(collection_path),
     )
     if rendered is None:
-        # A silent failure left partitioned collections without a thumbnail
-        # and gave no hint why (issue #1038).
         emit("warn", f"No thumbnail for {collection_path.name}: {path.name} did not render")
         return None
     return rendered, True
@@ -409,28 +332,7 @@ def ensure_collection_thumbnail(
     amend_latest: bool = False,
     state: RunState | None = None,
 ) -> Path | None:
-    """Give one collection a thumbnail asset, if it needs and can have one.
-
-    Never raises: a thumbnail is worth a warning, never a failed ``add``.
-
-    Args:
-        collection_path: Path to the collection directory.
-        catalog_root: Path to the catalog root.
-        generate: ``--thumbnails/--no-thumbnails``. None defers to the
-            ``thumbnails.enabled`` catalog setting. Checked here, not only in
-            the plural wrapper, so ``check --fix`` cannot generate a thumbnail
-            for a catalog that set ``enabled: false``.
-        force: Re-resolve and re-render even when a thumbnail asset is already
-            registered. Refreshes ``file:size`` and ``file:checksum`` too.
-        amend_latest: Fold the thumbnail into the version the caller just wrote
-            instead of bumping. ``add`` sets this for collections it versioned
-            this run, so one add stays one version.
-        state: The run state. It parses the config once per run and holds
-            the staged version that the thumbnail joins.
-
-    Returns:
-        The registered thumbnail path, or None when nothing was registered.
-    """
+    """Give one collection a thumbnail asset, if it needs and can have one."""
     if not _thumbnails_wanted(catalog_root, generate, state):
         return None
     data = _load_collection(collection_path)
@@ -455,10 +357,6 @@ def ensure_collection_thumbnail(
     if not register_collection_thumbnail(collection_path, thumbnail, state=state):
         return None
 
-    # Track every thumbnail we register, not only the ones we drew. An adopted
-    # image is a STAC asset the moment we point at it, and versions.json is the
-    # source of truth that push, drift, and integrity all read (ADR-0005). A
-    # forced refresh rewrites the record, so `only_if_missing` goes off.
     try:
         track_generated_assets(
             collection_path,
@@ -487,24 +385,7 @@ def ensure_collection_thumbnails(
     versioned_collections: set[str] | None = None,
     state: RunState | None = None,
 ) -> None:
-    """Ensure every affected collection carries a thumbnail asset.
-
-    Runs after the PMTiles side-step, so a higher-fidelity thumbnail rendered
-    from tiles is adopted rather than replaced.
-
-    Args:
-        catalog_root: Path to the catalog root.
-        affected_collections: Collection IDs touched by the command.
-        generate: ``--thumbnails/--no-thumbnails``. None defers to the
-            ``thumbnails.enabled`` catalog setting.
-        force: ``--force-thumbnails``. Redraw even when one is registered.
-        versioned_collections: Collections whose versions.json this ``add`` just
-            wrote. Their thumbnail is folded into that snapshot rather than
-            bumping a second version. A collection that was skipped is absent,
-            so its backfilled thumbnail gets its own version instead of editing
-            a snapshot that may already be published.
-        state: The run state, which parses the config once per run.
-    """
+    """Ensure every affected collection carries a thumbnail asset."""
     # Each footer read goes through the run memo.
     with span("add.thumbnails", collections=len(affected_collections)), run_scope(state):
         if not affected_collections:

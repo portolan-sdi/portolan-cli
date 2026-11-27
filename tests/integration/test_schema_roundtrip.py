@@ -1,12 +1,4 @@
-"""Integration tests for schema round-trip editing.
-
-Tests the full workflow:
-1. Extract schema from data file
-2. Export to JSON/CSV/Parquet
-3. Edit (add descriptions, units)
-4. Import back
-5. Verify no breaking changes for metadata edits
-"""
+"""Integration tests for schema round-trip editing."""
 
 from __future__ import annotations
 

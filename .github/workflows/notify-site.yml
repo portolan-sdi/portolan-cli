@@ -1,9 +1,7 @@
 name: Notify Site
 
-# portolan-sdi.org mirrors the example READMEs as tutorials. Its Sync CLI
-# Tutorials workflow copies them and opens a pull request there. This dispatch
-# starts that sync as soon as an example changes on main. Without it, the
-# site's daily run finds the change within 24 hours.
+# portolan-sdi.org mirrors the example READMEs. This dispatch starts its sync
+# when an example changes on main, instead of waiting for its daily run.
 on:
   push:
     branches:
@@ -12,10 +10,7 @@ on:
       - 'examples/**'
   workflow_dispatch:
 
-# Least-privilege default. The portolan-ops-sync app token carries the
-# cross-repo permission, not GITHUB_TOKEN. That app is installed on every
-# org repo, and its secrets are org secrets, so this workflow needs no
-# repo-level secret.
+# The portolan-ops-sync app token, an org secret, carries the cross-repo permission.
 permissions:
   contents: read
 

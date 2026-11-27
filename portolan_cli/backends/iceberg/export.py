@@ -1,8 +1,4 @@
-"""Static GeoParquet export from Iceberg snapshots.
-
-Provides a fallback for non-Iceberg STAC clients by exporting the
-current snapshot as a single GeoParquet file.
-"""
+"""Static GeoParquet export from Iceberg snapshots."""
 
 from __future__ import annotations
 
@@ -21,11 +17,7 @@ _DERIVED_PREFIXES = ("geohash_", "bbox_")
 
 
 def export_current_snapshot(table: Table, output_path: Path) -> None:
-    """Export the current Iceberg snapshot as a single Parquet file.
-
-    Excludes portolake-derived columns (geohash_*, bbox_*) from the output.
-    If the table has no data, writes an empty Parquet file with the schema.
-    """
+    """Export the current Iceberg snapshot as a single Parquet file."""
     snap = table.current_snapshot()
     if snap is None:
         # No data — write empty file with schema

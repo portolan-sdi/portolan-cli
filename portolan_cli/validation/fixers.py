@@ -1,43 +1,4 @@
-"""The fixers `portolan check --fix` dispatches on.
-
-rashid reports a defect; :mod:`portolan_cli.validation.remediation` says who
-resolves it; this module is the *who* for the AUTO bucket. Every AUTO row names
-a ``fixer`` key, and every key has an entry in :data:`FIXERS` — a completeness
-gate in ``tests/unit/validation/test_fixers.py`` enforces the correspondence in
-both directions, so a rule can never claim a fixer that does not exist.
-
-The signature is deliberately narrow::
-
-    Fixer = Callable[[Path, bool, RunState | None], list[FixResult]]
-    # (catalog_root, dry_run, state)
-
-``check --fix`` passes one run state to every fixer. A fixer that reads the
-config or records a version uses it, so the command parses each YAML file
-once and commits once (issue #995). A fixer called with no state opens its
-own run.
-
-A fixer takes the catalog root and sweeps it whole. It is not handed the
-findings that triggered it, because every repairer here is already a
-whole-catalog sweep: the findings decide *whether* a fixer runs, never *where*
-it looks. That keeps each fixer idempotent, keeps :func:`apply_fixers` free of
-per-finding bookkeeping, and means running a fixer twice costs a re-scan rather
-than a double edit.
-
-``dry_run`` is a hard contract: a fixer must report what it would change and
-write nothing. The tests snapshot the tree before and after to hold it.
-
-Results are :class:`~portolan_cli.metadata.fix.FixResult` values merged into the
-existing :class:`~portolan_cli.metadata.fix.FixReport`, so ``--fix`` has one
-report shape whether the repair came from a fixer or from the metadata
-freshness workflow. :func:`apply_fixers` wraps that report in a
-:class:`FixerRun` that also says which fixers were selected, which actually
-changed something, and what the rest reported — the caller cannot otherwise
-tell a fixer that did nothing from one that never ran.
-
-A defect a fixer cannot resolve without inventing data — a bbox with no
-readable asset behind it, an asset whose extension the registry does not know —
-is reported ``SKIPPED`` with the reason, never guessed at.
-"""
+"""The fixers `portolan check --fix` dispatches on."""
 
 from __future__ import annotations
 
@@ -81,23 +42,7 @@ class Fixer(Protocol):
 
 @dataclass(frozen=True)
 class FixerRun:
-    """What one ``apply_fixers`` sweep asked for, what it achieved, and why not.
-
-    ``FixReport`` alone cannot answer "did the fixer the finding named actually
-    do anything?" — a fixer that ran and skipped everything looks identical to
-    one that was never selected. The caller needs the difference to tell an
-    operator whether a surviving finding is a bug or a repair that honestly
-    could not proceed.
-
-    Attributes:
-        report: Every :class:`~portolan_cli.metadata.fix.FixResult` produced.
-        selected: Fixer keys the findings called for, after composite dedup and
-            minus the caller's ``skip``, in :data:`FIXERS` (execution) order.
-        applied: The subset of ``selected`` that produced at least one
-            ``CREATED``/``UPDATED`` result, in the same order.
-        skip_reasons: For each selected-but-not-applied key that said something,
-            its deduplicated messages in first-seen order.
-    """
+    """What one ``apply_fixers`` sweep asked for, what it achieved, and why not."""
 
     report: FixReport
     selected: list[str] = field(default_factory=list)
@@ -113,9 +58,7 @@ _MIRROR_ROLE = "collection-mirror"
 _MIRROR_FILENAME = "items.parquet"
 
 
-# --------------------------------------------------------------------------
-# shared plumbing
-# --------------------------------------------------------------------------
+# --- shared plumbing ---
 
 
 def _graph(root: Path) -> CatalogGraph:
@@ -168,21 +111,13 @@ def _local_asset_path(node: Node, asset: dict[str, Any]) -> Path | None:
     return candidate if candidate.is_file() else None
 
 
-# --------------------------------------------------------------------------
-# links — PTL-LNK-001..006
-# --------------------------------------------------------------------------
+# --- links: PTL-LNK-001..006 ---
 
 
 def _reuse_link(
     existing: list[dict[str, Any]], node: Node, graph: CatalogGraph, expected: ExpectedLink
 ) -> dict[str, Any] | None:
-    """An existing link to carry forward, so titles and extras survive the repair.
-
-    Matched by where the href *resolves*, not by its spelling: ``./a/b.json`` and
-    ``a/b.json`` name the same file, and a hand-written title on either should
-    outlive the repair. A ``child``/``item`` link that resolves nowhere has no
-    counterpart to carry forward and is simply replaced.
-    """
+    """An existing link to carry forward, so titles and extras survive the repair."""
     same_rel = [link for link in existing if link.get("rel") == expected.rel]
     if not same_rel:
         return None
@@ -196,21 +131,12 @@ def _reuse_link(
 
 
 def _rebuilt_rels() -> frozenset[str]:
-    """The rels the rebuild re-emits itself, so stale copies are dropped first.
-
-    Derived by membership rather than concatenation: ``STRUCTURAL_RELS`` belongs
-    to rashid, and exporting it as a set or list must not break link repair.
-    """
+    """The rels the rebuild re-emits itself, so stale copies are dropped first."""
     return frozenset(STRUCTURAL_RELS) | {"self"}
 
 
 def _rebuild_links(node: Node, graph: CatalogGraph) -> list[dict[str, Any]]:
-    """The link block ``node`` should carry: structural first, everything else after.
-
-    rashid's ``expected_links`` gives each structural rel, target, href, and type,
-    as its link rules check them. This side keeps only what rashid has no use for:
-    the title and extras of an existing link, and a title for a new one.
-    """
+    """The link block ``node`` should carry: structural first, everything else after."""
     existing = links_of(node)
     rebuilt: list[dict[str, Any]] = []
     for expected in expected_links(graph, node):
@@ -245,9 +171,7 @@ def _fix_links(root: Path, dry_run: bool, _state: RunState | None = None) -> lis
     return results
 
 
-# --------------------------------------------------------------------------
-# bbox — PTL-BBX-001
-# --------------------------------------------------------------------------
+# --- bbox: PTL-BBX-001 ---
 
 
 def _extent_bboxes(node: Node) -> list[Any] | None:
@@ -271,18 +195,12 @@ def _looks_valid(box: Any) -> bool:
     flat = to_2d_bbox(box)
     if not is_valid_bbox(flat):
         return False
-    # A coordinate a hair past the bound validates once snapped, so
-    # is_valid_bbox accepts it. The stored extent still carries the raw value,
-    # and replacing it is what this fixer is for.
+    # A coordinate just past the bound passes is_valid_bbox once snapped, but the stored extent keeps the raw value.
     return snap_to_wgs84_range(flat) == flat
 
 
 def _child_bboxes(node: Node, graph: CatalogGraph) -> list[list[float]]:
-    """Every bbox contained by ``node``, from items directly and collections' extents.
-
-    Descends through an organizing catalog (core.md:168-170), which carries no
-    extent of its own and would otherwise hide the items beneath it.
-    """
+    """Every bbox contained by ``node``, from items directly and collections' extents."""
     from portolan_core.bbox import to_2d_bbox
 
     found: list[list[float]] = []
@@ -310,13 +228,7 @@ _BBOX_EXTRACTORS: dict[str, tuple[str, str]] = {
 
 
 def _wgs84_bbox_from_asset(node: Node, asset: dict[str, Any]) -> list[float] | None:
-    """The asset's own footprint in WGS84, or None when it cannot be read.
-
-    Honest by construction: a remote href, an unrecognized suffix, an unreadable
-    file, or a CRS that cannot be reprojected all yield None, so the caller
-    skips. Never falls back to a default or a whole-world box — a wrong extent
-    published as fact is worse than a reported gap.
-    """
+    """The asset's own footprint in WGS84, or None when it cannot be read."""
     path = _local_asset_path(node, asset)
     if path is None:
         return None
@@ -377,9 +289,7 @@ def _fix_container_bbox(node: Node, graph: CatalogGraph, *, dry_run: bool) -> Fi
     from portolan_cli.stac import build_spatial_extent
     from portolan_core.errors import InvalidBboxError
 
-    # Items were repaired first and graph nodes are shared objects, so a bbox
-    # written above is already visible here without reloading the tree. The
-    # extent constructor of ``add`` builds it, so a repair equals a rebuild.
+    # Items were repaired first and graph nodes are shared, so the bboxes written above are visible here.
     try:
         extent = build_spatial_extent(_child_bboxes(node, graph) or _asset_bboxes(node))
     except InvalidBboxError:
@@ -390,12 +300,7 @@ def _fix_container_bbox(node: Node, graph: CatalogGraph, *, dry_run: bool) -> Fi
 
 
 def _fix_bbox(root: Path, dry_run: bool, _state: RunState | None = None) -> list[FixResult]:
-    """Recompute broken bboxes: items from their assets, containers from children.
-
-    Items go first so a container can union the values they just gained. Asset
-    bytes are read only where a bbox is actually missing or invalid, so a clean
-    catalog costs nothing beyond the JSON walk.
-    """
+    """Recompute broken bboxes: items from their assets, containers from children."""
     graph = _graph(root)
     results = [
         result
@@ -410,9 +315,7 @@ def _fix_bbox(root: Path, dry_run: bool, _state: RunState | None = None) -> list
     return results
 
 
-# --------------------------------------------------------------------------
-# assets — PTL-AST-001
-# --------------------------------------------------------------------------
+# --- assets: PTL-AST-001 ---
 
 
 #: What ``preparation._get_media_type`` returns when the extension is unknown.
@@ -467,9 +370,7 @@ def _fix_assets(root: Path, dry_run: bool, _state: RunState | None = None) -> li
     return results
 
 
-# --------------------------------------------------------------------------
-# media_type — PTL-DAT-003
-# --------------------------------------------------------------------------
+# --- media_type: PTL-DAT-003 ---
 
 #: The magic bytes of each format the data pass sniffs, and the media type they imply.
 _MAGIC_MEDIA_TYPES: tuple[tuple[bytes, str], ...] = (
@@ -531,18 +432,11 @@ def _fix_media_types(root: Path, dry_run: bool, _state: RunState | None = None) 
     return results
 
 
-# --------------------------------------------------------------------------
-# checksum — PTL-AST-003/004, PTL-DAT-001/002
-# --------------------------------------------------------------------------
+# --- checksum: PTL-AST-003/004, PTL-DAT-001/002 ---
 
 
 def _fix_checksums(root: Path, dry_run: bool, _state: RunState | None = None) -> list[FixResult]:
-    """Recompute file:size and the file:checksum multihash from the asset bytes.
-
-    Streams through ``sync.checksums.compute_checksum`` rather than reading each
-    asset whole: a COG is routinely gigabytes, and the whole point of this fixer
-    is that it runs over every asset in the catalog.
-    """
+    """Recompute file:size and the file:checksum multihash from the asset bytes."""
     from portolan_core.checksums import file_fields
 
     results: list[FixResult] = []
@@ -562,9 +456,7 @@ def _fix_checksums(root: Path, dry_run: bool, _state: RunState | None = None) ->
     return results
 
 
-# --------------------------------------------------------------------------
-# styles — PTL-VIZ-005
-# --------------------------------------------------------------------------
+# --- styles: PTL-VIZ-005 ---
 
 
 def _provides_pmtiles(node: Node) -> bool:
@@ -594,9 +486,7 @@ def _fix_styles(root: Path, dry_run: bool, _state: RunState | None = None) -> li
     return results
 
 
-# --------------------------------------------------------------------------
-# thumbnail — PTL-VIZ-001
-# --------------------------------------------------------------------------
+# --- thumbnail: PTL-VIZ-001 ---
 
 #: rashid's _THUMBNAIL_TYPES. A thumbnail asset typed anything else fails
 #: PTL-VIZ-001 just as surely as a missing one.
@@ -633,13 +523,7 @@ def _retype_thumbnails(node: Node, dry_run: bool) -> FixResult | None:
 
 
 def _fix_thumbnail(root: Path, dry_run: bool, state: RunState | None = None) -> list[FixResult]:
-    """Give every geospatial collection a correctly typed thumbnail asset.
-
-    Two repairs behind one rule id. A mistyped thumbnail is retyped in place.
-    A missing one is adopted or rendered by the same orchestrator ``add`` uses,
-    so a catalog generated before Issue #683 can heal itself with
-    ``portolan check --fix`` instead of being re-added.
-    """
+    """Give every geospatial collection a correctly typed thumbnail asset."""
     from portolan_cli.collection_thumbnail import (
         ensure_collection_thumbnail,
         would_generate_thumbnail,
@@ -655,10 +539,7 @@ def _fix_thumbnail(root: Path, dry_run: bool, state: RunState | None = None) -> 
             continue
         collection_dir = node.abs_path.parent
         if dry_run:
-            # Ask the orchestrator, rather than assuming every collection can
-            # have one. A tabular collection and a collection with no drawable
-            # source both decline, and a dry run that claimed otherwise promised
-            # work the real run would not do.
+            # Ask the orchestrator: a tabular or undrawable collection declines, and a dry run must say so.
             if would_generate_thumbnail(collection_dir, root, state=state):
                 results.append(_skipped(node.abs_path, "Would generate a collection thumbnail"))
             continue
@@ -668,9 +549,7 @@ def _fix_thumbnail(root: Path, dry_run: bool, state: RunState | None = None) -> 
     return results
 
 
-# --------------------------------------------------------------------------
-# item_mirror — PTL-MIR-001/002
-# --------------------------------------------------------------------------
+# --- item_mirror: PTL-MIR-001/002 ---
 
 
 def _mirror_assets(node: Node) -> list[dict[str, Any]]:
@@ -698,23 +577,12 @@ def _register_mirror(node: Node) -> bool:
 
 
 def _has_cog_items(node: Node, graph: CatalogGraph) -> bool:
-    """Whether ``node`` has scene items carrying COGs, exactly as rashid scopes it.
-
-    A plain ``image/tiff`` is a GeoTIFF, not a COG, and PTL-MIR-001 does not
-    fire on it. The media type must also carry ``profile=cloud-optimized``.
-    rashid now exports the predicate it applies (rashid#57), so this reads the
-    answer from ``has_cog`` instead of replicating the rule.
-    """
+    """Whether ``node`` has scene items carrying COGs, exactly as rashid scopes it."""
     return any(has_cog(item) for item in graph.items_of(node))
 
 
 def _write_mirror(collection_dir: Path, root: Path, state: RunState | None) -> None:
-    """Write items.parquet, register it, and record its bytes in versions.json.
-
-    The snapshot records the new bytes through the writer ``add`` uses, so
-    ``push`` sees the change (issue #1046). One run state carries the item
-    fingerprint from the build to the record.
-    """
+    """Write items.parquet, register it, and record its bytes in versions.json."""
     from portolan_cli.stac_parquet import (
         generate_items_parquet,
         register_mirror_asset,
@@ -765,9 +633,7 @@ def _fix_item_mirror(root: Path, dry_run: bool, state: RunState | None = None) -
     return results
 
 
-# --------------------------------------------------------------------------
-# partition — PTL-PRT-001
-# --------------------------------------------------------------------------
+# --- partition: PTL-PRT-001 ---
 
 
 def _is_partitioned(node: Node) -> bool:
@@ -818,9 +684,7 @@ def _fix_partition(root: Path, dry_run: bool, _state: RunState | None = None) ->
     return results
 
 
-# --------------------------------------------------------------------------
-# conformance, required files, and the existing repairers
-# --------------------------------------------------------------------------
+# --- conformance, required files, and the existing repairers ---
 
 
 def _fix_schema_uri(root: Path, dry_run: bool, _state: RunState | None = None) -> list[FixResult]:
@@ -868,13 +732,7 @@ def _fix_markdown_requirement(
     repair: Callable[[Path], Any],
     message: str,
 ) -> list[FixResult]:
-    """Scaffold a required sibling markdown file and its link, and say so honestly.
-
-    ``gap`` asks rashid's ``sidecar_link_gaps``, which is wider than what the
-    scaffolders normalize. When a repair runs and the gap survives it, the
-    result is SKIPPED rather than UPDATED: the finding will outlive the
-    re-check, and ``--fix`` must not claim work the next check contradicts.
-    """
+    """Scaffold a required sibling markdown file and its link, and say so honestly."""
     gapped = [
         node
         for node in _graph(root).iter("catalog", "collection")
@@ -989,15 +847,8 @@ FIXERS: dict[str, Fixer] = {
 _COMPOSED_OF: dict[str, tuple[str, ...]] = {"required_files": ("agents", "readme")}
 
 
-#: Repairs that must follow any pass which writes an item JSON.
-#:
-#: The registry is finding-driven, and the findings come from the check that ran
-#: *before* the freshness pass. An item that pass creates therefore never meets
-#: the registry: it lands with no structural links, no ``file:size`` and no
-#: ``file:checksum``, and its collection gains no ``rel="item"`` link, so
-#: ``--fix`` reported more defects than it started with (#709). Both keys name
-#: idempotent whole-catalog sweeps, so a second pass costs a re-scan rather than
-#: a double edit.
+#: Repairs that must follow any pass that writes an item JSON.
+#: Both are idempotent whole-catalog sweeps, so a second pass is safe.
 POST_ITEM_WRITE_FIXERS: tuple[str, ...] = ("links", "checksum")
 
 
@@ -1014,13 +865,7 @@ def _collection_dir_of(path: Path, root: Path) -> Path | None:
 def _refresh_mirrors(
     root: Path, changed: Iterable[Path], *, dry_run: bool, state: RunState | None
 ) -> list[FixResult]:
-    """Rewrite ``items.parquet`` for every collection whose items just changed.
-
-    The mirror is a copy of the items, so a pass that rewrites an item and
-    leaves the mirror alone creates the drift PTL-DAT-016 reports. Only
-    collections that already publish a mirror are touched, because creating one
-    where the operator never asked for it is ``add``'s decision, not a repair.
-    """
+    """Rewrite ``items.parquet`` for every collection whose items just changed."""
     collections = {
         collection
         for path in changed
@@ -1055,20 +900,7 @@ def repair_written_items(
     dry_run: bool,
     state: RunState | None = None,
 ) -> list[FixResult]:
-    """Bring items a freshness pass just wrote up to the same standard as the rest.
-
-    Args:
-        root: Catalog root to sweep.
-        changed: Paths the freshness pass created or updated. Only their
-            enclosing collections have their mirror refreshed.
-        dry_run: Report what would change and write nothing.
-        state: The run state of the command. None opens one run per mirror.
-
-    Returns:
-        One :class:`~portolan_cli.metadata.fix.FixResult` per repaired object. A
-        fixer that raises becomes one failed result, so a broken repair cannot
-        strand the others.
-    """
+    """Bring items a freshness pass just wrote up to the same standard as the rest."""
     changed = list(changed)
     results: list[FixResult] = []
     for key in POST_ITEM_WRITE_FIXERS:
@@ -1086,11 +918,7 @@ def repair_written_items(
 def _refresh_collection_fields(
     root: Path, changed: Iterable[Path], *, dry_run: bool, state: RunState | None
 ) -> list[FixResult]:
-    """Derive the extent and summaries again for each collection whose items changed.
-
-    The items the freshness pass rewrote carry new bboxes, so the collection
-    extent follows them, as it does after ``add`` (issue #801).
-    """
+    """Derive the extent and summaries again for each collection whose items changed."""
     from portolan_cli.finalization import refresh_collection_fields
 
     collections = {
@@ -1116,15 +944,7 @@ def _refresh_collection_fields(
 
 
 def auto_fixer_keys(findings: Iterable[Any]) -> list[str]:
-    """The distinct fixer keys the AUTO findings call for, in execution order.
-
-    Args:
-        findings: rashid findings, any severity. An INFO selects no fixer.
-
-    Returns:
-        Registry keys, deduplicated (including across :data:`_COMPOSED_OF`) and
-        ordered as :data:`FIXERS` is.
-    """
+    """The distinct fixer keys the AUTO findings call for, in execution order."""
     wanted = set()
     for finding in findings:
         remediation = remediation_of(finding)
@@ -1144,24 +964,7 @@ def apply_fixers(
     skip: Sequence[str] | set[str] = (),
     state: RunState | None = None,
 ) -> FixerRun:
-    """Run every fixer the AUTO findings call for, once each, over ``root``.
-
-    Args:
-        root: Catalog root to sweep.
-        findings: rashid findings from the pre-fix check.
-        dry_run: Report what would change and write nothing.
-        skip: Fixer keys the caller already covers, so no repair runs twice.
-            ``check --fix`` passes ``convert`` when its geo-asset pass is in
-            scope, since that pass is the same conversion sweep.
-        state: The run state of the command, passed to every fixer.
-
-    Returns:
-        A :class:`FixerRun`: the merged report plus which fixers were selected,
-        which actually changed something, and the reasons the rest gave. A fixer
-        that raises becomes one failed result rather than aborting the run — one
-        broken repair must not strand the others — and counts as selected but
-        not applied.
-    """
+    """Run every fixer the AUTO findings call for, once each, over ``root``."""
     selected = [key for key in auto_fixer_keys(findings) if key not in skip]
     results: list[FixResult] = []
     applied: list[str] = []

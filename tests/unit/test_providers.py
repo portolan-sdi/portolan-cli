@@ -1,11 +1,4 @@
-"""Unit tests for the provider model and the provenance it derives (issue #684).
-
-The spec requires every collection to name a producer and exactly one host,
-listed last. ``resolve_providers`` turns the ``providers`` array a human wrote in
-metadata.yaml into that shape, seeding the host from ``contact`` when the human
-left it out. ``derive_provenance`` then reads official-vs-mirror back off the
-result, matching rashid's ``provenance_of`` so generation and validation agree.
-"""
+"""Unit tests for the provider model and the provenance it derives."""
 
 from __future__ import annotations
 
@@ -139,7 +132,7 @@ class TestResolveProviders:
         assert _names(providers) == ["INDEC", "Declared Host"]
 
     def test_seeded_placeholder_contact_is_no_host(self) -> None:
-        """#1039: a seeded 'TODO: Add value' contact is not published as a provider."""
+        """A seeded 'TODO: Add value' contact is not published as a provider."""
         providers = resolve_providers(
             {
                 "providers": [{"name": "City of Philadelphia", "roles": ["producer"]}],

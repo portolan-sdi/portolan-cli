@@ -1,14 +1,4 @@
-"""Built-in format families from the file name, with no third-party imports.
-
-A format family groups formats: ``vector`` routes to geoparquet-io and
-``raster`` to rio-cogeo. A plugin format handler brings its own family string
-(#947), so a family is free text, not an enum.
-
-This leaf reads only a file name or the first 8 KB of a JSON file. The catalog
-read modules (``query``, ``catalog_list``) need it, and they must not load
-pyarrow, rasterio, rio-cogeo, or a plugin (issue #944). It knows the built-in
-formats only. ``formats.detect_format`` also asks the plugin format handlers.
-"""
+"""Built-in format families from the file name, with no third-party imports."""
 
 from __future__ import annotations
 
@@ -21,9 +11,7 @@ RASTER = "raster"
 
 FORMAT_DISPLAY_NAMES: dict[str, str] = _reg.field_map("display_name")
 
-# Extensions that route to geoparquet-io (vector) / rio-cogeo (raster). Derived
-# from the registry. Cloud-native vectors like .fgb/.pmtiles are included in
-# VECTOR_EXTENSIONS. .gdb is a FileGDB directory handled specially below.
+# .gdb is a FileGDB directory, which detect_family handles on its own.
 VECTOR_EXTENSIONS: frozenset[str] = _reg.extensions_where(routes_as="vector")
 
 RASTER_EXTENSIONS: frozenset[str] = _reg.extensions_where(routes_as="raster")
@@ -46,22 +34,7 @@ _GEOJSON_TOKENS = tuple(
 
 
 def detect_family(path: Path) -> str | None:
-    """Return the built-in family of a file: ``vector``, ``raster``, or None.
-
-    This provides minimal detection to route files to the correct conversion
-    library. It does NOT validate file contents. That is delegated to
-    geoparquet-io or rio-cogeo.
-
-    Args:
-        path: Path to the file or directory to detect.
-
-    Returns:
-        ``vector``, ``raster``, or None when no built-in format matches.
-
-    Raises:
-        FileNotFoundError: If the file does not exist.
-        IsADirectoryError: If the path is a non-geospatial directory.
-    """
+    """Return the built-in family of a file: ``vector``, ``raster``, or None."""
     if not path.exists():
         raise FileNotFoundError(f"File not found: {path}")
 
@@ -83,19 +56,7 @@ def detect_family(path: Path) -> str | None:
 
 
 def family_of_asset(media_type: str | None, href: str) -> str | None:
-    """Return the built-in family of a STAC asset from its media type.
-
-    The media type comes first. A plugin format declares its own media type,
-    so the read layer does not need to load the plugin. The href suffix is
-    the fallback for an asset with no ``type``.
-
-    Args:
-        media_type: The asset ``type``, or None.
-        href: The asset ``href``.
-
-    Returns:
-        ``vector``, ``raster``, or None.
-    """
+    """Return the built-in family of a STAC asset from its media type."""
     media = (media_type or "").lower()
     suffix = Path(href).suffix.lower()
     if "parquet" in media or (not media and suffix == ".parquet"):
@@ -106,13 +67,9 @@ def family_of_asset(media_type: str | None, href: str) -> str | None:
 
 
 def is_geojson(path: Path) -> bool:
-    """Check if a .json file is GeoJSON.
+    """Check if a .json file is GeoJSON from its first 8 KB.
 
-    Uses prefix reading (first 8KB) to avoid OOM on large files.
-    Searches for GeoJSON type tokens without full JSON parsing.
-
-    STAC items/collections/catalogs are NOT GeoJSON even though they have
-    "type": "Feature". They are identified by "stac_version".
+    A STAC object has "type": "Feature" too, but its "stac_version" marks it as not GeoJSON.
 
     Args:
         path: Path to JSON file.

@@ -1,10 +1,4 @@
-"""Tests for merge strategy functionality in metadata preservation.
-
-Issue #446: portolan add strips human-authored asset and column metadata.
-
-These tests verify that the merge strategy correctly preserves human-enrichable
-fields while updating machine-derivable fields.
-"""
+"""Tests for merge strategy functionality in metadata preservation."""
 
 from __future__ import annotations
 
@@ -128,7 +122,7 @@ class TestAddAssetToCollectionMerge:
 
     @pytest.mark.unit
     def test_keep_strategy_keeps_human_fields_and_refreshes_machine_fields(self) -> None:
-        """KEEP decides the human fields only. The data decides the rest (#931)."""
+        """KEEP decides the human fields only. The data decides the rest."""
         collection = self._create_collection_with_asset()
         collection.assets["data"].extra_fields["file:checksum"] = "1220stale"
 
@@ -237,7 +231,7 @@ _PMTILES = "application/vnd.pmtiles"
 
 
 class TestAssetKeyCollision:
-    """Issue #933: add never lets one file replace a different file's asset."""
+    """Add never lets one file replace a different file's asset."""
 
     @staticmethod
     def _collection(**assets: pystac.Asset) -> pystac.Collection:
@@ -277,11 +271,6 @@ class TestAssetKeyCollision:
     def test_parquet_moves_a_displaced_same_stem_file_to_its_filename_key(
         self, href: str, media_type: str
     ) -> None:
-        """A source, sidecar, or other same-stem file under the stem key moves aside.
-
-        0.8.0 renamed ``data`` to the stem after the scan keyed a same-stem
-        file by the stem, so any of these files could hold the GeoParquet key.
-        """
         collection = self._collection(
             roads=pystac.Asset(href=href, media_type=media_type, roles=["data"])
         )
@@ -376,7 +365,7 @@ class TestAssetKeyCollision:
 
     @pytest.mark.unit
     def test_parquet_moves_the_displaced_pmtiles_to_its_tiles_key(self) -> None:
-        """The exact damage #933 wrote into catalogs is repaired on re-add."""
+        """The damage a defective add wrote into catalogs is repaired on re-add."""
         collection = self._collection(
             zoning=pystac.Asset(
                 href="./zoning.pmtiles",
@@ -476,7 +465,7 @@ class TestAssetKeyCollision:
 
     @pytest.mark.unit
     def test_pmtiles_of_another_stem_is_not_moved(self) -> None:
-        """Only a same-stem PMTiles is the #933 damage. Anything else raises."""
+        """Only a same-stem PMTiles is the damage. Anything else raises."""
         collection = self._collection(
             zoning=pystac.Asset(href="./basemap.pmtiles", media_type=_PMTILES, roles=["data"])
         )
@@ -615,7 +604,6 @@ class TestAddTableExtensionMerge:
 
     @pytest.mark.unit
     def test_smart_strategy_removes_deleted_columns(self) -> None:
-        """SMART strategy removes columns no longer in schema."""
         collection = self._create_collection_with_columns()
 
         metadata = GeoParquetMetadata(
@@ -641,11 +629,6 @@ class TestAddTableExtensionMerge:
 
     @pytest.mark.unit
     def test_keep_strategy_keeps_descriptions_and_drops_removed_columns(self) -> None:
-        """Issue #931: KEEP keeps column descriptions, never a removed column.
-
-        On main KEEP returned the stored table fields unchanged, so a column
-        the data no longer had stayed in ``table:columns`` on every rebuild.
-        """
         collection = self._create_collection_with_columns()
 
         metadata = GeoParquetMetadata(

@@ -1,12 +1,4 @@
-"""Unit tests for `portolan clean` command.
-
-Tests for:
-- is_stac_metadata() correctly identifies STAC files
-- Non-STAC JSON files are skipped
-- .portolan/ is always removed
-- versions.json is always removed
-- dry-run doesn't actually delete
-"""
+"""Unit tests for `portolan clean` command."""
 
 from __future__ import annotations
 

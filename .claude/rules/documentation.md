@@ -21,59 +21,32 @@ When documenting CLI commands:
 ## docs/ vs code-adjacent notes
 
 - **`docs/`**, Public-facing, human-readable documentation (tutorials, visual guides, user-oriented). Built with Zensical and published.
-- **Internal rationale** lives in docstrings and comments at the site it governs. There is no separate notes directory.
+- **Internal rationale** lives in the commit body and the PR body. Read it with
+  `git log` for the file. There is no separate notes directory.
 
 Do NOT put architectural plans or design documents in `docs/`. Working plans are
 local scratch and are not committed. Once a decision holds, record it in one of
 the destinations below rather than leaving it in a plan.
 
-## Documentation Bias
+### Where a decision goes
 
-**Bias toward documenting everything.** AI agents work best with rich context.
+| What | Where |
+|------|-------|
+| User-facing behavior and its reasoning | `docs/`, next to the setting or command it governs |
+| Catalog conformance rules | portolan-spec, enforced by a rashid `PTL-*` rule |
+| Known upstream bugs and accepted limits | A one-line comment with the upstream URL, or a `skipif` or `xfail(strict=True)` reason, at the workaround |
+| Trade-offs, rejected alternatives, CI decisions | The commit body and the PR body |
 
-### What to Document
-
-| What | Where | When |
-|------|-------|------|
-| User-facing behavior and its reasoning | `docs/` | Anything an operator needs to predict what the CLI does |
-| Maintainer rationale | Module docstring or comment at the enforcing site | Why the code is shaped this way, rejected alternatives |
-| Known upstream bugs | Upstream issue URL in a comment, `skipif`, or `xfail(strict=True)` reason at the affected site | When a bug or environment constraint is identified but not fixed |
-| Non-obvious code | Inline comments | Code that would confuse a future reader |
-| API contracts, gotchas at the call site | Docstrings | All public functions/classes |
-| Catalog conformance rules | portolan-spec repo | Anything normative about catalog shape |
-
-### Record decisions next to what they govern
-
-This repo has no ADR directory. It had one, and the ADRs drifted: several
-described modules and CLI flags that were never built, and others restated rules
-the spec now owns. A decision record that outlives its subject is worse than no
-record, because it reads as authoritative.
-
-Write the decision where someone will hit it while changing the thing:
-
-- **A rule about catalog shape** belongs in portolan-spec, enforced by a rashid
-  `PTL-*` rule. Not here.
-- **A rule about how the CLI behaves** belongs in `docs/`, next to the setting or
-  command it governs.
-- **A constraint you accepted and did not fix** belongs at the workaround: a
-  comment on the pin, the `skipif` reason, or the `xfail(strict=True)` reason,
-  with the upstream issue URL. A strict `xfail` fails CI when upstream fixes the
-  bug, so the record cannot outlive the bug.
-- **A trade-off or rejected alternative** belongs in the docstring of the module
-  or function that enforces it. When it spans modules, put it in the module
-  that owns the entry point, and point to it from the others.
-- **A CI decision** belongs in a comment on the job or hook in
-  `.github/workflows/` or `prek.toml`.
-
-This repo has no free-standing notes directory. It had one (`context/`), and
-it drifted the same way the ADRs did.
+Docstrings and comments follow the 2-line rule in `.claude/rules/python.md`.
+A strict `xfail` fails CI when upstream fixes the bug, so the record cannot
+outlive the bug.
 
 ### Two Documentation Audiences
 
 | Audience | Location | Purpose |
 |----------|----------|---------|
 | **Humans** | `docs/` (Zensical) | *How to use*, tutorials, visual guides |
-| **AI agents** | Docstrings, AGENTS.md, `.claude/rules/` | *How to modify*, dense, structured, co-located with code |
+| **AI agents** | AGENTS.md, `.claude/rules/` | *How to modify*, dense, structured, co-located with code |
 
 ### Validating AI Guidance
 

@@ -1,10 +1,4 @@
-"""PMTiles metadata extraction.
-
-Uses the pmtiles package to read PMTiles header metadata.
-PMTiles store bounds in WGS84 (4326) but tiles are Web Mercator (3857).
-
-PMTiles are collection-level assets when added to a catalog.
-"""
+"""PMTiles metadata extraction."""
 
 from __future__ import annotations
 
@@ -18,16 +12,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class PMTilesMetadata:
-    """Metadata extracted from a PMTiles file.
-
-    Attributes:
-        bbox: Bounding box as (min_lon, min_lat, max_lon, max_lat) in WGS84.
-        min_zoom: Minimum zoom level.
-        max_zoom: Maximum zoom level.
-        tile_type: Tile type ("mvt", "png", "jpeg", "webp", "avif").
-        center: Optional center point as (lon, lat, zoom).
-        layer_name: Name of the primary layer in the PMTiles (for styling).
-    """
+    """Metadata extracted from a PMTiles file."""
 
     bbox: tuple[float, float, float, float] | None
     min_zoom: int
@@ -50,13 +35,7 @@ class PMTilesMetadata:
         return result
 
     def to_stac_properties(self) -> dict[str, Any]:
-        """Convert to STAC Item/Collection properties format.
-
-        Contributes no projection field: PMTiles tiles are always Web
-        Mercator internally, but that describes the visualization artifact,
-        not the source data, so it must never surface as the collection's
-        CRS (issues #488, #654).
-        """
+        """Convert to STAC Item/Collection properties format."""
         props: dict[str, Any] = {
             "pmtiles:min_zoom": self.min_zoom,
             "pmtiles:max_zoom": self.max_zoom,
@@ -143,8 +122,7 @@ def extract_pmtiles_metadata(path: Path) -> PMTilesMetadata:
     else:
         tile_type = _TILE_TYPE_MAP.get(tile_type_value, "unknown")
 
-    # Try to extract layer name from metadata (Issue #13)
-    # For multi-layer PMTiles, we use the first layer and warn if there are multiple.
+    # Multi-layer PMTiles use the first layer and warn.
     layer_name: str | None = None
     if isinstance(metadata, dict):
         # TileJSON format: {"vector_layers": [{"id": "layer_name", ...}]}

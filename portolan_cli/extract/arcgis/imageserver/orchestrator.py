@@ -1,22 +1,4 @@
-"""The ImageServer path of ``portolan extract arcgis``.
-
-This module wraps the async ``extract_imageserver()`` function. It turns the
-options into an extraction config, picks the exit code, and returns the
-result. It prints nothing (#1005). Progress goes to ``on_progress`` and the
-messages for the user go to ``on_message``. The CLI prints both.
-
-Typical usage:
-    from portolan_cli.extract.arcgis.imageserver.orchestrator import (
-        ImageServerCLIOptions,
-        run_imageserver_extraction_sync,
-    )
-
-    exit_code, report = run_imageserver_extraction_sync(
-        url="https://services.arcgis.com/.../ImageServer",
-        output_dir=Path("./output"),
-        options=ImageServerCLIOptions(dry_run=True),
-    )
-"""
+"""The ImageServer path of ``portolan extract arcgis``."""
 
 from __future__ import annotations
 
@@ -42,29 +24,7 @@ if TYPE_CHECKING:
 
 @dataclass
 class ImageServerCLIOptions:
-    """Options for ImageServer extraction.
-
-    Attributes:
-        tile_size: Desired tile size in pixels (default 4096).
-        max_concurrent: Maximum concurrent tile downloads (default 4).
-        max_retries: Attempts per tile before it counts as failed (default 3).
-        dry_run: If True, compute tiles but don't download.
-        resume: If True, resume from previous extraction.
-        raw: If True, skip auto-init (only create COGs + report, no STAC catalog).
-        bbox: Optional bounding box to subset extraction (minx, miny, maxx, maxy).
-        bbox_crs: Optional explicit CRS of bbox (e.g., "EPSG:4326"). Skips auto-detection.
-        timeout: HTTP request timeout in seconds (default 120).
-        compression: COG compression method ("DEFLATE" or "JPEG").
-        collection_name: Optional name for the collection (default: 'tiles').
-        catalog_id: Catalog id for the created catalog. None derives it from
-            the output directory name, which is the behavior before issue #821.
-        license: SPDX identifier from --license, or "other" with license_url.
-            Overrides any license URL in the service's licenseInfo (issue #686).
-        license_url: URL of the license text from --license-url.
-        coarse_scan: Ask a coarse tile cache level which blocks hold data
-            before reading them (issue #870). Only a cache-only service uses
-            it. It is off by default, because the scan can skip a thin feature.
-    """
+    """Options for ImageServer extraction."""
 
     tile_size: int = 4096
     max_concurrent: int = 4
@@ -85,15 +45,7 @@ class ImageServerCLIOptions:
 
 @dataclass(frozen=True)
 class ImageServerRunResult:
-    """One ImageServer run of ``portolan extract arcgis``.
-
-    Attributes:
-        url: The ImageServer URL, with the credentials removed.
-        output_dir: The directory the run wrote, as the caller gave it.
-        dry_run: True when the run computed the tiles and read none.
-        exit_code: 0 for success, 1 when every tile failed or held no data.
-        report: The extraction report, or None for a run that wrote none.
-    """
+    """One ImageServer run of ``portolan extract arcgis``."""
 
     url: str
     output_dir: Path
@@ -117,16 +69,7 @@ class ImageServerRunResult:
 
 
 def _failure_hint(tiles_failed: int) -> str:
-    """Tell the user how to recover from failed tiles (issue #870).
-
-    Failed tiles stay in the resume state, so a second run with --resume
-    retries them alone. HTTP 5xx responses from exportImage usually mean the
-    server could not build a tile of the requested size under load, so a
-    smaller tile or fewer parallel requests is the next thing to try.
-
-    Args:
-        tiles_failed: Number of tiles that failed after all retries.
-    """
+    """Tell the user how to recover from failed tiles."""
     return (
         f"Re-run the same command with --resume to retry the {tiles_failed} failed tiles. "
         "If the server returned HTTP 5xx, lower --tile-size or --max-concurrent. "
@@ -142,28 +85,7 @@ async def run_imageserver(
     on_progress: Callable[[TileProgress], None] | None = None,
     on_message: MessageCallback | None = None,
 ) -> tuple[int, ImageServerExtractionReport | None]:
-    """Run ImageServer extraction and pick the exit code. Raise on an error.
-
-    ``portolan extract arcgis`` calls this function through
-    ``run_extract_arcgis`` and maps each error to its output.
-
-    Args:
-        url: ImageServer URL.
-        output_dir: Directory to write extracted data.
-        options: Options (defaults to ImageServerCLIOptions()).
-        on_progress: Called with the progress of each tile.
-        on_message: Called with each message for the user, as
-            ``on_message(level, text)``. See ``extract.common.progress.emit_message``.
-
-    Returns:
-        Tuple of (exit_code, report). Exit code is 0 for success, 1 when every
-        tile failed or every tile is empty.
-
-    Raises:
-        MissingLicenseError: Before any download, when no license resolves.
-        ImageServerDiscoveryError: If service discovery fails.
-        ImageServerExtractionError: If no path can read the service.
-    """
+    """Run ImageServer extraction and pick the exit code. Raise on an error."""
     if options is None:
         options = ImageServerCLIOptions()
 
@@ -204,9 +126,7 @@ async def run_imageserver(
         return 1, result.report
 
     if result.tiles_downloaded == 0 and result.tiles_empty > 0 and result.tiles_skipped == 0:
-        # The service answered every request, and every tile holds no data.
-        # A resumed run that skips completed tiles holds data, so it is not
-        # a failure.
+        # Every tile holds no data. A resumed run holds data, so it is not a failure.
         emit_message(
             on_message,
             "error",
@@ -236,22 +156,7 @@ async def run_imageserver(
 async def run_imageserver_extraction(
     url: str, output_dir: Path, options: ImageServerCLIOptions | None = None
 ) -> tuple[int, ImageServerExtractionReport | None]:
-    """Run ``run_imageserver`` and turn an error into exit code 1.
-
-    This wrapper keeps the signature and the contract that callers had
-    before #1133. An error returns ``(1, None)``. The messages go to the
-    ``portolan_cli`` logger, because the wrapper takes no callback. A
-    missing license also logs the flags that set one.
-
-    Args:
-        url: ImageServer URL.
-        output_dir: Directory to write extracted data.
-        options: Options (defaults to ImageServerCLIOptions()).
-
-    Returns:
-        Tuple of (exit_code, report). Exit code is 0 for success, 1 for failure.
-        Report is None when the run raised.
-    """
+    """Run ``run_imageserver`` and turn an error into exit code 1."""
     from portolan_core.errors import MissingLicenseError
     from portolan_core.licensing import CLI_LICENSE_REMEDIATION
 
@@ -270,14 +175,5 @@ def run_imageserver_extraction_sync(
     output_dir: Path,
     options: ImageServerCLIOptions | None = None,
 ) -> tuple[int, ImageServerExtractionReport | None]:
-    """Run ``run_imageserver_extraction`` from synchronous code.
-
-    Args:
-        url: ImageServer URL.
-        output_dir: Directory to write extracted data.
-        options: Options (defaults to ImageServerCLIOptions()).
-
-    Returns:
-        Tuple of (exit_code, report). Exit code is 0 for success, 1 for failure.
-    """
+    """Run ``run_imageserver_extraction`` from synchronous code."""
     return asyncio.run(run_imageserver_extraction(url, output_dir, options))

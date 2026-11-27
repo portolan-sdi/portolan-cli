@@ -1,8 +1,4 @@
-"""Tests for README metadata.yaml section rendering.
-
-Tests that source_url, processing_notes, keywords, and attribution
-fields from metadata.yaml are properly rendered in the README.
-"""
+"""Tests for README metadata.yaml section rendering."""
 
 from __future__ import annotations
 
@@ -144,11 +140,6 @@ class TestKeywordsSection:
 
     @pytest.mark.unit
     def test_truncates_long_curated_list(self) -> None:
-        """A long but clean list is truncated, not omitted (#515).
-
-        Regression guard: the dump signal is the technical ratio, not the
-        length, so a genuinely curated long list still renders (capped).
-        """
         sections: list[str] = []
         # 20 clean, meaningful keywords (ratio 0.0).
         metadata = {"keywords": [f"Theme{chr(65 + i)}" for i in range(20)]}
@@ -160,7 +151,7 @@ class TestKeywordsSection:
 
     @pytest.mark.unit
     def test_omits_when_mostly_technical(self) -> None:
-        """A junk-dominated list (>60% technical) is omitted entirely (#515)."""
+        """A junk-dominated list (>60% technical) is omitted entirely."""
         sections: list[str] = []
         # 4 of 5 are technical (ratio 0.8).
         metadata = {"keywords": ["census", "AP010", "orden:30", "vial_nacional", "DB120"]}
@@ -171,7 +162,7 @@ class TestKeywordsSection:
 
     @pytest.mark.unit
     def test_drops_junk_keeps_meaningful(self) -> None:
-        """In a clean-majority list, technical keywords are dropped (#515)."""
+        """In a clean-majority list, technical keywords are dropped."""
         sections: list[str] = []
         # ratio 0.33 technical - not a dump, so render the meaningful ones.
         metadata = {"keywords": ["census", "demographics", "AP010"]}
@@ -185,7 +176,7 @@ class TestKeywordsSection:
 
     @pytest.mark.unit
     def test_caps_badge_count(self) -> None:
-        """No more than MAX_KEYWORD_BADGES badges are rendered (#515)."""
+        """No more than MAX_KEYWORD_BADGES badges are rendered."""
         sections: list[str] = []
         # 14 distinct meaningful keywords: under the dump threshold, over the cap.
         metadata = {"keywords": [f"Theme{chr(65 + i)}" for i in range(14)]}
@@ -197,7 +188,7 @@ class TestKeywordsSection:
 
     @pytest.mark.unit
     def test_omits_when_all_junk(self) -> None:
-        """A list of only technical slugs renders nothing (the IGN case) (#515)."""
+        """A list of only technical slugs renders nothing (the IGN case)."""
         sections: list[str] = []
         metadata = {"keywords": ["AP010", "orden:30", "vial_nacional"]}
 
@@ -207,7 +198,7 @@ class TestKeywordsSection:
 
 
 class TestIsMeaningfulKeyword:
-    """Tests for _is_meaningful_keyword (the keyword-quality predicate, #515)."""
+    """Tests for _is_meaningful_keyword (the keyword-quality predicate)."""
 
     @pytest.mark.unit
     @pytest.mark.parametrize(

@@ -1,28 +1,5 @@
-"""Fail when two tests have the same body.
-
-A copy of a test adds run time and adds no coverage. A change to the subject
-then needs two edits, and the two copies drift apart. This check parses each
-``tests/**/test_*.py`` file with ``ast``. For each test function and each test
-method, it removes the docstring and dumps the remaining statements. Two tests
-with the same key are duplicates. The key holds the marks, the async flag, the
-parameter names, and the body. The marks are the decorators of the test and of
-each enclosing class, and the ``pytestmark`` assignments in the module and in
-each enclosing class. The check ignores the test name, so a rename does not
-hide a copy. The check includes each mark that is a call, so two
-``parametrize`` rows with different values are not duplicates. A
-``pytestmark`` parametrize and the same ``parametrize`` decorator give the same
-key. The check includes the async flag, because an ``async def`` test and a
-``def`` test run on different paths. The check includes the parameter names,
-so two tests that ask for different fixtures are not duplicates. The check
-ignores a bare marker such as ``pytest.mark.unit``. A tier marker selects when a test runs. It does not
-change what the test does.
-
-A body that is only ``pass`` or ``pytest.skip(...)`` is a duplicate too. Delete
-the extra copy. Do not edit the body to make it different.
-
-The module reads the files under ``tests/`` and runs no product code. It lives
-in ``tests/docs/`` next to ``test_ci_wiring.py``, ``test_quality_config.py``, and
-``test_guardrail_exemptions.py``, which also read repository files and pin a gate.
+"""Fail when two tests have the same body. Delete the copy; do not edit it to differ.
+The key holds the call marks, the async flag, the parameter names, and the body without its docstring.
 """
 
 from __future__ import annotations

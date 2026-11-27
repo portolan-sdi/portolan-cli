@@ -1,10 +1,4 @@
-"""Tests for `portolan push --chunk-concurrency` CLI option (Issue #344).
-
-These tests verify the CLI behavior of the --chunk-concurrency flag for
-controlling per-file multipart upload parallelism.
-
-TDD: These tests are written FIRST, before implementation.
-"""
+"""Tests for `portolan push --chunk-concurrency` CLI option."""
 
 from __future__ import annotations
 
@@ -19,15 +13,12 @@ from click.testing import CliRunner
 from portolan_cli.cli import cli
 from portolan_cli.sync.push import PushAllResult, PushResult
 
-# Remote URL for tests - set via env var (Issue #356: sensitive settings)
+# Remote URL for tests - set via env var
 TEST_REMOTE = "s3://test/catalog"
 
 
 def _setup_catalog_with_collections(path: Path, collections: list[str]) -> None:
-    """Helper to create a catalog with multiple collections.
-
-    Note: remote must be set via PORTOLAN_REMOTE env var (Issue #356).
-    """
+    """Helper to create a catalog with multiple collections."""
     # Create .portolan/config.yaml (no sensitive settings)
     portolan_dir = path / ".portolan"
     portolan_dir.mkdir(parents=True, exist_ok=True)

@@ -1,26 +1,5 @@
-"""Every data file read in portolan_cli or portolan_core counts an open (#992).
-
-The scale gates see a re-open only when the code that opens the file counts
-it. pyarrow, rasterio, and OGR have no choke point in our code, so each
-function that opens a file calls ``count()`` itself. This test reads the
-source and fails on a function that opens a file more times than it counts
-one. ``READERS`` names each reader and the counter it feeds:
-
-- ``parquet.opens``: the readers of ``pyarrow.parquet``,
-  ``pyarrow.dataset.dataset``, ``read_parquet`` of geopandas and pandas, the
-  footer reader ``get_geo_metadata`` of geoparquet-io, and a
-  DuckDB SQL string that reads Parquet (``read_parquet``, ``parquet_scan``,
-  ``parquet_metadata``, ``parquet_schema``) passed to ``execute``, ``sql``, or
-  ``query``.
-- ``raster.opens``: ``rasterio.open`` in read mode. A write with
-  ``rasterio.open(path, "w")`` opens no file to read.
-- ``vector.opens``: the OGR readers (``geopandas.read_file``, the readers of
-  pyogrio, ``fiona.open``) and ``geopandas.read_feather``.
-
-``portolan_cli/backends/iceberg`` is not read. That package imports only
-``portolan_cli.api`` and ``portolan_cli.hookspecs`` (the iceberg boundary
-contract in pyproject.toml), so it cannot import ``trace``. No scenario runs
-the Iceberg backend.
+"""Every data file read in portolan_cli or portolan_core counts an open.
+``READERS`` names each reader and its counter; the iceberg backend cannot import ``trace``.
 """
 
 from __future__ import annotations
@@ -239,7 +218,7 @@ def test_every_open_site_counts() -> None:
 
 
 def test_the_scan_reads_both_packages() -> None:
-    """The config parser moved into portolan-core (#1133). The scan must still read it."""
+    """The scan reads the config parser in portolan-core."""
     files = source_files()
     assert CLI_ROOT / "convert.py" in files
     assert CORE_ROOT / "config.py" in files

@@ -1,13 +1,4 @@
-"""Unit tests for scan output improvements.
-
-Tests for:
-- Structure validation checklist display
-- Fixability labels for issues
-- Collection inference output
-- Better skip reason display
-- Next steps summary
-- Tree view output
-"""
+"""Unit tests for scan output improvements."""
 
 from __future__ import annotations
 
@@ -26,9 +17,7 @@ from portolan_cli.scan.core import (
 )
 from portolan_cli.scan.infer import CollectionSuggestion
 
-# =============================================================================
 # Test Data Factories
-# =============================================================================
 
 
 def make_scanned_file(
@@ -55,17 +44,7 @@ def make_scan_issue(
     suggestion: str | None = None,
     relative_path: str | None = None,
 ) -> ScanIssue:
-    """Create a ScanIssue for testing.
-
-    Args:
-        path: The absolute path to the file/directory with the issue.
-        issue_type: The type of issue.
-        severity: The severity level.
-        message: The issue message.
-        suggestion: Optional suggestion for fixing.
-        relative_path: Optional relative path override. If not provided,
-            uses path.name (basename only).
-    """
+    """Create a ScanIssue for testing."""
     return ScanIssue(
         path=path,
         relative_path=relative_path if relative_path is not None else str(path.name),
@@ -92,9 +71,7 @@ def make_skipped_file(
     )
 
 
-# =============================================================================
 # Tests for Fixability Labels
-# =============================================================================
 
 
 @pytest.mark.unit
@@ -129,9 +106,7 @@ class TestFixabilityLabels:
         assert Fixability.MANUAL.label == "[manual]"
 
 
-# =============================================================================
 # Tests for Structure Checklist
-# =============================================================================
 
 
 @pytest.mark.unit
@@ -203,9 +178,7 @@ class TestStructureChecklist:
             assert not root_check.passed
 
 
-# =============================================================================
 # Tests for Skip Reason Categories
-# =============================================================================
 
 
 @pytest.mark.unit
@@ -259,9 +232,7 @@ class TestSkipReasonDisplay:
         assert get_category_display_name(FileCategory.JUNK) == "junk"
 
 
-# =============================================================================
 # Tests for Collection Inference Output
-# =============================================================================
 
 
 @pytest.mark.unit
@@ -311,9 +282,7 @@ class TestCollectionInferenceOutput:
         assert "..." in output or "more" in output.lower()
 
 
-# =============================================================================
 # Tests for Next Steps Summary
-# =============================================================================
 
 
 @pytest.mark.unit
@@ -405,9 +374,7 @@ class TestNextStepsSummary:
         assert any("no" in step.lower() and "file" in step.lower() for step in steps)
 
 
-# =============================================================================
 # Tests for Tree View Output
-# =============================================================================
 
 
 @pytest.mark.unit
@@ -509,9 +476,7 @@ class TestTreeViewOutput:
         assert "missing" in output.lower() or "will generate" in output.lower()
 
 
-# =============================================================================
-# Tests for _format_size Function (Coverage Improvement)
-# =============================================================================
+# Tests for _format_size Function
 
 
 @pytest.mark.unit
@@ -564,9 +529,7 @@ class TestFormatSize:
         assert _format_size(10 * 1024 * 1024 * 1024) == "10.0 GB"
 
 
-# =============================================================================
-# Tests for Empty Sections in Formatted Output (Coverage Improvement)
-# =============================================================================
+# Tests for Empty Sections in Formatted Output
 
 
 @pytest.mark.unit
@@ -787,9 +750,7 @@ class TestFormatScanOutputWithCollections:
         assert "├" in output or "└" in output
 
 
-# =============================================================================
 # Integration Tests for Full Output
-# =============================================================================
 
 
 @pytest.mark.unit
@@ -829,9 +790,7 @@ class TestFullScanOutputFormat:
         assert "next step" in output.lower()
 
 
-# =============================================================================
 # Tests for --errors-only Output Mode
-# =============================================================================
 
 
 @pytest.mark.unit
@@ -1143,9 +1102,7 @@ class TestManualOnlyOutput:
         assert "1 file requires" in output
 
 
-# =============================================================================
 # Tests for Phase 3: Enhanced Output (Nested Catalogs)
-# =============================================================================
 
 
 @pytest.mark.unit
@@ -1649,20 +1606,12 @@ class TestFormatEnhancedSummary:
         assert "portolan" in output.lower() or "reorganize" in output.lower()
 
 
-# =============================================================================
 # Integration Tests: Full Pipeline Verification
-# =============================================================================
 
 
 @pytest.mark.integration
 class TestScanOutputIntegration:
-    """Integration tests verifying scan_directory output works with formatters.
-
-    These tests address the tautological testing issue found in adversarial review:
-    they call the real scan_directory() function and verify the output formatting
-    functions work correctly with the actual ScannedFile fields (not synthetic
-    metadata dicts).
-    """
+    """Integration tests verifying scan_directory output works with formatters."""
 
     @pytest.fixture
     def fixtures_dir(self) -> Path:
@@ -1670,11 +1619,6 @@ class TestScanOutputIntegration:
         return Path(__file__).parent.parent / "fixtures" / "scan"
 
     def test_group_files_by_collection_with_real_scan(self, fixtures_dir: Path) -> None:
-        """group_files_by_collection works with real scan_directory output.
-
-        This verifies _get_collection_id reads from inferred_collection_id field,
-        not metadata dict.
-        """
         from portolan_cli.scan.core import ScanOptions, scan_directory
         from portolan_cli.scan.output import group_files_by_collection
 
@@ -1692,11 +1636,6 @@ class TestScanOutputIntegration:
         )
 
     def test_format_fix_commands_json_with_real_scan(self, fixtures_dir: Path) -> None:
-        """format_fix_commands_json works with real scan_directory output.
-
-        This verifies the fix_commands generation uses collection IDs from the
-        inferred_collection_id field, not metadata.
-        """
         from portolan_cli.scan.core import ScanOptions, scan_directory
         from portolan_cli.scan.output import detect_structure_pattern, format_fix_commands_json
 
@@ -1716,11 +1655,6 @@ class TestScanOutputIntegration:
         assert len(add_commands) > 0, "Expected add commands for detected collections"
 
     def test_format_enhanced_summary_with_real_scan(self, fixtures_dir: Path) -> None:
-        """format_enhanced_summary works with real scan_directory output.
-
-        This verifies the enhanced summary shows proper collection grouping
-        from the inferred_collection_id field.
-        """
         from portolan_cli.scan.core import ScanOptions, scan_directory
         from portolan_cli.scan.output import format_enhanced_summary
 
@@ -1762,7 +1696,7 @@ class TestScanOutputIntegration:
 
 
 class TestPartitionOutputFormatting:
-    """Tests for partition metadata display in scan output (Issue #232 Phase 4)."""
+    """Tests for partition metadata display in scan output."""
 
     @pytest.mark.unit
     def test_format_special_formats_shows_hive_partition_with_metadata(

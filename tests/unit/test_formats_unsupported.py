@@ -1,8 +1,4 @@
-"""Unit tests for unsupported format detection.
-
-These tests verify that unsupported formats (NetCDF, HDF5, non-COPC LAS/LAZ)
-are correctly classified as UNSUPPORTED per spec 002-cloud-native-warnings User Story 3.
-"""
+"""Unit tests for unsupported format detection."""
 
 from __future__ import annotations
 

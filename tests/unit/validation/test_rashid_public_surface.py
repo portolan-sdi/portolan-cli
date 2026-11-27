@@ -1,12 +1,4 @@
-"""Every rashid name this package uses must come from rashid's public API.
-
-rashid's version range lets it refactor private modules in any patch release.
-An import of ``rashid_core.rules._common`` or ``rashid_core._multihash``
-therefore turns a routine rashid patch into an ``ImportError`` at ``portolan
-check`` startup. rashid#57 promoted the names we need to ``rashid.api``, which
-is ``rashid_core.api`` since rashid 0.5.0 (rashid#341); this test keeps the
-reach from growing back.
-"""
+"""Every rashid name this package uses must come from rashid's public API."""
 
 from __future__ import annotations
 

@@ -1,13 +1,4 @@
-"""Unit tests for the pystac href-root helper (issues #401, #731).
-
-``normalize_hrefs`` decides between a file and a directory by looking for a dot
-in the final path component, so it needs two things from every caller: a
-trailing slash, and an already-absolute path. Miss either one and pystac writes
-``catalog.json`` or ``collection.json`` into the parent directory.
-
-``href_root`` is the single writer for that string. These tests pin its contract
-and check that no call site bypasses it.
-"""
+"""Unit tests for the pystac href-root helper."""
 
 from __future__ import annotations
 
@@ -21,7 +12,7 @@ from tests.source_roots import CORE_ROOT, REPO_ROOT, SOURCE_ROOTS
 
 
 def _sources() -> list[Path]:
-    """The Python files of both source folders (#1133)."""
+    """The Python files of both source folders."""
     return sorted(path for root in SOURCE_ROOTS for path in root.rglob("*.py"))
 
 
@@ -37,10 +28,6 @@ class TestHrefRoot:
     def test_absolutizes_a_relative_path(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """pystac drops the trailing slash while absolutizing a relative root.
-
-        This is the issue #731 defect. Resolving first is what keeps the slash.
-        """
         working_dir = tmp_path / "tmp.relative"
         working_dir.mkdir()
         monkeypatch.chdir(working_dir)
@@ -64,12 +51,7 @@ class TestHrefRoot:
 
 
 class TestEveryCallSiteUsesTheHelper:
-    """The 'fix every parallel call site' rule, made executable.
-
-    .claude/rules/stac-assets.md records that the original trailing-slash fix
-    shipped for one call site and missed its twins. This test fails when a new
-    normalize_hrefs call builds its root string by hand.
-    """
+    """The 'fix every parallel call site' rule, made executable."""
 
     @pytest.mark.unit
     def test_no_normalize_hrefs_call_bypasses_href_root(self) -> None:
@@ -90,7 +72,6 @@ class TestEveryCallSiteUsesTheHelper:
 
     @pytest.mark.unit
     def test_the_guard_sees_the_known_call_sites(self) -> None:
-        """Guard against the scan silently matching nothing (issues #401, #731)."""
         call_sites = [
             f"{source.relative_to(REPO_ROOT)}:{lineno}"
             for source in _sources()
@@ -102,5 +83,4 @@ class TestEveryCallSiteUsesTheHelper:
 
     @pytest.mark.unit
     def test_the_scan_reads_both_packages(self) -> None:
-        """stac_links moved into portolan-core (#1133). The scan must read that folder too."""
         assert CORE_ROOT / "stac_links.py" in _sources()

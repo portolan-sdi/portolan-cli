@@ -1,11 +1,4 @@
-"""Tests for metadata.yaml schema and validation.
-
-Tests metadata validation including:
-- Required field detection (contact, license only - title/description come from STAC)
-- Optional field handling (known_issues, citation, doi, etc.)
-- Format validation (email, SPDX license, DOI)
-- Template generation for `portolan metadata init`
-"""
+"""Tests for metadata.yaml schema and validation."""
 
 from __future__ import annotations
 
@@ -171,7 +164,7 @@ class TestMetadataValidation:
 
     @pytest.mark.unit
     def test_stac_other_license_passes_with_a_license_url(self) -> None:
-        """'other' is conformant alongside a link to the license text (issue #568)."""
+        """'other' is conformant alongside a link to the license text."""
         from portolan_cli.metadata_yaml import validate_metadata
 
         metadata = {
@@ -187,7 +180,7 @@ class TestMetadataValidation:
 
     @pytest.mark.unit
     def test_stac_other_license_without_a_url_is_rejected(self) -> None:
-        """rashid fires PTL-LIC-002 on 'other' with no license link (issue #727)."""
+        """rashid fires PTL-LIC-002 on 'other' with no license link."""
         from portolan_cli.metadata_yaml import validate_metadata
 
         metadata = {
@@ -210,12 +203,6 @@ class TestMetadataValidation:
         ],
     )
     def test_licenseref_is_rejected_and_names_the_migration(self, license_id: str) -> None:
-        """LicenseRef-* is an SPDX expression construct, not an identifier (issue #727).
-
-        PORTO-CORE-059 allows an SPDX identifier or the STAC value 'other'.
-        rashid's list holds zero LicenseRef entries, so every one of these was
-        accepted here and then rejected by ``portolan check`` as PTL-LIC-001.
-        """
         from portolan_cli.metadata_yaml import validate_metadata
 
         metadata = {
@@ -232,7 +219,7 @@ class TestMetadataValidation:
     @pytest.mark.unit
     @pytest.mark.parametrize("license_id", ["EUPL-1.2", "CC-BY-3.0", "OGL-UK-3.0", "ODbL-1.0"])
     def test_a_real_identifier_outside_the_old_subset_passes(self, license_id: str) -> None:
-        """The 26-entry subset rejected real identifiers ``check`` accepts (issue #727)."""
+        """The validator accepts the real identifiers that ``check`` accepts."""
         from portolan_cli.metadata_yaml import validate_metadata
 
         metadata = {

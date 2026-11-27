@@ -1,20 +1,4 @@
-"""Run the real ``extract`` command against recorded service responses.
-
-Each scenario under ``tests/fixtures/network/`` holds the response shape that
-broke a production extraction: sparse ArcGIS layer IDs, a layer URL, a
-FeatureServer with only tables, a token gate, a transient 503, prefixed WFS
-names, an empty FeatureCollection, and an API key in the WFS URL. Its README
-names the issue and the source of the recording.
-
-``tests/replay_server.py`` serves the scenario on the loopback interface, so
-the requests of ``httpx``, ``requests``, and geoparquet-io all reach it. Each
-test asserts ``server.unmatched == []`` first. That proves the recording
-covers every request that the extraction made. The test then asserts the
-exact layer set in the extraction report and the exit code.
-
-A test that fails on ``origin/main`` carries a strict xfail with its issue
-number. The fix for that issue removes the marker.
-"""
+"""Run the real ``extract`` command against recorded service responses."""
 
 from __future__ import annotations
 
@@ -162,11 +146,7 @@ def test_recording_answers_every_request(
     run_cli: RunCli,
     build_damaged_catalog: Callable[[Path, str], Path],
 ) -> None:
-    """The scenario answers each request of the extraction.
-
-    This test has no xfail marker. A strict xfail on a behavior test also
-    swallows a lost route, so this test keeps the recording gate visible.
-    """
+    """No xfail: a strict xfail on a behavior test also hides a lost route."""
     if case in DAMAGED:
         build_damaged_catalog(tmp_path / "out", DAMAGED[case])
     _result, server, _out = _run(case, tmp_path, run_cli)
@@ -234,7 +214,6 @@ def test_arcgis_author_is_a_producer_and_never_the_contact(tmp_path: Path, run_c
 def test_arcgis_tables_only_service_fails_and_names_the_tables(
     tmp_path: Path, run_cli: RunCli
 ) -> None:
-    """A service that holds one table and no layer exits 1 and says why (#1034)."""
     result, server, _out = _run("tables_only", tmp_path, run_cli)
 
     assert server.unmatched == []
@@ -277,13 +256,7 @@ def test_arcgis_discovery_retries_a_transient_error(tmp_path: Path, run_cli: Run
 def test_permanent_error_is_not_retried(
     case: str, failing: str, status: str, tmp_path: Path, run_cli: RunCli
 ) -> None:
-    """A 404 or an ArcGIS token error fails at once, also with ``--retries 3``.
-
-    The token gate answers HTTP 200 with the ArcGIS code 499, in discovery
-    and in the feature query. The closed service answers its feature query
-    with HTTP 404. A retry cannot change either answer, so the run sends one
-    request to the route, names the status, and exits 1.
-    """
+    """A retry cannot change a 404 or an ArcGIS 499 token error."""
     result, server, _out = _run(case, tmp_path, run_cli)
 
     assert server.unmatched == []
@@ -306,7 +279,6 @@ def test_wfs_exclude_layers_matches_the_leaf_name(tmp_path: Path, run_cli: RunCl
 
 @GPIO_WFS_OOM
 def test_wfs_layers_matches_the_qualified_name(tmp_path: Path, run_cli: RunCli) -> None:
-    """``--layers gs:us_states`` extracts that layer only. This is the control for #768."""
     result, server, out = _run("workspace_layer-layers", tmp_path, run_cli)
 
     assert server.unmatched == []
@@ -346,7 +318,6 @@ def test_wfs_extraction_keeps_the_root_index_in_step(tmp_path: Path, run_cli: Ru
 
 
 def test_wfs_named_layer_with_no_features_fails(tmp_path: Path, run_cli: RunCli) -> None:
-    """A layer named with ``--layers`` that returns 0 features fails the run (#1034)."""
     result, server, out = _run("empty_collection", tmp_path, run_cli)
 
     assert server.unmatched == []
@@ -377,12 +348,6 @@ def test_wfs_api_key_stays_out_of_the_catalog(tmp_path: Path, run_cli: RunCli) -
 def test_discovery_failure_names_the_host_and_not_the_credential(
     case: str, service_path: str, tmp_path: Path, run_cli: RunCli
 ) -> None:
-    """A run that selects no layer names the service in text and JSON, with no credential.
-
-    The source URL carries ``SECRET`` as its key or token. A terminal log and
-    a CI log keep the message, so the message drops the key, as the catalog
-    does (#981).
-    """
     text, text_server, _out = _run(case, tmp_path, run_cli)
     as_json, json_server, _out = _run(case, tmp_path, run_cli, "--json", out_name="json")
 
@@ -470,7 +435,6 @@ def _host_warning(out: Path) -> str:
 
 
 def test_seeded_metadata_line_prints_without_verbose(tmp_path: Path, run_cli: RunCli) -> None:
-    """A default human run prints the seed line and the provider warnings (#1133)."""
     result, out = _carto_with(tmp_path, run_cli)
 
     assert "→ Seeded metadata.yaml from carto\n" in result.stdout

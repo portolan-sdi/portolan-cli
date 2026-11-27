@@ -1,11 +1,4 @@
-"""Tests for #316 README section generators (Wave 2C).
-
-Tests new metadata fields for citation, authors, and version sections:
-- citations list (multiple citations)
-- related_dois (in addition to primary DOI)
-- authors with ORCID links
-- upstream_version with optional URL
-"""
+"""Tests for README section generators."""
 
 from __future__ import annotations
 
@@ -15,7 +8,7 @@ import pytest
 
 
 class TestCitationSectionExtended:
-    """Tests for extended _add_citation_section supporting #316 fields."""
+    """Tests for extended _add_citation_section supporting fields."""
 
     @pytest.mark.unit
     def test_backward_compat_single_citation(self) -> None:
@@ -117,7 +110,7 @@ class TestCitationSectionExtended:
 
 
 class TestAuthorsSection:
-    """Tests for _add_authors_section supporting #316 authors field."""
+    """Tests for _add_authors_section supporting authors field."""
 
     @pytest.mark.unit
     def test_authors_with_orcid_renders_links(self) -> None:
@@ -208,7 +201,7 @@ class TestAuthorsSection:
 
 
 class TestVersionSection:
-    """Tests for _add_version_section supporting #316 version fields."""
+    """Tests for _add_version_section supporting version fields."""
 
     @pytest.mark.unit
     def test_upstream_version_renders(self) -> None:
@@ -268,7 +261,7 @@ class TestVersionSection:
 
 
 class TestGenerateReadmeSectionOrder:
-    """Tests for section ordering in generate_readme with #316 fields."""
+    """Tests for section ordering in generate_readme with fields."""
 
     @pytest.mark.unit
     def test_authors_before_citation(self) -> None:

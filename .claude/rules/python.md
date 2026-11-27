@@ -25,7 +25,9 @@ detail("Processing chunk 3/10...")         # Dimmed text
 ## Code Quality
 
 - **ruff**, Linting, formatting, complexity (`C901`), security (`S`), and
-  docstrings (`D`). Ruff replaced xenon, radon, and bandit in September 2026.
+  docstring style (`D`). `D1` coverage is off.
+- **`scripts/check_comments.py`**, Docstring and comment length and history.
+  The `check-comments` hook runs it on each changed file.
 - **mypy**, Type checking (`strict = true`)
 - **vulture**, Dead code detection
 - **jscpd**, Duplicate code detection, gated against `.jscpd-baseline.json`.
@@ -33,6 +35,26 @@ detail("Processing chunk 3/10...")         # Dimmed text
 - **pip-audit**, Dependency vulnerabilities
 
 All code must have type annotations (`mypy --strict`). The CLI is a thin Click layer, all logic lives in the library.
+
+## Docstrings and comments
+
+`scripts/check_comments.py` enforces these rules.
+
+- A docstring has at most 2 non-blank lines. A block of consecutive
+  comment-only `#` lines has at most 2 lines. A trailing comment on a code line
+  (`# noqa: X - reason`, `# type: ignore[...]`) does not count.
+- No history: no issue numbers (`#123`), "used to", "no longer", "previously",
+  "formerly", agent or lane labels, ISO dates, or "Month YYYY". A line that
+  holds a URL is exempt from this rule, so upstream issue links stay.
+- The commit body and the PR body hold the rationale, not the code.
+- Exempt from the length cap, not from the history rule:
+  - Click command and group docstrings. They are the `--help` text.
+  - The objects in `docs/reference/python.md` and their public members. They
+    have a one-line summary, at most one more line, and Google `Args:`,
+    `Returns:`, `Raises:`, `Yields:`, or `Attributes:` sections. Each section
+    entry fits on one line. A rendered object without a docstring fails.
+  - The `portolan_cli/api.py` module docstring. `generate_reference_docs.py`
+    parses its `Groups:` block.
 
 ## Coding conventions (enforced or de-facto in this repo)
 
@@ -90,7 +112,8 @@ All code must have type annotations (`mypy --strict`). The CLI is a thin Click l
   knobs. Each entry carries the reason it exists. Add a `# noqa` only for a
   false positive or a size-limit outlier that no config knob covers.
 - **Security rules come from `S` (flake8-bandit).** Write `# noqa: Sxxx`, not
-  `# nosec Bxxx`. The old `# nosec` comments do nothing now.
+  `# nosec Bxxx`. Ruff ignores `# nosec`.
+
 - **`PLC0415` (import-outside-top-level) stays off, and this was measured.**
   The tree holds 440 function-level imports. 88 of them break a real import
   cycle. About 10 more defer a heavy third-party import that costs 0.16s to

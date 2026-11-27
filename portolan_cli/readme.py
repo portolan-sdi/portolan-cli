@@ -1,32 +1,4 @@
-"""README generation from STAC + metadata.yaml.
-
-This module generates README.md files from STAC metadata and
-.portolan/metadata.yaml content. The README is a pure output - always
-generated, never hand-edited.
-
-**Sections auto-filled from STAC:**
-- Title, description (metadata.yaml override > catalog/collection STAC > id, #534)
-- Spatial/temporal coverage (from extent)
-- Schema/columns (from table:columns)
-- Bands (from the unified bands array on the data asset)
-- Files with checksums (from assets)
-- STAC links (from links)
-- Code examples (based on asset types)
-
-**Sections from metadata.yaml (human):**
-- License, contact
-- Citation, DOI
-- Known issues
-
-Usage:
-    from portolan_cli.readme import generate_readme, generate_readme_for_collection
-
-    # Generate from dicts
-    readme = generate_readme(stac=collection_json, metadata=metadata_yaml)
-
-    # Generate from collection path
-    readme = generate_readme_for_collection(collection_path, catalog_root)
-"""
+"""README generation from STAC + metadata.yaml."""
 
 from __future__ import annotations
 
@@ -56,9 +28,7 @@ _INTERVAL_LEN = 2
 _MAX_CODE_LEN = 8
 _MAX_DESCRIPTION_LEN = 200
 
-# Keyword-badge rendering limits (#515). A junk-dominated list is a machine dump
-# (e.g. WFS layer ids seeded into metadata.yaml at extraction) and is suppressed;
-# an otherwise-curated list is filtered then truncated to a readable count.
+# A junk-dominated keyword list is a machine dump and is suppressed; a curated one is truncated.
 MAX_KEYWORD_BADGES = 12  # cap on rendered badges (curated lists are truncated)
 TECHNICAL_KEYWORD_RATIO = 0.6  # >60% technical entries -> non-curated dump -> omit
 
@@ -126,19 +96,8 @@ print(gdf.head())
     return ""
 
 
-# =============================================================================
-# Section generators - each adds content to sections list
-# =============================================================================
-
-
 def _metadata_override(metadata: dict[str, Any], field: str) -> str | None:
-    """Return a non-blank human override for ``field`` from metadata.yaml (#534).
-
-    ``metadata.yaml`` may carry optional ``title``/``description`` keys as the
-    highest-precedence human override (Issue #502, mirrored by
-    :func:`portolan_cli.stac.apply_human_titles`). A blank/whitespace value is
-    treated as "not provided" so the auto-derived STAC value is used instead.
-    """
+    """Return a non-blank human override for ``field`` from metadata.yaml."""
     value = metadata.get(field)
     if isinstance(value, str) and value.strip():
         return value.strip()
@@ -149,13 +108,8 @@ def _resolve_title_description(
     stac: dict[str, Any],
     metadata: dict[str, Any],
 ) -> tuple[str, str]:
-    """Resolve title/description with metadata.yaml override precedence (#534).
-
-    Precedence: metadata.yaml human override > STAC value > humanized id.
-    """
-    # `or` chains (not stac.get defaults) so an explicit null in STAC
-    # (e.g. {"id": null} or {"description": null}) falls through to the literal
-    # fallback instead of becoming the string "None".
+    """Resolve title/description with metadata.yaml override precedence."""
+    # `or` chains so an explicit null in STAC falls through to the fallback, not "None".
     title = (
         _metadata_override(metadata, "title")
         or stac.get("title")
@@ -171,7 +125,7 @@ def _add_title_section(
     stac: dict[str, Any],
     metadata: dict[str, Any],
 ) -> None:
-    """Add title and description, preferring metadata.yaml overrides (#534)."""
+    """Add title and description, preferring metadata.yaml overrides."""
     title, description = _resolve_title_description(stac, metadata)
     sections.append(f"# {title}")
     sections.append("")
@@ -196,8 +150,7 @@ def _add_spatial_section(sections: list[str], stac: dict[str, Any]) -> None:
 
     from portolan_core.bbox import to_2d_bbox
 
-    # Reduce to 2D so a 6-element extent shows [west, south, east, north], not
-    # its [west, south, min_z, east] slice (issue #592).
+    # Reduce to 2D so a 6-element extent shows [west, south, east, north].
     west, south, east, north = to_2d_bbox(bbox)
 
     sections.append("## Spatial Coverage")
@@ -236,12 +189,7 @@ def _add_temporal_section(sections: list[str], stac: dict[str, Any]) -> None:
 
 
 def _add_schema_section(sections: list[str], stac: dict[str, Any]) -> None:
-    """Add schema/columns from table:columns extension.
-
-    The Table extension writes table:columns directly on the Collection object
-    (via add_table_extension), so we check there first. Fall back to summaries
-    for backward compatibility with older catalogs.
-    """
+    """Add schema/columns from table:columns extension."""
     # Primary location: Collection extra_fields (per Table extension spec)
     columns = stac.get("table:columns", [])
     # Fallback: legacy summaries location
@@ -268,9 +216,7 @@ def _add_schema_section(sections: list[str], stac: dict[str, Any]) -> None:
 # Statistics Object), not on the band itself.
 _BAND_STAT_KEYS = frozenset({"minimum", "maximum", "mean", "stddev", "valid_percent"})
 
-# Bands table columns in render order, as (header, band key). A column is
-# dropped when no band carries a value for it, so a bands array without
-# statistics renders as a narrow identity table.
+# Bands table columns as (header, band key). A column with no values is dropped.
 _BAND_COLUMNS: tuple[tuple[str, str], ...] = (
     ("Name", "name"),
     ("Common Name", "eo:common_name"),
@@ -298,13 +244,7 @@ def _band_field(band: dict[str, Any], key: str) -> Any:
 
 
 def _find_bands(assets: dict[str, Any], stac: dict[str, Any]) -> list[dict[str, Any]]:
-    """Find the unified bands array, preferring the primary data asset.
-
-    STAC v1.1.0 makes ``bands`` an asset-level field, and the CLI writes it
-    there (``stac._set_bands_on_data_assets``), item-level for rasters. The
-    ``eo:bands`` / ``raster:bands`` summaries are read only as a fallback, for
-    catalogs hand-authored before the v1.1.0 migration (issue #713).
-    """
+    """Find the unified bands array, preferring the primary data asset."""
     banded = [
         asset
         for asset in assets.values()
@@ -396,11 +336,7 @@ def _add_stac_links_section(sections: list[str], stac: dict[str, Any]) -> None:
 
 
 def _add_source_section(sections: list[str], metadata: dict[str, Any]) -> None:
-    """Add source URL from metadata.
-
-    Renders the data source as a clickable link, helping users find
-    the original data or verify provenance.
-    """
+    """Add source URL from metadata."""
     source_url = metadata.get("source_url")
     if not source_url or not str(source_url).strip():
         return
@@ -412,11 +348,7 @@ def _add_source_section(sections: list[str], metadata: dict[str, Any]) -> None:
 
 
 def _add_processing_section(sections: list[str], metadata: dict[str, Any]) -> None:
-    """Add processing notes from metadata.
-
-    Documents any transformations, cleaning, or modifications
-    applied to the original data.
-    """
+    """Add processing notes from metadata."""
     notes = metadata.get("processing_notes")
     if not notes or not str(notes).strip():
         return
@@ -428,11 +360,7 @@ def _add_processing_section(sections: list[str], metadata: dict[str, Any]) -> No
 
 
 def _add_authors_section(sections: list[str], metadata: dict[str, Any]) -> None:
-    """Add authors section with ORCID links (#316).
-
-    Renders original data authors (separate from contact/maintainer).
-    Authors with ORCID IDs are rendered as clickable links.
-    """
+    """Add authors section with ORCID links."""
     authors = metadata.get("authors")
     if not authors or not isinstance(authors, list) or len(authors) == 0:
         return
@@ -460,10 +388,7 @@ def _add_authors_section(sections: list[str], metadata: dict[str, Any]) -> None:
 
 
 def _add_version_section(sections: list[str], metadata: dict[str, Any]) -> None:
-    """Add upstream version section (#316).
-
-    Renders upstream_version with optional link to upstream_version_url.
-    """
+    """Add upstream version section."""
     version = metadata.get("upstream_version")
     if not version:
         return
@@ -482,20 +407,7 @@ def _add_version_section(sections: list[str], metadata: dict[str, Any]) -> None:
 
 
 def _is_meaningful_keyword(keyword: str) -> bool:
-    """Return True if a keyword is a meaningful discovery term, not a slug (#515).
-
-    Filters out the technical junk that extraction seeds verbatim into
-    ``metadata.yaml`` (WFS layer ids, FACC codes, STAC summary values). The junk
-    is characterised by structure, not case: lowercase common nouns (``census``,
-    ``roads``) are valid keywords and must be kept, so this deliberately does
-    *not* reuse :func:`is_technical_name`, which is title-oriented and treats
-    any lowercase single word as a slug.
-
-    Dropped: anything with an underscore (``vial_nacional``,
-    ``lineas_de_geomorfologia_CA010``), a colon (``orden:30``, ``ns:Name``), or a
-    short letters-then-digits code (``AP010``, ``DB120``). Kept: ``census``,
-    ``land use``, ``Provincia``, ``COVID19``.
-    """
+    """Return True if a keyword is a meaningful discovery term, not a slug."""
     text = keyword.strip()
     if not text:
         return False
@@ -512,13 +424,7 @@ def _is_meaningful_keyword(keyword: str) -> bool:
 
 
 def _add_keywords_section(sections: list[str], metadata: dict[str, Any]) -> None:
-    """Add curated keywords as shield.io badges.
-
-    Renders keywords as visual badges for quick scanning. Technical junk is
-    filtered out; a junk-dominated list (a machine dump rather than curated
-    keywords) is omitted entirely so it cannot bury the description, and an
-    otherwise-curated list is truncated to a readable count (#515).
-    """
+    """Add curated keywords as shield.io badges."""
     keywords = metadata.get("keywords")
     if not keywords or not isinstance(keywords, list):
         return
@@ -530,20 +436,14 @@ def _add_keywords_section(sections: list[str], metadata: dict[str, Any]) -> None
     if not meaningful:
         return
 
-    # A junk-dominated list is a machine dump, not curation -> omit. The
-    # proportion (not the length) is the signal: it tells a real curated list
-    # from one where a few clean tokens survived by coincidence.
+    # The junk proportion, not the length, tells a curated list from a machine dump.
     technical_ratio = (len(kws) - len(meaningful)) / len(kws)
     if technical_ratio > TECHNICAL_KEYWORD_RATIO:
         return
 
     badges = []
     for keyword_str in meaningful[:MAX_KEYWORD_BADGES]:
-        # Shield.io badge format requires:
-        # - Spaces become underscores (or %20)
-        # - Hyphens become double hyphens (--)
-        # - Other special chars need URL encoding
-        # First handle shield.io-specific escaping
+        # Shields.io needs spaces as underscores, hyphens doubled, other specials URL-encoded.
         safe_keyword = keyword_str.replace("-", "--")
         # Then URL-encode the rest (safe='' encodes everything except alphanumerics)
         safe_keyword = quote(safe_keyword, safe="")
@@ -557,11 +457,7 @@ def _add_keywords_section(sections: list[str], metadata: dict[str, Any]) -> None
 
 
 def _add_attribution_section(sections: list[str], metadata: dict[str, Any]) -> None:
-    """Add attribution from metadata.
-
-    Credits the data provider or source organization.
-    Appears near the footer but before license.
-    """
+    """Add attribution from metadata."""
     attribution = metadata.get("attribution")
     if not attribution or not str(attribution).strip():
         return
@@ -573,12 +469,8 @@ def _add_attribution_section(sections: list[str], metadata: dict[str, Any]) -> N
 
 
 def _add_citation_section(sections: list[str], metadata: dict[str, Any]) -> None:
-    """Add citation and DOI from metadata.
-
-    Supports both single citation (backward compat) and citations list (#316).
-    Also supports related_dois in addition to primary doi.
-    """
-    # Support both single citation (backward compat) and citations list (#316)
+    """Add citation and DOI from metadata."""
+    # Accept a single citation or a citations list.
     citations: list[str] = []
     if metadata.get("citation"):
         citations.append(str(metadata["citation"]))
@@ -668,27 +560,11 @@ def _add_footer_section(sections: list[str]) -> None:
     sections.append("")
 
 
-# =============================================================================
-# Public API
-# =============================================================================
-
-
 def generate_readme(
     stac: dict[str, Any],
     metadata: dict[str, Any],
 ) -> str:
-    """Generate README markdown from STAC and metadata.yaml.
-
-    Combines STAC metadata (machine-extracted) with metadata.yaml (human enrichment)
-    into a comprehensive README with columns, code examples, checksums, and links.
-
-    Args:
-        stac: STAC Collection/Catalog JSON as dict.
-        metadata: Merged metadata.yaml as dict.
-
-    Returns:
-        README markdown string.
-    """
+    """Generate README markdown from STAC and metadata.yaml."""
     sections: list[str] = []
 
     # Aggregate assets from collection and items
@@ -704,7 +580,7 @@ def generate_readme(
             if namespaced_key not in assets and asset_key not in assets:
                 assets[namespaced_key] = asset_value
 
-    # STAC-sourced sections (title/description honor metadata.yaml overrides, #534)
+    # STAC-sourced sections
     _add_title_section(sections, stac, metadata)
     _add_keywords_section(sections, metadata)  # Visual badges after title
     _add_spatial_section(sections, stac)
@@ -718,8 +594,8 @@ def generate_readme(
     # Metadata-sourced sections (human enrichment)
     _add_source_section(sections, metadata)
     _add_processing_section(sections, metadata)
-    _add_version_section(sections, metadata)  # #316: upstream version
-    _add_authors_section(sections, metadata)  # #316: authors before citation
+    _add_version_section(sections, metadata)
+    _add_authors_section(sections, metadata)
     _add_citation_section(sections, metadata)
     _add_attribution_section(sections, metadata)
     _add_license_section(sections, metadata)
@@ -737,18 +613,7 @@ def check_readme_freshness(
     stac: dict[str, Any],
     metadata: dict[str, Any],
 ) -> bool:
-    """Check if a README file is up-to-date.
-
-    Generates the expected README and compares it to the existing file.
-
-    Args:
-        readme_path: Path to the README.md file.
-        stac: STAC Collection JSON as dict.
-        metadata: Merged metadata.yaml as dict.
-
-    Returns:
-        True if README exists and matches generated content, False otherwise.
-    """
+    """Check if a README file is up-to-date."""
     if not readme_path.exists():
         return False
 
@@ -759,13 +624,7 @@ def check_readme_freshness(
 
 
 def _collection_relative_href(href: str, item_dir: str) -> str:
-    """Rebase an item-relative asset href onto the collection directory.
-
-    Item assets are written relative to the item JSON (``./scene-a.tif``), but
-    the README sits at the collection root, so the item directory has to be
-    prepended (``scene-a/scene-a.tif``). URLs and absolute paths already
-    resolve on their own and pass through untouched.
-    """
+    """Rebase an item-relative asset href onto the collection directory."""
     if not href or "://" in href or href.startswith("/"):
         return href
     cleaned = href.removeprefix("./")
@@ -775,11 +634,7 @@ def _collection_relative_href(href: str, item_dir: str) -> str:
 
 
 def _read_item(item_path: Path) -> dict[str, Any] | None:
-    """Parse an item JSON, returning None when it is missing or unreadable.
-
-    A stale ``rel="item"`` link is reported by ``portolan check``, so README
-    generation skips the item rather than failing the whole catalog.
-    """
+    """Parse an item JSON, returning None when it is missing or unreadable."""
     try:
         data = json.loads(item_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
@@ -803,19 +658,7 @@ def _rebase_item_assets(item: dict[str, Any], item_dir: str) -> dict[str, Any]:
 
 
 def load_collection_stac(collection_path: Path) -> dict[str, Any]:
-    """Load ``collection.json`` with the collection's items attached.
-
-    STAC keeps items in sibling files behind ``rel="item"`` links, but the
-    README renders asset-level metadata that exists only there: the unified
-    ``bands`` array (issue #713) plus each data file's size and checksum. The
-    items are attached under ``items`` so ``generate_readme`` walks one dict.
-
-    Args:
-        collection_path: Path to the collection directory.
-
-    Returns:
-        The collection dict, empty when there is no collection.json.
-    """
+    """Load ``collection.json`` with the collection's items attached."""
     collection_json_path = collection_path / "collection.json"
     if not collection_json_path.exists():
         return {}
@@ -834,11 +677,7 @@ def load_collection_stac(collection_path: Path) -> dict[str, Any]:
 
 
 def _merged_metadata(directory: Path, root: Path, state: ConfigSource | None) -> dict[str, Any]:
-    """The merged metadata.yaml of ``directory`` below ``root``.
-
-    The state merges below the catalog root only. A sub-catalog README uses
-    the sub-catalog as its root, so it reads without the state.
-    """
+    """The merged metadata.yaml of ``directory`` below ``root``."""
     if state is not None and root.resolve() == state.catalog_root.resolve():
         return state.metadata(directory)
     return load_merged_metadata(directory, root)
@@ -850,21 +689,7 @@ def generate_readme_for_collection(
     *,
     state: ConfigSource | None = None,
 ) -> str:
-    """Generate README for a collection by loading STAC and metadata from disk.
-
-    High-level function that:
-    1. Loads collection.json (STAC) and its items from collection_path
-    2. Loads merged metadata.yaml from hierarchy
-    3. Generates README from both sources
-
-    Args:
-        collection_path: Path to the collection directory.
-        catalog_root: Path to the catalog root.
-        state: The run state, which parses each metadata.yaml once per run.
-
-    Returns:
-        README markdown string.
-    """
+    """Generate README for a collection by loading STAC and metadata from disk."""
     stac = load_collection_stac(collection_path)
 
     # Load merged metadata from hierarchy
@@ -876,11 +701,7 @@ def generate_readme_for_collection(
 def _extract_collection_extent(
     data: dict[str, Any],
 ) -> tuple[list[float] | None, str | None, str | None]:
-    """Extract bbox and temporal extent from a collection dict.
-
-    Returns:
-        Tuple of (bbox, temporal_start, temporal_end).
-    """
+    """Extract bbox and temporal extent from a collection dict."""
     extent = data.get("extent", {})
 
     # Extract spatial
@@ -900,10 +721,7 @@ def _extract_collection_extent(
 
 
 def _compute_bbox_envelope(bboxes: list[list[float]]) -> list[float] | None:
-    """Compute bounding box envelope (union) from multiple bboxes.
-
-    Filters out invalid bboxes (inf/nan/out-of-range) with warnings (issue #516).
-    """
+    """Compute bounding box envelope (union) from multiple bboxes."""
     from portolan_core.bbox import compute_bbox_union
 
     if not bboxes:
@@ -914,21 +732,7 @@ def _compute_bbox_envelope(bboxes: list[list[float]]) -> list[float] | None:
 
 
 def aggregate_catalog_extent(catalog_path: Path) -> dict[str, Any]:
-    """Aggregate extent information from all collections in a catalog.
-
-    Computes the bounding box envelope (union) and temporal extent span
-    across all child collections.
-
-    Args:
-        catalog_path: Path to the catalog root directory.
-
-    Returns:
-        Dict with aggregated extent info:
-        - bbox: [min_x, min_y, max_x, max_y] or None if no collections
-        - temporal_start: Earliest start datetime (ISO string) or None
-        - temporal_end: Latest end datetime (ISO string) or None
-        - collections: List of collection IDs
-    """
+    """Aggregate extent information from all collections in a catalog."""
     collections: list[str] = []
     bboxes: list[list[float]] = []
     temporal_starts: list[str] = []
@@ -966,8 +770,7 @@ def aggregate_catalog_extent(catalog_path: Path) -> dict[str, Any]:
     }
 
 
-# Default threshold for making collections list collapsible (#424)
-# Catalogs with >= this many collections will use <details> tags
+# Catalogs with >= this many collections use <details> tags.
 COLLAPSIBLE_COLLECTIONS_THRESHOLD = 10
 
 
@@ -977,12 +780,7 @@ def _add_collections_section(
     aggregation: dict[str, Any],
     state: ConfigSource | None = None,
 ) -> None:
-    """Add collections listing section for catalog README.
-
-    For large catalogs (>= COLLAPSIBLE_COLLECTIONS_THRESHOLD), wraps the
-    collections list in an HTML <details> tag to make it collapsible.
-    This improves README navigability for catalogs with many collections (#424).
-    """
+    """Add collections listing section for catalog README."""
     collections = aggregation.get("collections", [])
     if not collections:
         return
@@ -1009,21 +807,14 @@ def _add_collections_section(
             except (json.JSONDecodeError, OSError):
                 stac = {"id": coll_id}
 
-        # metadata.yaml title/description override the STAC values (#534). A
-        # malformed metadata.yaml in one collection must not abort the catalog
-        # README, so fall back to STAC-only for that entry.
+        # A malformed metadata.yaml must not abort the catalog README; fall back to STAC.
         try:
             coll_metadata = _merged_metadata(coll_dir, catalog_path, state)
         except (ConfigInvalidStructureError, OSError):
             coll_metadata = {}
         title, description = _resolve_title_description(stac, coll_metadata)
 
-        # Link to collection directory. Prefix with the catalog directory name
-        # rather than using a bare "./" relative link (#549): static hosts like
-        # source.coop serve the catalog README at a URL with no trailing slash
-        # (e.g. /tyler/colombia-ecosystems-map), so "./ecosistemas/" resolves
-        # against /tyler/ and drops the catalog name. Including the catalog dir
-        # name makes it resolve to /tyler/colombia-ecosystems-map/ecosistemas/.
+        # Prefix the catalog directory name: hosts serve the README without a trailing slash.
         sections.append(f"### [{title}]({catalog_path.name}/{coll_id}/)")
         sections.append("")
         if description:
@@ -1056,8 +847,7 @@ def _add_aggregated_extent_section(
     if bbox:
         from portolan_core.bbox import to_2d_bbox
 
-        # Reduce to 2D so east/north are read from the correct indices for a
-        # 6-element bbox (issue #592).
+        # Reduce to 2D so east/north come from the right indices.
         west, south, east, north = to_2d_bbox(bbox)
         sections.append("**Spatial Extent**")
         sections.append("")
@@ -1076,20 +866,7 @@ def _add_aggregated_extent_section(
 
 
 def generate_catalog_readme(catalog_path: Path, *, state: ConfigSource | None = None) -> str:
-    """Generate README for a catalog with aggregated collection info.
-
-    Creates a catalog-level README that:
-    - Shows catalog title and description
-    - Lists all collections with links
-    - Shows aggregated spatial/temporal extent
-
-    Args:
-        catalog_path: Path to the catalog root directory.
-        state: The run state, which parses each metadata.yaml once per run.
-
-    Returns:
-        README markdown string.
-    """
+    """Generate README for a catalog with aggregated collection info."""
     sections: list[str] = []
 
     # Load catalog.json
@@ -1102,7 +879,7 @@ def generate_catalog_readme(catalog_path: Path, *, state: ConfigSource | None = 
     # Load merged metadata
     metadata = _merged_metadata(catalog_path, catalog_path, state)
 
-    # Title and description (metadata.yaml overrides catalog.json, #534)
+    # Title and description
     title = (
         _metadata_override(metadata, "title")
         or catalog.get("title")
@@ -1132,8 +909,8 @@ def generate_catalog_readme(catalog_path: Path, *, state: ConfigSource | None = 
     # Metadata sections (from catalog-level metadata.yaml)
     _add_source_section(sections, metadata)
     _add_processing_section(sections, metadata)
-    _add_version_section(sections, metadata)  # #316: upstream version
-    _add_authors_section(sections, metadata)  # #316: authors before citation
+    _add_version_section(sections, metadata)
+    _add_authors_section(sections, metadata)
     _add_citation_section(sections, metadata)
     _add_attribution_section(sections, metadata)
     _add_license_section(sections, metadata)
@@ -1172,15 +949,7 @@ def _build_readme_link() -> dict[str, str]:
 
 
 def _href_targets_readme(directory: Path, href: str) -> bool:
-    """True when ``href`` (relative to ``directory``) points at the sibling README.
-
-    Path equality is the answer whenever resolution succeeds — including for a
-    README that does not exist yet, since ``resolve()`` is non-strict. The
-    basename check is a fallback for the resolution *failing* (an href the OS
-    cannot express as a path); using it after a successful resolve matched any
-    href merely ending in ``README.md``, so a publisher's link to another
-    directory's README was mistaken for this object's own and overwritten.
-    """
+    """True when ``href`` (relative to ``directory``) points at the sibling README."""
     if not href:
         return False
     try:
@@ -1191,14 +960,7 @@ def _href_targets_readme(directory: Path, href: str) -> bool:
 
 
 def _ensure_readme_link(directory: Path, data: dict[str, Any]) -> bool:
-    """Insert or normalize the README's ``rel="describedby"`` link. True when changed.
-
-    A STAC object may carry several ``describedby`` links (a data dictionary, a
-    methodology PDF, ...). Only the one pointing at the sibling ``README.md`` is
-    normalized; every other link is left untouched, and the README link is
-    appended when none of them targets it. Overwriting the first ``describedby``
-    link destroyed publisher-authored documentation pointers on every ``add``.
-    """
+    """Insert or normalize the README's ``rel="describedby"`` link. True when changed."""
     links = data.setdefault("links", [])
     if not isinstance(links, list):
         return False
@@ -1217,37 +979,12 @@ def _ensure_readme_link(directory: Path, data: dict[str, Any]) -> bool:
 
 
 def readme_link_gap(root: Path, stac_path: Path, data: dict[str, Any]) -> bool:
-    """True when ``data``'s README link does not satisfy rashid PTL-FIL-003.
-
-    Rashid's ``sidecar_link_gaps`` gives the answer for ``rel="describedby"``
-    and ``README.md``. Every gap is repaired by :func:`ensure_readmes`, so
-    ``check --fix`` can act on the answer.
-
-    Args:
-        root: The catalog root.
-        stac_path: Path of the ``catalog.json``/``collection.json`` (its parent
-            directory is where ``README.md`` must sit).
-        data: The parsed STAC object.
-
-    Returns:
-        True when the object needs repair.
-    """
+    """True when ``data``'s README link does not satisfy rashid PTL-FIL-003."""
     return markdown_link_gap(root, stac_path, data, rel=README_LINK_REL, target=README_FILENAME)
 
 
 def write_readme(readme_path: Path, content: str) -> None:
-    """Write a README and re-stamp the collection that holds it.
-
-    The README is a ``rel="describedby"`` link, not an asset. A catalog that
-    an older ``add --force`` built can still register it as a ``documentation``
-    asset (issue #1041). That asset's ``file:size`` and ``file:checksum`` must
-    follow the new bytes, or ``check`` reports PTL-DAT-001 and PTL-DAT-002 on
-    every collection (issue #930).
-
-    Args:
-        readme_path: Path of the README.md to write.
-        content: The README text.
-    """
+    """Write a README and re-stamp the collection that holds it."""
     from portolan_cli.stac_parquet import restamp_collection_assets
 
     readme_path.write_text(content, encoding="utf-8")
@@ -1255,23 +992,7 @@ def write_readme(readme_path: Path, content: str) -> None:
 
 
 def ensure_readmes(catalog_root: Path, *, state: ConfigSource | None = None) -> bool:
-    """Scaffold README.md and its ``describedby`` link across a catalog tree.
-
-    Every catalog and collection directory carries a README.md referenced by a
-    ``rel="describedby"`` markdown link (issue #654). The file is generated from
-    the STAC object and metadata.yaml when absent; an existing README is never
-    overwritten, so a human-authored or hand-edited one survives ``add``.
-    Refreshing a stale README stays the job of ``portolan readme``.
-
-    Idempotent: a tree that already conforms is not rewritten.
-
-    Args:
-        catalog_root: Root directory of the catalog.
-        state: The run state, which parses each metadata.yaml once per run.
-
-    Returns:
-        True if any file was written or modified.
-    """
+    """Scaffold README.md and its ``describedby`` link across a catalog tree."""
     changed_any = False
     stac_files = _visible_stac_files(catalog_root)
 
@@ -1303,21 +1024,7 @@ def ensure_readmes(catalog_root: Path, *, state: ConfigSource | None = None) -> 
 
 
 def resolve_catalog_dir(catalog_root: Path, path: str | None, *, must_exist: bool) -> Path:
-    """Resolve the PATH argument of a catalog walk to a directory below the root.
-
-    Args:
-        catalog_root: The catalog root.
-        path: The PATH argument, relative to the root. None selects the root.
-        must_exist: If True, the directory must exist.
-
-    Returns:
-        ``catalog_root / path``, or the root when ``path`` is empty.
-
-    Raises:
-        InputValidationError: When ``path`` escapes the catalog root.
-        PathNotFoundError: When ``must_exist`` is set and nothing is at ``path``.
-        NotADirectoryError: When ``must_exist`` is set and ``path`` is a file.
-    """
+    """Resolve the PATH argument of a catalog walk to a directory below the root."""
     from portolan_cli.input_hardening import validate_safe_path
 
     if not path:
@@ -1342,15 +1049,7 @@ class UnsupportedOptionError(ValueError):
 
 @dataclass(frozen=True)
 class ReadmeRunResult:
-    """The READMEs a ``readme`` run wrote or checked, as catalog-relative paths.
-
-    Attributes:
-        recursive: True when the run walked the tree.
-        check: True when the run only compared the READMEs with fresh output.
-        fresh: Paths the run wrote, or found up to date in check mode.
-        stale: Paths whose README is missing or out of date, in check mode.
-        content: The README text of a single-path ``stdout`` run, which writes nothing.
-    """
+    """The READMEs a ``readme`` run wrote or checked, as catalog-relative paths."""
 
     recursive: bool
     check: bool
@@ -1398,11 +1097,7 @@ def _settle_readme(readme_path: Path, content: str, *, check: bool) -> bool:
 
 
 def _start_then_subtree(base_dir: Path) -> Iterator[Path]:
-    """Yield ``base_dir``, then list and yield everything below it.
-
-    The caller settles ``base_dir`` before the listing runs, so a listing error
-    leaves the start directory done.
-    """
+    """Yield ``base_dir``, then list and yield everything below it."""
     yield base_dir
     yield from sorted(base_dir.rglob("*"))
 
@@ -1449,27 +1144,7 @@ def generate_readmes(
     recursive: bool = True,
     on_progress: Callable[[str], None] | None = None,
 ) -> ReadmeRunResult:
-    """Generate the README of each catalog and collection from STAC and metadata.yaml.
-
-    Args:
-        catalog_root: The catalog root.
-        path: The start directory, relative to the root. None selects the root.
-        check: If True, compare each README with fresh output and write nothing.
-        stdout: If True, return the README text of the start directory and
-            write nothing. Only a single-path run accepts it.
-        recursive: If False, act only on the start directory.
-        on_progress: Receives a message for each file the run reads.
-
-    Returns:
-        The READMEs the run wrote, found fresh, or found stale.
-
-    Raises:
-        UnsupportedOptionError: When ``stdout`` is set on a recursive run.
-        InputValidationError: When ``path`` escapes the catalog root.
-        PathNotFoundError: When a recursive run starts at a missing path.
-        NotADirectoryError: When a recursive run starts at a file.
-        ConfigInvalidStructureError: When a metadata.yaml does not parse.
-    """
+    """Generate the README of each catalog and collection from STAC and metadata.yaml."""
     say = on_progress or (lambda _message: None)
     if recursive and stdout:
         raise UnsupportedOptionError("--stdout is not supported in recursive mode")

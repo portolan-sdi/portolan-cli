@@ -1,13 +1,4 @@
-"""Catalog configuration for Iceberg backend.
-
-Uses PyIceberg's load_catalog() for catalog-type-agnostic initialization.
-Defaults to local SQL/SQLite. Users override via standard PyIceberg env vars:
-  PYICEBERG_CATALOG__PORTOLAKE__TYPE=rest
-  PYICEBERG_CATALOG__PORTOLAKE__URI=https://my-rest-catalog.example.com
-  PYICEBERG_CATALOG__PORTOLAKE__WAREHOUSE=s3://my-bucket/warehouse
-
-See: https://py.iceberg.apache.org/configuration/
-"""
+"""Catalog configuration for Iceberg backend."""
 
 from __future__ import annotations
 
@@ -39,24 +30,14 @@ def _get_external_config() -> dict[str, str] | None:
 
 
 def create_catalog(catalog_root: Path | None = None) -> Catalog:
-    """Create an Iceberg catalog using PyIceberg's load_catalog().
-
-    Precedence:
-    1. External config (~/.pyiceberg.yaml or PYICEBERG_CATALOG__PORTOLAKE__* env vars)
-       — if present and non-SQLite (e.g., REST/BigLake), use it directly.
-    2. Local SQLite defaults using catalog_root (fallback when no external config).
-    """
+    """Create an Iceberg catalog using PyIceberg's load_catalog()."""
     external = _get_external_config()
     if external and "type" in external and external["type"] != "sql":
-        # Force snapshot-loading-mode=all so REST catalogs that advertise
-        # 'refs' (e.g. BigLake) still return historical snapshots — required
-        # by list_versions/rollback/prune to see prior portolake.version
-        # summaries, not just the current ref.
+        # REST catalogs that advertise refs (such as BigLake) return old snapshots only in mode
+        # "all".
         return load_catalog(CATALOG_NAME, **{"snapshot-loading-mode": "all"})
 
-    # SQLite or no external config: the catalog lives under the catalog root.
-    # The current directory is never a fallback, because a SQLite catalog there
-    # lands in whatever directory the caller runs from (issue #1056).
+    # A SQLite catalog lives under the catalog root, never in the current directory.
     if catalog_root is None:
         if external and "uri" in external:
             # The PyIceberg configuration names the SQLite catalog itself.

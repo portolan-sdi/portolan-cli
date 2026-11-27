@@ -1,13 +1,4 @@
-"""Unit tests for Issue #354: Fix asset path resolution in versions.json.
-
-Tests that asset keys in versions.json are collection-relative (no path doubling).
-
-Bug: Asset keys were incorrectly including collection directory name as prefix:
-  WRONG:  "fme_disk_tunnels/fme_disk_tunnels.parquet"
-  RIGHT:  "fme_disk_tunnels.parquet"
-
-The asset key should be collection-relative, while href contains the full path.
-"""
+"""Fix asset path resolution in versions.json."""
 
 from __future__ import annotations
 
@@ -80,9 +71,6 @@ class TestAssetKeyGeneration:
         latest_version = versions_data["versions"][-1]
         asset_keys = list(latest_version["assets"].keys())
 
-        # Asset key should NOT include collection_id prefix
-        # WRONG: "my_collection/my_collection.parquet"
-        # RIGHT: "my_collection.parquet"
         assert "my_collection.parquet" in asset_keys, (
             f"Asset key should be filename only, got: {asset_keys}"
         )
@@ -196,10 +184,7 @@ class TestAssetKeyGeneration:
         latest_version = versions_data["versions"][-1]
         asset_keys = list(latest_version["assets"].keys())
 
-        # Asset key should be collection-relative (filename only for collection-level)
-        # WRONG: "fme_disk_tunnels/fme_disk_tunnels.parquet" or
-        #        "subcatalog/fme_disk_tunnels/fme_disk_tunnels.parquet"
-        # RIGHT: "fme_disk_tunnels.parquet"
+        # The asset key is collection-relative: the filename only.
         assert "fme_disk_tunnels.parquet" in asset_keys, (
             f"Asset key should be filename only, got: {asset_keys}"
         )

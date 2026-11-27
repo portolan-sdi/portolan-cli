@@ -1,12 +1,4 @@
-"""Integration tests for push module.
-
-Tests for real filesystem operations and CLI command integration.
-These tests verify:
-- Local versions.json reading
-- Version diffing with real files
-- CLI command integration with Click
-- Error handling and user feedback
-"""
+"""Integration tests for push: versions.json reads, diffs, CLI wiring, and errors."""
 
 from __future__ import annotations
 
@@ -31,11 +23,7 @@ if TYPE_CHECKING:
 
 @pytest.fixture
 def catalog_with_versions(tmp_path: Path) -> Path:
-    """Create a catalog with versions.json for integration tests.
-
-    STAC files (catalog.json, collection.json, versions.json)
-    live at root level; config.yaml goes in .portolan/.
-    """
+    """Create a catalog with versions.json at the root and config.yaml in .portolan/."""
     catalog_dir = tmp_path / "catalog"
     catalog_dir.mkdir()
 
@@ -228,9 +216,7 @@ def _push_result(
     )
 
 
-# =============================================================================
 # Local Versions Reading Tests
-# =============================================================================
 
 
 class TestLocalVersionsReading:
@@ -261,9 +247,7 @@ class TestLocalVersionsReading:
             )
 
 
-# =============================================================================
 # Version Diffing Integration Tests
-# =============================================================================
 
 
 class TestVersionDiffingIntegration:
@@ -298,9 +282,7 @@ class TestVersionDiffingIntegration:
         assert diff.local_only == ["1.1.0", "1.2.0"]
 
 
-# =============================================================================
 # CLI Integration Tests
-# =============================================================================
 
 
 class TestPushCLI:
@@ -371,10 +353,7 @@ class TestPushCLI:
 
     @pytest.mark.integration
     def test_push_reads_aws_profile_from_env(self, catalog_with_versions: Path) -> None:
-        """Push should read aws_profile from PORTOLAN_AWS_PROFILE when --profile not specified.
-
-        Note: aws_profile is a sensitive setting and cannot be set in config.yaml (Issue #356).
-        """
+        """Push reads aws_profile from PORTOLAN_AWS_PROFILE. config.yaml cannot hold it."""
         import os
         from unittest.mock import patch as mock_patch
 
@@ -392,7 +371,7 @@ class TestPushCLI:
                 errors=[],
             )
 
-            # Set profile via env var (Issue #356: sensitive settings)
+            # aws_profile is a sensitive setting, so only the env var can set it.
             with mock_patch.dict(
                 os.environ,
                 {
@@ -418,10 +397,7 @@ class TestPushCLI:
 
     @pytest.mark.integration
     def test_push_cli_profile_overrides_env(self, catalog_with_versions: Path) -> None:
-        """Push --profile should override PORTOLAN_AWS_PROFILE env var.
-
-        Note: aws_profile is a sensitive setting and cannot be set in config.yaml (Issue #356).
-        """
+        """Push --profile overrides the PORTOLAN_AWS_PROFILE env var."""
         import os
         from unittest.mock import patch as mock_patch
 
@@ -466,9 +442,7 @@ class TestPushCLI:
             assert call_kwargs.get("profile") == "cli-override"
 
 
-# =============================================================================
 # JSON Output Tests
-# =============================================================================
 
 
 class TestPushJSONOutput:
@@ -508,11 +482,7 @@ class TestPushJSONOutput:
     def test_push_json_returned_failure_is_not_reported_as_success(
         self, catalog_with_versions: Path
     ) -> None:
-        """A returned PushResult(success=False) must yield success=False and exit 1.
-
-        Regression: the handler emitted the success envelope unconditionally, so a
-        failed push was reported as ``success: true`` with exit 0 in JSON mode.
-        """
+        """A returned PushResult(success=False) gives success=False and exit 1 in JSON mode."""
         from portolan_cli.cli import cli
         from portolan_cli.sync.push import PushResult
 
@@ -548,9 +518,7 @@ class TestPushJSONOutput:
             assert output_data["errors"][0]["message"] == "Upload failed: connection reset"
 
 
-# =============================================================================
 # Dry-run Behavior Tests
-# =============================================================================
 
 
 class TestDryRunBehavior:
@@ -578,13 +546,7 @@ class TestDryRunBehavior:
 
     @pytest.mark.integration
     def test_dry_run_does_not_detect_conflicts(self, catalog_with_versions: Path) -> None:
-        """Dry-run must NOT make network calls, so it cannot detect remote conflicts.
-
-        Bug #137: dry-run previously called _fetch_remote_versions to check for
-        conflicts even in dry-run mode. The fix ensures dry-run returns early
-        before any network I/O, which means remote conflicts are not checked.
-        Users who want conflict detection must run without --dry-run.
-        """
+        """Dry-run makes no network calls, so it does not detect remote conflicts."""
         from portolan_cli.sync.push import push
 
         with patch(
@@ -617,12 +579,7 @@ class TestDryRunBehavior:
 
     @pytest.mark.integration
     def test_cli_dry_run_no_contradictory_messages(self, catalog_with_versions: Path) -> None:
-        """CLI should not show 'Nothing to push' after dry-run shows pending work.
-
-        Regression test for issue #145: dry-run was showing contradictory messages:
-        - "[DRY RUN] Would push 7 version(s)" followed by
-        - "Nothing to push - local and remote are in sync"
-        """
+        """After dry-run shows pending work, the CLI does not also show 'Nothing to push'."""
         from portolan_cli.cli import cli
         from portolan_cli.sync.push import PushResult
 
@@ -689,11 +646,7 @@ class TestDryRunBehavior:
 
     @pytest.mark.integration
     def test_dry_run_nothing_to_push_real_codepath(self, catalog_with_versions: Path) -> None:
-        """Integration test: dry-run with nothing to push exercises real push() code.
-
-        This test does NOT mock push() - it mocks only _fetch_remote_versions
-        so we exercise the actual dry-run logic in push.py.
-        """
+        """Dry-run with nothing to push runs the real push(). Only the remote fetch is mocked."""
         from portolan_cli.sync.push import push
 
         # Mock _fetch_remote_versions to simulate remote is identical to local
@@ -719,11 +672,7 @@ class TestDryRunBehavior:
 
     @pytest.mark.integration
     def test_dry_run_with_work_real_codepath(self, catalog_with_versions: Path) -> None:
-        """Integration test: dry-run with pending work exercises real push() code.
-
-        This test mocks only _fetch_remote_versions, not push(), so we test
-        the actual dry-run message generation in push.py.
-        """
+        """Dry-run with pending work runs the real push(). Only the remote fetch is mocked."""
         from portolan_cli.sync.push import push
 
         with patch(
@@ -775,11 +724,7 @@ class TestDryRunBehavior:
 
     @pytest.mark.integration
     def test_cli_dry_run_with_work_real_codepath(self, catalog_with_versions: Path) -> None:
-        """CLI integration: dry-run with pending work shows what would be pushed.
-
-        Tests that we see "[DRY RUN] Would push N version(s)" without
-        contradictory "Nothing to push" message.
-        """
+        """CLI dry-run shows '[DRY RUN] Would push N version(s)' and no 'Nothing to push'."""
 
         with patch(
             "portolan_cli.sync.push._fetch_remote_versions_async", new_callable=AsyncMock
@@ -799,9 +744,7 @@ class TestDryRunBehavior:
         )
 
 
-# =============================================================================
 # Asset Path Resolution Tests
-# =============================================================================
 
 
 class TestAssetPathResolution:
@@ -828,9 +771,7 @@ class TestAssetPathResolution:
             assert asset_path.is_absolute()
 
 
-# =============================================================================
 # Error Handling Tests
-# =============================================================================
 
 
 class TestErrorHandling:
@@ -887,9 +828,7 @@ class TestErrorHandling:
             )
 
 
-# =============================================================================
 # CLI Error Branch Tests
-# =============================================================================
 
 
 class TestPushCLIErrorBranches:
@@ -986,19 +925,11 @@ class TestPushCLIErrorBranches:
         assert result.exit_code == 1
 
 
-# =============================================================================
 # Property-Based Tests (Hypothesis)
-# =============================================================================
 
 
 class TestPushOutputInvariants:
-    """Property-based tests for push CLI output invariants.
-
-    These tests verify invariants that should hold across all possible states:
-    - Dry-run never shows "Nothing to push" (contradictory)
-    - Non-dry-run with 0 versions pushed shows "Nothing to push"
-    - Successful push with >0 versions shows success message
-    """
+    """Property-based tests for push CLI output invariants."""
 
     @pytest.mark.integration
     @given(
@@ -1018,11 +949,7 @@ class TestPushOutputInvariants:
         files_uploaded: int,
         versions_pushed: int,
     ) -> None:
-        """Property: Dry-run mode never outputs 'Nothing to push'.
-
-        This invariant ensures we don't show contradictory messages where
-        dry-run indicates work to do but then says nothing to push.
-        """
+        """Property: dry-run mode never outputs 'Nothing to push'."""
 
         with patch("portolan_cli.sync.push.push_async", new_callable=AsyncMock) as mock_push:
             mock_push.return_value = _push_result(
@@ -1079,11 +1006,7 @@ class TestPushOutputInvariants:
         catalog_with_versions: Path,
         files_uploaded: int,
     ) -> None:
-        """Property: A metadata-only sync (0 versions, >0 files) hides 'Nothing to push'.
-
-        An edited AGENTS.md uploads with no version bump (#816). The CLI must not
-        report 'Nothing to push' when it actually pushed metadata files.
-        """
+        """Property: a metadata-only sync (0 versions, >0 files) hides 'Nothing to push'."""
         from portolan_cli.cli import cli
         from portolan_cli.sync.push import PushResult
 
@@ -1160,28 +1083,17 @@ class TestPushOutputInvariants:
             )
 
 
-# =============================================================================
 # Real Code Path Tests (No Mocking of push())
-# =============================================================================
 
 
 class TestDryRunRealCodePath:
-    """Tests that exercise the real push() code path without mocking.
-
-    These tests verify that the dry-run message handling works correctly
-    in the actual implementation, not just the CLI layer.
-    """
+    """Tests that run the real push() code path without mocks."""
 
     @pytest.mark.integration
     def test_dry_run_nothing_to_push_shows_dry_run_prefix(
         self, catalog_with_versions: Path
     ) -> None:
-        """Real push() with dry_run=True and nothing to push shows [DRY RUN] prefix.
-
-        This test does NOT mock push() - it tests the actual implementation
-        to verify the dry-run message is prefixed correctly when local and
-        remote are in sync.
-        """
+        """Real push() in dry-run with nothing to push shows the [DRY RUN] prefix."""
         from portolan_cli.sync.push import push
 
         with patch(
@@ -1232,11 +1144,7 @@ class TestDryRunRealCodePath:
 
     @pytest.mark.integration
     def test_dry_run_with_work_to_do_shows_would_push(self, catalog_with_versions: Path) -> None:
-        """Real push() with dry_run=True and work to do shows what would be pushed.
-
-        This tests the case where there ARE versions to push, verifying
-        that dry-run mode shows "[DRY RUN] Would push" messages.
-        """
+        """Real push() in dry-run with work to do shows what it would push."""
         from portolan_cli.sync.push import push
 
         with patch(
@@ -1268,25 +1176,15 @@ class TestDryRunRealCodePath:
             assert result.files_uploaded == 0  # Dry-run doesn't upload
 
 
-# =============================================================================
-# Trailing Slash URL Tests (Issue #144)
-# =============================================================================
+# Trailing slash URL tests
 
 
 class TestTrailingSlashNormalization:
-    """Tests for URL trailing slash handling.
-
-    Regression tests for issue #144: trailing slash in S3 URL causes path
-    parsing error due to double slashes in constructed paths.
-    """
+    """A trailing slash in the S3 URL must not make empty path segments."""
 
     @pytest.mark.integration
     def test_push_with_trailing_slash_url(self, catalog_with_versions: Path) -> None:
-        """Push should handle destination URLs with trailing slashes.
-
-        Before fix: s3://bucket/prefix/ would cause:
-        "Could not parse path: Path 'prefix//collection/versions.json' contained empty path segment"
-        """
+        """Push accepts destination URLs with a trailing slash."""
         from portolan_cli.sync.push import push
 
         with patch(
@@ -1349,11 +1247,7 @@ class TestTrailingSlashNormalization:
     def test_push_constructed_paths_have_no_double_slashes(
         self, catalog_with_versions: Path
     ) -> None:
-        """Verify that path construction doesn't create double slashes.
-
-        This test verifies the fix by checking the actual paths that would
-        be used for upload/fetch operations.
-        """
+        """Path construction makes no double slashes."""
         from portolan_cli.sync.upload import setup_store
 
         # Test various trailing slash scenarios
@@ -1377,29 +1271,18 @@ class TestTrailingSlashNormalization:
                 )
 
 
-# =============================================================================
-# Asset Diffing Integration Tests (Issue #329)
-# =============================================================================
+# Asset diffing integration tests
 
 
 class TestPushAssetDiffingIntegration:
-    """Integration tests for push asset diffing (Issue #329).
-
-    These tests verify that the full push flow correctly diffs assets
-    against remote and only uploads new/changed files.
-    """
+    """The full push flow diffs assets against the remote and uploads only new or changed files."""
 
     @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_push_only_uploads_new_assets(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Issue #329: Push should only upload assets not on remote.
-
-        Scenario: Local version 2.0.0 adds 1 new file to a catalog that
-        has 2 existing files on remote (version 1.0.0). Only the new file
-        should be uploaded.
-        """
+        """Local 2.0.0 adds 1 file to 2 files on the remote at 1.0.0. Push uploads only the new file."""
         from portolan_cli.sync.push import push_async
 
         # Setup catalog
@@ -1605,9 +1488,7 @@ class TestBrokenProfileCli:
         assert "broken" in result.output
 
 
-# =============================================================================
 # Push against a real S3 API (moto): rollback, conditional writes, headers
-# =============================================================================
 
 
 @pytest.fixture(scope="module")
@@ -1723,7 +1604,7 @@ class TestPushAgainstMoto:
     def test_clone_downloads_every_object_push_wrote(
         self, tmp_path: Path, bucket: tuple[str, Any]
     ) -> None:
-        """Issue #1042: the clone holds collection.json, README.md, and AGENTS.md."""
+        """The clone holds collection.json, README.md, and AGENTS.md."""
         from portolan_cli.sync.push import push_all_collections
         from portolan_cli.sync.transport import clone
 
@@ -1758,11 +1639,7 @@ class TestPushAgainstMoto:
         self, tmp_path: Path, bucket: tuple[str, Any], run_cli: Any
     ) -> None:
         """Three push runs on a CLI-built catalog: first, one overwrite, one with no change.
-
-        Each run reads the root versions.json ETag, writes under it, and prints
-        no rollback line. The overwrite leaves no backup key. The run_cli
-        teardown checks the catalog invariants.
-        """
+        Each run writes under the root versions.json ETag and prints no rollback line."""
         import pathlib
         import shutil
 
@@ -1791,12 +1668,8 @@ class TestPushAgainstMoto:
     def test_clone_checks_like_the_catalog_it_copies(
         self, tmp_path: Path, bucket: tuple[str, Any]
     ) -> None:
-        """Issue #1042: rashid reports the same findings on the clone as on the source.
-
-        The source catalog comes from the CLI, as in the issue. Its collection
-        has no providers, so both catalogs report PTL-PRV-001. A clone without
-        the remote catalog.json also reports PTL-LNK-002 (no child link).
-        """
+        """rashid reports the same findings on the clone as on the source catalog.
+        Neither has providers (PTL-PRV-001). A clone without the remote catalog.json adds PTL-LNK-002."""
         import pathlib
         import shutil
 
@@ -1840,12 +1713,7 @@ class TestPushAgainstMoto:
     def test_clone_of_one_collection_links_only_to_it(
         self, tmp_path: Path, bucket: tuple[str, Any], run_cli: Any
     ) -> None:
-        """Issue #1042: a clone of one collection keeps no child link to another.
-
-        The remote catalog.json links to both collections. The clone holds one,
-        so a kept link to the other does not resolve (PTL-LNK-006). The run_cli
-        teardown checks the invariants of the clone.
-        """
+        """A clone of one collection keeps no child link to another (PTL-LNK-006)."""
         import pathlib
         import shutil
 
@@ -1886,7 +1754,7 @@ class TestPushAgainstMoto:
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        """Issue #972: without s3:ListBucket, S3 refuses LIST and a HEAD of a missing key."""
+        """Without s3:ListBucket, S3 refuses LIST and a HEAD of a missing key."""
         import obstore
         from obstore.exceptions import PermissionDeniedError
 

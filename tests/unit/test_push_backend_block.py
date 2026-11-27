@@ -1,8 +1,4 @@
-"""Tests for push command behavior with non-file backends.
-
-Verifies that the CLI checks backend.supports_push() and shows the
-backend's push_blocked_message() when push is not supported.
-"""
+"""Tests for push command behavior with non-file backends."""
 
 from __future__ import annotations
 
@@ -17,7 +13,7 @@ from click.testing import CliRunner
 if TYPE_CHECKING:
     from pathlib import Path
 
-# Remote URL for tests - set via env var (Issue #356: sensitive settings)
+# Remote URL for tests - set via env var (sensitive settings)
 TEST_REMOTE = "gs://test-bucket/catalog"
 
 
@@ -28,10 +24,7 @@ def cli_runner() -> CliRunner:
 
 @pytest.fixture
 def catalog_with_backend(tmp_path: Path) -> Path:
-    """Create a catalog with a non-file backend.
-
-    Note: remote must be set via PORTOLAN_REMOTE env var (Issue #356).
-    """
+    """Create a catalog with a non-file backend."""
     catalog_root = tmp_path / "catalog"
     catalog_root.mkdir()
     (catalog_root / "catalog.json").write_text('{"type": "Catalog"}')

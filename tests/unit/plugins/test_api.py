@@ -1,9 +1,4 @@
-"""Tests for the public plugin API (#947).
-
-`portolan_cli.api`, `portolan_cli.hookspecs`, and `portolan_cli.testing` follow
-semantic versioning. `public_api.txt` records the three surfaces, so a change
-shows up in review.
-"""
+"""Tests for the public plugin API."""
 
 from __future__ import annotations
 
@@ -60,4 +55,4 @@ def test_every_export_resolves_to_its_source(name: str) -> None:
 @pytest.mark.unit
 def test_unknown_name_raises_attribute_error() -> None:
     with pytest.raises(AttributeError, match="has no attribute 'nope'"):
-        api.nope  # noqa: B018
+        api.nope  # noqa: B018 - the attribute access must raise

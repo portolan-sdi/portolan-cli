@@ -1,8 +1,4 @@
-"""Integration tests for the scan CLI command.
-
-These tests verify the CLI wrapper correctly calls the library and formats output.
-Tests use Click's CliRunner for isolated command invocation.
-"""
+"""Integration tests for the scan CLI wrapper and its output, through Click's CliRunner."""
 
 from __future__ import annotations
 
@@ -30,9 +26,7 @@ def fixtures_dir() -> Path:
     return FIXTURES_DIR
 
 
-# =============================================================================
-# Phase 8: CLI Integration Tests
-# =============================================================================
+# CLI integration tests
 
 
 @pytest.mark.integration
@@ -213,14 +207,10 @@ class TestScanCLI:
         )
 
 
-# =============================================================================
-# Phase 12: Output Truncation Tests (US10)
-# =============================================================================
+# Output truncation tests
 
 
-# =============================================================================
-# Phase 15: Full Workflow Integration Tests
-# =============================================================================
+# Full workflow integration tests
 
 
 @pytest.mark.integration
@@ -340,12 +330,7 @@ class TestScanOutputTruncation:
         assert "truncated" in result.output.lower() or "more" in result.output.lower()
 
     def test_scan_all_shows_all_issues(self, runner: CliRunner, tmp_path: Path) -> None:
-        """--all flag shows all issues without truncation.
-
-        With batched output, issues of the same type are grouped together.
-        When --all is provided, all file paths appear in the Examples list
-        rather than being truncated after 3.
-        """
+        """--all lists every file path in the Examples of a batched issue, with no cut after 3."""
         # Create 15 files with invalid characters
         for i in range(15):
             (tmp_path / f"file with spaces {i}.geojson").write_text(
@@ -387,9 +372,7 @@ class TestScanOutputTruncation:
         assert "truncated" not in result.output.lower()
 
 
-# =============================================================================
-# Phase 17: Enhanced Output Features Tests
-# =============================================================================
+# Enhanced output feature tests
 
 
 @pytest.mark.integration
@@ -506,9 +489,7 @@ class TestScanEnhancedOutput:
         assert "--suggest-collections" in result.output
 
 
-# =============================================================================
-# Error Handling Tests (Coverage Improvement)
-# =============================================================================
+# Error handling tests
 
 
 @pytest.mark.integration
@@ -568,9 +549,7 @@ class TestScanErrorHandling:
         assert "hint" in result.output.lower() or "add" in result.output.lower()
 
 
-# =============================================================================
-# Tests for --manual Flag
-# =============================================================================
+# --manual flag tests
 
 
 @pytest.mark.integration
@@ -639,9 +618,7 @@ class TestScanManualFlag:
         assert "no files require manual resolution" in result.output.lower()
 
 
-# =============================================================================
-# Tests for --fix Flag
-# =============================================================================
+# --fix flag tests
 
 
 @pytest.mark.integration
@@ -665,7 +642,7 @@ class TestScanFixFlag:
         assert result.exit_code == 0
         # Should show dry run message
         assert "dry run" in result.output.lower()
-        # Should preview the rename (dashes per issue #208)
+        # Should preview the rename (dashes)
         assert "file-with-spaces" in result.output
         # File should NOT be renamed
         assert bad_file.exists()
@@ -681,7 +658,7 @@ class TestScanFixFlag:
         assert result.exit_code == 0
         # Should show success message
         assert "applied" in result.output.lower()
-        # File should be renamed (dashes per issue #208)
+        # File should be renamed (dashes)
         assert not bad_file.exists()
         assert (tmp_path / "file-with-spaces.geojson").exists()
 
@@ -693,7 +670,7 @@ class TestScanFixFlag:
         result = runner.invoke(cli, ["scan", str(tmp_path), "--fix"])
 
         assert result.exit_code == 0
-        # Should rename to _con.geojson (lowercase per issue #208)
+        # Should rename to _con.geojson (lowercase)
         assert not bad_file.exists()
         assert (tmp_path / "_con.geojson").exists()
 
@@ -747,7 +724,7 @@ class TestScanFixFlag:
 
     def test_fix_collision_detection(self, runner: CliRunner, tmp_path: Path) -> None:
         """--fix detects collisions and doesn't overwrite existing files."""
-        # Create both source and would-be target (dashes per issue #208)
+        # Create both source and would-be target (dashes)
         source = tmp_path / "file with spaces.geojson"
         target = tmp_path / "file-with-spaces.geojson"
         source.write_text('{"type": "source"}')
@@ -828,7 +805,7 @@ class TestScanFixFlag:
 
     def test_fix_with_collision_shows_failed_count(self, runner: CliRunner, tmp_path: Path) -> None:
         """--fix shows count of fixes that couldn't be applied."""
-        # Create source with invalid chars and conflicting target (dashes per issue #208)
+        # Create source with invalid chars and conflicting target (dashes)
         source = tmp_path / "file one.geojson"
         target = tmp_path / "file-one.geojson"
         source.write_text('{"type": "source"}')
@@ -867,18 +844,12 @@ class TestScanFixFlag:
         assert "no issues" in result.output.lower()
 
 
-# =============================================================================
-# FileGDB Integration Tests (Issue #139)
-# =============================================================================
+# FileGDB integration tests
 
 
 @pytest.mark.integration
 class TestScanFileGDB:
-    """Integration tests for FileGDB directory detection during scan.
-
-    Issue #139: FileGDB directories should be detected as single assets,
-    not walked into with internal files reported as 'unknown format'.
-    """
+    """Scan detects a FileGDB directory as one asset and does not walk its internal files."""
 
     def test_scan_filegdb_fixture_not_walked_into(
         self, runner: CliRunner, fixtures_dir: Path
@@ -980,9 +951,7 @@ class TestScanFileGDB:
         )
 
 
-# =============================================================================
-# Issue #182: Default PATH to Current Directory
-# =============================================================================
+# Default PATH is the current directory
 
 
 @pytest.mark.integration
@@ -1116,18 +1085,12 @@ class TestScanDefaultPath:
         assert len(permission_issues) == 1
 
 
-# =============================================================================
-# Issue #256: JSON GeoJSON Detection
-# =============================================================================
+# .json files with GeoJSON content
 
 
 @pytest.mark.integration
 class TestScanJsonGeoJsonCLI:
-    """Integration tests for Issue #256: .json files with GeoJSON content.
-
-    GeoJSON files are often saved with .json extension rather than .geojson.
-    These tests verify the CLI correctly handles such files.
-    """
+    """The CLI detects GeoJSON content in files with a .json extension."""
 
     def test_scan_json_geojson_shows_in_ready_count(
         self, runner: CliRunner, fixtures_dir: Path

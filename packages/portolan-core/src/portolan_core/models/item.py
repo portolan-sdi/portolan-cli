@@ -1,8 +1,4 @@
-"""ItemModel dataclass for STAC Item metadata.
-
-An Item represents a single spatiotemporal entity within a collection.
-It has geometry, bbox, datetime, and assets per the STAC spec.
-"""
+"""ItemModel dataclass for STAC Item metadata."""
 
 from __future__ import annotations
 
@@ -15,14 +11,7 @@ from portolan_core.models.catalog import Link
 
 @dataclass
 class AssetModel:
-    """A STAC asset (file reference).
-
-    Attributes:
-        href: Asset URL or relative path.
-        type: Media type (e.g., "application/vnd.apache.parquet").
-        roles: Asset roles (e.g., ["data"], ["thumbnail"]).
-        title: Human-readable title.
-    """
+    """A STAC asset (file reference)."""
 
     href: str
     type: str | None = None
@@ -53,23 +42,7 @@ class AssetModel:
 
 @dataclass
 class ItemModel:
-    """STAC Item metadata model.
-
-    An Item is a single spatiotemporal entity within a collection.
-
-    Attributes:
-        id: Unique item identifier.
-        geometry: GeoJSON geometry (bounding polygon).
-        bbox: Bounding box [west, south, east, north].
-        properties: STAC properties including datetime.
-        assets: Asset references keyed by asset name.
-        collection: Parent collection ID.
-        type: Always "Feature".
-        stac_version: STAC spec version (uses STAC_VERSION constant).
-        title: Human-readable title (optional).
-        description: Item description (optional).
-        links: STAC links.
-    """
+    """STAC Item metadata model."""
 
     id: str
     geometry: dict[str, Any] | None

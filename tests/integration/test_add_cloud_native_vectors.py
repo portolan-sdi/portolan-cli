@@ -1,14 +1,5 @@
-"""Integration tests for adding cloud-native vector formats (PMTiles, FlatGeobuf).
-
-Per Issue #368: Adding PMTiles/FlatGeobuf should work without conversion.
-Vector files are collection-level assets.
-
-These tests verify:
-1. PMTiles/FlatGeobuf are NOT converted to GeoParquet
-2. Files are copied to collection directory
-3. Metadata is correctly extracted
-4. Assets are registered in collection.json
-"""
+"""Integration tests for adding PMTiles and FlatGeobuf: no conversion, collection-level assets.
+The tests check the copy, the extracted metadata, and the collection.json assets."""
 
 from __future__ import annotations
 
@@ -88,7 +79,7 @@ class TestAddPMTiles:
         fixtures_dir: Path,
         sample_pmtiles: Path,
     ) -> None:
-        """PMTiles are not converted, and the add raises no CRS error (#368)."""
+        """PMTiles are not converted, and the add raises no CRS error."""
         tiles = _tiles_beside_geoparquet(initialized_catalog, fixtures_dir, sample_pmtiles)
 
         _add_tiles(runner, initialized_catalog, tiles)
@@ -105,10 +96,7 @@ class TestAddPMTiles:
         sample_pmtiles: Path,
     ) -> None:
         """core.md "Roles": ``visual`` for the PMTiles, ``data`` for the GeoParquet.
-
-        formats.md "PMTiles" registers the tiles through a collection-level
-        ``rel: "pmtiles"`` link.
-        """
+        formats.md "PMTiles" registers the tiles through a collection-level ``rel: "pmtiles"`` link."""
         tiles = _tiles_beside_geoparquet(initialized_catalog, fixtures_dir, sample_pmtiles)
 
         _add_tiles(runner, initialized_catalog, tiles)
@@ -218,7 +206,7 @@ class TestAddFlatGeobuf:
         )
         assert result.exit_code == 0
 
-        # CRS lands as proj:code on the data asset, never top-level (#654)
+        # CRS lands as proj:code on the data asset, never top-level
         collection_json = collection_dir / "collection.json"
         assert collection_json.exists()
 
@@ -246,8 +234,7 @@ class TestCollectionLevelAssetBehavior:
         _add_tiles(runner, initialized_catalog, tiles)
         data = json.loads((tiles.parent / "collection.json").read_text())
 
-        # The tile CRS is a visualization artifact and contributes no
-        # projection field (#488, #654)
+        # The tile CRS is a visualization artifact and contributes no projection field
         assert "proj:epsg" not in data
         assert "proj:code" not in data
         assert "proj:code" not in data["assets"]["map-tiles"]
@@ -285,12 +272,8 @@ class TestCollectionLevelAssetBehavior:
 
 
 class TestSameStemGeoParquetAndPMTiles:
-    """Issue #933: a same-stem PMTiles never replaces the GeoParquet asset.
-
-    ``iterdir`` order decided which of ``<stem>.parquet`` and ``<stem>.pmtiles``
-    kept the ``<stem>`` key. Eight collections give several orders on one
-    filesystem, so the pre-fix code loses the GeoParquet in some of them.
-    """
+    """A same-stem PMTiles never replaces the GeoParquet asset, whatever the ``iterdir`` order.
+    Eight collections give several orders on one filesystem."""
 
     _STEMS: ClassVar[list[str]] = [f"zone{i}" for i in range(8)]
 
@@ -634,11 +617,7 @@ class TestAssetLineage:
     def test_a_failed_add_keeps_the_tiles_beside_its_source(
         self, runner: CliRunner, initialized_catalog: Path, sample_pmtiles: Path
     ) -> None:
-        """The cleanup of an output with no geometry removed every same-stem file.
-
-        The GeoJSON passes the pre-check, because its one geometry is not null.
-        The conversion gives no bbox, and the cleanup deleted ``zoning.pmtiles``.
-        """
+        """A failed add with no bbox keeps the same-stem ``zoning.pmtiles`` beside its source."""
         collection_dir = initialized_catalog / "land"
         collection_dir.mkdir()
         empty = {"type": "GeometryCollection", "geometries": []}
@@ -668,7 +647,7 @@ class TestAssetLineage:
     def test_converted_geojson_is_the_source_of_the_geoparquet(
         self, runner: CliRunner, initialized_catalog: Path, fixtures_dir: Path
     ) -> None:
-        """Issue #960: the GeoJSON carried the data role beside its GeoParquet."""
+        """The GeoJSON is the source of its GeoParquet and carries no data role."""
         collection_dir = initialized_catalog / "points"
         collection_dir.mkdir()
         shutil.copy(fixtures_dir / "vector" / "valid" / "points.geojson", collection_dir)
@@ -703,7 +682,7 @@ class TestAssetLineage:
         sample_pmtiles: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Issues #929 and #934: tiles built outside Portolan, no tippecanoe, no flag."""
+        """Tiles built outside Portolan pass check with no tippecanoe and no flag."""
         monkeypatch.setattr("portolan_cli.viz.pmtiles.shutil.which", lambda _name: None)
         _write_providers(initialized_catalog)
         collection_dir = initialized_catalog / "points"
@@ -739,7 +718,7 @@ class TestAssetLineage:
         sample_pmtiles: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Issue #934: the tippecanoe preflight ran before the up-to-date skip."""
+        """The up-to-date skip runs before the tippecanoe preflight."""
         monkeypatch.setattr("portolan_cli.viz.pmtiles.shutil.which", lambda _name: None)
         collection_dir = initialized_catalog / "points"
         collection_dir.mkdir()
@@ -832,11 +811,7 @@ class TestAssetLineage:
         sample_pmtiles: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Verbose add called tiles older than the GeoParquet up to date.
-
-        Plain add never rebuilds pre-built tiles (#929). Its in-place bbox
-        rewrite (#805) makes them look older although the data is the same.
-        """
+        """Plain add keeps pre-built tiles that the bbox rewrite makes look older, and says so."""
         collection_dir = self._prebuilt_tiles(initialized_catalog, fixtures_dir, sample_pmtiles, 1)
         before = (collection_dir / "points.pmtiles").read_bytes()
         built = self._record_builds(monkeypatch, sample_pmtiles)
@@ -876,7 +851,7 @@ class TestAssetLineage:
     def test_force_rebuild_registers_what_the_first_add_registered(
         self, runner: CliRunner, initialized_catalog: Path, fixtures_dir: Path
     ) -> None:
-        """Issue #1041: add --force registered the README the first add wrote."""
+        """add --force registers what the first add registered, and not its README."""
         collection_dir = initialized_catalog / "roads"
         collection_dir.mkdir()
         shutil.copy(
@@ -905,7 +880,7 @@ class TestAssetLineage:
     def test_item_declares_the_file_extension_of_its_assets(
         self, runner: CliRunner, initialized_catalog: Path, fixtures_dir: Path
     ) -> None:
-        """Issue #1037: only the collection declared the file extension."""
+        """The item declares the file extension of its assets, not only the collection."""
         item_dir = initialized_catalog / "imagery" / "scene-a"
         item_dir.mkdir(parents=True)
         shutil.copy(fixtures_dir / "raster" / "valid" / "rgb.tif", item_dir / "rgb.tif")
@@ -925,7 +900,7 @@ class TestAssetLineage:
 
 
 class TestVersionsKeys:
-    """Issue #1053: every versions.json key is the file's path in the collection."""
+    """Every versions.json key is the file's path in the collection."""
 
     @pytest.mark.integration
     @pytest.mark.parametrize(
@@ -945,11 +920,7 @@ class TestVersionsKeys:
         fixtures_dir: Path,
         scenes: dict[str, str],
     ) -> None:
-        """The collection thumbnail step tracked an item sidecar a second time.
-
-        It keyed the file by its name, so versions.json gained a key at the
-        collection root where no file is.
-        """
+        """The collection thumbnail step does not track an item sidecar a second time at the root."""
         collection_dir = initialized_catalog / "imagery"
         paths = []
         for scene, fixture in scenes.items():
@@ -978,11 +949,8 @@ class TestRasterRebuild:
     def test_force_keeps_the_band_statistics(
         self, runner: CliRunner, initialized_catalog: Path, fixtures_dir: Path
     ) -> None:
-        """The first add computes the statistics, and GDAL stores them in .aux.xml.
-
-        GDAL stores 14 significant digits, so a later add read 460.38215 where
-        the first add wrote 460.38215000000383.
-        """
+        """add --force keeps the band statistics of the first add.
+        GDAL stores 14 significant digits in .aux.xml, so a later add must not read them back."""
         item_dir = initialized_catalog / "imagery" / "rapidai4eo"
         item_dir.mkdir(parents=True)
         tif = item_dir / "rapidai4eo.tif"
@@ -1015,11 +983,7 @@ def _sha(path: Path) -> str:
 
 class TestNoConversionReplacesAForeignFile:
     """A conversion never writes over a file that its source did not make.
-
-    The output of ``b1.csv`` is ``b1.parquet``. The add converted the CSV into
-    that name over the operator's GeoParquet, and then deleted the result,
-    because the CSV holds no geometry. Only ``b1.csv`` stayed on disk.
-    """
+    ``b1.csv`` converts to the name ``b1.parquet``, which holds the operator's GeoParquet."""
 
     @staticmethod
     def _points(path: Path, count: int) -> None:
@@ -1057,8 +1021,8 @@ class TestNoConversionReplacesAForeignFile:
         )
 
         assert result.exit_code == 0, result.output
-        # The add rewrites the GeoParquet in place to add a bbox column (#805),
-        # so the bytes change. The rows stay, and versions.json tracks them.
+        # The add rewrites the GeoParquet in place to add a bbox column, so the bytes change.
+        # The rows stay, and versions.json tracks them.
         assert pq.read_metadata(geoparquet).num_rows == rows
         assert (collection_dir / "b1.csv").read_text() == "id,name\n1,a\n2,b\n"
         tracked = self._tracked(collection_dir)
@@ -1071,12 +1035,7 @@ class TestNoConversionReplacesAForeignFile:
         self, runner: CliRunner, initialized_catalog: Path, fixtures_dir: Path
     ) -> None:
         """The converted Parquet takes the stem. The CSV keeps an asset as its source.
-
-        The first add keys the companion ``attrs.csv`` by its stem. The re-add
-        converts it to ``attrs.parquet``. The source asset reused the stem key
-        by its href, and the Parquet then wrote over it. collection.json lost
-        the CSV that versions.json still tracked.
-        """
+        collection.json keeps the CSV that versions.json tracks."""
         collection_dir = initialized_catalog / "roads"
         collection_dir.mkdir()
         shutil.copy(
@@ -1184,11 +1143,7 @@ class TestNoConversionReplacesAForeignFile:
 
 def _make_legacy(collection_dir: Path) -> None:
     """Give a collection the shape that Portolan 0.8.0 wrote.
-
-    0.8.0 wrote no ``portolan:source`` footer key and no ``source_path`` in
-    versions.json. The output entry has ``source_mtime`` and the source entry
-    has only ``mtime``, as in a catalog that 0.8.0 built.
-    """
+    It has no ``portolan:source`` footer key and no ``source_path`` in versions.json."""
     import os
 
     from portolan_cli.convert import PROVENANCE_KEY
@@ -1214,11 +1169,7 @@ def _make_legacy(collection_dir: Path) -> None:
 
 class TestALegacyOutputIsItsSourceOwn:
     """An output that 0.8.0 wrote has no record, so an add never replaces it.
-
-    versions.json shows the same entries for a 0.8.0 output and for a file of
-    the operator that an add tracked. An equal layout does not prove which one
-    it is. So the new output takes the distinct name and the old file stays.
-    """
+    The new output takes the distinct name and the old file stays."""
 
     @staticmethod
     def _add(runner: CliRunner, catalog: Path, target: Path) -> None:
@@ -1351,11 +1302,7 @@ class TestALegacyOutputIsItsSourceOwn:
     def test_an_edited_geojson_leaves_a_legacy_companion_geoparquet(
         self, runner: CliRunner, initialized_catalog: Path, fixtures_dir: Path
     ) -> None:
-        """0.8.0 tracked a same-stem GeoJSON beside the operator's GeoParquet.
-
-        versions.json then looks the same as for an output and its source. The
-        conversion must not write over the GeoParquet, whose columns differ.
-        """
+        """An edited GeoJSON does not write over a 0.8.0 same-stem GeoParquet, whose columns differ."""
         collection_dir = initialized_catalog / "places"
         collection_dir.mkdir()
         geoparquet = collection_dir / "points.parquet"
@@ -1512,11 +1459,8 @@ class TestALegacyOutputIsItsSourceOwn:
 
 
 class TestAConvertedCogPassesItsOwnCheck:
-    """A COG that add converts from a GTiff embeds its statistics (issue #748).
-
-    A striped 600 x 600 GTiff is no COG, so add converts it. A GTiff under
-    512 pixels already validates as a COG, and add keeps it as it is.
-    """
+    """A COG that add converts from a GTiff embeds its statistics.
+    A striped 600 x 600 GTiff is no COG. A GTiff under 512 pixels validates as a COG as it is."""
 
     @pytest.mark.integration
     def test_check_metadata_reports_no_missing_statistics(

@@ -1,13 +1,4 @@
-"""Regression tests for STAC link and asset path issues.
-
-Bug #1: Asset hrefs were just filenames, but item JSON is in a subdirectory.
-        Assets need to reference ../filename to reach parent directory.
-
-Bug #2: is_current() looked up assets by filename alone, but versions.json
-        stores keys as {item_id}/{filename}, causing duplicate processing.
-
-Bug #3: Collection root links pointed to themselves instead of catalog root.
-"""
+"""Regression tests for STAC link and asset path issues."""
 
 from __future__ import annotations
 
@@ -46,11 +37,7 @@ def valid_parquet(fixtures_dir: Path) -> Path:
 
 @pytest.fixture
 def catalog_with_nested_item(tmp_path: Path, valid_parquet: Path) -> tuple[Path, Path, str]:
-    """Create a catalog with a nested item structure.
-
-    Returns:
-        Tuple of (catalog_root, data_file, collection_id)
-    """
+    """Create a catalog with a nested item structure."""
     catalog_root = tmp_path / "catalog"
     catalog_root.mkdir()
 
@@ -71,19 +58,13 @@ def catalog_with_nested_item(tmp_path: Path, valid_parquet: Path) -> tuple[Path,
 
 
 class TestAssetPathResolution:
-    """Bug #1: Asset hrefs must be relative to item JSON location."""
+    """Asset hrefs must be relative to item JSON location."""
 
     @pytest.mark.unit
     @pytest.mark.parametrize("item_id", ["data", "scene"])
     def test_item_hrefs_are_relative_to_the_item_json_in_the_file_directory(
         self, tmp_path: Path, valid_parquet: Path, item_id: str
     ) -> None:
-        """Issue #840: the item JSON sits in the directory of its files.
-
-        ``_create_and_save_item`` writes ``<item_dir>/<item_id>.json``. With
-        ``--item-id scene`` the scan wrote ``../data.parquet``, which resolves
-        to a file one directory up that does not exist.
-        """
         collection_dir = tmp_path / "collection"
         item_dir = collection_dir / "data"
         item_dir.mkdir(parents=True)
@@ -131,7 +112,7 @@ class TestAssetPathResolution:
 
 
 class TestIsCurrentKeyLookup:
-    """Bug #2: is_current() must handle item-scoped asset keys."""
+    """is_current() must handle item-scoped asset keys."""
 
     @pytest.mark.unit
     def test_is_current_finds_item_scoped_keys(
@@ -169,12 +150,6 @@ class TestIsCurrentKeyLookup:
     def test_multiple_files_same_directory_no_duplicate_processing(
         self, tmp_path: Path, valid_parquet: Path
     ) -> None:
-        """Files in same directory should not be processed multiple times.
-
-        When multiple geo files are in one directory:
-        1. First file adds ALL files as assets to versions.json
-        2. Subsequent files should be recognized as already-tracked
-        """
         # Arrange: catalog with 2 parquet files in same directory
         catalog_root = tmp_path / "catalog"
         catalog_root.mkdir()
@@ -202,7 +177,7 @@ class TestIsCurrentKeyLookup:
 
 
 class TestCollectionRootLinks:
-    """Bug #3: Collection root/parent links should point to catalog."""
+    """Collection root/parent links should point to catalog."""
 
     @pytest.mark.unit
     def test_collection_has_correct_root_link(
@@ -267,11 +242,6 @@ class TestCollectionRootLinks:
     def test_no_duplicate_item_links_in_collection(
         self, tmp_path: Path, valid_parquet: Path
     ) -> None:
-        """Collection should not have duplicate item links.
-
-        When multiple files in same directory are added, the collection
-        should have ONE item link, not multiple duplicates.
-        """
         # Arrange: catalog with 2 parquet files in same directory
         catalog_root = tmp_path / "catalog"
         catalog_root.mkdir()

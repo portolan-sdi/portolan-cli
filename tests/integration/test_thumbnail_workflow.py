@@ -1,10 +1,4 @@
-"""Integration tests for thumbnail and style workflow (Issue #13).
-
-Tests end-to-end flows:
-- Vector conversion → thumbnail generation
-- PMTiles asset → style in STAC properties
-- Config-driven style customization
-"""
+"""Integration tests for the thumbnail and style workflow."""
 
 from __future__ import annotations
 
@@ -17,9 +11,7 @@ import pytest
 if TYPE_CHECKING:
     from pathlib import Path
 
-# =============================================================================
 # Thumbnail Generation Integration Tests
-# =============================================================================
 
 
 class TestVectorThumbnailWorkflow:
@@ -99,9 +91,7 @@ thumbnails:
         assert config.basemap_opacity == 0.9
 
 
-# =============================================================================
 # Style Storage Integration Tests
-# =============================================================================
 
 
 class TestStyleInStacAssets:
@@ -220,9 +210,7 @@ styles:
         assert "portolan:styles" not in collection
 
 
-# =============================================================================
 # Raster Style Integration Tests
-# =============================================================================
 
 
 class TestRasterStyleWorkflow:
@@ -265,9 +253,7 @@ styles:
         assert props["render:rescale"] == [[0, 3000]]
 
 
-# =============================================================================
 # Config Hierarchy Tests
-# =============================================================================
 
 
 class TestConfigHierarchy:
@@ -309,9 +295,7 @@ styles:
         assert config.point_color == "#3388ff"
 
 
-# =============================================================================
 # Coordinate Transformation Tests
-# =============================================================================
 
 
 class TestPmtilesCoordinateTransformation:

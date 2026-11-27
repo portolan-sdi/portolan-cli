@@ -1,26 +1,7 @@
 #!/usr/bin/env python3
-"""Profile one perf scenario and save the report under the commit SHA (#992).
+"""Profile one perf scenario and save the report under ``.perf/<sha>/<scenario>/``.
 
-The script builds the scenario with the seeded generator of
-``tests/perf/scenarios.py`` and runs its command through
-``tests/perf/runner.py``, so the profile shows the same work as the gates::
-
-    uv run python scripts/profile.py add-many-collections --mode time
-    uv run python scripts/profile.py add-large-vector --mode mem --size 100000
-    uv run python scripts/profile.py add-many-collections --mode import
-
-Modes:
-
-- ``time`` runs pyinstrument and writes ``profile.html`` and ``profile.txt``.
-- ``mem`` runs ``memray run --native`` and writes ``memray.bin``, ``memray.html``
-  (a flame graph), and ``memray-stats.txt``. Native mode records the
-  allocations in geoparquet-io, DuckDB, and Arrow.
-- ``import`` runs ``python -X importtime`` and writes ``importtime.txt``.
-
-Each mode also writes ``record.json``, the runner record with the counters and
-the stage times. The output goes to ``.perf/<sha>/<scenario>/``, so two commits
-compare by a diff of two directories. ``uv run --with`` loads pyinstrument and
-memray, so neither is a project dependency.
+Modes: ``time`` (pyinstrument), ``mem`` (memray, native), ``import`` (``-X importtime``).
 """
 
 from __future__ import annotations
@@ -38,9 +19,9 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 from tests.perf.gates import SCALE_SIZES  # noqa: E402 - needs the path above
-from tests.perf.scenarios import SCENARIOS  # noqa: E402
+from tests.perf.scenarios import SCENARIOS  # noqa: E402 - needs the path above
 
-#: Sizes of the #990 table. Any other scenario defaults to twice its gate size.
+#: Profile sizes. Any other scenario defaults to twice its gate size.
 PROFILE_SIZES = {
     "add-many-collections": 100,
     "add-many-collections-thumbs": 100,

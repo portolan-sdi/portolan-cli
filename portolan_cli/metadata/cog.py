@@ -1,8 +1,4 @@
-"""COG (Cloud-Optimized GeoTIFF) metadata extraction.
-
-Uses rasterio to read COG metadata without loading pixel data.
-Extracts bbox, CRS, dimensions, bands, and resolution.
-"""
+"""COG (Cloud-Optimized GeoTIFF) metadata extraction."""
 
 from __future__ import annotations
 
@@ -20,21 +16,7 @@ if TYPE_CHECKING:
 
 @dataclass
 class COGMetadata:
-    """Metadata extracted from a COG file.
-
-    Attributes:
-        bbox: Bounding box as (minx, miny, maxx, maxy).
-        crs: CRS as EPSG code or WKT.
-        width: Image width in pixels.
-        height: Image height in pixels.
-        band_count: Number of bands.
-        dtype: Data type (uint8, float32, etc.).
-        nodata: Legacy single nodata value (first band). Use nodatavals for per-band.
-        resolution: Pixel resolution as (x_res, y_res).
-        nodatavals: Per-band nodata values as tuple. If None, falls back to nodata.
-        transform: Affine transform as 6 coefficients (a, b, c, d, e, f).
-                  Maps pixel coordinates to CRS coordinates.
-    """
+    """Metadata extracted from a COG file."""
 
     bbox: tuple[float, float, float, float]
     crs: str | None
@@ -68,13 +50,7 @@ class COGMetadata:
         return result
 
     def to_stac_properties(self) -> dict[str, Any]:
-        """Convert to STAC Item properties format (STAC v1.1.0 unified bands).
-
-        Returns unified `bands` array (not `raster:bands`) per STAC v1.1.0 spec.
-        Each band has: name, data_type, and optional nodata.
-
-        Also includes raster:spatial_resolution from resolution tuple.
-        """
+        """Convert to STAC Item properties format (STAC v1.1.0 unified bands)."""
         # Build unified bands array (STAC v1.1.0)
         bands: list[dict[str, Any]] = []
         for i in range(self.band_count):
@@ -198,23 +174,7 @@ def extract_schema_from_cog(
     *,
     return_warnings: bool = False,
 ) -> SchemaModel | tuple[SchemaModel, list[str]]:
-    """Extract SchemaModel from a COG file.
-
-    Extracts band metadata including data types and nodata values.
-    Returns a SchemaModel compatible with the Portolan metadata model.
-
-    Args:
-        path: Path to COG file.
-        return_warnings: If True, return (SchemaModel, warnings) tuple.
-
-    Returns:
-        SchemaModel with band definitions as columns, or (SchemaModel, warnings)
-        tuple if return_warnings is True.
-
-    Raises:
-        FileNotFoundError: If file doesn't exist.
-        rasterio.errors.RasterioIOError: If file is not valid raster.
-    """
+    """Extract SchemaModel from a COG file."""
     if not path.exists():
         raise FileNotFoundError(f"File not found: {path}")
 

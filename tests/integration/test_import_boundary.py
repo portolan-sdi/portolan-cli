@@ -1,8 +1,4 @@
-"""The library imports without the CLI shell (issue #944).
-
-The subprocess checks run in a fresh interpreter. The test process has already imported
-click and the geospatial stack, so ``sys.modules`` here proves nothing.
-"""
+"""The library imports without the CLI shell."""
 
 from __future__ import annotations
 
@@ -54,11 +50,7 @@ def test_import_loads_no_heavy_module(statement: str) -> None:
 
 @pytest.mark.integration
 def test_cli_export_is_the_group_after_the_submodule_loads() -> None:
-    """Importing ``portolan_cli.cli`` first must not rebind the export to the module.
-
-    The import system binds a loaded submodule to the package attribute of the
-    same name. Without the guard, this order returns the module object.
-    """
+    """Import binds a loaded submodule to the package attribute of the same name."""
     script = (
         "import click, portolan_cli.cli\n"
         "from portolan_cli import cli\n"

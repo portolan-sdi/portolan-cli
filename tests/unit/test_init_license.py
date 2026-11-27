@@ -1,14 +1,4 @@
-"""Unit tests for the license ``portolan init`` acquires (issue #686).
-
-``add`` refuses to write a collection with no license, so ``init`` collects one up
-front and seeds it into ``.portolan/metadata.yaml``. The hierarchical merge then
-hands it to every collection, and the gate in ``add_files`` passes without the
-human editing anything.
-
-Prompting is interactive-only. On ``--auto`` or ``--json`` there is nobody to ask,
-so a missing ``--license`` is an error rather than a silent default, matching how
-``extract`` handles a missing ArcGIS password.
-"""
+"""Unit tests for the license ``portolan init`` acquires."""
 
 from __future__ import annotations
 
@@ -117,15 +107,6 @@ class TestInitSeedsTheLicense:
     def test_the_seeded_metadata_carries_no_license_error(
         self, runner: CliRunner, tmp_path: Path
     ) -> None:
-        """The seeded file satisfies the license half of metadata validation.
-
-        Contact stays blank, which is what the two expected errors are. Asserting
-        on them proves the validator ran and simply had nothing to say about the
-        license, rather than the list being empty for some unrelated reason.
-
-        Sorted because ``_validate_contact`` iterates a frozenset, so the two
-        contact errors come back in either order depending on the process.
-        """
         root = tmp_path / "catalog"
         init = runner.invoke(cli, ["init", str(root), "--auto", "--license", "MIT"])
         assert init.exit_code == 0, init.output

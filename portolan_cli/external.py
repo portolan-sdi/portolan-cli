@@ -1,24 +1,4 @@
-"""Register external / remote data as catalog collections.
-
-Some valuable data sources are already published cloud-natively at a remote
-location (e.g. Overture Maps places as planet-scale GeoParquet on Overture's
-own public S3). Such data should be *referenced in place* — added to a Portolan
-catalog as an external collection that points at the remote URL — rather than
-downloaded and re-converted.
-
-This module creates a STAC ``collection.json`` whose collection-level ``data``
-asset ``href`` is the remote URL, carrying the ``external`` role, plus a
-``rel:"via"`` provenance link to the source. No bytes are downloaded and no
-conversion runs.
-
-a single vector file is a collection-level asset (no item.json),
-so external single-file data maps cleanly onto one collection with one
-collection-level asset.
-
-The metadata scanner (``portolan_cli.metadata.scan``) already skips
-scheme-qualified hrefs (``s3://``, ``https://``, ...) for local existence and
-freshness checks, so ``portolan check`` does not trip on the remote asset.
-"""
+"""Register external / remote data as catalog collections."""
 
 from __future__ import annotations
 
@@ -43,16 +23,8 @@ from portolan_cli.stac import (
 from portolan_cli.stac_enrich import enrich_collection_file
 from portolan_core.bbox import BBOX_2D_LEN, LAT_MAX, LAT_MIN, LON_MAX, LON_MIN
 
-# Role applied to external assets in addition to "data". This is what marks an
-# asset as referenced in place rather than downloaded and converted: a role is
-# spec-defined and every STAC client already reads them. The field that used to
-# carry the same fact is ``constants.LEGACY_MANAGED_FIELD``, which issue #654
-# stopped writing; `check --fix` reads it once to backfill this role.
 EXTERNAL_ROLE = "external"
 
-# URI scheme matcher for is_external_href (used by scanner/check to skip
-# remote assets). Note: validate_remote_url() is stricter and should be
-# used for input validation; this is for classification only.
 _URI_SCHEME_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9+.\-]*://")
 
 # Media type inference from the URL's apparent extension. Glob patterns and
@@ -75,15 +47,7 @@ DEFAULT_MEDIA_TYPE = "application/octet-stream"
 
 @dataclass
 class ExternalAddResult:
-    """Result of registering external data.
-
-    Attributes:
-        collection_id: ID of the collection that was created.
-        collection_path: Path to the written collection.json.
-        href: Remote URL the asset points at.
-        media_type: Media type recorded for the asset.
-        via_url: Provenance URL recorded as a ``rel:"via"`` link (if any).
-    """
+    """Result of registering external data."""
 
     collection_id: str
     collection_path: Path
@@ -109,17 +73,9 @@ def is_external_href(href: str) -> bool:
 
 
 def infer_media_type(url: str) -> str:
-    """Infer an IANA media type from a remote URL's apparent file extension.
-
-    Handles glob patterns (``.../*``), Hive-partition paths and query strings
-    by inspecting each path segment from the end and using the first one that
-    carries a recognised suffix. Falls back to ``application/octet-stream``.
-    """
+    """Infer an IANA media type from a remote URL's apparent file extension."""
     path = urlparse(url).path
     for segment in reversed([s for s in path.split("/") if s]):
-        # Tolerate glob segments like "*.parquet" by matching the trailing
-        # ".<ext>" directly (Path(".parquet").suffix is "", so we use a regex).
-        # A bare "*" has no extension and is skipped.
         match = re.search(r"(\.[A-Za-z0-9]+)$", segment)
         if match:
             suffix = match.group(1).lower()
@@ -129,13 +85,7 @@ def infer_media_type(url: str) -> str:
 
 
 def derive_collection_id_from_url(url: str) -> str:
-    """Best-effort collection ID from a remote URL.
-
-    Picks the last meaningful path segment, strips any extension and glob
-    characters, and normalises to the STAC id charset. Raises ``ValueError``
-    if nothing usable can be derived (caller should require an explicit
-    ``--collection``).
-    """
+    """Best-effort collection ID from a remote URL."""
     path = urlparse(url).path
     candidates = [s for s in path.split("/") if s and "*" not in s]
     for segment in reversed(candidates):
@@ -152,14 +102,7 @@ def derive_collection_id_from_url(url: str) -> str:
 
 
 def _validate_bbox(bbox: list[float]) -> None:
-    """Validate WGS84 bounding box coordinates.
-
-    Args:
-        bbox: [min_x, min_y, max_x, max_y] in WGS84.
-
-    Raises:
-        ValueError: If coordinates are out of range or min > max.
-    """
+    """Validate WGS84 bounding box coordinates."""
     if len(bbox) != BBOX_2D_LEN:
         raise ValueError("bbox must have exactly 4 values: min_x, min_y, max_x, max_y")
 
@@ -192,41 +135,7 @@ def add_external(
     asset_key: str = "data",
     force: bool = False,
 ) -> ExternalAddResult:
-    """Register remote data as an external catalog collection.
-
-    Creates ``<catalog_root>/<collection_id>/collection.json`` with a
-    collection-level ``data`` asset whose ``href`` is ``url`` (kept as-is,
-    not downloaded), carrying the ``external`` role, plus a ``rel:"via"``
-    provenance link. The collection is linked into the root catalog.
-
-    Args:
-        catalog_root: Catalog root (the directory containing catalog.json).
-        url: Remote URL of the data (e.g. an ``s3://`` or ``https://`` href).
-        collection_id: Collection ID. Derived from the URL when omitted.
-        title: Optional human-readable collection title.
-        description: Optional description (defaults to a generated one).
-        media_type: Asset media type. Inferred from the URL when omitted.
-        license: SPDX license expression, or "other" alongside license_url. Required
-            rather than defaulted: the old "other" default shipped a collection with
-            no rel="license" link, which is a PTL-LIC-002 error (issue #686). STAC
-            1.1 no longer accepts "proprietary".
-        license_url: URL of the license text, emitted as a rel="license" link.
-            Required when license is "other".
-        via_url: Provenance URL for the ``rel:"via"`` link. Defaults to ``url``.
-        bbox: Optional WGS84 bbox [min_x, min_y, max_x, max_y]. Global if omitted.
-        asset_key: Key for the asset entry in collection.json (default "data").
-        force: If True, overwrite existing collection. Default False.
-
-    Returns:
-        ExternalAddResult describing what was written.
-
-    Raises:
-        InputValidationError: If the URL fails validation (unsupported scheme,
-            path traversal, control characters, etc.).
-        ValueError: If the collection ID is missing/invalid, or bbox is invalid.
-        FileNotFoundError: If ``catalog_root`` is not an initialised catalog.
-        FileExistsError: If collection already exists and force=False.
-    """
+    """Register remote data as an external catalog collection."""
     # validate remote URL (rejects file://, path traversals, etc.)
     try:
         validate_remote_url(url)
@@ -265,8 +174,6 @@ def add_external(
         bbox=bbox,
     )
 
-    # Emit the rel="license" link, so a license of "other" is conformant rather than
-    # a PTL-LIC-002 error. Reuses the applier the add path uses (issue #686).
     apply_human_license(collection, {"license": license, "license_url": license_url})
 
     asset = pystac.Asset(
@@ -285,11 +192,8 @@ def add_external(
 
     from portolan_cli.catalog import apply_catalog_human_titles, ensure_link_titles
 
-    # Issue #815: a catalog takes its own title and description from its
-    # metadata.yaml, the same way the add sweeps apply them.
     apply_catalog_human_titles(catalog_root)
 
-    # Issue #502: backfill the human-readable title onto the new child link.
     ensure_link_titles(catalog_root)
 
     collection_path = collection_dir / "collection.json"
@@ -297,7 +201,6 @@ def add_external(
     resolved_via = via_url or url
     add_via_link(collection_path, resolved_via, title=title or "Source data")
 
-    # Run the collection hook on the finished file (#947).
     enrich_collection_file(
         collection_path,
         EnrichContext(

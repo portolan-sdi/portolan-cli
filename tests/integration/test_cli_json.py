@@ -1,8 +1,4 @@
-"""Integration tests for global --format=json CLI option.
-
-These tests verify that the global --format=json flag works correctly
-across all commands with the consistent OutputEnvelope structure.
-"""
+"""Integration tests for global --format=json CLI option."""
 
 from __future__ import annotations
 
@@ -23,12 +19,7 @@ def runner() -> CliRunner:
 
 @pytest.fixture
 def valid_catalog(conformant_catalog: Path) -> Path:
-    """A generated catalog that passes validation with no findings.
-
-    Built through `portolan init` rather than by hand: validation runs on
-    rashid and a hand-written catalog.json trips a dozen PTL-* rules
-    before these tests reach their subject, the JSON envelope.
-    """
+    """A generated catalog that passes validation with no findings."""
     return conformant_catalog
 
 
@@ -38,9 +29,7 @@ def scan_fixtures_dir() -> Path:
     return Path(__file__).parent.parent / "fixtures" / "scan"
 
 
-# =============================================================================
-# Phase 2: --format option on CLI root
-# =============================================================================
+# --format option on CLI root
 
 
 class TestGlobalFormatOption:
@@ -75,9 +64,7 @@ class TestGlobalFormatOption:
         assert "invalid" in result.output.lower() or "not one of" in result.output.lower()
 
 
-# =============================================================================
-# Phase 3: User Story 1 - Agent Parses Command Output
-# =============================================================================
+# Agent Parses Command Output
 
 
 class TestScanJsonOutput:
@@ -132,9 +119,7 @@ class TestScanJsonOutput:
 
         data = json.loads(result.output)
 
-        # Issues found: success=false in envelope, but exit code still 0
-        # Note: The scan issues are reported in data, not top-level errors
-        # The envelope errors are for CLI-level errors (like FileNotFoundError)
+        # Scan issues go in data; envelope errors are for CLI-level errors.
         assert "success" in data
         assert "data" in data
 
@@ -282,9 +267,7 @@ class TestErrorScenariosJsonOutput:
         assert "success" in data
 
 
-# =============================================================================
-# Phase 4: User Story 2 - Backward Compatibility
-# =============================================================================
+# Backward Compatibility
 
 
 class TestBackwardCompatibility:
@@ -353,9 +336,7 @@ class TestBackwardCompatibility:
         assert data["success"] is True
 
 
-# =============================================================================
-# Phase 5: User Story 3 - Human-Readable Default
-# =============================================================================
+# Human-Readable Default
 
 
 class TestTextOutputDefault:

@@ -1,4 +1,4 @@
-"""Tests for the lazy plugin command group (#947)."""
+"""Tests for the lazy plugin command group."""
 
 from __future__ import annotations
 
@@ -102,11 +102,6 @@ def test_builtin_wins_a_name_collision_and_help_warns(installed: list[EntryPoint
 
 
 def test_portolan_cli_entry_point_wins_a_name_collision(installed: list[EntryPoint]) -> None:
-    """An outside plugin cannot replace a command that portolan-cli declares.
-
-    The outside entry point comes first in discovery order, so the first-found
-    rule alone would pick it.
-    """
     installed.append(_command("version.rollback", "commands:add"))
     installed.append(_command("version.rollback", "commands:rollback", dist="portolan-cli"))
     root = _root()

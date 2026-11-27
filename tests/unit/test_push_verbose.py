@@ -1,11 +1,4 @@
-"""Tests for push verbose mode and upload metrics.
-
-Tests the quiet-by-default behavior of push uploads:
-- Default: only show failures, not per-file success messages
-- --verbose: show per-file upload details with size and speed
-
-See GitHub issue #282 for the upload metrics feature.
-"""
+"""Tests for push verbose mode and upload metrics."""
 
 from __future__ import annotations
 
@@ -26,9 +19,7 @@ if TYPE_CHECKING:
 
     from portolan_cli.sync.report import Report
 
-# =============================================================================
 # Formatting Tests
-# =============================================================================
 
 
 class TestFormatFileSize:
@@ -87,9 +78,7 @@ class TestFormatSpeed:
         assert format_speed(1024 * 1024 * 1024) == "1.0 GiB/s"
 
 
-# =============================================================================
 # Upload Metrics Tests
-# =============================================================================
 
 
 class TestUploadMetrics:
@@ -130,13 +119,11 @@ class TestUploadMetrics:
         assert metrics.average_speed == 0.0
 
 
-# =============================================================================
 # Verbose Mode Tests
-# =============================================================================
 
 
 class TestUploadMetricsAttrs:
-    """UploadMetrics feeds the push.assets span attributes (issue #991)."""
+    """UploadMetrics feeds the push.assets span attributes."""
 
     @pytest.mark.unit
     def test_to_attrs(self) -> None:

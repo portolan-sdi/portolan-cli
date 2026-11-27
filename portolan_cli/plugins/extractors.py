@@ -1,16 +1,4 @@
-"""The Extractor protocol and the registry of extractors (#947).
-
-An extractor turns a data source into a Portolan catalog. ``portolan
-extract <name>`` runs the Click command it supplies. A library caller runs
-``extract()`` directly.
-
-The ``portolan_extractors`` hook supplies extractors. The built-in ArcGIS,
-Carto, and WFS extractors come through the same hook. A built-in name wins a
-collision with a plugin.
-
-This module imports no Click at runtime. ``cli_command()`` imports the
-command module when the user runs the command.
-"""
+"""The Extractor protocol and the registry of extractors."""
 
 from __future__ import annotations
 
@@ -51,11 +39,7 @@ class Extractor(Protocol):
         ...
 
     def cli_command(self) -> click.Command:
-        """Return the Click command for ``portolan extract <name>``.
-
-        Import the command module inside this method, so ``portolan --help``
-        does not pay for it.
-        """
+        """Return the Click command for ``portolan extract <name>``."""
         ...
 
 
@@ -65,19 +49,7 @@ _CACHE: list[Any] = []
 
 
 def registered_extractors() -> dict[str, Extractor]:
-    """Collect extractors from every ``portolan_extractors`` hook.
-
-    Built-ins register first, so a built-in name keeps its built-in
-    extractor. A hook result that is not a list, a list entry that is not an
-    ``Extractor``, or a name that is already registered produces a
-    ``PluginWarning``.
-
-    The registry is cached per plugin manager, because ``portolan extract
-    --help`` asks for it once per command name.
-
-    Returns:
-        Extractors by name.
-    """
+    """Collect extractors from every ``portolan_extractors`` hook."""
     from portolan_cli.plugins.manager import PluginWarning, call_each, get_plugin_manager
 
     manager = get_plugin_manager()
@@ -119,14 +91,7 @@ def registered_extractors() -> dict[str, Extractor]:
 
 
 def extractor_owner(name: str) -> str | None:
-    """Return the name of the plugin that registers extractor ``name``.
-
-    Args:
-        name: The extractor name.
-
-    Returns:
-        The plugin name, or None when no plugin registers the extractor.
-    """
+    """Return the name of the plugin that registers extractor ``name``."""
     registered_extractors()
     owners: dict[str, str] = _CACHE[2]
     return owners.get(name)

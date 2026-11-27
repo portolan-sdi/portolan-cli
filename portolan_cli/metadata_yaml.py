@@ -1,38 +1,4 @@
-"""Metadata YAML schema and validation.
-
-This module provides validation and template generation for .portolan/metadata.yaml
-files. These files contain ONLY human-enrichable fields that can't be derived from
-STAC or other sources.
-
-**Required fields (human-only):**
-- contact.name, contact.email - Accountability
-- license - SPDX identifier, or "other" alongside license_url
-
-``license`` is the one required field generation actually enforces: ``portolan add``
-refuses to write a collection without a usable one, because a collection with no
-license fails PTL-LIC-001 or PTL-LIC-002 under ``portolan check`` (issue #686). The
-predicate lives in ``portolan_core.licensing``; ``portolan init`` seeds the value so
-the requirement is already met before the first add.
-
-**Auto-filled from STAC (NOT in metadata.yaml):**
-- title, description - From catalog/collection init
-- columns - From table:columns extension
-- bands - From eo:bands, raster:bands extensions
-- bbox, CRS, temporal extent - From STAC extent
-
-**Optional enrichment (human):**
-- license_url, citation, doi, keywords, attribution
-- source_url, processing_notes, known_issues
-
-Usage:
-    from portolan_cli.metadata_yaml import validate_metadata, load_and_validate_metadata
-
-    # Validate a metadata dict
-    errors = validate_metadata(metadata_dict)
-
-    # Load from hierarchy and validate
-    metadata, errors = load_and_validate_metadata(collection_path, catalog_root)
-"""
+"""Metadata YAML schema and validation."""
 
 from __future__ import annotations
 
@@ -56,32 +22,19 @@ _MAX_YEAR = 2100
 
 logger = logging.getLogger(__name__)
 
-# =============================================================================
-# Required fields (revised)
-# Title and description come from STAC, not metadata.yaml
-# =============================================================================
-
 REQUIRED_FIELDS = frozenset({"contact", "license"})
 REQUIRED_CONTACT_FIELDS = frozenset({"name", "email"})
-
-# =============================================================================
-# Validation regex patterns
-# =============================================================================
 
 # Basic email pattern - not RFC 5322 compliant but catches obvious errors
 EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
-# DOI pattern: 10.XXXX/suffix (where XXXX is 4+ digits)
-# Suffix can contain any non-whitespace characters
-# See: https://www.doi.org/doi_handbook/2_Numbering.html
+# DOI: 10.XXXX/suffix with 4+ digits. https://www.doi.org/doi_handbook/2_Numbering.html
 DOI_PATTERN = re.compile(r"^10\.\d{4,}/\S+$")
 
 # ISO date pattern: YYYY-MM-DD
 ISO_DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
-# ORCID pattern: 0000-0000-0000-000X (four groups of 4 chars, last can be X check digit)
-# See: https://support.orcid.org/hc/en-us/articles/360006897674
-# Check digit uses ISO 7064 Mod 11-2, so final char can be 0-9 or X
+# ORCID: four groups of 4, last char may be X. https://support.orcid.org/hc/en-us/articles/360006897674
 ORCID_PATTERN = re.compile(r"^\d{4}-\d{4}-\d{4}-\d{3}[\dX]$")
 
 # URL pattern: Basic validation for http/https URLs
@@ -89,23 +42,8 @@ ORCID_PATTERN = re.compile(r"^\d{4}-\d{4}-\d{4}-\d{3}[\dX]$")
 URL_PATTERN = re.compile(r"^https?://[^\s<>\"{}|\\^`\[\]]+$")
 
 
-# =============================================================================
-# Validation
-# =============================================================================
-
-
 def _validate_authors(authors: Any) -> list[str]:
-    """Validate the 'authors' field (list of author dicts).
-
-    Each author must have 'name'. Optional 'orcid' and 'email' are validated
-    for format if present.
-
-    Args:
-        authors: The authors field value to validate.
-
-    Returns:
-        List of validation error messages.
-    """
+    """Validate the 'authors' field (list of author dicts)."""
     errors: list[str] = []
 
     if not isinstance(authors, list):
@@ -147,14 +85,7 @@ def _validate_authors(authors: Any) -> list[str]:
 
 
 def _validate_related_dois(related_dois: Any) -> list[str]:
-    """Validate the 'related_dois' field (list of DOI strings).
-
-    Args:
-        related_dois: The related_dois field value to validate.
-
-    Returns:
-        List of validation error messages.
-    """
+    """Validate the 'related_dois' field (list of DOI strings)."""
     errors: list[str] = []
 
     if not isinstance(related_dois, list):
@@ -178,14 +109,7 @@ def _validate_related_dois(related_dois: Any) -> list[str]:
 
 
 def _validate_citations(citations: Any) -> list[str]:
-    """Validate the 'citations' field (list of citation strings).
-
-    Args:
-        citations: The citations field value to validate.
-
-    Returns:
-        List of validation error messages.
-    """
+    """Validate the 'citations' field (list of citation strings)."""
     errors: list[str] = []
 
     if not isinstance(citations, list):
@@ -202,14 +126,7 @@ def _validate_citations(citations: Any) -> list[str]:
 
 
 def _validate_upstream_version(upstream_version: Any) -> list[str]:
-    """Validate the 'upstream_version' field (string).
-
-    Args:
-        upstream_version: The upstream_version field value to validate.
-
-    Returns:
-        List of validation error messages.
-    """
+    """Validate the 'upstream_version' field (string)."""
     errors: list[str] = []
 
     if not isinstance(upstream_version, str):
@@ -221,14 +138,7 @@ def _validate_upstream_version(upstream_version: Any) -> list[str]:
 
 
 def _validate_upstream_version_url(upstream_version_url: Any) -> list[str]:
-    """Validate the 'upstream_version_url' field (URL string).
-
-    Args:
-        upstream_version_url: The upstream_version_url field value to validate.
-
-    Returns:
-        List of validation error messages.
-    """
+    """Validate the 'upstream_version_url' field (URL string)."""
     errors: list[str] = []
 
     if not isinstance(upstream_version_url, str):
@@ -250,17 +160,7 @@ def _validate_upstream_version_url(upstream_version_url: Any) -> list[str]:
 
 
 def _validate_contact(metadata: dict[str, Any]) -> list[str]:
-    """Validate the required 'contact' field.
-
-    Contact must be a dict with 'name' and 'email' subfields.
-    Email format is validated.
-
-    Args:
-        metadata: The full metadata dictionary.
-
-    Returns:
-        List of validation error messages.
-    """
+    """Validate the required 'contact' field."""
     errors: list[str] = []
 
     if "contact" not in metadata:
@@ -287,21 +187,7 @@ def _validate_contact(metadata: dict[str, Any]) -> list[str]:
 
 
 def _validate_license(metadata: dict[str, Any]) -> list[str]:
-    """Validate the required 'license' field.
-
-    The verdict comes from :func:`portolan_core.licensing.license_gap`, so this
-    command, ``portolan add``, and ``portolan check`` all apply one policy to
-    one SPDX list (issue #727). A license must be an identifier in
-    ``rashid_core.api.SPDX_LICENSE_IDS``, or the STAC 1.1 keyword ``other`` with a
-    link to the license text. STAC 1.1 no longer accepts the deprecated
-    ``proprietary`` value (issue #568).
-
-    Args:
-        metadata: The full metadata dictionary.
-
-    Returns:
-        List of validation error messages.
-    """
+    """Validate the required 'license' field."""
     errors: list[str] = []
 
     if "license" not in metadata:
@@ -357,20 +243,7 @@ def _validate_host_contact(host: dict[str, Any], index: int) -> list[str]:
 
 
 def _validate_providers(metadata: dict[str, Any]) -> list[str]:
-    """Validate the optional 'providers' array (issue #684).
-
-    The array is optional here because the host is seeded from ``contact`` when
-    it is absent, and because a producer is a human fact Portolan cannot invent —
-    a collection with no producer keeps reporting PTL-PRV-001 from
-    ``portolan check``. What this catches is an array that exists but cannot be
-    put in conformant shape.
-
-    Args:
-        metadata: The full metadata dictionary.
-
-    Returns:
-        List of validation error messages.
-    """
+    """Validate the optional 'providers' array."""
     providers = metadata.get("providers")
     if providers is None:
         return []
@@ -409,14 +282,7 @@ def _validate_providers(metadata: dict[str, Any]) -> list[str]:
 
 
 def _validate_doi(metadata: dict[str, Any]) -> list[str]:
-    """Validate the optional 'doi' field format.
-
-    Args:
-        metadata: The full metadata dictionary.
-
-    Returns:
-        List of validation error messages.
-    """
+    """Validate the optional 'doi' field format."""
     errors: list[str] = []
 
     doi = metadata.get("doi")
@@ -427,20 +293,7 @@ def _validate_doi(metadata: dict[str, Any]) -> list[str]:
 
 
 def _validate_title_description(metadata: dict[str, Any]) -> list[str]:
-    """Validate optional title/description overrides (Issue #502).
-
-    Both are optional human overrides for the auto-derived values. A blank
-    string (``""`` or whitespace) is treated as "not provided" — same as an
-    omitted key and consistent with the template's ``# title: ""`` guidance and
-    the other optional fields — so the auto-derived value is used. Only a
-    non-string value is invalid.
-
-    Args:
-        metadata: The full metadata dictionary.
-
-    Returns:
-        List of validation error messages.
-    """
+    """Validate optional title/description overrides."""
     errors: list[str] = []
     for field in ("title", "description"):
         value = metadata.get(field)
@@ -452,21 +305,7 @@ def _validate_title_description(metadata: dict[str, Any]) -> list[str]:
 
 
 def validate_metadata(metadata: dict[str, Any]) -> list[str]:
-    """Validate a metadata dictionary against the schema.
-
-    Checks for:
-    - Required fields: contact (name + email), license
-    - Format validation: email, SPDX license, DOI (if present)
-
-    Note: title and description are NOT required in metadata.yaml - they
-    come from STAC catalog/collection metadata.
-
-    Args:
-        metadata: The metadata dictionary to validate.
-
-    Returns:
-        List of validation error messages. Empty list if valid.
-    """
+    """Validate a metadata dictionary against the schema."""
     errors: list[str] = []
 
     # Required fields
@@ -486,7 +325,7 @@ def validate_metadata(metadata: dict[str, Any]) -> list[str]:
         else:
             errors.extend(_validate_defaults(defaults))
 
-    # Validate #316 fields if present (all optional)
+    # Validate the optional fields if present
     if (authors := metadata.get("authors")) is not None:
         errors.extend(_validate_authors(authors))
 
@@ -506,14 +345,7 @@ def validate_metadata(metadata: dict[str, Any]) -> list[str]:
 
 
 def _validate_temporal_defaults(temporal: dict[str, Any]) -> list[str]:
-    """Validate the 'defaults.temporal' section.
-
-    Args:
-        temporal: The temporal defaults dictionary.
-
-    Returns:
-        List of validation error messages.
-    """
+    """Validate the 'defaults.temporal' section."""
     errors: list[str] = []
 
     # Validate year (must be integer in reasonable range)
@@ -561,15 +393,7 @@ def _validate_temporal_defaults(temporal: dict[str, Any]) -> list[str]:
 
 
 def _validate_nodata_value(val: Any, index: int | None = None) -> str | None:
-    """Validate a single nodata value.
-
-    Args:
-        val: The nodata value to validate.
-        index: If provided, the band index (for per-band nodata).
-
-    Returns:
-        Error message if invalid, None if valid.
-    """
+    """Validate a single nodata value."""
     field = f"defaults.raster.nodata[{index}]" if index is not None else "defaults.raster.nodata"
 
     if val is None:
@@ -582,14 +406,7 @@ def _validate_nodata_value(val: Any, index: int | None = None) -> str | None:
 
 
 def _validate_raster_defaults(raster: dict[str, Any]) -> list[str]:
-    """Validate the 'defaults.raster' section.
-
-    Args:
-        raster: The raster defaults dictionary.
-
-    Returns:
-        List of validation error messages.
-    """
+    """Validate the 'defaults.raster' section."""
     errors: list[str] = []
 
     nodata = raster.get("nodata")
@@ -610,14 +427,7 @@ def _validate_raster_defaults(raster: dict[str, Any]) -> list[str]:
 
 
 def _validate_defaults(defaults: dict[str, Any]) -> list[str]:
-    """Validate the 'defaults' section of metadata.yaml.
-
-    Args:
-        defaults: The defaults dictionary to validate.
-
-    Returns:
-        List of validation error messages.
-    """
+    """Validate the 'defaults' section of metadata.yaml."""
     errors: list[str] = []
 
     # Validate temporal defaults
@@ -640,25 +450,7 @@ def _validate_defaults(defaults: dict[str, Any]) -> list[str]:
 
 
 def generate_metadata_template(*, license_id: str = "", license_url: str = "") -> str:
-    """Generate a metadata.yaml template with comments.
-
-    Returns a YAML string with required and optional fields,
-    with comments explaining each field's purpose.
-
-    Note: title and description are auto-derived from the collection id
-    (humanized, per Issue #502); the optional keys below override them.
-
-    ``portolan init`` fills the license in, because ``portolan add`` refuses to
-    write a collection without one (issue #686). ``portolan metadata init`` leaves
-    both blank, since a bare template is what that command is for.
-
-    Args:
-        license_id: SPDX identifier, or "other", to write into the template.
-        license_url: URL of the license text, required alongside "other".
-
-    Returns:
-        YAML template string ready to write to file.
-    """
+    """Generate a metadata.yaml template with comments."""
     # Comments line up at column 37 in this template; keep both license lines there.
     comment_column = 36
     license_line = f'license: "{license_id}"'.ljust(comment_column) + (
@@ -668,9 +460,7 @@ def generate_metadata_template(*, license_id: str = "", license_url: str = "") -
         "# optional - URL to full license text"
     )
 
-    # Substituted rather than interpolated: an f-string over the whole template
-    # reads to the S608 rule as string-built SQL. A suppression here would blunt
-    # a check that catches the real thing elsewhere in the tree.
+    # Substituted, not an f-string: an f-string reads as string-built SQL (S608).
     return _TEMPLATE.replace("__LICENSE_LINE__", license_line).replace(
         "__LICENSE_URL_LINE__", license_url_line
     )
@@ -796,20 +586,7 @@ known_issues: ""                    # optional - Known limitations or caveats
 def apply_temporal_defaults(
     defaults: dict[str, Any],
 ) -> datetime | None:
-    """Apply temporal defaults from metadata.yaml.
-
-    Returns a datetime to use for items that don't have explicit datetime.
-    Year takes precedence over start date if both are specified.
-
-    Args:
-        defaults: The 'defaults' section from metadata.yaml.
-
-    Returns:
-        A datetime object or None if no temporal defaults specified.
-
-    Raises:
-        ValueError: If date format is invalid (should be caught by validation).
-    """
+    """Apply temporal defaults from metadata.yaml."""
     temporal = defaults.get("temporal")
     if not temporal:
         return None
@@ -850,24 +627,7 @@ def apply_raster_nodata_defaults(
     *,
     strict: bool = True,
 ) -> tuple[float | None, ...]:
-    """Apply raster nodata defaults from metadata.yaml.
-
-    Fills in missing nodata values from defaults. Existing values are preserved.
-
-    Args:
-        defaults: The 'defaults' section from metadata.yaml.
-        nodatavals: Current nodata values tuple (may be None or contain Nones).
-        band_count: Number of bands in the raster.
-        strict: If True (default), raise error on per-band list length mismatch.
-            If False, log a warning and pad with last value.
-
-    Returns:
-        Updated nodatavals tuple with defaults applied.
-
-    Raises:
-        NodataMismatchError: If strict=True and per-band nodata list length
-            doesn't match band_count.
-    """
+    """Apply raster nodata defaults from metadata.yaml."""
     raster = defaults.get("raster")
     if not raster or "nodata" not in raster:
         # No raster defaults - return original or tuple of Nones
@@ -925,20 +685,7 @@ def load_and_validate_metadata(
     *,
     state: ConfigSource | None = None,
 ) -> tuple[dict[str, Any], list[str]]:
-    """Load metadata from hierarchy and validate.
-
-    Uses hierarchical .portolan/ resolution to merge metadata.yaml files
-    from catalog_root down to path, then validates the merged result.
-
-    Args:
-        path: Directory to start from (collection or subcatalog).
-        catalog_root: Catalog root directory.
-        state: The run state, which parses each metadata.yaml once per run.
-
-    Returns:
-        Tuple of (merged_metadata_dict, list_of_errors).
-        Returns ({}, errors) if no metadata.yaml exists in hierarchy.
-    """
+    """Load metadata from hierarchy and validate."""
     # Load merged metadata using existing hierarchy support
     metadata = (
         state.metadata(path) if state is not None else load_merged_metadata(path, catalog_root)

@@ -93,8 +93,8 @@ uploaded.
 one. Diff by sha256 against the remote `versions.json` and upload only new or
 changed assets. (See `_get_assets_to_upload` in `push.py`.)
 
-Push compares the local current snapshot with the remote current snapshot
-(#962). It skips an asset only when both snapshots record the same href and the
+Push compares the local current snapshot with the remote current snapshot.
+It skips an asset only when both snapshots record the same href and the
 same sha256. The entry that `current_version` names is the current snapshot. If
 that field is missing or names no entry, push uses the last entry.
 
@@ -108,7 +108,7 @@ that field is missing or names no entry, push uses the last entry.
   that are local only. A force push with no new version needs uploads too, and
   an older local version can list a file that the user deleted.
 - The diff reads only manifests. It cannot see an object that disagrees with
-  its manifest. `push --verify` sends one HEAD per skipped asset (#966). It
+  its manifest. `push --verify` sends one HEAD per skipped asset. It
   uploads the asset when the object is missing or its size differs from the
   local `size_bytes`. The HEADs run through `AsyncIOExecutor` with the push
   concurrency. Without the flag, push sends no HEAD for a skipped asset. A dry
@@ -138,7 +138,7 @@ namely `visual`, `thumbnail`, `style` and `collection-mirror`. Single-File
 Collections says a collection "may optionally carry a `.pmtiles`, a
 `thumbnail.png`, and a `styles/` directory". Push skips one that left the disk,
 and it warns. Two roles keep the `FileNotFoundError`, namely `data` and `source`.
-Nothing can rebuild those (#735). Conformance gaps belong to `portolan check`,
+Nothing can rebuild those. Conformance gaps belong to `portolan check`,
 not to push.
 
 The predicate `derived_assets.is_optional_derivative` decides. It reads the role

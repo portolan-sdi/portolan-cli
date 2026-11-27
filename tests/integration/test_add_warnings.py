@@ -1,8 +1,4 @@
-"""Integration tests for warnings during add().
-
-These tests verify that the proper warnings and errors are emitted when adding
-data based on their cloud-native status per spec 002-cloud-native-warnings.
-"""
+"""Integration tests for warnings during add()."""
 
 from __future__ import annotations
 
@@ -159,10 +155,8 @@ class TestAddIntegration:
         # For now, we just verify the format detection returns CLOUD_NATIVE.
         result = get_cloud_native_status(valid_points_parquet)
         assert result.status == CloudNativeStatus.CLOUD_NATIVE
-        # In a full integration test, we would:
-        # 1. Initialize a catalog
-        # 2. Call add with the GeoParquet
-        # 3. Verify no warning was printed to stderr
+        # A full test would init a catalog, add the GeoParquet, and check that
+        # stderr has no warning.
         _ = capsys  # Silence unused warning; will be used in full integration test
 
     @pytest.mark.integration

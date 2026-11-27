@@ -1,27 +1,4 @@
-"""Conversion configuration for controlling format handling behavior.
-
-This module provides configuration for overriding default format conversion
-behavior:
-- Force-convert cloud-native formats (e.g., FlatGeobuf -> GeoParquet)
-- Preserve convertible formats (e.g., keep Shapefiles as-is)
-- Path-based overrides with glob patterns
-
-Config is stored in .portolan/config.yaml under the 'conversion' key:
-
-    conversion:
-      extensions:
-        convert: [fgb]       # Force convert these cloud-native formats
-        preserve: [gpkg]     # Keep these convertible formats as-is
-      paths:
-        preserve:            # Glob patterns for files to preserve
-          - "legacy/**"
-          - "regulatory/*.shp"
-
-See:
-- GitHub Issue #75: FlatGeobuf cloud-native status
-- GitHub Issue #103: Config for non-cloud-native file handling
-- Accept non-cloud-native formats
-"""
+"""Conversion configuration for controlling format handling behavior."""
 
 from __future__ import annotations
 
@@ -51,46 +28,18 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class ConversionOverrides:
-    """Configuration overrides for format conversion behavior.
-
-    Attributes:
-        extensions_convert: Extensions to force-convert even if cloud-native.
-            Normalized to lowercase with leading dot (e.g., {".fgb"}).
-        extensions_preserve: Extensions to preserve even if convertible.
-            Normalized to lowercase with leading dot (e.g., {".shp"}).
-        paths_preserve: Glob patterns for files to preserve regardless of format.
-            Patterns are matched against relative paths from catalog root.
-    """
+    """Configuration overrides for format conversion behavior."""
 
     extensions_convert: frozenset[str] = field(default_factory=frozenset)
     extensions_preserve: frozenset[str] = field(default_factory=frozenset)
     paths_preserve: tuple[str, ...] = field(default_factory=tuple)
 
     def should_force_convert(self, path: Path) -> bool:
-        """Check if a file should be force-converted based on extension.
-
-        Args:
-            path: Path to the file to check.
-
-        Returns:
-            True if the file's extension is in extensions_convert.
-        """
+        """Check if a file should be force-converted based on extension."""
         return path.suffix.lower() in self.extensions_convert
 
     def should_preserve(self, path: Path, *, root: Path | None = None) -> bool:
-        """Check if a file should be preserved (not converted).
-
-        Checks both extension-based and path-based preserve rules.
-        Path patterns take precedence over extension rules.
-
-        Args:
-            path: Path to the file to check.
-            root: Catalog root for resolving relative paths in glob patterns.
-                Required if paths_preserve contains patterns.
-
-        Returns:
-            True if the file should be preserved based on extension or path pattern.
-        """
+        """Check if a file should be preserved (not converted)."""
         # Check path patterns first (higher precedence)
         if self.paths_preserve and root is not None:
             try:
@@ -111,14 +60,7 @@ class ConversionOverrides:
 
 
 def _normalize_extension(ext: str) -> str:
-    """Normalize an extension to lowercase with leading dot.
-
-    Args:
-        ext: Extension string, with or without leading dot.
-
-    Returns:
-        Lowercase extension with leading dot (e.g., ".fgb").
-    """
+    """Normalize an extension to lowercase with leading dot."""
     ext = ext.lower().strip()
     if not ext.startswith("."):
         ext = f".{ext}"
@@ -144,18 +86,7 @@ def _parse_paths(items: list[Any]) -> tuple[str, ...]:
 def get_conversion_overrides(
     catalog_path: Path, *, state: ConfigSource | None = None
 ) -> ConversionOverrides:
-    """Load conversion overrides from catalog config.
-
-    Reads the 'conversion' section from .portolan/config.yaml and returns
-    a ConversionOverrides instance with normalized values.
-
-    Args:
-        catalog_path: Root path of the catalog.
-        state: The run state, which parses the config once per run.
-
-    Returns:
-        ConversionOverrides instance. Returns empty overrides if no config exists.
-    """
+    """Load conversion overrides from catalog config."""
     config = load_catalog_config(catalog_path, state=state)
     extensions = config.section("conversion", "extensions")
     paths = config.section("conversion", "paths")
@@ -168,21 +99,7 @@ def get_conversion_overrides(
 
 
 def get_handler_pins(catalog_path: Path, *, state: ConfigSource | None = None) -> dict[str, str]:
-    """Load ``conversion.handlers``: the format handler to use per extension (#947).
-
-    A pin decides between format handlers that claim the same extension::
-
-        conversion:
-          handlers:
-            .tif: cog
-
-    Args:
-        catalog_path: Root path of the catalog.
-        state: The run state, which parses the config once per run.
-
-    Returns:
-        Lowercase extension with a leading dot, to handler name.
-    """
+    """Load ``conversion.handlers``: the format handler to use per extension."""
     handlers = load_catalog_config(catalog_path, state=state).section("conversion", "handlers")
     pins: dict[str, str] = {}
     for extension, name in handlers.items():
@@ -190,10 +107,6 @@ def get_handler_pins(catalog_path: Path, *, state: ConfigSource | None = None) -
         pins[ext if ext.startswith(".") else f".{ext}"] = str(name).strip()
     return pins
 
-
-# =============================================================================
-# COG Settings (Issue #279)
-# =============================================================================
 
 # The compression algorithms that rio-cogeo accepts. The module
 # rio_cogeo.profiles holds the profile table that these names index.
@@ -224,11 +137,10 @@ GDAL_COMPRESS_NAMES: dict[str, str] = {"RAW": "NONE"}
 # Compression methods that support quality setting
 QUALITY_COMPRESSIONS: frozenset[str] = frozenset({"JPEG", "WEBP"})
 
-# Sentinel meaning "derive this from the source raster" (Issue #690).
+# Sentinel meaning "derive this from the source raster".
 AUTO = "auto"
 
-# Fallback pair used when a raster cannot be inspected. These are the values
-# Portolan hardcoded before #690: safe everywhere, optimal nowhere.
+# Fallback pair for a raster that cannot be inspected: safe everywhere, optimal nowhere.
 FALLBACK_PREDICTOR = 2
 FALLBACK_RESAMPLING = "nearest"
 
@@ -251,19 +163,7 @@ VALID_RESAMPLING_METHODS: frozenset[str] = frozenset(
 
 @dataclass(frozen=True)
 class CogSettings:
-    """Configuration for Cloud-Optimized GeoTIFF conversion.
-
-    Defaults are the built-in COG settings.
-
-    Attributes:
-        compression: Compression algorithm (DEFLATE, JPEG, LZW, ZSTD, etc.).
-        quality: Quality setting (1-100). Applies to JPEG and WEBP compression.
-        tile_size: Internal tile size in pixels (default 512).
-        predictor: Compression predictor (1=none, 2=horizontal, 3=floating point),
-            or "auto" to derive it from the source raster's dtype.
-        resampling: Overview resampling method (nearest, bilinear, cubic, etc.),
-            or "auto" to derive it from the source raster's dtype.
-    """
+    """Configuration for Cloud-Optimized GeoTIFF conversion."""
 
     compression: str = "DEFLATE"
     quality: int | None = None
@@ -276,30 +176,7 @@ class CogSettings:
 
 
 def derive_cog_defaults(source: Path | Any) -> tuple[int, str]:
-    """Pick a predictor and an overview resampling method for one raster.
-
-    The spec's conversion defaults tie both settings to what the pixels mean
-    (see specs/best-practices/conversion-defaults.md in portolan-spec):
-
-    - Floating-point rasters (elevation, model output) compress better with the
-      floating-point predictor, and their overviews should be averaged.
-    - Integer rasters may carry class codes, so their overviews stay nearest:
-      averaging two class codes invents a class that does not exist.
-    - Multi-band byte imagery gains nothing from horizontal differencing, so it
-      gets no predictor at all.
-
-    Continuous versus categorical has no perfect signal. Dtype is the one signal
-    that is cheap and rarely wrong, and both results stay overridable through
-    ``conversion.cog`` in ``.portolan/config.yaml``.
-
-    Args:
-        source: Raster to inspect, or the raster open for reading. A caller
-            that has the raster open passes it, so the file opens once.
-
-    Returns:
-        A ``(predictor, resampling)`` pair. Unreadable rasters yield the
-        conservative fallback, ``(2, "nearest")``.
-    """
+    """Pick a predictor and an overview resampling method for one raster."""
     import rasterio
 
     try:
@@ -322,19 +199,7 @@ def derive_cog_defaults(source: Path | Any) -> tuple[int, str]:
 
 
 def resolve_cog_settings(settings: CogSettings, source: Path | Any) -> CogSettings:
-    """Replace any "auto" field in ``settings`` with a value read off ``source``.
-
-    Configured values pass through untouched. Call this immediately before
-    handing a profile to rio-cogeo, never at config load time: derivation needs
-    the raster, and one catalog holds many.
-
-    Args:
-        settings: Settings as loaded from config.
-        source: Raster about to be converted, or the raster open for reading.
-
-    Returns:
-        Settings with concrete ``predictor`` and ``resampling`` values.
-    """
+    """Replace any "auto" field in ``settings`` with a value read off ``source``."""
     if AUTO not in (settings.predictor, settings.resampling):
         return settings
 
@@ -348,18 +213,7 @@ def resolve_cog_settings(settings: CogSettings, source: Path | Any) -> CogSettin
 
 
 def validate_cog_settings(settings: CogSettings) -> list[str]:
-    """Validate COG settings and return warnings for any issues.
-
-    Does not raise exceptions — returns a list of warning messages. This allows
-    conversion to proceed with potentially suboptimal settings while informing
-    the user of issues.
-
-    Args:
-        settings: CogSettings instance to validate.
-
-    Returns:
-        List of warning messages. Empty list if all settings are valid.
-    """
+    """Validate COG settings and return warnings for any issues."""
     warnings: list[str] = []
 
     # Validate compression
@@ -427,7 +281,7 @@ def validate_cog_settings(settings: CogSettings) -> list[str]:
             f"A predictor applies only to: {', '.join(sorted(PREDICTOR_COMPRESSIONS))}."
         )
 
-    # Validate thumbnail_max_size (Issue #372)
+    # Validate thumbnail_max_size
     if settings.thumbnail_max_size <= 0:
         warnings.append(
             f"thumbnail_max_size {settings.thumbnail_max_size} is invalid. "
@@ -439,7 +293,7 @@ def validate_cog_settings(settings: CogSettings) -> list[str]:
             "Recommended: <= 4096. Defeats the purpose of a thumbnail."
         )
 
-    # Validate thumbnail_quality (Issue #372)
+    # Validate thumbnail_quality
     if not 1 <= settings.thumbnail_quality <= _MAX_QUALITY:
         warnings.append(
             f"thumbnail_quality {settings.thumbnail_quality} is out of range. "
@@ -460,12 +314,7 @@ PARTITION_KEYS: tuple[str, ...] = (
 
 @dataclass(frozen=True)
 class PartitionSettings:
-    """The resolved ``partitioning.*`` settings of one directory.
-
-    Attributes:
-        directory: The directory whose config hierarchy gave the values.
-        values: Each key of ``PARTITION_KEYS`` to its value, None when unset.
-    """
+    """The resolved ``partitioning.*`` settings of one directory."""
 
     directory: Path
     values: dict[str, Any]
@@ -489,26 +338,7 @@ def settings_override(
     vector: VectorSettings | None = None,
     partition: PartitionSettings | None = None,
 ) -> Iterator[None]:
-    """Make the settings loaders return these values.
-
-    ``convert_file`` takes explicit settings, and a format handler loads its
-    settings by catalog root (#947). The override carries the explicit
-    settings to the handler. ``add`` also carries the settings it resolved
-    through its run state, because a handler method takes no state. A None
-    value leaves that loader unchanged.
-
-    The override is a context variable. ``add`` sets it in the worker thread
-    that calls the handler, so it reaches the handler in that thread.
-
-    Args:
-        cog: COG settings for ``get_cog_settings``, or None.
-        vector: Vector settings for ``get_vector_settings``, or None.
-        partition: Partition settings for ``partitioning.partition_strategy``
-            in their directory, or None.
-
-    Yields:
-        Nothing. The override ends with the block.
-    """
+    """Make the settings loaders return these values."""
     token = _SETTINGS_OVERRIDE.set((cog, vector, partition))
     try:
         yield
@@ -525,22 +355,7 @@ def partition_override(directory: Path) -> PartitionSettings | None:
 def get_cog_settings(
     catalog_path: Path | None, *, state: ConfigSource | None = None
 ) -> CogSettings:
-    """Load COG conversion settings from catalog config.
-
-    Reads the 'conversion.cog' section from .portolan/config.yaml and returns
-    a CogSettings instance with values from config merged with defaults.
-
-    Validates settings and logs warnings for any issues. Invalid values are
-    either corrected (e.g., quality clamped to 1-100) or passed through to
-    let rio-cogeo handle the error with its own message.
-
-    Args:
-        catalog_path: Root path of the catalog.
-        state: The run state, which parses the config once per run.
-
-    Returns:
-        CogSettings instance. Returns defaults if no config exists.
-    """
+    """Load COG conversion settings from catalog config."""
     override = _SETTINGS_OVERRIDE.get()[0]
     if override is not None:
         return override
@@ -565,9 +380,7 @@ def get_cog_settings(
     if not isinstance(tile_size, int):
         tile_size = 512
 
-    # predictor and resampling both accept "auto", meaning "derive from the
-    # source raster at conversion time" (Issue #690). Anything unparsable
-    # falls back to "auto" rather than to a hardcoded value.
+    # "auto" derives predictor and resampling from the source; unparsable values fall back to it.
     raw_predictor = cog.get("predictor", AUTO)
     predictor: int | str
     if isinstance(raw_predictor, bool) or not isinstance(raw_predictor, int):
@@ -609,19 +422,13 @@ def get_cog_settings(
     return settings
 
 
-# =============================================================================
-# Vector Settings (Issue #340)
-# =============================================================================
-
 # Valid spatial index types supported by geoparquet-io
 VALID_SPATIAL_INDEXES: frozenset[str] = frozenset({"h3", "quadkey", "s2", "a5", "kdtree", "none"})
 
 # Valid sort methods
 VALID_SORT_METHODS: frozenset[str] = frozenset({"hilbert", "quadkey", "none"})
 
-# Defaults that make generated GeoParquet conform to the Portolan profile
-# (issue #805). Named so the parse fallbacks below cannot drift from the
-# dataclass defaults.
+# Defaults that make GeoParquet conform to the Portolan profile; named so parse fallbacks match.
 DEFAULT_SORT = "hilbert"
 DEFAULT_ADD_BBOX = True
 
@@ -637,28 +444,7 @@ DEFAULT_RESOLUTIONS: dict[str, int] = {
 
 @dataclass(frozen=True)
 class VectorSettings:
-    """Configuration for vector (GeoParquet) conversion.
-
-    Controls spatial optimization at conversion time via geoparquet-io's
-    fluent Table API. Both file and Iceberg backends receive the same
-    spatially-enriched output.
-
-    Attributes:
-        spatial_index: Spatial index column to add (h3, quadkey, s2, a5, kdtree, none).
-        resolution: Index resolution. "auto" uses geoparquet-io defaults which
-            include row-count-based tuning. Explicit int overrides.
-        sort: Row ordering method (hilbert, quadkey, none). Defaults to
-            ``hilbert``.
-        add_bbox: Whether to add a bbox struct column. Defaults to ``True``.
-        partition: Whether to produce hive-partitioned output. Only affects
-            file backend; Iceberg uses native partitioning on the spatial column.
-
-    ``sort`` and ``add_bbox`` default to the values the Portolan GeoParquet
-    profile requires (issue #805). rashid reads row order through the bbox
-    covering column, so ``add_bbox`` is what makes PTL-DAT-006 and PTL-DAT-007
-    evaluable and ``sort`` is what makes PTL-DAT-006 pass. Set ``sort: none``
-    or ``add_bbox: false`` in ``.portolan/config.yaml`` to turn either off.
-    """
+    """Configuration for vector (GeoParquet) conversion."""
 
     spatial_index: str = "none"
     resolution: int | str = "auto"
@@ -668,16 +454,7 @@ class VectorSettings:
 
 
 def validate_vector_settings(settings: VectorSettings) -> list[str]:
-    """Validate vector settings and return warnings for any issues.
-
-    Does not raise exceptions — returns a list of warning messages.
-
-    Args:
-        settings: VectorSettings instance to validate.
-
-    Returns:
-        List of warning messages. Empty list if all settings are valid.
-    """
+    """Validate vector settings and return warnings for any issues."""
     warnings: list[str] = []
 
     # Validate spatial_index
@@ -718,32 +495,17 @@ def validate_vector_settings(settings: VectorSettings) -> list[str]:
     return warnings
 
 
-# Console warnings already shown, keyed by catalog and message. `add` reads the
-# vector settings once per file, so without this a single misspelled config key
-# would print one warning per file in the batch (issue #805).
+# Warnings already shown, keyed by catalog and message, so a batch warns once, not per file.
 _CONFIG_WARNINGS_SHOWN: set[tuple[str, str]] = set()
 
 
 def reset_config_warning_cache() -> None:
-    """Forget which config warnings were already shown.
-
-    Each `portolan` process warns once per distinct problem. Tests run many
-    catalogs in one process, so they call this to get the first-run behavior
-    back.
-    """
+    """Forget which config warnings were already shown."""
     _CONFIG_WARNINGS_SHOWN.clear()
 
 
 def _warn_once(catalog_path: Path, message: str) -> None:
-    """Log a config problem as a warning once, and at debug level after that.
-
-    The CLI shows warnings on stderr. Library code does not print (#1035).
-
-    Args:
-        catalog_path: Catalog the setting came from. Scopes the deduplication,
-            so a second catalog in the same process still warns.
-        message: The warning text.
-    """
+    """Log a config problem as a warning once, and at debug level after that."""
     key = (str(catalog_path), message)
     if key in _CONFIG_WARNINGS_SHOWN:
         logger.debug(message)
@@ -755,18 +517,7 @@ def _warn_once(catalog_path: Path, message: str) -> None:
 def get_vector_settings(
     catalog_path: Path | None, *, state: ConfigSource | None = None
 ) -> VectorSettings:
-    """Load vector conversion settings from catalog config.
-
-    Reads the 'conversion.vector' section from .portolan/config.yaml and returns
-    a VectorSettings instance with values from config merged with defaults.
-
-    Args:
-        catalog_path: Root path of the catalog.
-        state: The run state, which parses the config once per run.
-
-    Returns:
-        VectorSettings instance. Returns defaults if no config exists.
-    """
+    """Load vector conversion settings from catalog config."""
     override = _SETTINGS_OVERRIDE.get()[1]
     if override is not None:
         return override
@@ -789,8 +540,7 @@ def get_vector_settings(
     elif isinstance(raw_resolution, int):
         resolution = raw_resolution
 
-    # Parse sort. A missing or non-string value keeps the default rather than
-    # disabling the optimization (issue #805).
+    # Parse sort. A missing or non-string value keeps the default.
     sort = vector.get("sort")
     sort = DEFAULT_SORT if not isinstance(sort, str) else sort.lower()
 
@@ -804,9 +554,7 @@ def get_vector_settings(
     if not isinstance(partition, bool):
         partition = False
 
-    # Normalize invalid values before creating settings. A misspelled value
-    # changes what the writer produces, so the operator sees these, not only
-    # the log (issue #805).
+    # Normalize invalid values; the operator sees these, not only the log.
     if spatial_index not in VALID_SPATIAL_INDEXES:
         _warn_once(
             catalog_path,

@@ -1,8 +1,4 @@
-"""Tests for spatial partitioning utilities (Phase 2).
-
-Tests for geohash precision detection, geohash column computation,
-and bbox column computation.
-"""
+"""Tests for spatial partitioning utilities (Phase 2)."""
 
 from __future__ import annotations
 
@@ -164,7 +160,7 @@ def test_compute_bbox_columns_preserves_existing():
 
 
 def _table_with_gaps() -> pa.Table:
-    """Three rows: a point, a null geometry, and an empty point (issue #961)."""
+    """Three rows: a point, a null geometry, and an empty point."""
     empty_point = struct.pack("<BIdd", 1, 1, float("nan"), float("nan"))
     return pa.table(
         {

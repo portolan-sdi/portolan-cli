@@ -353,8 +353,6 @@ class TestListIgnoredFilesHypothesis:
             result = runner.invoke(cli, ["list", "--catalog", str(tmp_path)])
 
         assert result.exit_code == 0
-        # Check hidden file doesn't appear as a listed item
-        # Files appear as "+ filename" in output, so check for that pattern
-        # (not substring — ".parq" would match "visible.parquet")
+        # Match "+ filename", not a substring: ".parq" would match "visible.parquet".
         assert f"+ {hidden_file}" not in result.output
         assert "visible.parquet" in result.output

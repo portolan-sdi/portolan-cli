@@ -1,9 +1,4 @@
-"""Tests for SLD to Mapbox GL converter.
-
-Uses real fixture data from WMS GetStyles requests:
-- sld_simple_point.xml: Pergamino aeropuertos (stacked circles with airplane glyph)
-- sld_categorical.xml: Pergamino barrios_y_pueblos (12-category polygon fills)
-"""
+"""Tests for SLD to Mapbox GL converter."""
 
 from __future__ import annotations
 

@@ -1,8 +1,4 @@
-"""Tests for ArcGIS extraction orchestrator.
-
-The orchestrator ties together all extraction components:
-URL parsing → Discovery → Filtering → Extraction → Report generation.
-"""
+"""Tests for ArcGIS extraction orchestrator."""
 
 from __future__ import annotations
 
@@ -75,11 +71,7 @@ def _extract_root(
     layers: ServiceDiscoveryResult | list[ServiceDiscoveryResult],
     **kwargs: Any,
 ) -> tuple[ExtractionReport, MagicMock, MagicMock]:
-    """Extract a fake services root in raw mode.
-
-    ``layers`` is one discovery result for every service, or one per service
-    in order. Returns the report, the discover_layers mock, and the fetch mock.
-    """
+    """Extract a fake services root in raw mode."""
     traversal = FolderTraversal(visited=[], skipped=[], service_count=len(services))
     with (
         patch(
@@ -148,9 +140,7 @@ def _staged_relative(path: Path, catalog: Path) -> Path:
     return Path(*path.relative_to(catalog / ".portolan" / "staging").parts[1:])
 
 
-# =============================================================================
 # slugify tests
-# =============================================================================
 
 
 class TestSlugify:
@@ -184,9 +174,7 @@ class TestSlugify:
         assert slugify("2020 Census - Block Groups (PA)") == "2020_census_block_groups_pa"
 
 
-# =============================================================================
 # Fixtures
-# =============================================================================
 
 
 @pytest.fixture
@@ -218,9 +206,7 @@ def mock_gpio() -> MagicMock:
     return mock
 
 
-# =============================================================================
 # extract_arcgis_catalog tests
-# =============================================================================
 
 
 @pytest.mark.usefixtures("no_extract_side_requests")
@@ -469,9 +455,7 @@ class TestExtractionProgress:
         assert progress.status == "extracting"
 
 
-# =============================================================================
 # Integration tests (with mocked gpio)
-# =============================================================================
 
 
 @pytest.mark.usefixtures("no_extract_side_requests")
@@ -631,9 +615,7 @@ class TestOrchestratorIntegration:
         assert result.summary.failed == 0
 
 
-# =============================================================================
 # Services root support tests
-# =============================================================================
 
 
 class TestListServices:
@@ -792,7 +774,6 @@ class TestServicesRootExtraction:
         assert (tmp_path / ".portolan").exists()
         assert (tmp_path / ".portolan" / "extraction-report.json").exists()
 
-        # Verify fetch was called with the correct path structure
         # Single-layer service is FLATTENED: census_2020/census_2020.parquet
         # (not nested: census_2020/block_groups/block_groups.parquet)
         call_args = mock_extract.call_args
@@ -824,19 +805,6 @@ class TestServicesRootExtraction:
         assert result.summary.total_layers == 1
 
     def test_single_layer_service_flattened(self, tmp_path: Path) -> None:
-        """Single-layer service should create collection directly (no subcatalog).
-
-        Expected output structure:
-            bag_woonfunctie/
-            ├── collection.json  (created by auto-init)
-            └── bag_woonfunctie.parquet
-
-        NOT:
-            bag_woonfunctie/
-            ├── catalog.json  (subcatalog)
-            └── bag_woonfunctie/
-                └── bag_woonfunctie.parquet
-        """
         mock_services = [
             ServiceInfo(name="BAG_Woonfunctie", service_type="FeatureServer"),
         ]
@@ -870,16 +838,6 @@ class TestServicesRootExtraction:
         assert layer_result.output_path == "bag_woonfunctie/bag_woonfunctie.parquet"
 
     def test_multi_layer_service_keeps_nesting(self, tmp_path: Path) -> None:
-        """Multi-layer service should keep subcatalog structure.
-
-        Expected output structure:
-            woontypering/
-            ├── catalog.json  (subcatalog)
-            ├── layer_a/
-            │   └── layer_a.parquet
-            └── layer_b/
-                └── layer_b.parquet
-        """
         mock_services = [
             ServiceInfo(name="Woontypering", service_type="FeatureServer"),
         ]
@@ -914,11 +872,6 @@ class TestServicesRootExtraction:
             assert len(parts) == 3, f"Expected nested path, got: {layer_result.output_path}"
 
     def test_mixed_services_flatten_and_nest_appropriately(self, tmp_path: Path) -> None:
-        """Mix of single and multi-layer services should handle each correctly.
-
-        Single-layer service → flatten
-        Multi-layer service → keep nesting
-        """
         mock_services = [
             ServiceInfo(name="SingleLayer", service_type="FeatureServer"),
             ServiceInfo(name="MultiLayer", service_type="FeatureServer"),
@@ -1057,9 +1010,7 @@ class TestArcGISCollectionMetadataSeeding:
         assert "Description from ArcGIS API" in content
 
 
-# =============================================================================
 # list_services folder recursion + coverage tests
-# =============================================================================
 
 
 @pytest.mark.unit
@@ -1120,9 +1071,7 @@ def test_list_services_no_recurse_skips_coverage(monkeypatch: pytest.MonkeyPatch
     assert "folder_coverage" not in result.to_dict()
 
 
-# =============================================================================
 # Task 9: nested-by-folder output paths
-# =============================================================================
 
 
 @pytest.mark.unit
@@ -1137,9 +1086,7 @@ def test_service_output_dir_nests_folders(tmp_path: Path) -> None:
     )
 
 
-# =============================================================================
 # Tasks 8 + 10: recursive folder discovery, scoping, routing, coverage
-# =============================================================================
 
 
 @pytest.mark.unit
@@ -1215,9 +1162,7 @@ def test_discover_and_filter_no_recurse_uses_flat_discovery(
     assert captured["token"] == "TKN"
 
 
-# =============================================================================
 # ArcGISLayerSource.fetch token-forwarding test
-# =============================================================================
 
 
 @pytest.mark.unit
@@ -1248,9 +1193,7 @@ def test_fetch_passes_token(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> 
     assert captured["bbox"] is True
 
 
-# =============================================================================
-# ArcGISLayerSource.fetch timeout-forwarding tests (issue #898)
-# =============================================================================
+# ArcGISLayerSource.fetch timeout-forwarding tests
 
 
 class _StubTable:
@@ -1266,7 +1209,7 @@ class _StubTable:
         Path(path).write_bytes(b"PAR1")
 
 
-# A source that needs longer than gpio's 60s default, as in issue #898.
+# A source that needs longer than gpio's 60s default.
 _SLOW_LAYER_OPTIONS = ExtractionOptions(timeout=180.0, vector=VectorSettings(sort="none"))
 
 
@@ -1283,11 +1226,6 @@ def _extract_through_fake_gpio(
 
 @pytest.mark.unit
 def test_fetch_forwards_timeout(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """The configured timeout must reach gpio.extract_arcgis (issue #898).
-
-    Discovery already honored --timeout, but the feature-page requests stayed at
-    gpio's 60s default, so slow layers timed out however high the user set it.
-    """
     seen: dict[str, object] = {}
 
     def gpio_with_timeout(url: str, timeout: float = 60.0, **rest: object) -> object:
@@ -1303,11 +1241,6 @@ def test_fetch_forwards_timeout(monkeypatch: pytest.MonkeyPatch, tmp_path: Path)
 def test_fetch_omits_timeout_when_gpio_lacks_it(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """An older gpio without a timeout parameter must keep working (issue #898).
-
-    The variadic keyword catch-all proves the kwarg is withheld rather than
-    merely tolerated.
-    """
     seen: dict[str, object] = {}
 
     def gpio_without_timeout(url: str, **rest: object) -> object:
@@ -1322,9 +1255,7 @@ def test_fetch_omits_timeout_when_gpio_lacks_it(
     assert "timeout" not in seen
 
 
-# =============================================================================
-# ArcGISLayerSource.fetch output-CRS forwarding tests (issue #802)
-# =============================================================================
+# ArcGISLayerSource.fetch output-CRS forwarding tests
 
 
 def _capturing_extract(captured: dict[str, object]) -> Callable[..., object]:
@@ -1348,7 +1279,6 @@ class _NullCrsTable(_StubTable):
 
 
 def test_output_crs_defaults_to_native() -> None:
-    """ExtractionOptions must preserve the source CRS by default (issue #802)."""
     assert ExtractionOptions().output_crs == "native"
 
 
@@ -1400,11 +1330,6 @@ def test_fetch_warns_when_gpio_lacks_output_crs(
 def test_fetch_restamps_projected_source_crs(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """A native extraction with a projected table CRS ends up tagged with it.
-
-    This covers the capture-write-restamp chain in ArcGISLayerSource.fetch, not
-    the isolated helpers (issue #802).
-    """
     from pyproj import CRS
 
     rd_new = CRS.from_epsg(28992).to_json_dict()
@@ -1423,12 +1348,6 @@ def test_fetch_restamps_projected_source_crs(
 
 
 def test_fetch_ignores_string_source_crs(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """A string table CRS must not reach the metadata, which needs PROJJSON.
-
-    gpio.Table.crs may return a string. A string CRS is not a valid PROJJSON
-    dict, so the writer's null tag stays (issue #802).
-    """
-
     def fake_extract_arcgis(url: str, output_crs: str | None = None) -> object:
         return _NullCrsTable("EPSG:28992")
 
@@ -1440,9 +1359,7 @@ def test_fetch_ignores_string_source_crs(monkeypatch: pytest.MonkeyPatch, tmp_pa
     assert _read_crs(out) is None
 
 
-# =============================================================================
-# _ensure_geoparquet_crs tests (issue #802)
-# =============================================================================
+# _ensure_geoparquet_crs tests
 
 
 def _write_geoparquet_with_null_crs(path: Path) -> None:
@@ -1479,7 +1396,6 @@ def _read_crs(path: Path) -> object:
 
 
 def test_ensure_geoparquet_crs_stamps_projected_crs(tmp_path: Path) -> None:
-    """A projected source CRS must replace the null tag gpio wrote (issue #802)."""
     from pyproj import CRS
 
     path = tmp_path / "rd.parquet"
@@ -1550,9 +1466,7 @@ def test_is_wgs84_crs_rejects_projected_crs() -> None:
     assert _is_wgs84_crs(CRS.from_epsg(28992).to_json_dict()) is False
 
 
-# =============================================================================
-# bbox covering column (issue #805)
-# =============================================================================
+# bbox covering column
 
 
 def _recording_ops_extract(calls: list[str]) -> Callable[..., object]:
@@ -1572,11 +1486,6 @@ def _recording_ops_extract(calls: list[str]) -> Callable[..., object]:
 
 @pytest.mark.unit
 def test_fetch_adds_bbox_before_sorting(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """rashid reads PTL-DAT-006 and PTL-DAT-007 through the covering column.
-
-    Without ``add_bbox`` the extractor's output fails PTL-DAT-007 outright, so
-    the call is not optional. The order matches convert.apply_vector_settings.
-    """
     calls: list[str] = []
     _install_gpio(monkeypatch, _recording_ops_extract(calls))
 
@@ -1599,12 +1508,7 @@ def test_fetch_honours_add_bbox_false(monkeypatch: pytest.MonkeyPatch, tmp_path:
 
 
 def _no_geometry_extract(calls: list[str]) -> Callable[..., object]:
-    """A geoparquet_io stand-in whose Table reports no geometry column.
-
-    `gpio.extract_arcgis` reads an ArcGIS Table layer as a plain table with
-    `geometry_column` set to None. Both spatial operations raise a DuckDB
-    binder error on such a table.
-    """
+    """A geoparquet_io stand-in whose Table reports no geometry column."""
 
     class _Table(_StubTable):
         geometry_column = None
@@ -1624,12 +1528,6 @@ def _no_geometry_extract(calls: list[str]) -> Callable[..., object]:
 def test_fetch_skips_spatial_ops_without_geometry(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """An ArcGIS Table layer carries no geometry, so neither operation runs.
-
-    `convert.apply_vector_settings` guards this case. The extractor builds its
-    own table and must apply the same guard, or a Table layer aborts the
-    extraction with a raw DuckDB binder error (issue #805).
-    """
     calls: list[str] = []
     _install_gpio(monkeypatch, _no_geometry_extract(calls))
 
@@ -1644,9 +1542,7 @@ def test_fetch_skips_spatial_ops_without_geometry(
     assert (tmp_path / "out.parquet").exists()
 
 
-# =============================================================================
-# Layers without Query capability (issue #1001)
-# =============================================================================
+# Layers without Query capability
 
 NO_QUERY_REASON = "skipped: no Query capability (tiles-only)"
 
@@ -1697,7 +1593,6 @@ def test_single_service_skipped_layers_respect_layer_filter(tmp_path: Path) -> N
 
 
 def test_services_root_keeps_the_service_order_with_skipped_layers(tmp_path: Path) -> None:
-    """#1012: a tiles-only service keeps its place, so the [i/N] index follows the services."""
     results = {
         "https://x/rest/services/Tiles/MapServer": _tiles_only_discovery(),
         "https://x/rest/services/Good/FeatureServer": ServiceDiscoveryResult(
@@ -1734,7 +1629,6 @@ def test_services_root_keeps_the_service_order_with_skipped_layers(tmp_path: Pat
 def test_services_root_names_the_producer_the_services_share(
     copyrights: tuple[str, str], producer: str | None
 ) -> None:
-    """#1039: one attribution across the services names the catalog producer."""
     roads = [LayerInfo(id=0, name="roads", layer_type="Feature Layer")]
     services = [ServiceInfo("A", "FeatureServer"), ServiceInfo("B", "FeatureServer")]
     results = iter(ServiceDiscoveryResult(layers=roads, copyright_text=text) for text in copyrights)
@@ -1817,9 +1711,7 @@ def test_services_root_filters_skipped_layers_and_keeps_each_reason(tmp_path: Pa
     assert [(r.name, r.error) for r in report.layers] == [("lijnen", f"B: {NO_QUERY_REASON}")]
 
 
-# =============================================================================
-# Layer URLs (#652), tables (#812), and the layer identity in errors (#866)
-# =============================================================================
+# Layer URLs, tables, and the layer identity in errors
 
 _PARKS_AND_ROADS = ServiceDiscoveryResult(
     layers=[
@@ -1843,7 +1735,6 @@ def _discover(source: str, found: ServiceDiscoveryResult, **options: Any) -> Dis
 
 @pytest.mark.unit
 def test_layer_url_discovers_that_one_layer_as_named() -> None:
-    """#652: .../FeatureServer/1 extracts layer 1, which the user named."""
     discovery = _discover(f"{TEST_FEATURE_SERVER_URL}/1", _PARKS_AND_ROADS)
 
     assert [(ref.id, ref.name, ref.explicit) for ref in discovery.layers] == [(1, "Roads", True)]
@@ -1893,7 +1784,6 @@ def test_layer_url_for_a_missing_layer_fails() -> None:
 
 @pytest.mark.unit
 def test_tables_join_the_layers_only_with_include_tables() -> None:
-    """#812: --include-tables reaches discovery, and a table is kind 'table'."""
     without = _discover(TEST_FEATURE_SERVER_URL, _PARKS_AND_ROADS)
     with_tables = _discover(TEST_FEATURE_SERVER_URL, _PARKS_AND_ROADS, include_tables=True)
 
@@ -1907,7 +1797,6 @@ def test_tables_join_the_layers_only_with_include_tables() -> None:
 
 @pytest.mark.unit
 def test_tables_only_service_fails_and_names_the_flag(tmp_path: Path) -> None:
-    """#812: a FeatureServer with only tables no longer reports 'Extracted 0/0 layers'."""
     tables_only = ServiceDiscoveryResult(
         layers=[], tables=[LayerInfo(id=0, name="zoning_descriptions", layer_type="Table")]
     )
@@ -1955,7 +1844,6 @@ def test_include_tables_flag_reaches_the_extraction(tmp_path: Path) -> None:
 def test_fetch_error_keeps_the_layer_identity(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """#866: the DuckDB error names a temp file. The message names the layer too."""
     from portolan_cli.extract.arcgis.orchestrator import ArcGISLayerError
 
     def failing_gpio(url: str, **_: object) -> object:

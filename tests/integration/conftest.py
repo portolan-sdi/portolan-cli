@@ -1,21 +1,4 @@
-"""Fault injection for push against a moto S3 server.
-
-obstore is a Rust client. It sends real HTTP requests and does not see boto3
-patches, so the harness runs moto in server mode on the loopback interface.
-The tests then read the bucket back with boto3. They assert the object set,
-the ETags, and the Content-Type headers that a reader of the bucket sees.
-
-``PutFaults`` wraps ``obstore.put`` and ``obstore.put_async``. Every put site
-in ``portolan_cli/sync`` calls them through the ``obstore`` module, so one
-``monkeypatch.setattr`` reaches all of them. A test arms an action on the Nth
-put whose key matches a predicate. The action raises ``ConnectionError`` to
-simulate a dropped connection, or calls ``second_writer`` to simulate a
-concurrent push.
-
-``bucket`` wraps the shared ``s3_bucket`` and ``_aws_env`` fixtures of
-``tests/conftest.py``. Every CLI call goes through the shared ``run_cli``
-harness, so the catalog invariants check each catalog that a test writes.
-"""
+"""Fault injection for push against a moto S3 server."""
 
 from __future__ import annotations
 
@@ -28,7 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from tests.print_report import print_report_fixture  # noqa: F401  (a shared fixture)
+from tests.print_report import print_report_fixture  # noqa: F401 - a shared fixture
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -226,12 +209,7 @@ def _catalog_template(
 
 @pytest.fixture
 def fault_catalog(tmp_path: Path, _catalog_template: Path) -> Path:
-    """Return a fresh copy of a catalog with a vector and a raster collection.
-
-    ``init --auto`` and ``add`` build it once per session. The collection
-    ``buildings`` holds ``open-buildings.parquet``. The collection ``imagery``
-    holds two COG scenes as Items.
-    """
+    """Return a fresh copy of a catalog with a vector and a raster collection."""
     root = tmp_path / "catalog"
     shutil.copytree(_catalog_template, root)
     return root

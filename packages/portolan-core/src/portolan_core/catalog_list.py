@@ -1,11 +1,4 @@
-"""Catalog listing with status indicators.
-
-This module provides functions to list all files in a catalog with their
-tracking status (tracked, untracked, modified, deleted).
-
-Per issue #210: The list command shows ALL files with status indicators.
-Everything in a catalog is tracked unless excluded by ignored_files config.
-"""
+"""Catalog listing with status indicators."""
 
 from __future__ import annotations
 
@@ -99,11 +92,7 @@ class ItemInfo:
 
 @dataclass
 class CollectionInfo:
-    """Information about a collection with all its items.
-
-    ``assets`` holds the files directly in the collection directory, such as a
-    collection-level GeoParquet that ``portolan add`` writes.
-    """
+    """Information about a collection with all its items."""
 
     collection_id: str
     is_initialized: bool  # Has collection.json
@@ -182,7 +171,7 @@ _ALWAYS_IGNORED: frozenset[str] = frozenset(
         ".DS_Store",
         "Thumbs.db",
         ".gitkeep",
-        ".env",  # Credentials - must never be tracked/pushed (Issue #356)
+        ".env",  # Credentials: must never be tracked or pushed
     }
 )
 
@@ -198,16 +187,7 @@ _STAC_METADATA_FILES: frozenset[str] = frozenset(
 
 
 def _is_ignored(filename: str, item_id: str, ignored_patterns: list[str]) -> bool:
-    """Check if a file should be ignored.
-
-    Args:
-        filename: The filename to check.
-        item_id: The item directory name (for STAC metadata matching).
-        ignored_patterns: List of glob patterns to ignore.
-
-    Returns:
-        True if the file should be ignored.
-    """
+    """Check if a file should be ignored."""
     # Always ignore certain files
     if filename in _ALWAYS_IGNORED:
         return True
@@ -230,23 +210,10 @@ def _is_ignored(filename: str, item_id: str, ignored_patterns: list[str]) -> boo
 
 
 def _get_format_display_name(filename: str, file_path: Path | None = None) -> str:
-    """Get human-readable format name for a file.
-
-    Uses extension-based detection by default, with content inspection
-    for ambiguous formats like .json (which may be GeoJSON or plain JSON).
-
-    Args:
-        filename: The filename to check.
-        file_path: Optional full path for content inspection. If provided and
-            the file exists, content inspection is used for .json files.
-
-    Returns:
-        Human-readable format name (e.g., "GeoParquet", "GeoJSON", "JSON").
-    """
+    """Get human-readable format name for a file."""
     ext = Path(filename).suffix.lower()
 
-    # Special case: .json files need content inspection to distinguish
-    # GeoJSON from plain JSON (PR #261)
+    # A .json file needs content inspection to tell GeoJSON from plain JSON.
     if ext == ".json" and file_path is not None and file_path.exists():
         if is_geojson(file_path):
             return "GeoJSON"
@@ -262,22 +229,13 @@ def _get_format_display_name(filename: str, file_path: Path | None = None) -> st
 def _by_name(path: PurePath) -> str:
     """Sort key that orders files the same way on every platform.
 
-    A Windows ``Path`` compares without case, so ``sorted`` on paths puts
-    ``data.parquet`` before ``README.md`` there and after it on POSIX.
+    A Windows ``Path`` compares without case, so sorting Paths would differ per OS.
     """
     return path.name
 
 
 def _get_tracked_assets(versions_path: Path) -> set[str]:
-    """Read tracked asset keys from versions.json.
-
-    Args:
-        versions_path: Path to versions.json file.
-
-    Returns:
-        Set of asset keys that are tracked, or empty set if
-        versions.json doesn't exist or is corrupt.
-    """
+    """Read tracked asset keys from versions.json."""
     if not versions_path.exists():
         return set()
     try:
@@ -297,20 +255,7 @@ def _scan_files(
     tracked_assets: set[str],
     ignored_patterns: list[str],
 ) -> list[AssetInfo]:
-    """List the files directly in ``directory`` with their tracking status.
-
-    Args:
-        directory: The item or collection directory.
-        key_prefix: The versions.json key prefix of a file here. An item uses
-            ``"{item_id}/"``. The collection directory uses ``""``.
-        item_id: The item ID, to skip the ``{item_id}.json`` STAC file. Empty
-            for the collection directory.
-        tracked_assets: Asset keys in the current version of versions.json.
-        ignored_patterns: List of glob patterns to ignore.
-
-    Returns:
-        The files on disk, then the tracked files missing from disk.
-    """
+    """List the files directly in ``directory`` with their tracking status."""
     assets: list[AssetInfo] = []
     seen_keys: set[str] = set()
 
@@ -375,17 +320,7 @@ def _scan_item_directory(
     tracked_assets: set[str],
     ignored_patterns: list[str],
 ) -> ItemInfo:
-    """Scan an item directory and return all files with status.
-
-    Args:
-        item_dir: Path to the item directory.
-        collection_id: ID of the parent collection.
-        tracked_assets: Asset keys in the current version of versions.json.
-        ignored_patterns: List of glob patterns to ignore.
-
-    Returns:
-        ItemInfo with all assets and their status.
-    """
+    """Scan an item directory and return all files with status."""
     item_id = item_dir.name
     return ItemInfo(
         item_id=item_id,
@@ -399,19 +334,7 @@ def _scan_collection_directory(
     collection_id: str,
     ignored_patterns: list[str],
 ) -> CollectionInfo:
-    """Scan a collection directory and return its files and items with status.
-
-    A subdirectory that holds its own ``collection.json`` is a nested
-    collection. It is listed on its own, not as an item of this collection.
-
-    Args:
-        col_dir: Path to the collection directory.
-        collection_id: The collection ID, a path below the catalog root.
-        ignored_patterns: List of glob patterns to ignore.
-
-    Returns:
-        CollectionInfo with all items and their assets.
-    """
+    """Scan a collection directory and return its files and items with status."""
     is_initialized = (col_dir / "collection.json").exists()
     tracked_assets = _get_tracked_assets(col_dir / "versions.json")
 
@@ -452,25 +375,7 @@ def list_catalog_contents(
     untracked_only: bool = False,
     state: ConfigSource | None = None,
 ) -> CatalogListResult:
-    """List all contents of a catalog with tracking status.
-
-    This is the library function of ``portolan list``.
-
-    The collections come from ``catalog_collections``, the walk ``check`` also
-    applies, so a nested or unlinked collection appears (issue #944). A
-    top-level directory without ``collection.json`` appears too when it holds
-    item files, so ``list`` still shows data that is not yet added.
-
-    Args:
-        catalog_root: Root directory of the catalog.
-        collection_id: Optional collection to filter by.
-        tracked_only: Keep only tracked assets. It wins over ``untracked_only``.
-        untracked_only: Keep only untracked assets.
-        state: The run state, which parses the config once per run.
-
-    Returns:
-        CatalogListResult with all collections, items, and assets.
-    """
+    """List all contents of a catalog with tracking status."""
     # Verify catalog exists
     catalog_path = catalog_root / "catalog.json"
     if not catalog_path.exists():

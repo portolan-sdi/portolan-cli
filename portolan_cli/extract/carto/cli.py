@@ -1,8 +1,4 @@
-"""The ``portolan extract carto`` command, part of the CLI layer.
-
-The command parses the options, and ``orchestrator.extract_carto_catalog``
-harvests the tables of a Carto SQL API account.
-"""
+"""The ``portolan extract carto`` command, part of the CLI layer."""
 
 from __future__ import annotations
 
@@ -214,8 +210,3 @@ def extract_carto_cmd(
         raise SystemExit(1) from None
 
     cli_helpers.output_extract_result(result, use_json, dry_run, command="extract-carto")
-
-
-# =============================================================================
-# Version management commands (iceberg backend only)
-# =============================================================================

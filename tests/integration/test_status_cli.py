@@ -55,7 +55,7 @@ def initialized_catalog(tmp_path: Path) -> Path:
     }
     (collection / "versions.json").write_text(json.dumps(versions_data))
 
-    # status finds collections by their collection.json, as check does (#944)
+    # status finds collections by their collection.json, as check does
     (collection / "collection.json").write_text(
         json.dumps({"type": "Collection", "id": "demographics", "links": []})
     )

@@ -1,12 +1,4 @@
-"""The vendored STAC extension schemas stay usable and stay current (issue #746).
-
-rashid validates against the Portolan profile and STAC core. It carries no rule
-for extension schemas, so the CLI declared raster v1.1.0 for months with every
-gate green (issue #654). The conformance gate closes that by validating emitted
-raster items against the published raster v2.0.0 schema, which means keeping the
-schema bytes on disk. These tests keep that copy honest: usable offline, tied to
-the URI the CLI emits, and checked against the published document nightly.
-"""
+"""The vendored STAC extension schemas stay usable and stay current."""
 
 from __future__ import annotations
 
@@ -30,12 +22,6 @@ def _load(path: Path) -> dict[str, Any]:
 @pytest.mark.unit
 class TestVendoredRasterSchema:
     def test_id_matches_the_uri_the_cli_emits(self) -> None:
-        """The copy on disk is the schema Portolan actually points items at.
-
-        Bumping ``EXTENSION_URLS["raster"]`` without vendoring the matching
-        schema fails here, so the gate can never validate a new version against
-        an old document.
-        """
         from portolan_cli.stac import EXTENSION_URLS
 
         declared = EXTENSION_URLS["raster"]
@@ -60,14 +46,6 @@ class TestVendoredRasterSchema:
         jsonschema.Draft7Validator.check_schema(schema)
 
     def test_an_item_with_no_raster_field_is_rejected(self) -> None:
-        """Pin the v2.0.0 rule that drove the conditional declaration in #744.
-
-        v2.0.0 added an ``anyOf`` requiring at least one ``raster:``-prefixed
-        field somewhere in the item. Declaring the extension on a COG that has
-        none is a schema failure, which is why ``add_raster_extension`` became
-        conditional. If a later vendored version drops that requirement, this
-        test turns red and the conditional can be revisited deliberately.
-        """
         import jsonschema
 
         bare_item: dict[str, object] = {
@@ -92,12 +70,6 @@ class TestVendoredRasterSchema:
 
 @pytest.mark.network
 def test_the_vendored_raster_schema_still_matches_the_published_one() -> None:
-    """Refetch the published schema and compare bytes.
-
-    Runs in the nightly network tier. Drift opens a tracking issue there instead
-    of breaking pull requests, because a schema changing under a pinned version
-    is upstream news, not a regression in this repo.
-    """
     from portolan_cli.stac import EXTENSION_URLS
 
     with urllib.request.urlopen(EXTENSION_URLS["raster"], timeout=30) as response:

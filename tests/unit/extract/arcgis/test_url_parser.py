@@ -1,13 +1,4 @@
-"""Tests for ArcGIS URL parsing.
-
-The URL parser detects the type of ArcGIS REST endpoint:
-- FeatureServer: `*/FeatureServer` or `*/FeatureServer/0` (layer endpoint)
-- MapServer: `*/MapServer` or `*/MapServer/0`
-- Services Root: `*/rest/services` (lists all available services)
-- Services Folder: `*/rest/services/<folder>` (folder-scoped service discovery)
-
-It also extracts the service name for default output directory naming.
-"""
+"""Tests for ArcGIS URL parsing."""
 
 from __future__ import annotations
 
@@ -207,10 +198,7 @@ class TestParseArcGISURLInvalid:
         assert result.folder == "Census"
 
     def test_image_server_is_now_supported(self) -> None:
-        """ImageServer is now supported (raster extraction added)."""
-        # This test verifies ImageServer URLs no longer raise errors
-        # See tests/unit/extract/arcgis/imageserver/test_url_parser_imageserver.py
-        # for comprehensive ImageServer URL parsing tests
+        # tests/unit/extract/arcgis/imageserver/test_url_parser_imageserver.py has the full set.
         result = parse_arcgis_url("https://example.com/rest/services/Imagery/ImageServer")
         assert result.url_type == ArcGISURLType.IMAGE_SERVER
         assert result.service_name == "Imagery"
@@ -335,7 +323,6 @@ def test_bare_services_root_still_parses() -> None:
 
 
 def test_invalid_url_error_keeps_no_credential() -> None:
-    """#981: the error quotes the URL that the user typed, without its token."""
     with pytest.raises(InvalidArcGISURLError) as caught:
         parse_arcgis_url("https://h.example/not/arcgis?token=SECRET")
 

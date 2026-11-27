@@ -1,13 +1,4 @@
-"""The Issue #735 reproduction, end to end on real data.
-
-An ``init`` plus an ``add`` on one COG records three assets in version 1.0.0.
-They are the raster the user supplied, the ``.thumb.jpg`` Portolan drew from it,
-and the ``items.parquet`` mirror. A user who deletes either derived artifact
-once made push raise ``FileNotFoundError``. The rest of the catalog was fine.
-
-The roles here are the ones a real ``add`` emits, not a fixture's guess. That is
-what the classifier reads, per specs/portolan/core.md, section Assets.
-"""
+"""Push of a collection whose derived asset is missing, end to end on real data."""
 
 from __future__ import annotations
 
@@ -102,9 +93,8 @@ def test_missing_cog_thumbnail_is_skipped(
 
     hrefs = [path.relative_to(catalog).as_posix() for path in _push_assets(catalog, print_report)]
 
-    # Sorted because the order is not a contract. push.py iterates the assets
-    # dict in versions.json, so the order follows what add recorded, which
-    # follows filesystem enumeration and differs per platform.
+    # Sorted: the order follows filesystem enumeration at add, which differs
+    # per platform, and is not a contract.
     assert sorted(hrefs) == ["imagery/items.parquet", "imagery/scene1/scene1.tif"]
     assert "imagery/scene1/scene1.thumb.jpg" in capsys.readouterr().err
 

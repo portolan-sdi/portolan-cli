@@ -1,13 +1,4 @@
-"""One breaker per AUTO rule id.
-
-A breaker takes the root of a copy of a valid catalog and a Hypothesis data
-object. It edits the copy so that its rule fires, and it draws from the data
-object to choose which node, which asset, or which value to break.
-``test_rules_fire.py`` then runs ``check``, ``check --fix``, and ``check``
-again. The completeness gate there requires
-``set(BREAKERS) | set(UNBREAKABLE)`` to equal the AUTO rule ids in
-``RULE_REMEDIATION``.
-"""
+"""One breaker per AUTO rule id. ``set(BREAKERS) | set(UNBREAKABLE)`` equals the AUTO rule ids."""
 
 from __future__ import annotations
 

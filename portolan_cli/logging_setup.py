@@ -1,32 +1,4 @@
-"""Logging setup for the ``portolan`` command (issue #991).
-
-The root ``cli`` group calls ``configure_logging`` once for each run. Log
-records go to stderr only. Stdout stays for the output helpers and the JSON
-envelope.
-
-Levels:
-
-- default: WARNING
-- ``-v``: INFO for ``portolan_cli``
-- ``-vv``: DEBUG for ``portolan_cli``, ``urllib3``, ``httpx``, and ``obstore``,
-  and Python warnings go through the ``py.warnings`` logger
-- ``--quiet``: ERROR
-
-At WARNING and ERROR a ``portolan_cli`` record reads as an output line, such
-as ``⚠ message``. ``-v`` shows the full record format.
-
-Without a flag, ``PORTOLAN_LOG`` (``debug``, ``info``, or ``warning``) sets the level.
-``PORTOLAN_LOG_FILE=<path>`` also writes one JSON object for each record.
-``PORTOLAN_GDAL_DEBUG=1`` sets ``CPL_DEBUG=ON`` for GDAL and shows the GDAL
-debug messages that rasterio logs, at any verbosity.
-
-Each handler removes URL credentials from the text it writes, with
-``utils.redact_credentials``. urllib3 logs each request line at DEBUG, and an
-HTTP error quotes the URL. A basemap tile URL holds its API key, and so does
-an extract request.
-
-This module uses no click, so library code can call it too.
-"""
+"""Logging setup for the ``portolan`` command."""
 
 from __future__ import annotations
 
@@ -46,7 +18,6 @@ LOG_ENV = "PORTOLAN_LOG"
 LOG_FILE_ENV = "PORTOLAN_LOG_FILE"
 GDAL_DEBUG_ENV = "PORTOLAN_GDAL_DEBUG"
 
-# portolan_core holds the reader modules, so its records are ours too (#1133).
 PACKAGE_LOGGERS = ("portolan_cli", "portolan_core")
 THIRD_PARTY_LOGGERS = ("urllib3", "httpx", "obstore")
 # Rasterio sends GDAL messages to this logger. A CPL_DEBUG message arrives at DEBUG.
@@ -71,11 +42,7 @@ class _StderrHandler(logging.StreamHandler):  # type: ignore[type-arg]
 
 
 class _RedactingFormatter(logging.Formatter):
-    """A formatter whose output holds no URL credential.
-
-    The redaction runs on the formatted text, so it covers the message, its
-    arguments, and the traceback.
-    """
+    """A formatter whose output holds no URL credential."""
 
     def format(self, record: logging.LogRecord) -> str:
         return redact_credentials(self._format(record))
@@ -95,13 +62,7 @@ class _RelativeFormatter(_RedactingFormatter):
 
 
 class _UserFormatter(_RelativeFormatter):
-    """Format a ``portolan_cli`` or ``portolan_core`` record as an output line: ``⚠ message``.
-
-    At the default level a library warning is a message for the operator, so
-    it reads like ``output.warn``. An error reads like ``output.error``. The
-    record format and the traceback need ``-v``. Other loggers keep the
-    record format.
-    """
+    """Format a ``portolan_cli`` or ``portolan_core`` record as an output line: ``⚠ message``."""
 
     def _format(self, record: logging.LogRecord) -> str:
         if record.name.split(".")[0] not in PACKAGE_LOGGERS:
@@ -111,11 +72,7 @@ class _UserFormatter(_RelativeFormatter):
 
 
 class _JsonFormatter(logging.Formatter):
-    """Format a record as one JSON object with the run ID.
-
-    The text fields lose their URL credentials before the JSON encoding, so
-    the redaction does not cut a JSON escape.
-    """
+    """Format a record as one JSON object with the run ID."""
 
     def format(self, record: logging.LogRecord) -> str:
         doc = {
@@ -166,21 +123,13 @@ def reset_logging() -> None:
 
 
 def configure_logging(*, verbosity: int = 0, quiet: bool = False) -> None:
-    """Set the log level and the stderr handler for one run.
-
-    Args:
-        verbosity: The count of ``-v`` flags.
-        quiet: True for ``--quiet``. It wins over ``verbosity``.
-    """
+    """Set the log level and the stderr handler for one run."""
     reset_logging()
     level = _resolve_level(verbosity, quiet)
     gdal_debug = os.environ.get(GDAL_DEBUG_ENV, "").strip() in ("1", "true", "on", "yes")
     root = logging.getLogger()
 
-    # The handler level keeps records below the chosen level off stderr,
-    # also when another handler (pytest's caplog) lowers the root level.
-    # With GDAL debug on, the handler passes DEBUG records. The logger levels
-    # below still keep the DEBUG records of other loggers off stderr.
+    # The handler level keeps records below it off stderr even if another handler lowers the root level.
     stderr_handler = _StderrHandler()
     stderr_handler.setLevel(logging.DEBUG if gdal_debug else level)
     stderr_handler.setFormatter(
@@ -196,9 +145,6 @@ def configure_logging(*, verbosity: int = 0, quiet: bool = False) -> None:
         file_handler._portolan = True  # type: ignore[attr-defined]
         root.addHandler(file_handler)
 
-    # Records from portolan_cli reach the root handlers at any root level, so
-    # the root level changes only for --quiet. Other libraries stay at
-    # WARNING, as with Python's fallback handler.
     if level != logging.WARNING:
         for name in PACKAGE_LOGGERS:
             logging.getLogger(name).setLevel(level)

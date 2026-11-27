@@ -1,25 +1,4 @@
-"""Style and legend generation for vector and raster assets (Issue #13, #498).
-
-Generates Mapbox GL style specs for PMTiles and render extension properties for COGs.
-Also provides legend discovery and registration for WMS-extracted legend images.
-
-Public API:
-- VectorStyleConfig: Configuration for vector styling
-- RasterStyleConfig: Configuration for raster styling
-- StyleInfo: Discovered style file metadata
-- LegendInfo: Discovered legend file metadata
-- build_full_style: Generate complete Mapbox GL style with sources
-- write_style_file: Write style dict to JSON file
-- write_default_style: Convenience function to write default.json
-- build_raster_style: Generate render extension properties for COG
-- get_vector_style_config: Load vector style config from catalog
-- get_raster_style_config: Load raster style config from catalog
-- discover_styles: Discover style JSON files in styles/ directory
-- select_default_style_key: Pick the style that carries the default role
-- register_style_assets: Register styles as STAC assets in collection.json
-- discover_legends: Discover legend PNG files in legends/ directory
-- register_legend_assets: Register legends as STAC assets in collection.json
-"""
+"""Style and legend generation for vector and raster assets."""
 
 from __future__ import annotations
 
@@ -46,11 +25,6 @@ if TYPE_CHECKING:
 _RESCALE_LEN = 2
 
 logger = logging.getLogger(__name__)
-
-
-# =============================================================================
-# Config Parsing Helpers
-# =============================================================================
 
 
 def _parse_config_str(value: Any, key: str, default: str) -> str:
@@ -83,22 +57,9 @@ def _parse_config_float(value: Any, key: str, default: float) -> float:
     return default
 
 
-# =============================================================================
-# Configuration Dataclasses
-# =============================================================================
-
-
 @dataclass(frozen=True)
 class StyleInfo:
-    """Metadata for a discovered style file.
-
-    Attributes:
-        key: STAC asset key (e.g., "styles/default").
-        href: Relative href for STAC asset (e.g., "./styles/default.json").
-        title: Human-readable title from style's "name" field or filename.
-        description: Description from style file (empty string if absent).
-        path: Absolute path to the style file on disk.
-    """
+    """Metadata for a discovered style file."""
 
     key: str
     href: str
@@ -109,15 +70,7 @@ class StyleInfo:
 
 @dataclass(frozen=True)
 class LegendInfo:
-    """Metadata for a discovered legend file.
-
-    Attributes:
-        key: STAC asset key (e.g., "legends/source").
-        href: Relative href for STAC asset (e.g., "./legends/source.png").
-        title: Human-readable title derived from filename.
-        media_type: MIME type (always "image/png").
-        path: Absolute path to the legend file on disk.
-    """
+    """Metadata for a discovered legend file."""
 
     key: str
     href: str
@@ -128,23 +81,7 @@ class LegendInfo:
 
 @dataclass(frozen=True)
 class VectorStyleConfig:
-    """Configuration for vector styling.
-
-    Defines default colors, sizes, and opacities for point, line, and polygon
-    geometries. These values are used to generate Mapbox GL style specs for
-    PMTiles assets.
-
-    Attributes:
-        point_color: Circle fill color for points (default #3388ff).
-        point_radius: Circle radius in pixels (default 4).
-        point_opacity: Circle opacity 0.0-1.0 (default 0.8).
-        line_color: Line color for linestrings (default #3388ff).
-        line_width: Line width in pixels (default 2).
-        line_opacity: Line opacity 0.0-1.0 (default 0.8).
-        polygon_fill_color: Fill color for polygons (default #3388ff).
-        polygon_fill_opacity: Fill opacity 0.0-1.0 (default 0.6).
-        polygon_outline_color: Outline color for polygons (default #2266cc).
-    """
+    """Configuration for vector styling."""
 
     point_color: str = "#3388ff"
     point_radius: int = 4
@@ -159,33 +96,15 @@ class VectorStyleConfig:
 
 @dataclass(frozen=True)
 class RasterStyleConfig:
-    """Configuration for raster styling (render extension).
-
-    Defines colormap and rescale settings for COG visualization.
-
-    Attributes:
-        colormap: Named colormap (default 'viridis').
-        rescale_min: Minimum value for rescaling (None = auto).
-        rescale_max: Maximum value for rescaling (None = auto).
-    """
+    """Configuration for raster styling (render extension)."""
 
     colormap: str = "viridis"
     rescale_min: float | None = None
     rescale_max: float | None = None
 
 
-# =============================================================================
-# Style Building Functions
-# =============================================================================
-
-
 def pmtiles_source_url(pmtiles_path: str) -> str:
-    """Return a MapLibre-loadable source URL for a PMTiles path.
-
-    The MapLibre PMTiles plugin only intercepts URLs carrying the
-    ``pmtiles://`` scheme; a bare path is treated as TileJSON and fails to
-    load (issue #756). Paths that already carry a scheme are returned as-is.
-    """
+    """Return a MapLibre-loadable source URL for a PMTiles path."""
     if "://" in pmtiles_path:
         return pmtiles_path
     return f"pmtiles://{pmtiles_path}"
@@ -200,28 +119,7 @@ def build_full_style(
     min_zoom: int | None = None,
     max_zoom: int | None = None,
 ) -> dict[str, Any]:
-    """Build complete Mapbox GL v8 style with sources and layers.
-
-    Generates a full Mapbox GL style spec (version 8) including sources
-    section with PMTiles URL and a single layer appropriate for the
-    geometry type.
-
-    Args:
-        name: Style name (e.g., "Default").
-        geometry_type: OGC geometry type (Point, LineString, Polygon, etc.).
-        source_layer: Name of the source layer in PMTiles.
-        pmtiles_relative_path: Relative path to PMTiles file (e.g., "../data.pmtiles").
-            Written as a ``pmtiles://`` URL so MapLibre can load it.
-        config: Style configuration.
-        min_zoom: Minimum zoom of the PMTiles archive, written as the source's
-            ``minzoom`` (omitted when None).
-        max_zoom: Maximum zoom of the PMTiles archive, written as the source's
-            ``maxzoom`` so MapLibre does not request tiles beyond the archive's
-            range (omitted when None).
-
-    Returns:
-        Complete Mapbox GL style spec dict with version, name, sources, and layers.
-    """
+    """Build complete Mapbox GL v8 style with sources and layers."""
     # Normalize geometry type to layer type
     geom_lower = geometry_type.lower()
 
@@ -281,23 +179,7 @@ def write_style_file(
     name: str,
     style_dict: dict[str, Any],
 ) -> Path:
-    """Write a style dict to a JSON file.
-
-    Creates the directory if needed, writes {style_dir}/{name}.json with
-    indented JSON formatting.
-
-    Args:
-        style_dir: Directory to write the style file into.
-        name: Style filename (without .json extension). Must not contain
-            path separators or parent directory references.
-        style_dict: Style dict to serialize.
-
-    Returns:
-        Path to the written file.
-
-    Raises:
-        ValueError: If name contains path traversal characters.
-    """
+    """Write a style dict to a JSON file."""
     if "/" in name or "\\" in name or ".." in name:
         msg = f"Style name must not contain path separators or '..': {name!r}"
         raise ValueError(msg)
@@ -313,31 +195,7 @@ def complete_style_sources(
     min_zoom: int | None = None,
     max_zoom: int | None = None,
 ) -> list[Path]:
-    """Make every style under styles/ point at a loadable PMTiles source.
-
-    Styles can be written before their archive exists (extract converts SLD
-    styles at extraction time), leaving a vector source with no ``url``; older
-    generations also wrote bare relative paths, which MapLibre treats as
-    TileJSON and fails to load (issue #756). Run after PMTiles generation,
-    this pass repairs both cases and fills the archive's zoom range:
-
-    - a vector source with no ``url`` gets ``pmtiles://../<archive>``;
-    - a bare-path ``url`` is prefixed with the ``pmtiles://`` scheme;
-    - ``minzoom``/``maxzoom`` are set when absent and known.
-
-    Sources that already carry a scheme keep their URL (only the zoom range
-    may be filled in). Files are rewritten only when something changed.
-
-    Args:
-        collection_path: Path to the collection directory.
-        pmtiles_relative_path: Archive path relative to the collection
-            (e.g., "data.pmtiles"), used for sources with no URL.
-        min_zoom: Archive minimum zoom, or None to leave sources untouched.
-        max_zoom: Archive maximum zoom, or None to leave sources untouched.
-
-    Returns:
-        Paths of the style files that were modified.
-    """
+    """Make every style under styles/ point at a loadable PMTiles source."""
     styles_dir = collection_path / "styles"
     if not styles_dir.is_dir():
         return []
@@ -383,24 +241,7 @@ def write_default_style(
     min_zoom: int | None = None,
     max_zoom: int | None = None,
 ) -> Path | None:
-    """Write default style to {collection_path}/styles/default.json.
-
-    Convenience function that creates a default.json style file. Does NOT
-    overwrite if file already exists (returns None).
-
-    Args:
-        collection_path: Path to the collection directory.
-        geometry_type: OGC geometry type (Point, LineString, Polygon, etc.).
-        source_layer: Name of the source layer in PMTiles.
-        pmtiles_relative_path: PMTiles path relative to collection (e.g., "data.pmtiles"
-            or "sub/data.pmtiles"). Will be prefixed with "../" for styles/ directory.
-        config: Optional style configuration (uses defaults if None).
-        min_zoom: Optional minimum zoom of the PMTiles archive (source minzoom).
-        max_zoom: Optional maximum zoom of the PMTiles archive (source maxzoom).
-
-    Returns:
-        Path to written file, or None if default.json already exists.
-    """
+    """Write default style to {collection_path}/styles/default.json."""
     styles_dir = collection_path / "styles"
     default_path = styles_dir / "default.json"
 
@@ -425,16 +266,7 @@ def write_default_style(
 
 
 def build_raster_style(config: RasterStyleConfig) -> dict[str, Any]:
-    """Build render extension properties for COG styling.
-
-    Generates STAC render extension properties for COG visualization.
-
-    Args:
-        config: Raster style configuration.
-
-    Returns:
-        Dict with render:* properties.
-    """
+    """Build render extension properties for COG styling."""
     props: dict[str, Any] = {
         "render:colormap_name": config.colormap,
     }
@@ -458,17 +290,7 @@ def enrich_cog_assets(
     *,
     state: ConfigSource | None = None,
 ) -> None:
-    """Add render extension properties to each COG asset in a dict, in place.
-
-    Each COG asset gets render:colormap_name and optionally render:rescale from
-    the catalog style config. The config loads once per call, and only when a
-    COG asset is present.
-
-    Args:
-        assets: Dict of asset_key -> pystac.Asset.
-        catalog_path: Catalog root for loading style config.
-        state: The run state, which parses the config once per run.
-    """
+    """Add render extension properties to each COG asset in a dict, in place."""
     cogs = [a for a in assets.values() if getattr(a, "media_type", None) in _COG_MEDIA_TYPES]
     if not cogs:
         return
@@ -482,10 +304,6 @@ def enrich_cog_assets(
         # A new dict per asset, so no two assets share the rescale list.
         asset.extra_fields.update(build_raster_style(config))
 
-
-# =============================================================================
-# Style Discovery
-# =============================================================================
 
 #: Role every style asset carries. A client discovers a collection's styles by
 #: filtering assets on it, which is why the spec defines no manifest property.
@@ -506,14 +324,7 @@ STYLE_MEDIA_TYPE = "application/vnd.mapbox.style+json"
 
 
 def discover_styles(collection_path: Path) -> list[StyleInfo]:
-    """Discover style JSON files in {collection_path}/styles/ directory.
-
-    Args:
-        collection_path: Path to the collection directory.
-
-    Returns:
-        List of StyleInfo objects. Empty list if no styles/ directory exists.
-    """
+    """Discover style JSON files in {collection_path}/styles/ directory."""
     styles_dir = collection_path / "styles"
 
     if not styles_dir.exists():
@@ -550,11 +361,7 @@ def discover_styles(collection_path: Path) -> list[StyleInfo]:
 
 
 def _marks_default(asset: Any) -> bool:
-    """Whether a raw asset already carries the ``default`` role.
-
-    Reads a collection.json that a human may have edited, so it answers False
-    for anything that is not an asset object with a list of roles.
-    """
+    """Whether a raw asset already carries the ``default`` role."""
     if not isinstance(asset, dict):
         return False
     roles = asset.get("roles")
@@ -565,12 +372,7 @@ def _choose_default(
     styles: list[StyleInfo],
     existing_assets: dict[str, Any],
 ) -> tuple[str | None, bool]:
-    """Pick the default style key and say whether Portolan picked it unaided.
-
-    Returns:
-        The winning asset key (None only when there are no styles), and whether
-        the pick came from the tie-break rather than from a publisher's mark.
-    """
+    """Pick the default style key and say whether Portolan picked it unaided."""
     keys = {style.key for style in styles}
     marked = [key for key in keys if _marks_default(existing_assets.get(key))]
     if len(marked) == 1:
@@ -586,33 +388,7 @@ def select_default_style_key(
     styles: list[StyleInfo],
     existing_assets: dict[str, Any],
 ) -> str | None:
-    """Choose the style asset key that carries the ``default`` role.
-
-    PORTO-CORE-070: a client reads the default off a second role, never off a key
-    or a position, and exactly one style asset MUST carry it when a collection
-    registers more than one. So a collection with styles always names a default;
-    leaving the question open would ship a nonconformant collection. Precedence
-    runs from most deliberate to least:
-
-    1. the style a previous run already marked ``default``, because which style
-       leads is cartographic judgment and a human's choice must survive a
-       regeneration;
-    2. ``styles/default``, the key :func:`write_default_style` generates;
-    3. the lexicographically first key, which decides a tie between styles no one
-       has ranked. The order styles are discovered in must not change the answer,
-       so this reads the keys, not the list.
-
-    Rules 2 and 3 are bookkeeping, not cartography, and
-    :func:`register_style_assets` says so on the terminal when it applies them.
-
-    Args:
-        styles: Styles discovered on disk (from :func:`discover_styles`).
-        existing_assets: The collection's current ``assets`` object, read for
-            the role a previous run wrote.
-
-    Returns:
-        The winning asset key, or None when there are no styles to choose from.
-    """
+    """Choose the style asset key that carries the ``default`` role."""
     return _choose_default(styles, existing_assets)[0]
 
 
@@ -621,23 +397,7 @@ def _merge_style_asset(
     style_info: StyleInfo,
     roles: list[str],
 ) -> dict[str, Any]:
-    """Update one style asset in place-ish, keeping whatever a human put there.
-
-    ``add`` merges, it never regenerates (.claude/rules/stac-assets.md). Only the
-    machine-derivable fields are rewritten: ``href``, ``type`` and ``roles`` come
-    from disk and from :func:`select_default_style_key`, so a stale value there is
-    wrong rather than personal. Everything else survives, including ``title`` and
-    ``description`` an editor sharpened by hand and any field this code has never
-    heard of.
-
-    Args:
-        existing: The asset the collection already carries under this key, if any.
-        style_info: The style as discovered on disk.
-        roles: The roles this run computed for the asset.
-
-    Returns:
-        The merged asset dict.
-    """
+    """Update one style asset in place-ish, keeping whatever a human put there."""
     asset: dict[str, Any] = dict(existing) if isinstance(existing, dict) else {}
 
     asset["href"] = style_info.href
@@ -668,24 +428,7 @@ def register_style_assets(
     collection_path: Path,
     styles: list[StyleInfo],
 ) -> None:
-    """Register discovered styles as STAC assets on the collection.
-
-    Updates collection.json to add or update style assets and to drop stale
-    ones. Every style asset gets the ``style`` role and exactly one also gets
-    ``default`` (PORTO-CORE-070, see :func:`select_default_style_key`). Existing
-    assets are merged rather than rebuilt, so a re-run never costs a publisher
-    the ``title`` or ``description`` they wrote. The removed ``portolan:styles``
-    manifest is stripped whenever it survives from an older generation, so a
-    re-run migrates the collection.
-
-    Each asset also publishes ``file:size`` and ``file:checksum`` for the style
-    file it points at (PORTO-CORE-069), which obliges the collection to declare
-    the STAC file extension.
-
-    Args:
-        collection_path: Path to the collection directory.
-        styles: List of StyleInfo objects from discover_styles().
-    """
+    """Register discovered styles as STAC assets on the collection."""
     collection_json_path = collection_path / "collection.json"
     if not collection_json_path.exists():
         return
@@ -693,7 +436,7 @@ def register_style_assets(
     data = json.loads(collection_json_path.read_text(encoding="utf-8"))
     assets = data.get("assets", {})
 
-    # Remove stale style assets (assets with "styles/" prefix that no longer have files)
+    # Remove stale style assets
     current_keys = {s.key for s in styles}
     stale_keys = [k for k in assets if k.startswith("styles/") and k not in current_keys]
     for key in stale_keys:
@@ -721,20 +464,8 @@ def register_style_assets(
         _announce_default(default_key, len(styles))
 
 
-# =============================================================================
-# Legend Discovery (Issue #498)
-# =============================================================================
-
-
 def discover_legends(collection_path: Path) -> list[LegendInfo]:
-    """Discover legend PNG files in {collection_path}/legends/ directory.
-
-    Args:
-        collection_path: Path to the collection directory.
-
-    Returns:
-        List of LegendInfo objects. Empty list if no legends/ directory exists.
-    """
+    """Discover legend PNG files in {collection_path}/legends/ directory."""
     legends_dir = collection_path / "legends"
 
     if not legends_dir.exists():
@@ -763,20 +494,7 @@ def register_legend_assets(
     collection_path: Path,
     legends: list[LegendInfo],
 ) -> None:
-    """Register discovered legends as STAC assets carrying the ``legend`` role.
-
-    Updates collection.json to add/update legend assets and remove stale ones.
-
-    The ``portolan:legends`` manifest that used to list the same keys is gone
-    (issue #654): the spec defines no ``portolan:`` field, and a client finds a
-    collection's legends by filtering assets on the ``legend`` role. A rewrite
-    strips the property where an older Portolan left it, the same way the style
-    manifest is stripped above.
-
-    Args:
-        collection_path: Path to the collection directory.
-        legends: List of LegendInfo objects from discover_legends().
-    """
+    """Register discovered legends as STAC assets carrying the ``legend`` role."""
     collection_json_path = collection_path / "collection.json"
     if not collection_json_path.exists():
         return
@@ -784,7 +502,7 @@ def register_legend_assets(
     data = json.loads(collection_json_path.read_text(encoding="utf-8"))
     assets = data.get("assets", {})
 
-    # Remove stale legend assets (assets with "legends/" prefix that no longer have files)
+    # Remove stale legend assets
     current_keys = {lg.key for lg in legends}
     stale_keys = [k for k in assets if k.startswith("legends/") and k not in current_keys]
     for key in stale_keys:
@@ -806,25 +524,10 @@ def register_legend_assets(
     write_json_atomic(collection_json_path, data)
 
 
-# =============================================================================
-# Config Loading
-# =============================================================================
-
-
 def get_vector_style_config(
     catalog_path: Path, *, state: ConfigSource | None = None
 ) -> VectorStyleConfig:
-    """Load vector style config from catalog's config.yaml.
-
-    Reads the 'styles.vector' section and returns a VectorStyleConfig instance.
-
-    Args:
-        catalog_path: Root path of the catalog.
-        state: The run state, which parses the config once per run.
-
-    Returns:
-        VectorStyleConfig instance. Returns defaults if no config exists.
-    """
+    """Load vector style config from catalog's config.yaml."""
     config = load_catalog_config(catalog_path, state=state).data
     styles = get_dict(config, "styles")
     if not styles:
@@ -869,23 +572,7 @@ def get_vector_style_config(
 def get_raster_style_config(
     catalog_path: Path, *, state: ConfigSource | None = None
 ) -> RasterStyleConfig:
-    """Load raster style config from catalog's config.yaml.
-
-    Reads the 'styles.raster' section and returns a RasterStyleConfig instance.
-
-    Config format:
-        styles:
-          raster:
-            colormap: terrain
-            rescale: [0, 1000]
-
-    Args:
-        catalog_path: Root path of the catalog.
-        state: The run state, which parses the config once per run.
-
-    Returns:
-        RasterStyleConfig instance. Returns defaults if no config exists.
-    """
+    """Load raster style config from catalog's config.yaml."""
     config = load_catalog_config(catalog_path, state=state).data
 
     styles = get_dict(config, "styles")

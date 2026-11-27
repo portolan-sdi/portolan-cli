@@ -1,23 +1,4 @@
-"""Carto extraction through the shared LayerSource driver.
-
-``CartoLayerSource`` implements ``LayerSource`` for a Carto SQL API account,
-and ``extract_carto_catalog`` runs it with ``run_layer_extraction``.
-
-- ``discover`` lists the account's tables. When the account cannot be
-  listed, it falls back to the literal table names in the layer filter. It
-  then probes only the kept tables for a geometry column.
-- ``fetch`` calls geoparquet-io's ``convert_carto_to_geoparquet``. A table with
-  no geometry becomes plain Parquet in a tabular collection.
-
-Typical usage:
-    from portolan_cli.extract.carto.orchestrator import extract_carto_catalog
-
-    result = extract_carto_catalog(
-        url="https://phl.carto.com/api/v2/sql",
-        output_dir=Path("./output"),
-        layer_filter=["vacant_*"],
-    )
-"""
+"""Carto extraction through the shared LayerSource driver."""
 
 from __future__ import annotations
 
@@ -68,28 +49,7 @@ _NON_SPATIAL_NOTE = (
 
 @dataclass
 class ExtractionOptions:
-    """Options for Carto extraction.
-
-    Attributes:
-        workers: Number of parallel workers for table extraction.
-        retries: Number of retry attempts per failed table.
-        timeout: Per-table request timeout in seconds (passed to gpio).
-        resume: Whether to resume from an existing extraction report.
-        raw: If True, skip auto-init (only create extraction files, no STAC).
-        dry_run: If True, list tables without extracting.
-        where: SQL WHERE clause applied to every extracted table.
-        bbox: Bounding box filter (minx, miny, maxx, maxy).
-        limit: Maximum rows per table (None for unlimited).
-        include_cols: Comma-separated columns to include.
-        exclude_cols: Comma-separated columns to exclude.
-        api_key: Carto API key (or set via the CARTO_API_KEY env var).
-        license: SPDX identifier for the harvested data, or "other" with
-            license_url. Carto exposes no license metadata, so this is the only
-            source (issue #686).
-        license_url: URL of the license text.
-        catalog_id: Catalog id for the created catalog. None derives it from
-            the output directory name, which is the behavior before issue #821.
-    """
+    """Options for Carto extraction."""
 
     workers: int = 1
     retries: int = 3
@@ -110,13 +70,8 @@ class ExtractionOptions:
 
 
 def _build_table_query_url(sql_api_url: str, table_name: str) -> str:
-    """Build a SQL API URL that selects a table (used as a provenance via-link).
-
-    The query is never executed by Portolan — it is stored as a STAC ``via`` link
-    href — but the table name is still quoted as a SQL identifier so the link is a
-    valid, copy-pasteable Carto query.
-    """
-    query = f"SELECT * FROM {quote_table_identifier(table_name)}"  # noqa: S608
+    """Build a SQL API URL that selects a table (used as a provenance via-link)."""
+    query = f"SELECT * FROM {quote_table_identifier(table_name)}"  # noqa: S608 - the identifier is quoted
     return f"{sql_api_url}?{urlencode({'q': query})}"
 
 
@@ -125,12 +80,7 @@ def _discover_tables(
     layer_filter: list[str] | None,
     options: ExtractionOptions,
 ) -> CartoDiscoveryResult:
-    """Enumerate account tables, falling back to explicit names if enumeration fails.
-
-    If ``CDB_UserTables()`` is unavailable (single public table, or an API key
-    without catalog access) but the user named literal (non-glob) tables in
-    ``layer_filter``, treat those names as the table set.
-    """
+    """Enumerate account tables, falling back to explicit names if enumeration fails."""
     try:
         return discover_carto_tables(url, api_key=options.api_key, timeout=options.timeout)
     except CartoDiscoveryError:
@@ -168,11 +118,7 @@ class CartoLayerSource:
         self.options = options or ExtractionOptions()
 
     def discover(self, source: str, options: LayerSourceOptions) -> Discovery:
-        """List and filter the tables, then probe the kept ones for geometry.
-
-        Probing only the kept tables costs one ``LIMIT 0`` request per wanted
-        table, not one per table in the account.
-        """
+        """List and filter the tables, then probe the kept ones for geometry."""
         found = _discover_tables(source, options.layer_filter, self.options)
         sql_api_url = found.service_url
         refs = filter_refs(
@@ -192,11 +138,7 @@ class CartoLayerSource:
 
     @staticmethod
     def discovery_from(found: CartoDiscoveryResult, layers: list[LayerRef]) -> Discovery:
-        """Build the driver's ``Discovery`` for a Carto account.
-
-        Carto publishes no license metadata, so ``--license`` is the only
-        source (issue #686). The account name titles the catalog.
-        """
+        """Build the driver's ``Discovery`` for a Carto account."""
         from portolan_cli.extract.carto.metadata import extract_carto_metadata
 
         sql_api_url = found.service_url
@@ -210,12 +152,7 @@ class CartoLayerSource:
         )
 
     def fetch(self, source: str, layer: LayerRef, dest: Path) -> int:
-        """Write the table with geoparquet-io's ``convert_carto_to_geoparquet``.
-
-        A spatial table becomes optimized GeoParquet. A non-spatial table
-        becomes plain Parquet through gpio's ``geometry=False`` path, with no
-        bbox filter, because a bounding-box filter needs a geometry.
-        """
+        """Write the table with geoparquet-io's ``convert_carto_to_geoparquet``."""
         from geoparquet_io.core import carto as gpio_carto
 
         table: CartoTableInfo = layer.data
@@ -261,25 +198,7 @@ def extract_carto_catalog(
     on_progress: LayerProgressCallback | None = None,
     on_message: MessageCallback | None = None,
 ) -> ExtractionReport:
-    """Extract tables from a Carto account into a Portolan catalog.
-
-    Args:
-        url: Carto SQL API URL or account domain.
-        output_dir: Directory to write extracted data.
-        layer_filter: Glob patterns / names of tables to include (None = all).
-        layer_exclude: Glob patterns / names of tables to exclude.
-        options: Extraction options (defaults to ExtractionOptions()).
-        on_progress: Callback for progress updates.
-        on_message: Called as ``on_message(level, text)`` with each catalog notice.
-
-    Returns:
-        ExtractionReport with results for all tables.
-
-    Raises:
-        CartoDiscoveryError: If the account cannot be enumerated and no explicit
-            tables were provided as a fallback.
-        MissingLicenseError: If no license is given (issue #686).
-    """
+    """Extract tables from a Carto account into a Portolan catalog."""
     options = options or ExtractionOptions()
     # gpio enforces the per-table timeout, so the driver sets no deadline.
     driver = LayerSourceOptions(

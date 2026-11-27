@@ -1,10 +1,4 @@
-"""Catalog management for Portolan.
-
-Primary API (v2):
-- init_catalog(): Initialize catalog with STAC catalog.json at root level
-- detect_state(): Detect catalog state (MANAGED, UNMANAGED_STAC, FRESH)
-- create_catalog(): Create a CatalogModel with auto-extracted fields
-"""
+"""Catalog management for Portolan."""
 
 from __future__ import annotations
 
@@ -69,20 +63,7 @@ else:
 
 
 class CatalogState(Enum):
-    """The state of a directory with respect to Portolan catalog management.
-
-    States:
-        MANAGED: A fully managed Portolan catalog exists. .portolan/config.yaml exists.
-            This is the target state after `portolan init`.
-            Per issue #290, config.yaml alone is sufficient (state.json removed).
-
-        UNMANAGED_STAC: An existing STAC catalog (catalog.json) exists but is not
-            managed by Portolan. This happens when someone has a pre-existing STAC
-            catalog that wasn't created by Portolan. Use `portolan adopt` to manage it.
-
-        FRESH: No catalog exists. This is a clean directory suitable for `portolan init`.
-            Note: An empty .portolan directory is also considered FRESH.
-    """
+    """The state of a directory with respect to Portolan catalog management."""
 
     MANAGED = "managed"
     UNMANAGED_STAC = "unmanaged_stac"
@@ -90,37 +71,12 @@ class CatalogState(Enum):
 
 
 def detect_state(path: Path) -> CatalogState:
-    """Detect the catalog state of a directory.
-
-    Checks only file/directory existence - does NOT read file contents.
-    This ensures fast detection without I/O overhead.
-
-    The detection logic (per issue #290, updating ):
-    1. If .portolan/config.yaml exists -> MANAGED
-    2. If catalog.json exists at root (and not MANAGED) -> UNMANAGED_STAC
-    3. Otherwise -> FRESH
-
-    Args:
-        path: Directory to check for catalog state.
-
-    Returns:
-        CatalogState indicating the current state of the directory.
-
-    Examples:
-        >>> detect_state(Path("/empty/dir"))
-        CatalogState.FRESH
-
-        >>> detect_state(Path("/my-catalog"))  # where .portolan/config.yaml exists
-        CatalogState.MANAGED
-
-        >>> detect_state(Path("/with/only/catalog.json"))
-        CatalogState.UNMANAGED_STAC
-    """
+    """Detect the catalog state of a directory."""
     portolan_dir = path / ".portolan"
     config_file = portolan_dir / "config.yaml"
     root_catalog = path / "catalog.json"
 
-    # Check for managed state first (config.yaml alone is sufficient per issue #290)
+    # Check for managed state first (config.yaml alone is sufficient)
     if config_file.exists():
         return CatalogState.MANAGED
 
@@ -139,38 +95,12 @@ def find_catalog_root(
 ) -> Path | None:
     """Find the catalog root by walking up from the given path.
 
-    Searches for a managed Portolan catalog starting from start_path (or cwd if None)
-    and walking up parent directories. This provides git-style behavior
-    where commands work from any subdirectory within a catalog.
-
-    issue #290, this uses .portolan/config.yaml as the sole sentinel,
-    unifying detection across all CLI commands. By default (require_operational=True),
-    it also requires catalog.json to exist to avoid detecting half-initialized repos.
-
-    Security: Limited to MAX_CATALOG_SEARCH_DEPTH levels to prevent
-    traversing to filesystem root where a malicious .portolan might exist.
-
     Args:
         start_path: Starting directory for search (defaults to cwd).
-        require_operational: If True (default), require .portolan/config.yaml
-            AND catalog.json to exist. Set to False during init_catalog() when
-            creating a new catalog where config.yaml is written before catalog.json.
+        require_operational: If True (default), require both .portolan/config.yaml and catalog.json. Pass False while init writes them.
 
     Returns:
         Path to catalog root if found, None otherwise.
-
-    Examples:
-        >>> find_catalog_root(Path("/my-catalog/collection/item"))
-        PosixPath('/my-catalog')
-
-        >>> find_catalog_root(Path("/no-catalog-here"))
-        None
-
-        >>> find_catalog_root()  # Uses current working directory
-        PosixPath('/my-catalog')
-
-        >>> # During init, check for config.yaml only (catalog.json not yet written)
-        >>> find_catalog_root(start_path, require_operational=False)
     """
     from portolan_core.constants import MAX_CATALOG_SEARCH_DEPTH
 
@@ -184,7 +114,7 @@ def find_catalog_root(
             # During init, config.yaml alone is sufficient
             return True
 
-        # Require operational file: catalog.json at root (state.json removed per issue #290)
+        # Require operational file: catalog.json at root (state.json removed)
         catalog_json = path / "catalog.json"
         return catalog_json.exists()
 
@@ -211,11 +141,7 @@ def find_catalog_root(
 
 # Keep legacy exception for backward compatibility
 class CatalogExistsError(Exception):
-    """Raised when attempting to initialize a catalog that already exists.
-
-    Legacy exception kept for backward compatibility.
-    New code should use CatalogAlreadyExistsError from portolan_core.errors.
-    """
+    """Raised when attempting to initialize a catalog that already exists."""
 
     def __init__(self, path: Path) -> None:
         self.path = path
@@ -223,16 +149,7 @@ class CatalogExistsError(Exception):
 
 
 def _sanitize_id(name: str) -> str:
-    """Sanitize a string to be a valid STAC identifier.
-
-    STAC IDs must match pattern ^[a-zA-Z0-9_-]+$
-
-    Args:
-        name: Raw string (e.g., directory name).
-
-    Returns:
-        Sanitized string suitable for use as STAC id.
-    """
+    """Sanitize a string to be a valid STAC identifier."""
     # Replace spaces and special chars with hyphens
     sanitized = re.sub(r"[^a-zA-Z0-9_-]", "-", name)
     # Remove leading/trailing hyphens
@@ -245,14 +162,6 @@ def _sanitize_id(name: str) -> str:
     return sanitized
 
 
-# Directory names that name a step in someone's workflow rather than the data
-# itself. `init` inside one of these silently published a catalog whose id was
-# "publish" (issue #821). Every entry is a valid STAC id, so no syntactic check
-# catches it. Only the meaning is wrong.
-#
-# The last group is the output directory `extract` picks when the caller names
-# none. Those are the ids the tool produces on its own, so they reach a
-# published catalog most easily of all.
 _TOOLING_ARTIFACT_IDS = frozenset(
     {
         "build",
@@ -276,17 +185,7 @@ _TOOLING_ARTIFACT_IDS = frozenset(
 
 
 def _is_tooling_artifact_id(catalog_id: str) -> bool:
-    """Report whether an id names a workflow step rather than the data.
-
-    Case and the choice of hyphen or underscore carry no meaning here, so
-    "WFS_Extract" and "wfs-extract" both match.
-
-    Args:
-        catalog_id: The candidate catalog id.
-
-    Returns:
-        True when the id names a tooling artifact.
-    """
+    """Report whether an id names a workflow step rather than the data."""
     return catalog_id.lower().replace("_", "-") in _TOOLING_ARTIFACT_IDS
 
 
@@ -317,29 +216,7 @@ def create_catalog(
     description: str | None = None,
     return_warnings: bool = False,
 ) -> CatalogModel | tuple[CatalogModel, list[str]]:
-    """Create a CatalogModel with auto-extracted and optional user-provided fields.
-
-    Auto-extracted fields:
-    - id: Derived from directory name (sanitized)
-    - created: Current timestamp
-    - updated: Current timestamp
-
-    User-provided fields (optional):
-    - title: Human-readable title
-    - description: Catalog description
-
-    Args:
-        path: Directory path for the catalog.
-        title: Optional catalog title.
-        description: Optional catalog description.
-        return_warnings: If True, return (CatalogModel, warnings) tuple.
-
-    Returns:
-        CatalogModel instance, or (CatalogModel, warnings) if return_warnings=True.
-
-    Raises:
-        CatalogAlreadyExistsError: If .portolan directory already exists.
-    """
+    """Create a CatalogModel with auto-extracted and optional user-provided fields."""
     portolan_path = path / ".portolan"
     if portolan_path.exists():
         raise CatalogAlreadyExistsError(str(path))
@@ -386,22 +263,7 @@ def _seed_root_metadata(
     license_id: str | None,
     license_url: str | None,
 ) -> list[str]:
-    """Write the catalog-level metadata.yaml carrying the license (issue #686).
-
-    Every collection inherits this license through the hierarchical merge, which is
-    what lets ``add`` require one without the human editing anything first.
-
-    Args:
-        portolan_dir: The catalog's ``.portolan`` directory.
-        license_id: SPDX identifier, or None to leave metadata.yaml to the caller.
-        license_url: URL of the license text, required alongside "other".
-
-    Returns:
-        Warnings to surface to the user.
-
-    Raises:
-        CatalogInitError: If the file cannot be written.
-    """
+    """Write the catalog-level metadata.yaml carrying the license."""
     if license_id is None:
         return []
 
@@ -429,34 +291,13 @@ def _seed_root_metadata(
 def _resolve_catalog_identity(
     path: Path, catalog_id: str | None, title: str | None
 ) -> tuple[str, str, list[str]]:
-    """Decide the catalog's id and title, and report what had to be guessed.
-
-    The caller may name the catalog outright. Otherwise the id comes from the
-    directory name, which is what every catalog did before issue #821.
-    ``_sanitize_id`` coerces a derived id. A supplied id goes through
-    ``validate_catalog_id``, which rejects a bad value rather than rewrite it,
-    because the caller typed that value deliberately.
-
-    Args:
-        path: The resolved catalog directory, whose name seeds a derived id.
-        catalog_id: The id the caller supplied, or None to derive one.
-        title: The title the caller supplied, or None to derive one.
-
-    Returns:
-        A tuple of the catalog id, the title, and the warnings to report.
-
-    Raises:
-        InputValidationError: If a supplied id is not a valid STAC identifier.
-    """
+    """Decide the catalog's id and title, and report what had to be guessed."""
     warnings: list[str] = []
     derived_id = catalog_id is None
 
     # path is already resolved, so path.name is the real directory name.
     catalog_id = _sanitize_id(path.name) if catalog_id is None else validate_catalog_id(catalog_id)
 
-    # A derived id that names a workflow step rather than the data is the failure
-    # in issue #821. Warn only when the id was derived. An explicit id is the
-    # caller's decision.
     if derived_id and _is_tooling_artifact_id(catalog_id):
         warnings.append(
             f"Derived catalog id '{catalog_id}' from the directory name. "
@@ -464,8 +305,7 @@ def _resolve_catalog_identity(
             "Pass --id to set the catalog identity."
         )
 
-    # Issue #502: a title is mandatory and must be human-readable, so derive one
-    # from the id instead of leaving it empty.
+    # A title is mandatory and human-readable, so derive one from the id.
     if not title:
         title = humanize_slug(catalog_id)
         source = "directory name" if derived_id else "catalog id"
@@ -480,22 +320,7 @@ def _check_init_preconditions(
     backend: str,
     logo: str | Path | None,
 ) -> None:
-    """Reject an init that cannot succeed, before anything is written.
-
-    A rejected backend or logo must not leave a half-built catalog behind. Each
-    check runs before the first write, so the directory stays in FRESH state.
-
-    Args:
-        path: Resolved catalog directory.
-        backend: Versioning backend name.
-        logo: Local path to a catalog logo, or None.
-
-    Raises:
-        CatalogAlreadyExistsError: If the directory is in MANAGED state.
-        UnmanagedStacCatalogError: If the directory is in UNMANAGED_STAC state.
-        CatalogInitError: If the backend is not available.
-        LogoError: If the logo is a URL, missing, or of an unpermitted media type.
-    """
+    """Reject an init that cannot succeed, before anything is written."""
     from portolan_core.errors import UnmanagedStacCatalogError
 
     state = detect_state(path)
@@ -514,8 +339,7 @@ def _check_init_preconditions(
 
         from portolan_cli.backends import get_backend
 
-        # Build the backend in a scratch directory, so the check writes nothing
-        # in the new catalog or in the current directory (issue #1056).
+        # Probe in a scratch directory so the check writes nothing.
         try:
             with tempfile.TemporaryDirectory() as probe:
                 get_backend(backend, catalog_root=Path(probe))
@@ -530,25 +354,7 @@ def _write_conformance_files(
     logo: str | Path | None,
     logo_title: str | None,
 ) -> list[str]:
-    """Write the files a catalog needs to conform, and copy the logo.
-
-    AGENTS.md carries the rel="agents" link (rashid PTL-FIL-002). README.md
-    carries the rel="describedby" link (issue #654). Both are written at init,
-    so a new catalog conforms before anything is added to it. The logo is
-    optional (PORTO-CORE-074).
-
-    Args:
-        path: Resolved catalog directory.
-        catalog_file: Path to catalog.json, which already exists.
-        logo: Local path to a catalog logo, or None.
-        logo_title: Accessible label for the logo link.
-
-    Returns:
-        Warnings raised while the logo was copied.
-
-    Raises:
-        CatalogInitError: If any write fails.
-    """
+    """Write the files a catalog needs to conform, and copy the logo."""
     from portolan_cli.readme import ensure_readmes
     from portolan_core.agents_md import ensure_agents_md
 
@@ -575,12 +381,7 @@ def _write_conformance_files(
 
 
 class InitResult(NamedTuple):
-    """The catalog that ``init_catalog`` created. It unpacks as ``(catalog_file, warnings)``.
-
-    Attributes:
-        catalog_file: The catalog.json that ``init_catalog`` wrote.
-        warnings: The values that ``init_catalog`` had to guess, for the user.
-    """
+    """The catalog that ``init_catalog`` created. It unpacks as ``(catalog_file, warnings)``."""
 
     catalog_file: Path
     warnings: list[str]
@@ -612,79 +413,14 @@ def init_catalog(
     logo: str | Path | None = None,
     logo_title: str | None = None,
 ) -> InitResult:
-    """Initialize a new Portolan catalog with the v2 file structure.
-
-    Creates (in order for partial failure recovery):
-    1. .portolan/ directory
-    2. versions.json at ROOT level (file backend only, consumer-visible)
-    3. catalog.json at ROOT level (valid STAC catalog via pystac)
-    4. Self link in catalog.json
-    5. .portolan/metadata.yaml — seeded with the license
-    6. .portolan/config.yaml — sentinel file, written LAST (per issue #290)
-
-    Write order ensures failed runs stay in FRESH state (retry-safe).
-    Versions.json is user-visible metadata and lives at the
-    catalog root alongside STAC files; only internal tooling state goes in
-    .portolan/.
-
-    Note: state.json was removed per issue #290. config.yaml alone is now
-    sufficient for MANAGED state detection.
-
-    ``license_id`` has no default, so every caller states its intent. Passing an
-    identifier seeds metadata.yaml with it, and the hierarchical merge then hands
-    that license to every collection, which is what lets ``add`` require one
-    (issue #686). Passing None writes no metadata.yaml, for callers that own the
-    file themselves: ``extract`` seeds it from harvested service metadata, and
-    ``clone`` copies collections that already carry their own licenses. Callers
-    validate the value with ``licensing.license_gap`` before getting here.
-
-    Args:
-        path: Directory path for the catalog. Will be created if doesn't exist.
-            Resolved before use, so a relative path such as the CLI's "." default
-            is interpreted against the working directory exactly once.
-        catalog_id: Catalog id. None derives one from the directory name, which
-            is the behavior before issue #821. A supplied id is validated and
-            rejected when invalid, rather than coerced.
-        title: Optional catalog title.
-        description: Optional catalog description.
-        backend: Versioning backend name.
-        license_id: SPDX identifier, or "other" alongside license_url. None leaves
-            metadata.yaml to the caller.
-        license_url: URL of the license text. Required when license_id is "other".
-        logo: Local path to a catalog logo. Copied to ``_assets/`` and published
-            as a ``rel="icon"`` link on the root catalog (PORTO-CORE-074). A
-            logo is optional, so None writes no link.
-        logo_title: Accessible label for the logo link. Defaults to the catalog
-            title.
-
-    Returns:
-        Tuple of (catalog_file_path, warnings). The path is absolute, so callers
-        can read it back without matching the working directory init ran in.
-
-    Raises:
-        InputValidationError: If ``catalog_id`` is not a valid STAC identifier.
-            Raised before the directory is created, so a rejected id leaves no
-            trace on disk (issue #821).
-        CatalogAlreadyExistsError: If directory is in MANAGED state.
-        UnmanagedStacCatalogError: If directory is in UNMANAGED_STAC state.
-        CatalogInitError: If filesystem operations fail.
-        LogoError: If ``logo`` is a URL, missing, or of an unpermitted media
-            type. Raised before anything is written, so the directory stays in
-            FRESH state and init can be retried with a valid image.
-    """
+    """Initialize a new Portolan catalog with the v2 file structure."""
     import pystac
 
-    # Ensure path exists. Resolve first: the path argument defaults to "." and
-    # every downstream write, including pystac's, then depends on the working
-    # directory. pystac's normalize_hrefs drops the trailing slash when it
-    # absolutizes a relative root, so a dotted working directory name trips the
-    # file-versus-directory heuristic of issue #401 and catalog.json lands in the
-    # parent. Resolving here keeps the trailing slash meaningful and gives the
-    # caller an absolute path to read back (issue #731).
+    # Resolve first: pystac normalize_hrefs drops the trailing slash of a relative root.
     path = Path(path).resolve()
 
     # Resolve the identity before anything touches the filesystem. A rejected
-    # --id must leave no directory behind for the caller to clean up (issue #821).
+    # --id must leave no directory behind for the caller to clean up.
     catalog_id, title, identity_warnings = _resolve_catalog_identity(path, catalog_id, title)
 
     try:
@@ -699,12 +435,7 @@ def init_catalog(
     if description is None:
         description = "A Portolan-managed STAC catalog"
 
-    # ─────────────────────────────────────────────────────────────────────────
-    # WRITE ORDER: config.yaml LAST for atomicity (per issue #290)
-    # detect_state() checks for config.yaml to determine MANAGED state.
-    # Writing config.yaml LAST ensures that if init fails partway through,
-    # the directory stays in FRESH state and can be safely retried.
-    # ─────────────────────────────────────────────────────────────────────────
+    # config.yaml is written last: detect_state() reads it as MANAGED, so a failed init stays FRESH.
 
     # Step 1: Create .portolan directory
     portolan_dir = path / ".portolan"
@@ -713,11 +444,6 @@ def init_catalog(
     except OSError as e:
         raise CatalogInitError(f"Cannot create .portolan directory: {e}") from e
 
-    # Step 2: versions.json - only for file backend
-    # Versions.json is consumer-visible metadata and must live at
-    # the catalog root alongside STAC files, NOT inside .portolan/ (which is
-    # reserved for internal tooling state only).
-    # Written early so failure here leaves directory in FRESH state.
     if backend == "file":
         now = datetime.now(UTC)
         versions_data = {
@@ -745,26 +471,12 @@ def init_catalog(
     except OSError as e:
         raise CatalogInitError(f"Cannot write catalog.json: {e}") from e
 
-    # No self link: a SELF_CONTAINED catalog omits it, which is what pystac
-    # emits. rashid enforced this through PTL-LNK-005 until 0.1.8 retired the
-    # rule, so a self link is now allowed rather than wrong. Keep omitting it:
-    # `init` used to append one by hand and `add` then stripped it, so the two
-    # commands disagreed about the same catalog.
-
     # Steps 4b to 4c-bis: AGENTS.md, the schema URI, README.md, and the logo.
     warnings.extend(_write_conformance_files(path, catalog_file, logo=logo, logo_title=logo_title))
 
-    # Step 4d: metadata.yaml - seed the license the human supplied. Every collection
-    # inherits it through the hierarchical merge, so the gate in add_files passes
-    # without the human editing anything first (issue #686). Skipped when the caller
-    # owns the file: extract seeds it from harvested metadata, and writing here first
-    # would make its O_EXCL create a no-op and silently drop everything harvested.
     warnings.extend(_seed_root_metadata(portolan_dir, license_id, license_url))
 
-    # Step 5: config.yaml - sentinel file per issue #290 (sufficient for MANAGED state)
-    # Written LAST for atomicity: if any previous step fails, directory stays FRESH
-    # and init can be safely retried. Also serves as user configuration file for
-    # settings like remote, aws_profile, etc.
+    # Step 5: config.yaml is the MANAGED sentinel and the user config file.
     config_content = "# Portolan configuration\n"
     if backend != "file":
         config_content = f"# Portolan configuration\nbackend: {backend}\n"
@@ -778,12 +490,6 @@ def init_catalog(
 
 class Catalog:
     """A Portolan catalog backed by a .portolan directory.
-
-    The Catalog class provides the Python API for all catalog operations.
-    The CLI commands are thin wrappers around these methods.
-
-    Note: This is the legacy v1 API. New code should use init_catalog()
-    which creates the v2 file structure with catalog.json at root level.
 
     Attributes:
         root: The root directory containing the .portolan folder.
@@ -814,13 +520,9 @@ class Catalog:
     def init(cls, root: Path, *, license_id: str | None = None) -> Self:
         """Initialize a new Portolan catalog.
 
-        Creates the catalog using the v2 file structure via init_catalog().
-
         Args:
             root: The directory where the catalog should be created.
-            license_id: SPDX identifier to seed into metadata.yaml. Left None, the
-                catalog starts unlicensed and ``add`` will ask for a license before
-                it writes a collection (issue #686).
+            license_id: SPDX identifier to seed into metadata.yaml. Left None, the catalog starts unlicensed and ``add`` asks for one.
 
         Returns:
             A Catalog instance for the newly created catalog.
@@ -840,49 +542,14 @@ class Catalog:
 
 
 def intermediate_catalog_ids(collection_id: str) -> list[str]:
-    """Return the ancestor sub-catalog ids for a nested collection.
-
-    These are the intermediate directory levels between the catalog root and the
-    leaf collection, each of which holds a ``catalog.json`` (created by
-    ``create_intermediate_catalogs`` during ``add``). This is the single source
-    of truth for the path-segment walk, reused by both ``add`` (to create the
-    files) and ``push`` (to discover them as upload targets).
-
-    Examples:
-        "climate/hittekaart" -> ["climate"]
-        "env/air/quality"    -> ["env", "env/air"]
-        "demographics"       -> []  (leaf holds collection.json, no intermediates)
-
-    Args:
-        collection_id: The (possibly nested) collection ID, POSIX-separated.
-
-    Returns:
-        Ancestor sub-catalog ids in root-to-leaf order (empty for single-level).
-    """
+    """Return the ancestor sub-catalog ids for a nested collection."""
     parts = collection_id.split("/")
     return ["/".join(parts[: i + 1]) for i in range(len(parts) - 1)]
 
 
 def create_intermediate_catalogs(collection_id: str, catalog_root: Path) -> None:
-    """Create intermediate catalog.json files for nested collection paths.
-
-    For a nested collection ID like "climate/hittekaart", this creates:
-    - climate/catalog.json (intermediate catalog)
-
-    For deeper nesting like "env/air/quality", this creates:
-    - env/catalog.json
-    - env/air/catalog.json
-
-    Single-level collection IDs (e.g., "demographics") create no intermediate catalogs
-    since the directory will contain collection.json directly.
-
-    Args:
-        collection_id: The nested collection ID (e.g., "climate/hittekaart").
-        catalog_root: Root directory of the catalog.
-    """
-    # Create catalog.json at each intermediate level (all but the last).
-    # intermediate_catalog_ids is the shared source of truth for this walk,
-    # also used by push discovery (keeps add/push in lockstep).
+    """Create intermediate catalog.json files for nested collection paths."""
+    # intermediate_catalog_ids is shared with push discovery, so add and push agree.
     for intermediate_path in intermediate_catalog_ids(collection_id):
         catalog_dir = catalog_root / intermediate_path
         catalog_file = catalog_dir / "catalog.json"
@@ -894,17 +561,9 @@ def create_intermediate_catalogs(collection_id: str, catalog_root: Path) -> None
         # Create directory if needed
         catalog_dir.mkdir(parents=True, exist_ok=True)
 
-        # Root and parent diverge below the first level: the root catalog is
-        # `depth` levels up, while the containing object is always the catalog
-        # one level up. Deriving both from the depth made every intermediate
-        # below the first point past its own parent (issue #711).
         root_href = relative_href(catalog_dir, catalog_root / "catalog.json")
         parent_href = relative_href(catalog_dir, catalog_dir.parent / "catalog.json")
 
-        # Titled after its own path segment, not the full id: the title is what
-        # a browser shows and what ensure_link_titles copies onto the parent's
-        # child link, so "Air Quality" reads better than "Env/Air Quality"
-        # (issue #502, rashid PTL-TTL-001 and PTL-TTL-003).
         title = humanize_slug(catalog_dir.name)
 
         # Create intermediate catalog
@@ -930,20 +589,7 @@ def create_intermediate_catalogs(collection_id: str, catalog_root: Path) -> None
 
 
 def update_catalog_links_for_nested(catalog_root: Path, collection_id: str) -> None:
-    """Update catalog links for nested collection structure.
-
-    Ensures:
-    - Root catalog links to intermediate catalogs (not directly to leaf collections)
-    - Intermediate catalogs link to their child catalogs/collections
-
-    For "climate/hittekaart":
-    - Root catalog links to ./climate/catalog.json
-    - climate/catalog.json links to ./hittekaart/collection.json
-
-    Args:
-        catalog_root: Root directory of the catalog.
-        collection_id: The nested collection ID (e.g., "climate/hittekaart").
-    """
+    """Update catalog links for nested collection structure."""
     parts = collection_id.split("/")
 
     # For single-level collections, just ensure root links to collection
@@ -1002,19 +648,7 @@ def _ensure_catalog_links_to_child(catalog_file: Path, child_href: str) -> None:
 def _link_title_from_target(
     stac_file: Path, link: dict[str, object], catalog_root: Path
 ) -> str | None:
-    """Read the human-readable title of a child/item link's target.
-
-    Child links target a ``collection.json``/``catalog.json`` (title at the top
-    level); item links target an ``item.json`` (title under ``properties``).
-
-    Args:
-        stac_file: The STAC file the link lives in (for relative resolution).
-        link: The link mapping (must have an ``href``).
-        catalog_root: Root the resolved target must stay within.
-
-    Returns:
-        The target's title, or None if it can't be read.
-    """
+    """Read the human-readable title of a child/item link's target."""
     href = link.get("href")
     if not isinstance(href, str) or not href:
         return None
@@ -1039,23 +673,7 @@ def _link_title_from_target(
 
 
 def ensure_link_titles(catalog_root: Path) -> bool:
-    """Backfill ``title`` (and ``type``) on all child/item links (Issue #502).
-
-    Walks every ``catalog.json``/``collection.json`` under ``catalog_root`` and,
-    for each ``child``/``item`` link, copies the target's human-readable title
-    onto the link so STAC Browser can render names without fetching every child.
-    Also fills a missing ``type`` (``application/json`` for child links,
-    ``application/geo+json`` for item links).
-
-    Idempotent: only rewrites a file when a link actually changed. Reused by the
-    ``check --fix`` repair path.
-
-    Args:
-        catalog_root: Root directory of the catalog.
-
-    Returns:
-        True if any file was modified.
-    """
+    """Backfill ``title`` (and ``type``) on all child/item links."""
     changed_any = False
 
     for stac_file, content in iter_stac_objects(catalog_root):
@@ -1080,7 +698,7 @@ def ensure_link_titles(catalog_root: Path) -> bool:
     return changed_any
 
 
-#: metadata.yaml keys that a catalog copies onto its own catalog.json (#815).
+#: metadata.yaml keys that a catalog copies onto its own catalog.json.
 #: Kept apart from :data:`portolan_core.config.NON_INHERITED_METADATA_KEYS`, which
 #: answers a different question. That constant names the keys a child never takes
 #: from a parent. This one names the keys a catalog publishes about itself.
@@ -1093,16 +711,7 @@ def _apply_human_fields(
     *,
     dry_run: bool = False,
 ) -> bool:
-    """Copy the human-authored fields of ``metadata`` onto one catalog.json.
-
-    Args:
-        catalog_path: Path of the ``catalog.json`` to update.
-        metadata: Metadata that belongs to the catalog at ``catalog_path``.
-        dry_run: If True, report the change without writing the file.
-
-    Returns:
-        True if the file was rewritten, or would be under ``dry_run``.
-    """
+    """Copy the human-authored fields of ``metadata`` onto one catalog.json."""
     if not metadata:
         return False
 
@@ -1132,32 +741,7 @@ def _apply_human_fields(
 def apply_catalog_human_titles(
     catalog_root: Path, *, dry_run: bool = False, state: RunState | None = None
 ) -> list[Path]:
-    """Apply each metadata.yaml title/description to its catalog.json (issue #815).
-
-    A collection takes its human-authored title and description from
-    ``metadata.yaml`` through :func:`portolan_cli.stac.apply_human_titles`. A
-    catalog took the value ``init`` wrote, so a title a human authored after
-    creation never reached ``catalog.json``. ``extract`` names the catalog after
-    its directory, which made that the published title.
-
-    Every ``catalog.json`` in the visible tree is treated the same way. Each one
-    reads the ``metadata.yaml`` in its own directory. A title never inherits (see
-    :data:`portolan_core.config.NON_INHERITED_METADATA_KEYS`), so a root title
-    cannot rename a subcatalog below it.
-
-    Idempotent. A catalog that already carries the values is not rewritten. The
-    sweep only writes a value it finds. It never clears a field, so a title
-    removed from ``metadata.yaml`` stays on ``catalog.json`` until a human or
-    ``check --fix`` replaces it.
-
-    Args:
-        catalog_root: Root directory of the catalog.
-        dry_run: If True, report what would change without writing.
-        state: The run state, which parses each ``metadata.yaml`` once per run.
-
-    Returns:
-        The catalog.json paths that were modified, in sweep order.
-    """
+    """Apply each metadata.yaml title/description to its catalog.json."""
     from portolan_core.run_state import RunState
 
     state = state or RunState.open(catalog_root)
@@ -1172,22 +756,7 @@ def apply_catalog_human_titles(
 
 
 def ensure_schema_uris(catalog_root: Path) -> bool:
-    """Declare the Portolan profile schema URI across a catalog tree (issue #654).
-
-    Walks every ``catalog.json`` and ``collection.json`` under ``catalog_root``
-    and stamps the versioned profile URI into ``stac_extensions``. Items are left
-    alone: the conformance claim lives on catalogs and collections.
-
-    Idempotent — a tree that already declares the current URI is not rewritten.
-    Shared by ``init``, ``add``, and the ``check --fix`` repair path so all three
-    produce the same output.
-
-    Args:
-        catalog_root: Root directory of the catalog.
-
-    Returns:
-        True if any file was modified.
-    """
+    """Declare the Portolan profile schema URI across a catalog tree."""
     from portolan_cli.stac import ensure_portolan_schema_uri
 
     changed_any = False
@@ -1218,12 +787,7 @@ class CollectionSummary(NamedTuple):
 
 
 def _read_catalog_index(versions_path: Path) -> dict[str, Any]:
-    """Read the catalog-level ``versions.json`` and check its shape.
-
-    Raises:
-        CatalogVersionsCorruptedError: If the file is not JSON, is not an
-            object, or holds a ``collections`` value that is not an object.
-    """
+    """Read the catalog-level ``versions.json`` and check its shape."""
     try:
         count("versions_json.reads")
         content = json.loads(versions_path.read_text(encoding="utf-8"))
@@ -1258,12 +822,7 @@ def _read_catalog_index(versions_path: Path) -> dict[str, Any]:
 
 
 def collection_summaries(state: RunState) -> dict[str, CollectionSummary]:
-    """Read file-backed collection summaries for recovery on an unchanged run.
-
-    Collection records may have committed while the root index write failed.
-    The next run must reconcile them even when it stages no new version. The
-    state's memo reuses records the unchanged-file checks already read.
-    """
+    """Read file-backed collection summaries for recovery on an unchanged run."""
     from portolan_core.stac_links import versioned_collections
 
     summaries: dict[str, CollectionSummary] = {}
@@ -1283,29 +842,7 @@ def update_catalog_index(
     catalog_root: Path,
     summaries: dict[str, CollectionSummary] | Callable[[], dict[str, CollectionSummary]],
 ) -> bool:
-    """Write the entries of several collections into the catalog-level versions.json.
-
-    The catalog-level versions.json summarizes each collection, so a reader
-    does not open every collection's versions.json. One call does one
-    read-modify-write under the catalog lock, for every collection of a run.
-    The read happens inside the lock, so a concurrent ``add`` that wrote first
-    keeps its entries. An entry that already holds the same version, asset
-    count, and size is left alone. When every entry matches, the file and its
-    ``updated`` time do not change.
-
-    Args:
-        catalog_root: Root directory of the catalog.
-        summaries: Collection id to its new entry. A callable is called under
-            the lock, so a summary it reads from disk cannot be older than an
-            entry that another command wrote first.
-
-    Returns:
-        True when the file was written.
-
-    Raises:
-        CatalogVersionsCorruptedError: If catalog versions.json is invalid JSON
-            or has invalid structure.
-    """
+    """Write the entries of several collections into the catalog-level versions.json."""
     versions_path = catalog_root / "versions.json"
     if (isinstance(summaries, dict) and not summaries) or not versions_path.exists():
         # No catalog-level versions.json: not a file-backend catalog (Iceberg).
@@ -1349,11 +886,5 @@ class CatalogVersionsCorruptedError(Exception):
     """Raised when catalog-level versions.json is corrupted."""
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Directory handling
-# ─────────────────────────────────────────────────────────────────────────────
-
 # Note: GEOSPATIAL_EXTENSIONS imported from portolan_core.constants
 # Note: is_filegdb is imported from portolan_cli.scan.detect (canonical implementation).
-# scan_detect.is_filegdb accepts either .gdbtable files OR a 'gdb' marker file, which
-# matches the full FileGDB spec. Do not reimplement here.

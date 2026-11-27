@@ -1,19 +1,4 @@
-"""STAC metadata generation from ImageServer metadata.
-
-This module converts ImageServer metadata into STAC Collection and Item
-JSON structures. The output is ready for json.dump() and follows the
-STAC 1.1.0 specification.
-
-Key mappings:
-- ImageServerMetadata.name → Collection.id (sanitized)
-- ImageServerMetadata.full_extent → Collection.extent.spatial (transformed to WGS84)
-- TileSpec.bbox → Item.bbox and Item.geometry
-- COG path → Item.assets.data.href
-
-References:
-- STAC Spec: https://stacspec.org/
-- Temporal extent handling (use null for unknown dates)
-"""
+"""STAC metadata generation from ImageServer metadata."""
 
 from __future__ import annotations
 
@@ -37,27 +22,7 @@ def create_collection_metadata(
     service_metadata: ImageServerMetadata,
     service_url: str,
 ) -> dict[str, Any]:
-    """Create STAC Collection JSON from ImageServer metadata.
-
-    Args:
-        service_metadata: Parsed ImageServer metadata.
-        service_url: URL of the source ImageServer.
-
-    Returns:
-        Dict ready for json.dump() with STAC Collection structure:
-        - type: "Collection"
-        - stac_version: from portolan_core.models._stac_version
-        - id: derived from service name (sanitized)
-        - extent: spatial from fullExtent (WGS84), temporal open interval
-        - summaries: core v1.1.0 bands array
-        - links: source link to ImageServer, self link, and a license link when the
-          service's licenseInfo carries a URL
-        - license: "other" (STAC 1.1 value for unknown/non-SPDX sources)
-
-    A service whose licenseInfo holds no URL yields "other" with no license link,
-    which ``portolan check`` reports as PTL-LIC-002 for a human to resolve. Nothing
-    honest can be written from license text that names no license (issue #686).
-    """
+    """Create STAC Collection JSON from ImageServer metadata."""
     collection_id = _sanitize_id(service_metadata.name)
 
     # Transform extent to WGS84
@@ -90,7 +55,7 @@ def create_collection_metadata(
     ]
 
     # PTL-LIC-002: "other" needs a rel="license" link, and the service's own
-    # licenseInfo is where the only honest one can come from (issue #686).
+    # licenseInfo is where the only honest one can come from.
     harvested_license_url = license_url_from_text(service_metadata.license_info)
     if harvested_license_url:
         links.append(
@@ -115,12 +80,12 @@ def create_collection_metadata(
     collection: dict[str, Any] = {
         "type": "Collection",
         "stac_version": get_stac_version(),
-        # No extension declaration: band metadata is core STAC v1.1.0 (issue #654).
+        # No extension declaration: band metadata is core STAC v1.1.0.
         "stac_extensions": [],
         "id": collection_id,
         "title": service_metadata.name,
         "description": description,
-        "license": "other",  # STAC 1.1: non-SPDX / unknown license (issue #568)
+        "license": "other",  # STAC 1.1: non-SPDX / unknown license
         "extent": {
             "spatial": {
                 "bbox": [list(wgs84_bbox)],
@@ -146,25 +111,7 @@ def create_item_metadata(
     cog_path: str,
     collection_id: str | None = None,
 ) -> dict[str, Any]:
-    """Create STAC Item JSON for a single tile.
-
-    Args:
-        tile: Tile specification with bbox and ID.
-        service_metadata: Parent ImageServer metadata.
-        cog_path: Relative or absolute path to the COG file.
-        collection_id: ID of the parent collection (required by STAC spec).
-
-    Returns:
-        Dict ready for json.dump() with STAC Item structure:
-        - type: "Feature"
-        - stac_version: from portolan_core.models._stac_version
-        - id: from tile ID
-        - geometry: Polygon from tile bbox
-        - bbox: tile bbox (transformed to WGS84 if needed)
-        - properties: datetime (null), created timestamp
-        - collection: parent collection ID
-        - assets: COG asset with href and media type
-    """
+    """Create STAC Item JSON for a single tile."""
     item_id = tile.get_id()
 
     # Derive collection_id from service name if not provided
@@ -188,7 +135,7 @@ def create_item_metadata(
     item: dict[str, Any] = {
         "type": "Feature",
         "stac_version": get_stac_version(),
-        # No extension declaration: band metadata is core STAC v1.1.0 (issue #654).
+        # No extension declaration: band metadata is core STAC v1.1.0.
         "stac_extensions": [],
         "id": item_id,
         "geometry": geometry,
@@ -231,17 +178,7 @@ def create_item_metadata(
 
 
 def _sanitize_id(name: str) -> str:
-    """Sanitize service name for use as STAC ID.
-
-    STAC IDs should be URL-safe, lowercase, and contain only
-    alphanumeric characters, underscores, and hyphens.
-
-    Args:
-        name: Original service name.
-
-    Returns:
-        Sanitized ID string.
-    """
+    """Sanitize service name for use as STAC ID."""
     # Convert to lowercase
     sanitized = name.lower()
 
@@ -259,18 +196,7 @@ def _sanitize_id(name: str) -> str:
 
 
 def _get_description(metadata: ImageServerMetadata) -> str:
-    """Get description with fallback.
-
-    Priority:
-    1. description
-    2. Generated fallback
-
-    Args:
-        metadata: ImageServer metadata.
-
-    Returns:
-        Description string.
-    """
+    """Get description with fallback."""
     if metadata.description:
         return metadata.description
     return (
@@ -279,29 +205,12 @@ def _get_description(metadata: ImageServerMetadata) -> str:
 
 
 def _build_summaries(metadata: ImageServerMetadata) -> dict[str, Any]:
-    """Build STAC Collection summaries.
-
-    Args:
-        metadata: ImageServer metadata.
-
-    Returns:
-        Summaries dict with the core ``bands`` array.
-    """
+    """Build STAC Collection summaries."""
     return {"bands": _build_bands(metadata)}
 
 
 def _build_bands(metadata: ImageServerMetadata) -> list[dict[str, Any]]:
-    """Build the core STAC v1.1.0 ``bands`` array.
-
-    v1.1.0 folded ``raster:bands`` and ``eo:bands`` into one core array, so band
-    metadata needs no extension declaration (issue #654).
-
-    Args:
-        metadata: ImageServer metadata.
-
-    Returns:
-        List of band objects with data_type.
-    """
+    """Build the core STAC v1.1.0 ``bands`` array."""
     # Map ArcGIS pixel types to STAC data types
     pixel_type_map = {
         "U1": "uint8",
@@ -335,20 +244,10 @@ def _build_bands(metadata: ImageServerMetadata) -> list[dict[str, Any]]:
 def _bbox_to_polygon(
     bbox: tuple[float, float, float, float],
 ) -> dict[str, Any]:
-    """Convert bbox to GeoJSON Polygon geometry.
-
-    Args:
-        bbox: Bounding box as (minx, miny, maxx, maxy).
-
-    Returns:
-        GeoJSON Polygon geometry dict.
-    """
+    """Convert bbox to GeoJSON Polygon geometry."""
     minx, miny, maxx, maxy = bbox
 
-    # Create closed ring following the right-hand rule (RFC 7946):
-    # For exterior rings, vertices are in counter-clockwise order when
-    # viewed from above (i.e., the interior is on the left as you traverse).
-    # This ordering: SW -> SE -> NE -> NW -> SW traces counter-clockwise.
+    # Counter-clockwise exterior ring (RFC 7946): SW -> SE -> NE -> NW -> SW.
     coordinates = [
         [
             [minx, miny],  # SW

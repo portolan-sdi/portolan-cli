@@ -1,8 +1,4 @@
-"""Integration tests for `portolan version` subcommands via CLI.
-
-Tests rollback, prune, list, and current commands through the full
-CLI pipeline with the iceberg backend.
-"""
+"""Integration tests for `portolan version` subcommands via CLI."""
 
 from __future__ import annotations
 

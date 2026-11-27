@@ -1,4 +1,4 @@
-"""Tests for the catalog writer plan in portolan_core.writer (#1133)."""
+"""Tests for the catalog writer plan in portolan_core.writer."""
 
 from __future__ import annotations
 
@@ -393,11 +393,7 @@ class TestReviewFixes:
 
 @pytest.fixture(params=["posix", "windows"])
 def host(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> str:
-    """Run a test as on POSIX, then as on a case-insensitive Windows host.
-
-    Each case sets the host path type, so it means the same on every runner.
-    Rashid's own tests patch the host the same way.
-    """
+    """Run a test as on POSIX, then as on a case-insensitive Windows host."""
     host_path = PureWindowsPath if request.param == "windows" else PurePosixPath
     monkeypatch.setattr(rashid_href, "_HOST_PATH", host_path)
     return str(request.param)

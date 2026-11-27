@@ -1,8 +1,4 @@
-"""Integration test fixtures for portolan CLI-to-Iceberg pipeline.
-
-These fixtures create full portolan catalogs with the iceberg backend
-configured, using SQLite + local filesystem (no Docker, no cloud).
-"""
+"""Integration test fixtures for portolan CLI-to-Iceberg pipeline."""
 
 from __future__ import annotations
 
@@ -30,9 +26,7 @@ _SKIP_WINDOWS = pytest.mark.skipif(
 pytestmark = [pytest.mark.integration, _SKIP_WINDOWS]
 
 # Minimal valid GeoJSON FeatureCollection with point geometries.
-# Used as the primary test input because portolan-cli's add pipeline
-# expects geospatial files (GeoJSON, GeoParquet, Shapefile, etc.)
-# and converts GeoJSON to GeoParquet automatically.
+# The add pipeline converts GeoJSON to GeoParquet.
 _POINTS_GEOJSON = json.dumps(
     {
         "type": "FeatureCollection",
@@ -97,9 +91,8 @@ def initialized_iceberg_catalog(
             "PyIceberg SQL catalog warehouse paths broken on Windows"
             " (https://github.com/apache/iceberg-python/issues/1005)"
         )
-    # init --backend iceberg writes .portolan/iceberg.db into the working
-    # directory (#1056). A separate temporary directory keeps it out of the
-    # repository and out of the catalog.
+    # init --backend iceberg writes .portolan/iceberg.db into the working directory.
+    # A separate temporary directory keeps it out of the repository and the catalog.
     monkeypatch.chdir(tmp_path_factory.mktemp("init-cwd"))
     result = runner.invoke(
         cli,
@@ -112,11 +105,7 @@ def initialized_iceberg_catalog(
 
 
 def load_test_catalog(catalog_root: Path):
-    """Load the SQLite Iceberg catalog from a portolan catalog root.
-
-    Uses catalog name "portolake" to match the name used by
-    portolan_cli.backends.iceberg.config.create_catalog() (CATALOG_NAME = "portolake").
-    """
+    """Load the SQLite Iceberg catalog from a portolan catalog root."""
     return load_catalog(
         "portolake",
         type="sql",
@@ -131,13 +120,7 @@ def place_geojson_in_collection(
     geojson_content: str | None = None,
     filename: str = "data.geojson",
 ) -> Path:
-    """Write a GeoJSON file into the expected catalog directory structure.
-
-    For vector data (GeoJSON), portolan-cli uses collection-level assets: parent directory = collection. So:
-      catalog_root/collection/data.geojson -> collection = "collection"
-
-    Returns the file path.
-    """
+    """Write a GeoJSON file into the expected catalog directory structure."""
     if geojson_content is None:
         geojson_content = _POINTS_GEOJSON
     collection_dir = catalog_root / collection

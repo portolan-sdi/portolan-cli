@@ -1,18 +1,4 @@
-"""Regression tests for issue #465: O(n²) add on collection-level vector assets.
-
-`_scan_item_assets` scans the whole collection directory for every file added.
-For collection-level single-file vector assets `item_dir` IS the
-collection dir, so adding N files re-checksums every sibling → O(n²) work. This
-made the 1000-file stress tests exceed the 300s nightly timeout.
-
-Test 1 bounds the redundant scan; Test 2 guards against the fix over-skipping
-and dropping legitimate non-geo companion assets.
-
-Test 1 adds copies of a conformant GeoParquet (with a bbox covering column).
-A copy of the bare `simple.parquet` fixture lacks that column, so `add`
-rewrites every copy through geoparquet-io (issue #805). The rewrite has nothing
-to do with the scan bound and made the test take 8 s locally and 41 s on CI.
-"""
+"""O(n²) add on collection-level vector assets."""
 
 from __future__ import annotations
 
@@ -57,11 +43,7 @@ def _collection_assets(collection_dir: Path) -> dict[str, dict]:
 
 @pytest.fixture(scope="module")
 def conformant_parquet_bytes(tmp_path_factory: pytest.TempPathFactory, fixtures_dir: Path) -> bytes:
-    """`simple.parquet` with the bbox covering column that `add` asks for.
-
-    The test fails rather than silently paying for 20 rewrites when the
-    conformance rule changes and this file stops meeting it.
-    """
+    """`simple.parquet` with the bbox covering column that `add` asks for."""
     import geoparquet_io as gpio
 
     from portolan_cli.conversion_config import VectorSettings
@@ -80,23 +62,13 @@ def conformant_parquet_bytes(tmp_path_factory: pytest.TempPathFactory, fixtures_
 def test_collection_level_scan_is_bounded_not_quadratic(
     initialized_catalog: Path, conformant_parquet_bytes: bytes
 ) -> None:
-    """Adding N collection-level vectors must NOT re-checksum every sibling.
-
-    Pre-fix, each file's scan measures and re-checksums all N siblings, so
-    `_measure` runs N*N times (400 for N=20, measured). Post-fix each file
-    measures only itself (+ its own sidecars), so the count is O(N) (20,
-    measured). The bound 3*N (60) sits far below the quadratic value and above
-    the linear count.
-    """
     n = 20
     collection_dir = initialized_catalog / "many"
     collection_dir.mkdir()
     for i in range(n):
         (collection_dir / f"f{i:04d}.parquet").write_bytes(conformant_parquet_bytes)
 
-    # Count the files the scan measures. Each measure hashes the file, and a
-    # run state answers a second hash of one file from its memo, so a count of
-    # hashes would stay linear even with the quadratic scan back.
+    # Count the files the scan measures.
     real_measure = prep_mod._measure
     call_count = 0
 
@@ -139,12 +111,6 @@ def test_collection_level_scan_is_bounded_not_quadratic(
 def test_loose_non_geo_companions_are_not_dropped(
     initialized_catalog: Path, fixtures_dir: Path
 ) -> None:
-    """Non-geo companions (not in GEOSPATIAL_EXTENSIONS) must stay tracked.
-
-    Files like `.txt`/`.png` are filtered out of `files_to_process` and are never
-    deferred, so at collection level they are tracked ONLY by the sibling scan.
-    The O(n²) fix must skip only *other items'* geo files, never these companions. Guards against an over-aggressive skip rule.
-    """
     collection_dir = initialized_catalog / "with-companions"
     collection_dir.mkdir()
     (collection_dir / "data.parquet").write_bytes((fixtures_dir / "simple.parquet").read_bytes())
@@ -169,11 +135,6 @@ def test_loose_non_geo_companions_are_not_dropped(
 
 
 def test_batch_sibling_names_includes_multilayer_outputs(fixtures_dir: Path) -> None:
-    """Multi-layer sources contribute their per-layer `{stem}_{layer}.parquet`
-    output names so sibling layer items skip each other in a flat collection
-    scan (issue #465). Without these, each layer's scan re-checksums the other
-    layers' outputs — O(n²) in the layer count.
-    """
     gpkg = fixtures_dir / "multilayer" / "multilayer.gpkg"
     names = _batch_sibling_names([gpkg])
 

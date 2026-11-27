@@ -1,9 +1,4 @@
-"""Tests for common extraction filtering.
-
-These tests verify the shared filtering logic used across all extraction
-backends (ArcGIS, WFS, etc.). Both services and layers use glob patterns
-(fnmatch) to include or exclude items from extraction.
-"""
+"""Tests for common extraction filtering."""
 
 from __future__ import annotations
 
@@ -14,9 +9,7 @@ from portolan_cli.extract.common.filters import filter_services, is_glob, layer_
 pytestmark = pytest.mark.unit
 
 
-# =============================================================================
 # Service Filtering Tests
-# =============================================================================
 
 
 class TestFilterServicesInclude:
@@ -113,9 +106,7 @@ class TestFilterServicesCaseSensitivity:
         assert result == ["Census_2020", "CENSUS_2021", "census_2022"]
 
 
-# =============================================================================
 # Layer Matching Tests
-# =============================================================================
 
 
 class TestLayerMatches:
@@ -133,7 +124,6 @@ class TestLayerMatches:
         assert layer_matches(2, "5", "5") is False
 
     def test_plain_pattern_matches_the_leaf(self) -> None:
-        """#768: a WFS name is workspace:layer, and the leaf alone matches."""
         assert layer_matches(0, "cadastru_data:terenuri", "terenuri") is True
         assert layer_matches(0, "cadastru_data:terenuri", "cadastru_data:terenuri") is True
         assert layer_matches(0, "cadastru_data:terenuri", "cadastru") is False
@@ -147,9 +137,7 @@ class TestLayerMatches:
         assert is_glob("roads") is False
 
 
-# =============================================================================
 # Folder-Qualified Name Tests
-# =============================================================================
 
 
 @pytest.mark.unit

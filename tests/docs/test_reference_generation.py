@@ -92,11 +92,7 @@ def _cli_page() -> str:
 
 
 def test_cli_reference_anchors_match_the_toc_slug() -> None:
-    """Every heading anchor equals the slug Python-Markdown derives for it.
-
-    The generator writes the anchor itself rather than import markdown. This
-    proves the two agree for every command that ships.
-    """
+    """The generator writes the anchor itself, so this proves it matches Python-Markdown."""
     from markdown.extensions.toc import slugify
 
     from scripts.generate_reference_docs import _slug, _walk
@@ -108,12 +104,7 @@ def test_cli_reference_anchors_match_the_toc_slug() -> None:
 
 
 def test_cli_reference_drops_clicks_no_rewrap_marker() -> None:
-    """The page carries no no-rewrap marker in either of its two forms.
-
-    The previous renderer removed a line only when it held the backspace
-    character. This repo's docstrings carry the two-character form, so 47
-    markers reached the built page.
-    """
+    """The page carries no no-rewrap marker in either of its two forms."""
     page = _cli_page()
 
     assert "\\b" not in page
@@ -121,12 +112,7 @@ def test_cli_reference_drops_clicks_no_rewrap_marker() -> None:
 
 
 def test_cli_reference_fences_every_no_rewrap_block() -> None:
-    """Each no-rewrap marker in the Click tree produces one fenced block.
-
-    Click marks a paragraph that it must not rewrap. The page holds that
-    paragraph in a fenced block, so the example commands inside it keep their
-    line breaks.
-    """
+    """Each no-rewrap marker in the Click tree produces one fenced block."""
     from scripts.generate_reference_docs import _VERBATIM_MARKERS, _walk
 
     expected = sum(
@@ -167,11 +153,7 @@ def test_cli_reference_tables_keep_one_pipe_per_column() -> None:
 
 
 def test_cli_reference_lists_arguments_click_cannot_describe() -> None:
-    """The page tables the arguments that the previous renderer omitted.
-
-    Click holds no help text for an argument, so the old table style dropped
-    arguments entirely. A reader could not see that `portolan add` takes paths.
-    """
+    """Click holds no help text for an argument, so the table lists each argument itself."""
     page = _cli_page()
 
     assert "| Name | Type | Required |" in page
@@ -180,16 +162,9 @@ def test_cli_reference_lists_arguments_click_cannot_describe() -> None:
 
 
 def test_cli_reference_ignores_the_terminal_width(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The page does not change with the width of the window that generates it.
-
-    Click derives its default help width from the terminal size. A checked-in
-    page that read it would fail `--check` on any machine with a different
-    window.
-    """
-    # COLUMNS is the variable shutil.get_terminal_size reads first, so this
-    # drives Click the same way a real terminal does. Do not patch
-    # shutil.get_terminal_size itself, because pytest calls it with a
-    # fallback= keyword while it writes progress.
+    """Click derives its help width from the terminal, which must not change the page."""
+    # shutil.get_terminal_size reads COLUMNS first. Do not patch that function:
+    # pytest calls it with a fallback= keyword.
     before = _cli_page()
 
     monkeypatch.setenv("COLUMNS", "37")
@@ -203,11 +178,7 @@ def test_cli_reference_ignores_the_terminal_width(monkeypatch: pytest.MonkeyPatc
 
 
 def test_generator_rejects_a_machine_specific_default() -> None:
-    """The generator stops when an option default names a path or an address.
-
-    Such a default ties the checked-in page to the machine that wrote it. The
-    generator fails loudly rather than write a page that CI cannot reproduce.
-    """
+    """A path or address default ties the page to one machine, so the generator stops."""
     import click
 
     from scripts.generate_reference_docs import _command_options

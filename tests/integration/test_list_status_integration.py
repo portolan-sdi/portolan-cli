@@ -1,8 +1,4 @@
-"""Integration tests for unified list command with status indicators.
-
-These tests verify the complete workflow from CLI invocation through
-to output, using real filesystem operations (no mocks).
-"""
+"""Integration tests for unified list command with status indicators."""
 
 from __future__ import annotations
 
@@ -32,9 +28,7 @@ def init_catalog(catalog_dir: Path) -> None:
     assert result.exit_code == 0, f"init failed: {result.output}"
 
 
-# =============================================================================
 # Integration tests: Full workflow with real filesystem
-# =============================================================================
 
 
 class TestListStatusIntegration:

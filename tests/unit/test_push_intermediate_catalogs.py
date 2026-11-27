@@ -1,12 +1,4 @@
-"""Tests for intermediate catalog.json / README.md upload on push (Issue #547, #552).
-
-A nested collection like
-``tst/latest/adm0`` has a ``catalog.json`` at each intermediate level
-(``tst/`` and ``tst/latest/``) created by ``create_intermediate_catalogs``
-during ``add``. These files were never uploaded by ``push`` -- neither the
-single-collection path nor the catalog-wide path -- breaking STAC navigation for
-any client walking ``child`` links remotely. These tests pin the fix.
-"""
+"""Tests for intermediate catalog.json / README.md upload on push."""
 
 from __future__ import annotations
 
@@ -90,17 +82,7 @@ def _link(catalog_json: Path, *hrefs: str) -> None:
 
 @pytest.fixture
 def nested_catalog(tmp_path: Path) -> Path:
-    """Two sibling leaf collections under a two-level nesting (structure from #552).
-
-    Layout::
-
-        catalog.json                    (root)
-        tst/catalog.json                (intermediate, level 1)
-        tst/README.md                   (intermediate authored readme)
-        tst/latest/catalog.json         (intermediate, level 2)
-        tst/latest/adm0/{collection,versions}.json
-        tst/latest/adm1/{collection,versions}.json
-    """
+    """Two sibling leaf collections under a two-level nesting (structure)."""
     _setup_valid_catalog(tmp_path)
     _write_catalog_json(tmp_path / "catalog.json", "root")
     _write_catalog_json(tmp_path / "tst" / "catalog.json", "tst")
@@ -121,9 +103,8 @@ class TestDiscoverIntermediateCatalogFiles:
         )
         rel = [f.relative_to(nested_catalog).as_posix() for f in files]
 
-        # tst/ and tst/latest/ each appear once despite two sibling collections;
-        # the authored tst/README.md is included, and root catalog.json is NOT.
-        # Sorted by ancestor dir; within a dir, catalog.json precedes README.md.
+        # tst/ and tst/latest/ each appear once despite two sibling collections; the authored
+        # tst/README.md is included, and root catalog.json is NOT.
         assert rel == [
             "tst/catalog.json",
             "tst/README.md",
@@ -147,13 +128,13 @@ def put_order(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[str]]:
 
 
 class TestCatalogWidePushIntermediateCatalogs:
-    """push_all_collections must upload intermediate catalog.json (Issue #547, #552)."""
+    """push_all_collections must upload intermediate catalog.json."""
 
     @patch("portolan_cli.sync.push.push_async", new_callable=AsyncMock)
     def test_uploads_intermediate_catalogs(
         self, mock_push: MagicMock, put_order: list[str], nested_catalog: Path
     ) -> None:
-        # The scaffolded AGENTS.md beside an intermediate catalog (#905, #935).
+        # The scaffolded AGENTS.md beside an intermediate catalog.
         (nested_catalog / "tst" / "AGENTS.md").write_text("# tst agents\n")
         mock_push.return_value = PushResult(
             success=True, files_uploaded=1, versions_pushed=1, conflicts=[], errors=[]
@@ -260,11 +241,7 @@ class TestSingleCollectionIntermediateCatalogs:
 
 
 class TestIntermediateSidecarFiles:
-    """Every file that an intermediate catalog names reaches the remote (#905, #935).
-
-    The fixed name list held only catalog.json and README.md. The scaffolded
-    AGENTS.md, which the catalog's rel="agents" link names, was never uploaded.
-    """
+    """Every file that an intermediate catalog names reaches the remote."""
 
     def test_discovers_agents_md_beside_intermediate_catalog(self, nested_catalog: Path) -> None:
         (nested_catalog / "tst" / "AGENTS.md").write_text("# tst agents\n")
@@ -391,11 +368,7 @@ def _push_unchanged_collection(
 
 
 class TestMetadataOnlyPushIntermediateFiles:
-    """A push with no new version still syncs intermediate files (#816, #905).
-
-    An edited intermediate AGENTS.md bumps no version. A standalone push takes
-    the metadata-only path, which must upload it like a root or collection file.
-    """
+    """A push with no new version still syncs intermediate files."""
 
     def test_standalone_push_uploads_intermediate_agents_md(self, nested_catalog: Path) -> None:
         (nested_catalog / "tst" / "AGENTS.md").write_text("# edited agents\n")

@@ -1,11 +1,4 @@
-"""Integration tests for arbitrary Hive partition support in portolan add (Issue #443).
-
-Tests the full workflow:
-1. Adding pre-existing Hive-partitioned data with arbitrary column names
-2. Merge behavior preserving hand-authored partition metadata
-3. Glob pattern generation for arbitrary partitions
-4. Schema consistency validation across partitions
-"""
+"""Integration tests for arbitrary Hive partition support in portolan add."""
 
 from __future__ import annotations
 
@@ -38,16 +31,7 @@ def initialized_catalog(tmp_path: Path) -> Path:
 def create_partitioned_parquet(
     base_dir: Path, partition_col: str, partition_values: list[str]
 ) -> None:
-    """Create a Hive-partitioned GeoParquet collection with consistent schema.
-
-    Creates valid GeoParquet files with point geometries so they're recognized
-    as vector data by Portolan.
-
-    Args:
-        base_dir: Base directory for the partitioned collection.
-        partition_col: Name of the partition column.
-        partition_values: List of partition values to create.
-    """
+    """Create a Hive-partitioned GeoParquet collection with consistent schema."""
     import geopandas
     from shapely.geometry import Point
 
@@ -75,15 +59,7 @@ def create_multilevel_partitioned_parquet(
     level2_col: str,
     level2_values: list[str],
 ) -> None:
-    """Create a multi-level Hive-partitioned GeoParquet collection.
-
-    Args:
-        base_dir: Base directory for the partitioned collection.
-        level1_col: Name of first partition level column.
-        level1_values: Values for first partition level.
-        level2_col: Name of second partition level column.
-        level2_values: Values for second partition level.
-    """
+    """Create a multi-level Hive-partitioned GeoParquet collection."""
     import geopandas
     from shapely.geometry import Point
 

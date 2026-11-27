@@ -1,4 +1,4 @@
-"""A configurable format handler for the plugin system tests (#947)."""
+"""A configurable format handler for the plugin system tests."""
 
 from __future__ import annotations
 

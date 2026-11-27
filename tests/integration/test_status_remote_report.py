@@ -1,8 +1,4 @@
-"""`portolan status` prints the download lines of the remote versions.json.
-
-Commit f7f8214 printed them through `portolan_cli.output`. The store is an
-in-memory obstore ``MemoryStore``, so no test sends a network request.
-"""
+"""`portolan status` prints the download lines of the remote versions.json."""
 
 from __future__ import annotations
 

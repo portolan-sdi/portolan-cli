@@ -19,10 +19,8 @@ def _gpio_connection_cap() -> int | None:
     return int(parse_size(limit)) if limit else None
 
 
-# geoparquet-io 1.7 caps each connection at 50% of the RAM. The WFS feature
-# query reads JSON with maximum_object_size=1 GiB on all threads. At 6 threads
-# it fails under a 4.0 GiB cap and passes at 4.2 GiB. The 7 GB macOS runner
-# gets a 3.2 GiB cap. The 16 GB Linux and Windows runners pass.
+# geoparquet-io 1.7 caps each connection at 50% of the RAM; the WFS parse needs about 4.2 GiB.
+# The 7 GB macOS runner gets a 3.2 GiB cap; the 16 GB runners pass.
 _cap = _gpio_connection_cap()
 GPIO_WFS_OOM = pytest.mark.xfail(
     _cap is not None and _cap <= 4 * 1024**3,

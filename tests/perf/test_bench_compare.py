@@ -21,7 +21,7 @@ def _results(wall: float, calibration: float) -> dict[str, Any]:
 
 
 def test_a_slower_runner_does_not_fail_unchanged_code() -> None:
-    """The 2026-10-28 nightly ran the baseline code 1.5x to 2x slower on another runner."""
+    """A runner that runs the baseline code 1.5x to 2x slower does not fail the compare."""
     baseline = _results(wall=100.0, calibration=2.0)
     assert compare(_results(wall=190.0, calibration=4.0), baseline) == []
 

@@ -19,10 +19,7 @@ logger = logging.getLogger(__name__)
 
 
 def _is_geospatial_file(item: Path) -> bool:
-    """Return True for a regular file with a recognized geospatial extension.
-
-    A plugin format handler adds its extensions (#947).
-    """
+    """Return True for a regular file with a recognized geospatial extension."""
     from portolan_cli.plugins.formats import plugin_extensions
 
     extension = item.suffix.lower()
@@ -32,19 +29,7 @@ def _is_geospatial_file(item: Path) -> bool:
 
 
 def _iter_recursive(directory: Path, visited: set[Path] | None = None) -> Iterator[Path]:
-    """Yield geospatial assets under ``directory``, pruning FileGDB subtrees.
-
-    FileGDB (``.gdb``) directories are single geospatial assets: they are
-    yielded as-is and their internals are *never* enumerated (issue #590),
-    avoiding a wasted walk over the thousands of files a FileGDB contains.
-
-    The walk enters each real directory once. A directory symlink that points
-    back at an ancestor would otherwise repeat the walk until the OS refuses
-    the path, and ``add`` would find and convert the same file about 40 times.
-    A symlink to a directory outside the walk is still followed once. The
-    listing is sorted, so the path that reaches a directory first is the same
-    on every filesystem.
-    """
+    """Yield geospatial assets under ``directory``, pruning FileGDB subtrees."""
     if visited is None:
         visited = set()
     real = directory.resolve()
@@ -66,18 +51,7 @@ def iter_geospatial_files(
     *,
     recursive: bool = True,
 ) -> list[Path]:
-    """Iterate over geospatial files in a directory.
-
-    Includes both regular files and FileGDB directories (.gdb).
-    FileGDB directories are treated as single geospatial assets.
-
-    Args:
-        path: Directory to scan.
-        recursive: If True, scan subdirectories recursively.
-
-    Returns:
-        List of paths to geospatial files (including FileGDB directories).
-    """
+    """Iterate over geospatial files in a directory."""
     # Special case: if path itself is a FileGDB, return it directly
     if is_filegdb(path):
         return [path]
@@ -102,17 +76,7 @@ def iter_geospatial_files(
 
 
 def get_sidecars(path: Path) -> list[Path]:
-    """Detect sidecar files for a given primary file.
-
-    Automatically finds associated files like .dbf/.shx/.prj for shapefiles,
-    or .tfw/.xml for GeoTIFFs.
-
-    Args:
-        path: Path to the primary file.
-
-    Returns:
-        List of existing sidecar file paths (may be empty).
-    """
+    """Detect sidecar files for a given primary file."""
     suffix_lower = path.suffix.lower()
     patterns = SIDECAR_PATTERNS.get(suffix_lower, [])
 
@@ -129,19 +93,7 @@ def get_sidecars(path: Path) -> list[Path]:
 
 
 def iter_files_with_sidecars(path: Path, *, recursive: bool = True) -> list[Path]:
-    """Iterate over geospatial files in a directory (including their sidecars).
-
-    Returns geospatial files and their associated sidecars (e.g., .dbf/.shx for shapefiles).
-    FileGDB directories (.gdb) are treated as single geospatial assets (which have no
-    sidecars). Discovery and FileGDB handling are delegated to iter_geospatial_files.
-
-    Args:
-        path: Directory to scan.
-        recursive: If True, scan subdirectories recursively.
-
-    Returns:
-        List of geospatial file paths (including FileGDB directories) and their sidecars.
-    """
+    """Iterate over geospatial files in a directory (including their sidecars)."""
     files: list[Path] = []
     seen: set[Path] = set()
 

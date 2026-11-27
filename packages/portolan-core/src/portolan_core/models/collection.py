@@ -1,8 +1,4 @@
-"""CollectionModel dataclass for STAC Collection metadata.
-
-A Collection groups related items with shared extent, license, and schema.
-It follows the STAC Collection spec with Portolan extensions.
-"""
+"""CollectionModel dataclass for STAC Collection metadata."""
 
 from __future__ import annotations
 
@@ -21,13 +17,7 @@ ID_PATTERN = re.compile(r"^[a-zA-Z0-9_-]+$")
 
 @dataclass
 class Provider:
-    """A data provider.
-
-    Attributes:
-        name: Provider name.
-        roles: Provider roles (licensor, producer, processor, host).
-        url: Provider URL.
-    """
+    """A data provider."""
 
     name: str
     roles: list[str] | None = None
@@ -54,11 +44,7 @@ class Provider:
 
 @dataclass
 class SpatialExtent:
-    """Spatial extent with bounding boxes.
-
-    Attributes:
-        bbox: List of bounding boxes (WGS84). Each bbox is [west, south, east, north].
-    """
+    """Spatial extent with bounding boxes."""
 
     bbox: list[list[float]]
 
@@ -68,9 +54,8 @@ class SpatialExtent:
             if len(box) not in (4, 6):
                 raise ValueError(f"bbox must have 4 or 6 elements, got {len(box)}")
 
-            # Skip antimeridian validation - west > east is valid per STAC.
-            # A 6-element bbox is [west, south, min_z, east, north, max_z], so
-            # east/north are at indices 3/4, not 2/3 (issue #592).
+            # West > east is valid per STAC (antimeridian). A 6-element bbox is
+            # [west, south, min_z, east, north, max_z], so east/north are at 3/4.
             west, south = box[0], box[1]
             if len(box) == BBOX_3D_LEN:
                 east, north = box[3], box[4]
@@ -101,11 +86,7 @@ class SpatialExtent:
 
 @dataclass
 class TemporalExtent:
-    """Temporal extent with intervals.
-
-    Attributes:
-        interval: List of temporal intervals. Each is [start, end] with ISO dates or null.
-    """
+    """Temporal extent with intervals."""
 
     interval: list[list[str | None]]
 
@@ -121,12 +102,7 @@ class TemporalExtent:
 
 @dataclass
 class ExtentModel:
-    """Spatial and temporal extent.
-
-    Attributes:
-        spatial: Spatial extent with bboxes.
-        temporal: Temporal extent with intervals.
-    """
+    """Spatial and temporal extent."""
 
     spatial: SpatialExtent
     temporal: TemporalExtent
@@ -149,25 +125,7 @@ class ExtentModel:
 
 @dataclass
 class CollectionModel:
-    """STAC Collection metadata model.
-
-    A Collection groups related items with shared extent, license, and schema.
-
-    Attributes:
-        id: Unique identifier.
-        description: Collection description (required by STAC).
-        extent: Spatial and temporal extent.
-        type: Always "Collection".
-        stac_version: STAC spec version (uses STAC_VERSION constant).
-        license: SPDX license identifier (default CC-BY-4.0).
-        title: Human-readable title (optional).
-        summaries: Aggregated metadata (CRS, geometry types).
-        providers: Data providers.
-        keywords: Search keywords.
-        created: Creation timestamp.
-        updated: Last update timestamp.
-        links: STAC links.
-    """
+    """STAC Collection metadata model."""
 
     id: str
     description: str

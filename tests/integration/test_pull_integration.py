@@ -1,8 +1,4 @@
-"""Integration tests for pull command.
-
-Tests for the `portolan pull` CLI command.
-These tests verify the CLI correctly wraps the pull library function.
-"""
+"""Integration tests for pull command."""
 
 from __future__ import annotations
 
@@ -16,9 +12,7 @@ from click.testing import CliRunner
 if TYPE_CHECKING:
     from pathlib import Path
 
-# =============================================================================
 # Test Fixtures
-# =============================================================================
 
 
 @pytest.fixture
@@ -106,9 +100,7 @@ def remote_versions_data() -> dict[str, Any]:
     }
 
 
-# =============================================================================
 # Malformed Fixtures for Error Path Testing
-# =============================================================================
 
 
 @pytest.fixture
@@ -141,9 +133,7 @@ def malformed_remote_versions_data() -> dict[str, Any]:
     }
 
 
-# =============================================================================
 # CLI Pull Command Tests
-# =============================================================================
 
 
 class TestPullCommand:
@@ -385,9 +375,7 @@ class TestPullCommand:
         assert output["data"]["files_downloaded"] == 2
 
 
-# =============================================================================
 # CLI Error Handling Tests
-# =============================================================================
 
 
 class TestPullCommandErrors:
@@ -475,9 +463,7 @@ class TestPullCommandErrors:
         assert "errors" in output
 
 
-# =============================================================================
 # Malformed Data Error Tests
-# =============================================================================
 
 
 class TestPullMalformedDataErrors:
@@ -607,9 +593,7 @@ class TestPullMalformedDataErrors:
         assert result.exit_code != 0
 
 
-# =============================================================================
 # Pull CLI Error Branch Tests
-# =============================================================================
 
 
 class TestPullCLIErrorBranches:

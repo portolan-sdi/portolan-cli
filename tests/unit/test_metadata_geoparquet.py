@@ -37,10 +37,7 @@ class TestExtractGeoParquetMetadata:
     def test_extracts_crs(self, valid_points_parquet: Path) -> None:
         """Should extract CRS as EPSG code or WKT."""
         metadata = extract_geoparquet_metadata(valid_points_parquet)
-        # Note: Our fixture doesn't have CRS in the geo metadata
-        # This test verifies we handle missing CRS gracefully
-        # (A fully compliant fixture would have EPSG:4326)
-        # For now, we accept None or a CRS string
+        # The fixture has no CRS in the geo metadata, so accept None or a CRS string.
         assert metadata.crs is None or isinstance(metadata.crs, (str, dict))
 
     @pytest.mark.unit
@@ -161,7 +158,7 @@ class TestGeoParquetMetadata:
 
     @pytest.mark.unit
     def test_to_stac_properties_includes_proj_epsg_from_epsg_string(self) -> None:
-        """to_stac_properties() derives proj:epsg from an EPSG-string CRS (issue #488)."""
+        """to_stac_properties derives proj:epsg from an EPSG-string CRS."""
         metadata = GeoParquetMetadata(
             bbox=None,
             crs="EPSG:4258",
@@ -176,7 +173,7 @@ class TestGeoParquetMetadata:
 
     @pytest.mark.unit
     def test_to_stac_properties_includes_proj_epsg_from_projected_crs(self) -> None:
-        """to_stac_properties() derives proj:epsg from a projected CRS (issue #488)."""
+        """to_stac_properties derives proj:epsg from a projected CRS."""
         metadata = GeoParquetMetadata(
             bbox=None,
             crs="EPSG:28992",
@@ -190,7 +187,7 @@ class TestGeoParquetMetadata:
 
     @pytest.mark.unit
     def test_to_stac_properties_includes_proj_epsg_from_projjson(self) -> None:
-        """to_stac_properties() derives proj:epsg from a PROJJSON dict CRS (issue #488)."""
+        """to_stac_properties derives proj:epsg from a PROJJSON dict CRS."""
         metadata = GeoParquetMetadata(
             bbox=None,
             crs={"type": "GeographicCRS", "id": {"authority": "EPSG", "code": 4258}},
@@ -341,7 +338,7 @@ class TestGeoParquetMetadataEdgeCases:
 
     @pytest.mark.unit
     def test_extract_crs_keeps_the_projjson_authority(self, tmp_path: Path) -> None:
-        """A PROJJSON id with the OGC authority reads as OGC:CRS84, not EPSG:CRS84 (#928)."""
+        """A PROJJSON id with the OGC authority reads as OGC:CRS84, not EPSG:CRS84."""
         import json
 
         import pyarrow as pa
@@ -367,7 +364,7 @@ class TestGeoParquetMetadataEdgeCases:
 
     @pytest.mark.unit
     def test_extract_crs_keeps_a_projjson_with_a_custom_authority(self, tmp_path: Path) -> None:
-        """pyproj cannot resolve MYORG:1, so the full PROJJSON stays and still reprojects (#928)."""
+        """pyproj cannot resolve MYORG:1, so the full PROJJSON stays and still reprojects."""
         import json
 
         import pyarrow as pa
@@ -460,14 +457,14 @@ class TestGeoParquetMetadataEdgeCases:
 
     @pytest.mark.unit
     def test_extract_bbox_3d_drops_z(self, tmp_path: Path) -> None:
-        """Reduces a 6-element 3D bbox to 2D, keeping indices 0, 1, 3, 4 (issue #854)."""
+        """Reduces a 6-element 3D bbox to 2D, keeping indices 0, 1, 3, 4."""
         import json
 
         import pyarrow as pa
         import pyarrow.parquet as pq
 
-        # The EPSG:25830 LineString Z layer reported in issue #854. A 3D column bbox is
-        # ordered [minx, miny, minz, maxx, maxy, maxz].
+        # An EPSG:25830 LineString Z layer. A 3D column bbox is ordered
+        # [minx, miny, minz, maxx, maxy, maxz].
         geo_meta = {
             "version": "1.1.0",
             "primary_column": "geometry",
@@ -522,15 +519,11 @@ class TestGeoParquetMetadataEdgeCases:
 
 
 class TestCoveringColumnDetection:
-    """Tests for the covering column and is_geoparquet() (issue #805).
-
-    rashid resolves PTL-DAT-006 and PTL-DAT-007 through the covering column, so
-    ``add`` reads these two answers to decide whether to rewrite a file.
-    """
+    """Tests for the covering column and is_geoparquet."""
 
     @pytest.mark.unit
     def test_fixture_without_covering_column(self, valid_points_parquet: Path) -> None:
-        """The committed fixture predates #805 and carries no covering column."""
+        """The committed fixture carries no covering column."""
         assert is_geoparquet(valid_points_parquet) is True
         assert read_spatial_layout(valid_points_parquet).has_bbox_covering is False
 
@@ -593,11 +586,7 @@ class TestCoveringColumnDetection:
 
 
 class TestReadSpatialLayout:
-    """One footer read answers both spatial-layout questions.
-
-    `_needs_spatial_rewrite` needs both answers per source file. Asking through
-    `is_geoparquet` and `has_bbox_covering_column` opened the file twice.
-    """
+    """One footer read answers both spatial-layout questions."""
 
     @pytest.mark.unit
     def test_a_geoparquet_without_the_column(self, tmp_path: Path) -> None:
@@ -703,7 +692,7 @@ class TestRewriteFidelityExtraKeys:
 
 
 def _write_declared_types(path: Path, geometry_types: list[str]) -> Path:
-    """Write the mixed Point/LineString table of issue #1010 with ``geometry_types``."""
+    """Write a mixed Point/LineString table with ``geometry_types``."""
     import json
 
     import pyarrow as pa
@@ -722,7 +711,7 @@ def _write_declared_types(path: Path, geometry_types: list[str]) -> Path:
 
 
 class TestGeometryTypes:
-    """Issue #1010: every declared geometry type reaches the metadata."""
+    """Every declared geometry type reaches the metadata."""
 
     @pytest.mark.unit
     def test_mixed_types_keep_the_whole_list(self, tmp_path: Path) -> None:

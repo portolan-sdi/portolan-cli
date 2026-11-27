@@ -1,9 +1,5 @@
 """The command-parity ratchet, and the ignore paths of the harness.
-
-`PARITY_PENDING` lists each command that has no parity test yet. A family
-agent that moves a command into the library adds its parity test and removes
-the command from this list in the same commit. The list only shrinks.
-`tests/parity/harness.py` gives the full convention.
+`PARITY_PENDING` only shrinks: a new parity test removes its command from it.
 """
 
 from __future__ import annotations
@@ -60,11 +56,7 @@ def cli_command_paths() -> set[str]:
 
 
 def covered_command_paths() -> set[str]:
-    """Return each command that a `parity(...)` success call in `tests/parity/` names.
-
-    `parity.error(...)` does not count. A failure case alone does not prove that
-    the command and the library function return the same result.
-    """
+    """Return each command that a `parity(...)` success call names; `parity.error(...)` does not count."""
     covered: set[str] = set()
     for path in sorted(PARITY_DIR.glob("test_*.py")):
         covered |= parity_calls(path.read_text(encoding="utf-8"), path.name)
@@ -72,11 +64,7 @@ def covered_command_paths() -> set[str]:
 
 
 def parity_calls(source: str, name: str) -> set[str]:
-    """Return the command path of each `parity("...")` call in a test module that runs.
-
-    A call inside a function or class with a skip, skipif, or xfail decorator
-    does not count, because that test does not prove parity.
-    """
+    """Return the command path of each `parity("...")` call that is not under a skip or xfail."""
     covered: set[str] = set()
     nodes: list[ast.AST] = [ast.parse(source)]
     while nodes:
@@ -200,11 +188,7 @@ def test_a_command_that_breaks_its_catalog_fails(
     build_conformant_catalog: Callable[..., Path],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The harness checks the catalog invariants on the command side, before the rebuild.
-
-    The stub writes an absolute path into catalog.json on the first call only,
-    which is the command side. The two results stay equal.
-    """
+    """The stub breaks catalog.json on the command side only, and the results stay equal."""
     from portolan_cli import inspect
 
     real = inspect.inspect_catalog
@@ -261,11 +245,7 @@ def test_a_to_dict_that_prints_fails(
 def test_a_library_log_record_is_not_printed_output(
     parity: Parity, build_conformant_catalog: Callable[..., Path]
 ) -> None:
-    """The command run leaves its stderr log handler. The library side must not inherit it.
-
-    A library function logs a notice when its caller passes no callback. The
-    harness counts only what the library prints, not what the CLI handler writes.
-    """
+    """The library side does not inherit the stderr log handler of the command run."""
     import logging
 
     from portolan_cli.inspect import inspect_catalog

@@ -1,25 +1,4 @@
-"""The one walker for a local STAC catalog tree.
-
-Every command that asks "which collections does this catalog hold?" or "which
-items does this collection own?" calls this module. Before issue #944, nine
-functions answered those questions with different strategies. ``list``,
-``status``, and ``check`` then disagreed about the collections of one catalog.
-
-Two walks live here:
-
-- The containment walk finds every ``catalog.json`` and ``collection.json``
-  below the root and skips dot-directories. ``catalog_collections`` uses it. It
-  applies the rule of rashid's ``CatalogGraph``, which ``check`` uses, so a
-  collection without a ``child`` link still counts. ``check`` reports that
-  missing link as PTL-LNK-002.
-- The link walk follows the ``rel`` links of one STAC object.
-  ``owned_item_hrefs`` uses it to find the items of a collection.
-  ``published_files`` uses it to find the files that push publishes and
-  clone downloads, so the two commands agree on one set.
-
-The module imports only the standard library. A read module can call it
-without the CLI or the geospatial stack.
-"""
+"""The one walker for a local STAC catalog tree."""
 
 from __future__ import annotations
 
@@ -59,9 +38,7 @@ GDAL_PAM_SUFFIX = ".aux.xml"
 def _published_path(base: str, href: object) -> str | None:
     """Return the catalog-relative path that an href names, or None for no file of the catalog.
 
-    The href decodes before the checks, so a percent escape cannot hide an
-    absolute path, a drive, a backslash or a NUL. The checks are the same on
-    every host. A path that leaves the catalog names no file of it.
+    The href decodes before the checks, so a percent escape cannot hide a path that escapes.
     """
     if not isinstance(href, str) or not href or "://" in href:
         return None
@@ -79,22 +56,7 @@ def _published_path(base: str, href: object) -> str | None:
 
 
 def published_files(document: dict[str, Any], document_rel: str) -> tuple[set[str], set[str]]:
-    """Return the files that one STAC object publishes, and its item documents.
-
-    The files are the targets of its asset hrefs and of its relative links
-    outside the tree, the README.md and AGENTS.md beside it, and the GDAL PAM
-    sidecar of each GeoTIFF it names. An absolute or a remote href names no
-    file, and nor does an href that leaves the catalog. Push uploads these
-    files, and clone downloads them.
-
-    Args:
-        document: A parsed STAC object.
-        document_rel: The catalog-relative POSIX path of the object.
-
-    Returns:
-        The catalog-relative POSIX paths of the files, and of the items that
-        its ``item`` links name.
-    """
+    """Return the files that one STAC object publishes, and its item documents."""
     base = posixpath.dirname(document_rel)
     links = [link for link in document.get("links", []) if isinstance(link, dict)]
     named = [asset.get("href") for asset in document.get("assets", {}).values()]
@@ -111,16 +73,7 @@ def published_files(document: dict[str, Any], document_rel: str) -> tuple[set[st
 
 
 def published_tree(catalog_root: Path, documents: Iterable[str]) -> set[str]:
-    """Return the files that local STAC objects, and the items below them, publish.
-
-    Args:
-        catalog_root: The catalog root directory.
-        documents: Catalog-relative POSIX paths of catalogs or collections.
-
-    Returns:
-        The catalog-relative POSIX paths from ``published_files``, and the
-        paths of the documents that the walk read.
-    """
+    """Return the files that local STAC objects, and the items below them, publish."""
     pending = list(documents)
     files: set[str] = set()
     read: set[str] = set()
@@ -143,15 +96,7 @@ def published_tree(catalog_root: Path, documents: Iterable[str]) -> set[str]:
 
 
 def resolve_href(base_dir: Path, href: str) -> Path:
-    """Resolve a STAC link href against the directory holding the linking object.
-
-    Rashid's ``resolve_local_href`` resolves a relative href that stays below
-    ``base_dir``. It decodes percent escapes and drops the query and the
-    fragment, so rashid's link ``%C3%A9t%C3%A9%202024.json`` names
-    ``été 2024.json``. Rashid gives None for an href that leaves ``base_dir``.
-    That href is decoded and resolves on disk. An absolute or a remote href is
-    joined as written.
-    """
+    """Resolve a STAC link href against the directory holding the linking object."""
     from rashid_core.api import resolve_local_href
 
     # The document name is a placeholder. Only its directory, base_dir, matters.
@@ -170,14 +115,7 @@ def resolve_href(base_dir: Path, href: str) -> Path:
 def contained_link_target(catalog_root: Path, base_dir: Path, href: str) -> Path | None:
     """Return the file that a link href names, or None when it lies outside the catalog.
 
-    ``resolve_href`` gives the path. The check reads the path after symlinks
-    resolve, so neither a ``../`` href nor a symlink leads a read or a write
-    out of the catalog. A remote href names no local file.
-
-    Args:
-        catalog_root: The catalog root directory.
-        base_dir: Directory holding the object that holds the link.
-        href: The link href.
+    Symlinks resolve before the check, so no href or symlink leads out of the catalog.
     """
     if "://" in href:
         return None
@@ -192,16 +130,7 @@ def iter_links(
     base_dir: Path,
     rels: Iterable[str],
 ) -> Iterator[tuple[dict[str, Any], str, Path]]:
-    """Yield ``(link, href, path)`` for each link of ``data`` with a rel in ``rels``.
-
-    A link without a non-empty string href is skipped. The link dict is the
-    one inside ``data``, so a caller can change it in place.
-
-    Args:
-        data: A parsed STAC object.
-        base_dir: Directory holding the file ``data`` came from.
-        rels: Link relations to yield.
-    """
+    """Yield ``(link, href, path)`` for each link of ``data`` with a rel in ``rels``."""
     wanted = frozenset(rels)
     links = data.get("links")
     if not isinstance(links, list):
@@ -216,26 +145,12 @@ def iter_links(
 
 
 def owned_item_hrefs(node_json_path: Path) -> list[tuple[str, Path]]:
-    """Every (href, path) pair for the items the object at ``node_json_path`` owns.
-
-    A catalog may sit below a collection to organize its items (core.md:168-170),
-    so ownership follows ``rel="child"`` links down into catalogs rather than
-    stopping at the collection's own ``rel="item"`` links. Descent stops at a
-    child collection, whose items belong to that collection instead.
-
-    The href is carried alongside the resolved path because it is what the
-    operator wrote and therefore what a stale-link error should name.
-    """
+    """Every (href, path) pair for the items the object at ``node_json_path`` owns."""
     return _owned_item_hrefs(node_json_path, set())
 
 
 def _owned_item_hrefs(node_json_path: Path, active: set[Path]) -> list[tuple[str, Path]]:
-    """Walk ``owned_item_hrefs`` with ``active``, the catalogs in the current branch.
-
-    A ``child`` link back to an active catalog is a cycle and is skipped. A
-    catalog leaves ``active`` when its walk ends, so two branches that reach the
-    same catalog both include its items.
-    """
+    """Walk ``owned_item_hrefs`` with ``active``, the catalogs in the current branch."""
     if not node_json_path.exists():
         return []
 
@@ -255,19 +170,7 @@ def _owned_item_hrefs(node_json_path: Path, active: set[Path]) -> list[tuple[str
 
 
 def visible_stac_files(catalog_root: Path) -> list[Path]:
-    """Every ``catalog.json``/``collection.json`` in the *visible* catalog tree.
-
-    Dot-directories (``.portolan/``, ``.git/``, editor scratch dirs) hold caches
-    and backups, not published STAC objects; a sweep that descends into them
-    rewrites files no publisher asked about. Shared by every catalog-wide sweep
-    so they all walk exactly the same set.
-
-    Args:
-        catalog_root: Root directory of the catalog.
-
-    Returns:
-        Sorted catalog paths first, then sorted collection paths.
-    """
+    """Every ``catalog.json``/``collection.json`` in the *visible* catalog tree."""
     return [
         *_visible_files(catalog_root, "catalog.json"),
         *_visible_files(catalog_root, "collection.json"),
@@ -286,14 +189,7 @@ def _visible_files(catalog_root: Path, name: str) -> list[Path]:
 
 
 def iter_stac_objects(catalog_root: Path) -> Iterator[tuple[Path, dict[str, Any]]]:
-    """Yield ``(path, data)`` for each visible catalog and collection that parses.
-
-    A file that cannot be read, is not JSON, or holds no JSON object is skipped.
-    ``check`` reports such a file. A catalog-wide sweep does not.
-
-    Args:
-        catalog_root: Root directory of the catalog.
-    """
+    """Yield ``(path, data)`` for each visible catalog and collection that parses."""
     for path in visible_stac_files(catalog_root):
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
@@ -304,19 +200,7 @@ def iter_stac_objects(catalog_root: Path) -> Iterator[tuple[Path, dict[str, Any]
 
 
 def catalog_collections(catalog_root: Path) -> list[str]:
-    """The ID of every collection in the catalog, as a path below the root.
-
-    A collection is a directory below the root that holds ``collection.json``.
-    A nested collection has an ID like ``climate/hittekaart``. A link from the
-    parent is not necessary. This is the set ``check`` reports, so ``list`` and
-    ``status`` report the same collections as ``check`` (issue #944).
-
-    Args:
-        catalog_root: Root directory of the catalog.
-
-    Returns:
-        Sorted collection IDs with forward slashes on every platform.
-    """
+    """The ID of every collection in the catalog, as a path below the root."""
     ids = {
         path.parent.relative_to(catalog_root).as_posix()
         for path in visible_stac_files(catalog_root)
@@ -326,18 +210,7 @@ def catalog_collections(catalog_root: Path) -> list[str]:
 
 
 def versioned_collections(catalog_root: Path) -> list[str]:
-    """The ID of every directory below the root that holds ``versions.json``.
-
-    ``push`` and ``pull`` find collections by this rule. A directory with
-    ``versions.json`` but no ``collection.json`` is not in ``catalog_collections``.
-    ``push`` still uploads it, so ``status`` must report it.
-
-    Args:
-        catalog_root: Root directory of the catalog.
-
-    Returns:
-        Sorted collection IDs with forward slashes on every platform.
-    """
+    """The ID of every directory below the root that holds ``versions.json``."""
     ids = {
         path.parent.relative_to(catalog_root).as_posix()
         for path in _visible_files(catalog_root, "versions.json")

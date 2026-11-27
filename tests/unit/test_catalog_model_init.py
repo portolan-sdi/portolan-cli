@@ -1,13 +1,4 @@
-"""Tests for catalog creation using the new CatalogModel.
-
-User Story 1: Initialize Catalog with Auto-Extracted Metadata
-
-Tests cover:
-- Auto-extraction of id from directory name
-- Auto-generation of timestamps
-- --auto flag behavior
-- PRTLN-CAT001 error for existing catalog
-"""
+"""Tests for catalog creation using the new CatalogModel."""
 
 from __future__ import annotations
 
@@ -356,7 +347,7 @@ class TestInitCatalogBackendOption:
         init_catalog(catalog_dir, backend="file", license_id="CC-BY-4.0")
 
         assert (catalog_dir / "versions.json").exists()
-        # state.json was removed per issue #290; config.yaml is the sole sentinel
+        # config.yaml is the sole sentinel
         assert (catalog_dir / ".portolan" / "config.yaml").exists()
 
     @pytest.mark.unit
@@ -426,10 +417,8 @@ class TestInitCatalogFilesystemErrors:
         catalog_dir = tmp_path / "test"
         catalog_dir.mkdir()
 
-        # config.yaml is written through the atomic helper, so the failure is
-        # simulated there rather than on Path.write_text. metadata.yaml goes through
-        # the same helper and is written first, so fail only on config.yaml to keep
-        # this test about the step it names.
+        # Fail the atomic helper on config.yaml only: metadata.yaml goes through the same
+        # helper and is written first.
         def failing_write_text_atomic(path: Path, content: str) -> None:
             if path.name == "config.yaml":
                 raise OSError("Disk full")
@@ -441,7 +430,6 @@ class TestInitCatalogFilesystemErrors:
 
     @pytest.mark.unit
     def test_init_catalog_raises_on_metadata_write_failure(self, tmp_path: Path) -> None:
-        """CatalogInitError raised when the seeded metadata.yaml write fails (issue #686)."""
         from unittest.mock import patch
 
         from portolan_cli.catalog import CatalogInitError, init_catalog
@@ -459,9 +447,6 @@ class TestInitCatalogFilesystemErrors:
             assert "Cannot write metadata.yaml" in exc_info.value.message
         # config.yaml is the sentinel and is written last, so the catalog stays FRESH.
         assert not (catalog_dir / ".portolan" / "config.yaml").exists()
-
-    # Note: test_init_catalog_raises_on_state_write_failure removed per issue #290
-    # state.json is no longer created during init
 
     @pytest.mark.unit
     def test_init_catalog_raises_on_versions_write_failure(self, tmp_path: Path) -> None:

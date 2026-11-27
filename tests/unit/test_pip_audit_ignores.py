@@ -1,11 +1,4 @@
-"""Unit tests for scripts/pip_audit_ignores.py.
-
-The ignore file is the single source of truth for pip-audit vulnerability
-ignores (consumed by ci.yml, nightly.yml, and security-audit.yml). These tests
-pin the two behaviours that make it safe: expired entries drop automatically
-(so a still-present vuln starts failing CI again) and malformed lines fail loud
-(so a typo can never silently disable auditing).
-"""
+"""Unit tests for scripts/pip_audit_ignores.py."""
 
 from __future__ import annotations
 

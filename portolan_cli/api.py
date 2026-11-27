@@ -1,4 +1,4 @@
-"""The public API for Portolan plugins (#947).
+"""The public API for Portolan plugins.
 
 A plugin imports from this module and from ``portolan_cli.hookspecs``, and
 from nothing else in ``portolan_cli``. Both follow semantic versioning. A
@@ -39,7 +39,7 @@ Groups:
 - STAC builders: ``create_item``, ``create_collection``,
   ``add_projection_extension``, ``add_vector_extension``,
   ``add_raster_extension``, ``add_table_extension``, ``wgs84_bbox``. They
-  build pystac objects with no catalog folder (#928).
+  build pystac objects with no catalog folder.
 """
 
 from __future__ import annotations

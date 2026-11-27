@@ -1,10 +1,4 @@
-"""Library functions of ``portolan version rollback`` and ``portolan version prune``.
-
-``backends/iceberg/cli.py`` is the Click layer. It resolves the catalog root,
-calls a function here, and emits ``result.to_dict()`` as the envelope data.
-This module imports ``portolan_cli.api`` only, and no Click or pyiceberg, so
-the help path can load the command module.
-"""
+"""Library functions of ``portolan version rollback`` and ``portolan version prune``."""
 
 from __future__ import annotations
 
@@ -40,19 +34,7 @@ class BackendUnavailableError(Exception):
 
 
 def require_iceberg_backend(catalog_path: Path, command_name: str) -> VersioningBackend:
-    """Load the iceberg backend or raise BackendRequiredError.
-
-    Args:
-        catalog_path: Path to catalog root.
-        command_name: Name of the command (for error messages).
-
-    Returns:
-        The iceberg VersioningBackend instance.
-
-    Raises:
-        BackendRequiredError: If the current backend is not 'iceberg'.
-        BackendUnavailableError: If the iceberg backend cannot start.
-    """
+    """Load the iceberg backend or raise BackendRequiredError."""
     backend_name = api.get_setting("backend", catalog_path=catalog_path)
     if backend_name != "iceberg":
         raise BackendRequiredError(command_name, "iceberg", backend_name)
@@ -82,13 +64,7 @@ class RollbackResult:
 def rollback_collection(
     collection: str, target_version: str, *, catalog_root: Path
 ) -> RollbackResult:
-    """Set the current snapshot of ``collection`` back to ``target_version``.
-
-    Raises:
-        BackendRequiredError: If the catalog does not use the iceberg backend.
-        BackendUnavailableError: If the iceberg backend cannot start.
-        ValueError: If the collection does not hold ``target_version``.
-    """
+    """Set the current snapshot of ``collection`` back to ``target_version``."""
     backend = require_iceberg_backend(catalog_root, "rollback")
     return RollbackResult(collection, backend.rollback(collection, target_version))
 
@@ -117,12 +93,7 @@ class PruneResult:
 def prune_collection(
     collection: str, *, keep: int = 5, dry_run: bool = False, catalog_root: Path
 ) -> PruneResult:
-    """Remove the old versions of ``collection``, keeping the ``keep`` most recent.
-
-    Raises:
-        BackendRequiredError: If the catalog does not use the iceberg backend.
-        BackendUnavailableError: If the iceberg backend cannot start.
-    """
+    """Remove the old versions of ``collection``, keeping the ``keep`` most recent."""
     backend = require_iceberg_backend(catalog_root, "prune")
     pruned = backend.prune(collection, keep=keep, dry_run=dry_run)
     return PruneResult(collection, pruned, keep, dry_run)

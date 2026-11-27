@@ -1,11 +1,4 @@
-"""CRS transformation utilities.
-
-Provides functions for transforming coordinates between coordinate reference systems,
-with a focus on STAC's requirement for WGS84 (EPSG:4326) bounding boxes.
-
-Handles antimeridian crossings per RFC 7946: when a bbox spans the antimeridian,
-the western bound (minx) will be greater than the eastern bound (maxx).
-"""
+"""CRS transformation utilities."""
 
 from __future__ import annotations
 
@@ -31,17 +24,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class CRSMismatchWarning:
-    """Warning about CRS mismatch between declared CRS and actual coordinates.
-
-    This is returned when coordinates appear to be in WGS84 but the CRS
-    declares a projected coordinate system (like EPSG:28992).
-
-    Attributes:
-        declared_crs: The CRS declared in the file metadata.
-        likely_actual_crs: The CRS the coordinates likely belong to.
-        message: Human-readable warning message.
-        bbox: The bbox that triggered the warning.
-    """
+    """Warning about CRS mismatch between declared CRS and actual coordinates."""
 
     declared_crs: str
     likely_actual_crs: str
@@ -58,18 +41,7 @@ EDGE_SAMPLE_POINTS = 10
 
 
 def describe_crs(crs: str | dict[str, Any] | None) -> str:
-    """Return a short label for a CRS, for use in a message.
-
-    ``crs`` may be a PROJJSON dict. A dict holds the whole coordinate system
-    definition, so printing it whole makes an error unreadable. Name the CRS
-    instead, and fall back to a fixed label when it carries no name.
-
-    Args:
-        crs: CRS as an EPSG/WKT string, a PROJJSON dict, or None.
-
-    Returns:
-        A one-line label.
-    """
+    """Return a short label for a CRS, for use in a message."""
     if crs is None:
         return "no CRS"
     if isinstance(crs, dict):
@@ -86,55 +58,21 @@ def transform_bbox_to_wgs84(
     *,
     allow_guess: bool = False,
 ) -> tuple[float, float, float, float]:
-    """Transform bbox from source CRS to WGS84 with antimeridian handling.
-
-    STAC requires Item bbox and geometry to be in WGS84 (EPSG:4326) per RFC 7946.
-    This function transforms a bbox from any source CRS to WGS84, properly handling
-    antimeridian crossings.
-
-    For antimeridian-crossing bboxes, returns (west, south, east, north) where
-    west > east per RFC 7946 Section 5.2.
-
-    Args:
-        bbox: Bounding box as (minx, miny, maxx, maxy) in source CRS.
-        source_crs: Source CRS as an EPSG code (e.g., "EPSG:32610"), a WKT
-                   string, or a PROJJSON dict. GeoParquet stores a CRS without
-                   an authority code as PROJJSON, which pyproj reads directly.
-                   If None, returns bbox unchanged (assumed WGS84).
-        allow_guess: If True, when a CRS mismatch is detected (e.g., declared
-                    as projected CRS but coordinates appear to be WGS84), log a
-                    warning and return the bbox unchanged. If False (default),
-                    raise CRSMismatchError for fail-fast behavior.
-
-    Returns:
-        Bounding box as (west, south, east, north) in WGS84.
-        For antimeridian-crossing bboxes, west > east.
-
-    Raises:
-        CRSMismatchError: When a CRS mismatch is detected and allow_guess=False.
-        CRSTransformError: When pyproj cannot read the CRS or the transform
-            fails.
-        ValueError: When input bbox contains inf/nan values (issue #516).
-    """
-    # Validate input bbox for inf/nan (issue #516)
+    """Transform bbox from source CRS to WGS84 with antimeridian handling."""
+    # Validate input bbox for inf/nan
     import math
 
     if not all(math.isfinite(c) for c in bbox):
         raise ValueError(f"Input bbox contains non-finite values (inf/nan): {bbox}")
 
     if source_crs is None:
-        # No CRS means "assume WGS84" — but coordinates outside lon/lat range
-        # prove the assumption wrong (e.g. GeoParquet written with a null CRS
-        # from projected data, issue #785). Publishing them would put meters
-        # into a STAC extent, so fail fast instead.
+        # No CRS means assume WGS84, but out-of-range coordinates disprove it: fail fast.
         _reject_non_wgs84_magnitudes(bbox, "no CRS (assumed WGS84)", allow_guess)
         return _snapped(bbox)
 
     label = describe_crs(source_crs)
 
-    # Parse source CRS with specific exception handling
-    # An unreadable CRS or a failed transform leaves the bbox in the source
-    # CRS, which must not pass as WGS84 (#928).
+    # An unreadable CRS or failed transform must not pass the bbox off as WGS84.
     try:
         src_crs = CRS.from_user_input(source_crs)
     except (CRSError, TypeError) as e:
@@ -174,12 +112,7 @@ def transform_bbox_to_wgs84(
 
 
 def _snapped(bbox: tuple[float, float, float, float]) -> tuple[float, float, float, float]:
-    """Pull a coordinate that rounds past a WGS84 bound back onto it.
-
-    A whole-world extent rarely lands on exactly 180.0 after a reprojection or
-    a bbox union, and the STAC extent this bbox becomes has to stay inside the
-    range (issue #882).
-    """
+    """Pull a coordinate that rounds past a WGS84 bound back onto it."""
     from portolan_core.bbox import snap_to_wgs84_range
 
     west, south, east, north = snap_to_wgs84_range(list(bbox))
@@ -191,16 +124,7 @@ def _reject_non_wgs84_magnitudes(
     declared: str,
     allow_guess: bool,
 ) -> None:
-    """Fail fast when a bbox treated as WGS84 is outside lon/lat range.
-
-    The inverse of the declared-projected-but-looks-WGS84 mismatch check:
-    here the bbox is about to pass through untransformed, so values beyond
-    +/-180 / +/-90 can only mean the real CRS is projected and the metadata
-    is wrong or missing (issue #785).
-
-    The comparison carries a tolerance, because a coordinate that rounds past a
-    bound is that bound rather than a projected value (issue #882).
-    """
+    """Fail fast when a bbox treated as WGS84 is outside lon/lat range."""
     from portolan_core.bbox import WGS84_EDGE_TOLERANCE
 
     minx, miny, maxx, maxy = bbox
@@ -213,9 +137,7 @@ def _reject_non_wgs84_magnitudes(
         and abs(maxy) <= lat_limit
     ):
         return
-    # "Effectively infinite" sentinels (issue #516, e.g. WFS-served ±1.79e308)
-    # are not projected coordinates; leave them to the existing invalid-bbox
-    # filtering so their error message stays about invalid values, not CRS.
+    # Infinite sentinels are not projected coordinates; leave them to invalid-bbox filtering.
     from portolan_core.bbox import MAX_SANE_COORD
 
     if any(abs(c) > MAX_SANE_COORD for c in bbox):
@@ -236,11 +158,7 @@ def _reject_non_wgs84_magnitudes(
 
 
 def _is_wgs84(crs: CRS) -> bool:
-    """Check if a CRS is WGS84 (EPSG:4326 or CRS84).
-
-    CRS84 (urn:ogc:def:crs:OGC:1.3:CRS84) is WGS84 with explicit lon/lat axis order.
-    Both should be treated as WGS84 for coordinate transformation purposes.
-    """
+    """Check if a CRS is WGS84 (EPSG:4326 or CRS84)."""
     epsg = crs.to_epsg()
     if epsg == _WGS84_EPSG:
         return True
@@ -259,12 +177,7 @@ def _transform_and_compute_bbox(
     bbox: tuple[float, float, float, float],
     src_crs: CRS,
 ) -> tuple[float, float, float, float]:
-    """Transform bbox and compute RFC 7946 compliant WGS84 bbox.
-
-    Samples points along bbox edges for accuracy with curved projections,
-    then uses the antimeridian library to compute a proper bbox that handles
-    antimeridian crossings.
-    """
+    """Transform bbox and compute RFC 7946 compliant WGS84 bbox."""
     minx, miny, maxx, maxy = bbox
 
     # Create transformer (always_xy ensures lon/lat order)
@@ -300,20 +213,7 @@ def validate_bbox_crs(
     bbox: tuple[float, float, float, float],
     crs: str | dict[str, Any] | None,
 ) -> CRSMismatchWarning | None:
-    """Validate that bbox coordinates match declared CRS.
-
-    Detects the common bug where a file declares a projected CRS (e.g., EPSG:28992)
-    but actually contains WGS84 coordinates. This happens when ArcGIS services
-    return WGS84 but declare the original projection.
-
-    Args:
-        bbox: Bounding box as (minx, miny, maxx, maxy).
-        crs: Declared CRS as an EPSG code, a WKT string, a PROJJSON dict,
-            or None.
-
-    Returns:
-        CRSMismatchWarning if mismatch detected, None otherwise.
-    """
+    """Validate that bbox coordinates match declared CRS."""
     # No CRS declared = assumed WGS84, no validation needed
     if crs is None:
         return None
@@ -351,21 +251,7 @@ def validate_bbox_crs(
 
 
 def is_likely_wgs84_bbox(bbox: tuple[float, float, float, float]) -> bool:
-    """Detect if bbox coordinates look like WGS84 (lon/lat).
-
-    Uses heuristics to detect if coordinates are likely in WGS84:
-    - Longitude: -180 to 180 (or crossing antimeridian where west > east)
-    - Latitude: -90 to 90
-
-    This is used to detect CRS mislabeling where data is declared as a
-    projected CRS (e.g., EPSG:28992) but actually contains WGS84 coordinates.
-
-    Args:
-        bbox: Bounding box as (minx, miny, maxx, maxy).
-
-    Returns:
-        True if coordinates appear to be WGS84-like.
-    """
+    """Detect if bbox coordinates look like WGS84 (lon/lat)."""
     minx, miny, maxx, maxy = bbox
 
     # Check latitude bounds (y coordinates must be -90 to 90)
@@ -384,11 +270,7 @@ def _sample_bbox_edges(
     maxy: float,
     n_points: int,
 ) -> list[tuple[float, float]]:
-    """Sample points along bbox edges for accurate transformation.
-
-    Returns points in order: bottom edge → right edge → top edge → left edge.
-    This forms a closed ring when the first point is appended at the end.
-    """
+    """Sample points along bbox edges for accurate transformation."""
     points: list[tuple[float, float]] = []
 
     # Bottom edge (left to right)
@@ -451,34 +333,7 @@ def measure_wgs84_bbox(
     geometry_column: str,
     source_crs: str | dict[str, Any] | None,
 ) -> tuple[float, float, float, float] | None:
-    """Measure a GeoParquet's WGS84 extent from its geometry, not its bbox.
-
-    :func:`transform_bbox_to_wgs84` answers a different question: it reprojects
-    a *rectangle*. For a projected CRS the WGS84 envelope of that rectangle is
-    strictly larger than the envelope of the data inside it — the corners of a
-    UTM bbox hold no data and the grid lines curve — so a collection extent
-    derived that way overstates the data, by ~14 km on real UTM zone 30N data.
-    That is not a rounding difference: ``check`` rejects it (PTL-DAT-005), and
-    the PMTiles built from the same file report the tighter, correct box.
-
-    So measure the transformed vertices instead. Row groups are streamed and
-    only the geometry column is read, so peak memory stays bounded on files far
-    too large to hold in one GeoDataFrame.
-
-    Returns None whenever the measurement cannot be made — a missing optional
-    dependency, an unreadable file, a CRS pyproj will not resolve, no finite
-    coordinates. The caller then falls back to reprojecting the bbox, which is
-    wider than the data but never wrong about containing it.
-
-    Args:
-        data_path: GeoParquet file, or a directory of them (partitioned output).
-        geometry_column: Name of the WKB geometry column to read.
-        source_crs: CRS of the stored coordinates (EPSG code, WKT string,
-            PROJJSON dict, or None).
-
-    Returns:
-        ``(minx, miny, maxx, maxy)`` in WGS84, or None if not measurable.
-    """
+    """Measure a GeoParquet's WGS84 extent from its geometry, not its bbox."""
     if not source_crs:
         return None
     try:
@@ -505,15 +360,7 @@ def _stream_wgs84_bounds(
     src: CRS,
     data_path: Path,
 ) -> _MeasuredBounds | None:
-    """Accumulate WGS84 bounds over the geometry column, one row group at a time.
-
-    Longitude is tracked twice: once as it comes, and once shifted into
-    [0, 360). Data that crosses the antimeridian is compact in the shifted frame
-    and spans almost the whole globe in the plain one, so the two spans detect
-    the crossing without a second pass over the file.
-
-    Returns None when nothing measurable was read.
-    """
+    """Accumulate WGS84 bounds over the geometry column, one row group at a time."""
     try:
         import math
 
@@ -556,12 +403,7 @@ def _stream_wgs84_bounds(
 
 
 def _bbox_from_bounds(bounds: _MeasuredBounds) -> tuple[float, float, float, float]:
-    """Resolve accumulated bounds to a bbox, honouring an antimeridian crossing.
-
-    RFC 7946: a bbox that crosses the antimeridian writes west greater than
-    east. Keep whichever frame describes the data more tightly; a tie keeps the
-    plain frame, so data that does not cross is unaffected.
-    """
+    """Resolve accumulated bounds to a bbox, honouring an antimeridian crossing."""
     if bounds.shifted_span() < bounds.plain_span():
         west = bounds.min_shifted - 360.0 if bounds.min_shifted >= LON_MAX else bounds.min_shifted
         east = bounds.max_shifted - 360.0 if bounds.max_shifted > LON_MAX else bounds.max_shifted

@@ -1,10 +1,4 @@
-"""Unit tests for ``update_catalog_provenance`` (issue #684, PORTO-CORE-057).
-
-A mirror sync sets ``updated`` on every catalog and collection it checks.
-rashid's PTL-PRO-003 applies that to every catalog whose collections are all
-mirrors, the root or a sub-catalog. A catalog that holds any official
-collection is not a mirror and keeps no stamp.
-"""
+"""Unit tests for ``update_catalog_provenance``."""
 
 from __future__ import annotations
 

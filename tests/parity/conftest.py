@@ -10,7 +10,7 @@ import pytest
 # The harness asserts outside a test module. Rewrite it, so a failure shows the diff.
 pytest.register_assert_rewrite("tests.parity.harness")
 
-from tests.parity.harness import Parity  # noqa: E402
+from tests.parity.harness import Parity  # noqa: E402 - after register_assert_rewrite
 
 if TYPE_CHECKING:
     from collections.abc import Callable

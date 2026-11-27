@@ -1,19 +1,4 @@
-"""Unit tests for push module.
-
-Tests for cloud-native catalog push functionality with conflict detection
-and optimistic locking via etag.
-
-Following TDD: these tests are written FIRST, before implementation.
-
-Test categories:
-- PushResult dataclass
-- Version diffing (local vs remote changes)
-- Conflict detection
-- Manifest-last upload ordering
-- Etag-based optimistic locking
-- Dry-run mode
-- Force mode (overwrite conflicts)
-"""
+"""Unit tests for push module."""
 
 from __future__ import annotations
 
@@ -38,9 +23,7 @@ if TYPE_CHECKING:
 
     from portolan_cli.sync.report import Report
 
-# =============================================================================
 # Test fixtures
-# =============================================================================
 
 
 @pytest.fixture
@@ -94,7 +77,7 @@ def local_catalog(tmp_path: Path) -> Path:
 
     (versions_dir / "versions.json").write_text(json.dumps(versions_data, indent=2))
 
-    # Create collection.json (required for push per Issue #252)
+    # Create collection.json (required for push)
     collection_data = {
         "type": "Collection",
         "id": "test",
@@ -199,9 +182,7 @@ def remote_versions_diverged() -> dict[str, Any]:
     }
 
 
-# =============================================================================
 # Malformed Fixtures for Error Path Testing
-# =============================================================================
 
 
 @pytest.fixture
@@ -282,9 +263,7 @@ def remote_versions_diverged_malformed() -> dict[str, Any]:
     }
 
 
-# =============================================================================
 # PushResult Tests
-# =============================================================================
 
 
 class TestPushResult:
@@ -342,9 +321,7 @@ class TestPushResult:
         assert len(result.errors) == 1
 
 
-# =============================================================================
 # Version Diffing Tests
-# =============================================================================
 
 
 class TestDiffVersionLists:
@@ -421,9 +398,7 @@ class TestDiffVersionLists:
         assert diff.common == ["1.0.0", "1.1.0"]
 
 
-# =============================================================================
 # Conflict Detection Tests
-# =============================================================================
 
 
 class TestConflictDetection:
@@ -469,9 +444,7 @@ class TestConflictDetection:
         assert diff.has_conflict is False
 
 
-# =============================================================================
 # Push Function Tests
-# =============================================================================
 
 
 class TestPush:
@@ -482,8 +455,7 @@ class TestPush:
         """Dry-run should not perform actual upload."""
         from portolan_cli.sync.push import push
 
-        # Dry-run returns early without any network calls (Bug #137)
-        # No need to patch - the function returns before upload
+        # Dry-run returns before any network call, so nothing is patched.
         result = push(
             catalog_root=local_catalog,
             collection="test",
@@ -550,9 +522,7 @@ class TestPush:
         assert result.versions_pushed == 0
 
 
-# =============================================================================
 # Push against an in-memory remote: the bucket holds what the push wrote
-# =============================================================================
 
 
 @pytest.fixture
@@ -693,7 +663,7 @@ class TestRollbackRestoresOverwrittenKeys:
         second_push: dict[str, bytes],
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Issue #965: a failed versions.json write puts the old bytes back."""
+        """A failed versions.json write puts the old bytes back."""
         from portolan_cli.sync.push import push
 
         async def fail_manifest(key: str) -> None:
@@ -715,7 +685,7 @@ class TestRollbackRestoresOverwrittenKeys:
         second_push: dict[str, bytes],
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Issue #971: the winner's manifest describes the old bytes, so they come back."""
+        """The winner's manifest describes the old bytes, so they come back."""
         from portolan_cli.sync.push import PushConflictError, push
 
         async def other_writer_wins(key: str) -> None:
@@ -932,9 +902,7 @@ class TestUploadVersionsJsonAsync:
             await _upload_versions_json_async(MemoryStore(), "catalog", "test", {}, None)
 
 
-# =============================================================================
 # Store Setup Tests
-# =============================================================================
 
 
 class TestStoreSetup:
@@ -974,9 +942,7 @@ class TestStoreSetup:
                 assert call_kwargs.get("profile") == "myprofile"
 
 
-# =============================================================================
 # Missing Asset Detection Tests
-# =============================================================================
 
 
 class TestMissingAssetDetection:
@@ -1010,14 +976,7 @@ class TestMissingAssetDetection:
 
 
 class TestMissingDerivedAsset:
-    """Push warns and skips an optional derivative that left the disk (#735).
-
-    The spec calls a ``visual``, ``thumbnail``, ``style`` or
-    ``collection-mirror`` asset optional. Portolan rebuilds each one from other
-    files in the catalog. A user who deletes one still holds a sound catalog. An
-    asset with role ``data`` or ``source`` still raises. The role decides, and
-    the filenames only answer for an href no STAC object claims.
-    """
+    """Push warns and skips an optional derivative that left the disk."""
 
     @staticmethod
     def _versions_data(assets: dict[str, str]) -> dict[str, Any]:
@@ -1050,7 +1009,6 @@ class TestMissingDerivedAsset:
         capsys: pytest.CaptureFixture[str],
         missing_href: str,
     ) -> None:
-        """Push skips a recorded derived artifact that is no longer on disk."""
         from portolan_cli.sync.push import _get_assets_to_upload
 
         source = local_catalog / "test" / "scene1" / "scene1.tif"
@@ -1098,12 +1056,6 @@ class TestMissingDerivedAsset:
 
     @pytest.mark.unit
     def test_data_role_beats_a_generated_filename(self, local_catalog: Path) -> None:
-        """A publisher's own PMTiles carries role `data`, so push still raises.
-
-        The extension registry gives .pmtiles the role `data`, and the spec lets
-        a publisher ship PMTiles as the primary asset. A filename test alone
-        would skip that file and publish a manifest without it.
-        """
         from portolan_cli.sync.push import _get_assets_to_upload
 
         self._register_collection_asset(local_catalog, "data", "./data.pmtiles", ["data"])
@@ -1147,12 +1099,6 @@ class TestMissingDerivedAsset:
 
     @pytest.mark.unit
     def test_missing_user_supplied_image_still_raises(self, local_catalog: Path) -> None:
-        """An adopted ``thumbnail.png`` is the user's image, not our render.
-
-        One writer records both an adopted image and a rendered one. Only the
-        ``{stem}.thumb.jpg`` name marks an artifact Portolan drew. A user's own
-        picture must keep the hard failure.
-        """
         from portolan_cli.sync.push import _get_assets_to_upload
 
         with pytest.raises(FileNotFoundError, match=r"test/thumbnail\.png"):
@@ -1162,9 +1108,7 @@ class TestMissingDerivedAsset:
             )
 
 
-# =============================================================================
 # Force Flag Tests
-# =============================================================================
 
 
 class TestForceFlag:
@@ -1172,7 +1116,7 @@ class TestForceFlag:
 
     @staticmethod
     def _build_identical_version_catalog(tmp_path: Path) -> Path:
-        """Catalog whose local versions.json exactly matches the remote (Issue #496)."""
+        """Catalog whose local versions.json exactly matches the remote."""
         catalog_dir = tmp_path / "catalog"
         versions_dir = catalog_dir / "test"
         versions_dir.mkdir(parents=True)
@@ -1238,7 +1182,7 @@ class TestForceFlag:
     def test_force_reuploads_metadata_when_versions_identical(
         self, tmp_path: Path, remote: MemoryStore
     ) -> None:
-        """Issue #496: --force must re-upload metadata even with NO version delta."""
+        """--force must re-upload metadata even with NO version delta."""
         from portolan_cli.sync.push import push
 
         catalog_dir = self._build_identical_version_catalog(tmp_path)
@@ -1253,11 +1197,6 @@ class TestForceFlag:
 
     @pytest.mark.unit
     def test_no_force_skips_upload_when_versions_identical(self, tmp_path: Path) -> None:
-        """Without --force and no version delta, push is a no-op (regression guard).
-
-        This pins the other side of the Issue #496 gate: the "Nothing to push"
-        short-circuit must remain intact when force is not set.
-        """
         from portolan_cli.sync.push import push
 
         catalog_dir = self._build_identical_version_catalog(tmp_path)
@@ -1289,9 +1228,7 @@ class TestForceFlag:
         mock_upload_stac.assert_not_called()
 
 
-# =============================================================================
 # Orphan Cleanup Tests
-# =============================================================================
 
 
 class TestOrphanCleanup:
@@ -1361,9 +1298,7 @@ class TestOrphanCleanup:
         assert problems == ["Could not delete key1: Network error"]
 
 
-# =============================================================================
 # Progress Reporting Tests
-# =============================================================================
 
 
 class TestProgressReporting:
@@ -1390,9 +1325,7 @@ class TestProgressReporting:
         assert result.dry_run is True
 
 
-# =============================================================================
 # Multi-Cloud Store Setup Tests
-# =============================================================================
 
 
 class TestMultiCloudStoreSetup:
@@ -1485,11 +1418,6 @@ class TestMultiCloudStoreSetup:
 
     @pytest.mark.unit
     def test_setup_store_gcs(self) -> None:
-        """setup_store should create store for gs:// URLs via obs.store.from_url.
-
-        Note: GCS credential handling is delegated to obstore library.
-        We just verify the URL is parsed correctly and from_url is called.
-        """
         from portolan_cli.sync.upload import setup_store
 
         with patch("portolan_cli.sync.upload.obs.store.from_url") as mock_from_url:
@@ -1502,11 +1430,6 @@ class TestMultiCloudStoreSetup:
 
     @pytest.mark.unit
     def test_setup_store_gcs_no_credentials(self) -> None:
-        """setup_store should work for GCS without explicit credentials.
-
-        Note: GCS credential handling is delegated to obstore library.
-        We just verify the URL is parsed correctly and from_url is called.
-        """
         from portolan_cli.sync.upload import setup_store
 
         with patch("portolan_cli.sync.upload.obs.store.from_url") as mock_from_url:
@@ -1519,11 +1442,6 @@ class TestMultiCloudStoreSetup:
 
     @pytest.mark.unit
     def test_setup_store_azure_with_key(self) -> None:
-        """setup_store should create store for az:// URLs via obs.store.from_url.
-
-        Note: Azure credential handling is delegated to obstore library.
-        We just verify the URL is parsed correctly and from_url is called.
-        """
         from portolan_cli.sync.upload import setup_store
 
         with patch("portolan_cli.sync.upload.obs.store.from_url") as mock_from_url:
@@ -1536,11 +1454,6 @@ class TestMultiCloudStoreSetup:
 
     @pytest.mark.unit
     def test_setup_store_azure_with_sas_token(self) -> None:
-        """setup_store should create store for az:// URLs via obs.store.from_url.
-
-        Note: Azure credential handling (SAS tokens) is delegated to obstore library.
-        We just verify the URL is parsed correctly and from_url is called.
-        """
         from portolan_cli.sync.upload import setup_store
 
         with patch("portolan_cli.sync.upload.obs.store.from_url") as mock_from_url:
@@ -1553,11 +1466,6 @@ class TestMultiCloudStoreSetup:
 
     @pytest.mark.unit
     def test_setup_store_azure_parses_prefix(self) -> None:
-        """setup_store should correctly parse Azure URL prefix.
-
-        Azure URLs have format: az://account/container/path
-        Note: Azure credential precedence is delegated to obstore library.
-        """
         from portolan_cli.sync.upload import setup_store
 
         with patch("portolan_cli.sync.upload.obs.store.from_url") as mock_from_url:
@@ -1572,12 +1480,6 @@ class TestMultiCloudStoreSetup:
 
     @pytest.mark.unit
     def test_setup_store_unknown_scheme_uses_from_url(self) -> None:
-        """setup_store should fallback to from_url for unknown schemes.
-
-        NOTE: This tests upload.py, but since parse_object_store_url
-        validates the scheme first and raises ValueError for unsupported schemes,
-        we need to mock it to allow the unknown scheme through.
-        """
         from portolan_cli.sync.upload import setup_store
 
         with patch("portolan_cli.sync.upload.parse_object_store_url") as mock_parse:
@@ -1593,9 +1495,7 @@ class TestMultiCloudStoreSetup:
         assert prefix == "catalog"
 
 
-# =============================================================================
 # Upload Assets Error Handling Tests
-# =============================================================================
 
 
 class TestUploadAssetsErrorHandling:
@@ -1629,9 +1529,7 @@ class TestUploadAssetsErrorHandling:
         assert uploaded_keys == []
 
 
-# =============================================================================
 # Error Path Tests with Malformed Data
-# =============================================================================
 
 
 class TestMalformedDataHandling:
@@ -1670,12 +1568,6 @@ class TestMalformedDataHandling:
     def test_push_with_malformed_local_versions_keyerror(
         self, local_catalog_malformed: Path
     ) -> None:
-        """Push should fail when local versions.json has missing required keys.
-
-        The local_catalog_malformed fixture has versions.json missing spec_version
-        and current_version. When push tries to read and process this, it should
-        fail with a KeyError when accessing these missing fields.
-        """
         from portolan_cli.sync.push import _read_local_versions
 
         # Read the malformed versions.json
@@ -1699,17 +1591,9 @@ class TestMalformedDataHandling:
     def test_push_with_malformed_remote_versions_missing_key(
         self, remote_versions_same_malformed: dict[str, Any]
     ) -> None:
-        """Push should handle malformed remote versions.json gracefully.
-
-        The remote_versions_same_malformed fixture is missing spec_version.
-        When diff_version_lists tries to extract versions, it should handle
-        this gracefully or raise an appropriate error.
-        """
         from portolan_cli.sync.push import diff_version_lists
 
-        # The malformed data has versions but is missing spec_version
-        # Attempting to extract version strings should still work
-        # since versions list exists
+        # The data has versions but no spec_version, so the version strings still extract.
         local_versions = ["1.0.0", "1.1.0"]
         remote_versions = [v["version"] for v in remote_versions_same_malformed.get("versions", [])]
 
@@ -1723,12 +1607,6 @@ class TestMalformedDataHandling:
     def test_push_with_malformed_asset_fields_extraction(
         self, remote_versions_diverged_malformed: dict[str, Any]
     ) -> None:
-        """Push should fail when extracting assets with missing fields.
-
-        The remote_versions_diverged_malformed fixture has assets missing
-        sha256 and size_bytes fields. When code tries to access these,
-        it should fail with KeyError.
-        """
         # Extract the malformed asset
         versions = remote_versions_diverged_malformed["versions"]
         assets = versions[0]["assets"]
@@ -1746,9 +1624,7 @@ class TestMalformedDataHandling:
             _ = asset_data["size_bytes"]
 
 
-# =============================================================================
 # Property-Based Tests (Hypothesis)
-# =============================================================================
 
 
 class TestPushResultInvariants:
@@ -1789,16 +1665,6 @@ class TestPushResultInvariants:
 
     @pytest.mark.unit
     def test_dry_run_result_always_has_zero_counts(self, local_catalog: Path) -> None:
-        """In dry-run mode, push() should always return zero work done.
-
-        This property encodes the semantic contract: dry-run never actually
-        pushes, so files_uploaded and versions_pushed must be 0.
-
-        Tests multiple scenarios to verify invariant holds:
-        1. First push (no remote versions)
-        2. Incremental push (remote has some versions)
-        3. Nothing to push (remote matches local)
-        """
         from portolan_cli.sync.push import push
 
         # Scenario 1: First push (remote has no versions)
@@ -1884,11 +1750,6 @@ class TestVersionDiffInvariants:
     def test_diff_partitions_versions(
         self, local_versions: list[str], remote_versions: list[str]
     ) -> None:
-        """Version diff should partition versions into local_only and remote_only.
-
-        Property: local_only | remote_only | common == local | remote
-        Property: local_only ∩ remote_only = ∅
-        """
         from portolan_cli.sync.push import diff_version_lists
 
         diff = diff_version_lists(local_versions, remote_versions)
@@ -1935,27 +1796,14 @@ class TestVersionDiffInvariants:
         assert not diff.has_conflict  # First push, no conflict
 
 
-# =============================================================================
 # Dry-Run Network Isolation Tests
-# =============================================================================
 
 
 class TestDryRunNetworkIsolation:
-    """Tests that dry-run mode never makes network calls.
-
-    Bug #137: --dry-run was still calling _fetch_remote_versions and
-    _setup_store, making real network connections. These tests assert
-    the fix: dry_run=True must return early BEFORE any network I/O.
-    """
+    """Tests that dry-run mode never makes network calls."""
 
     @pytest.mark.unit
     def test_push_dry_run_never_calls_fetch_remote_versions(self, local_catalog: Path) -> None:
-        """push(dry_run=True) must not call _fetch_remote_versions at all.
-
-        This is the core regression test for bug #137. The previous behaviour
-        always called _setup_store then _fetch_remote_versions regardless of
-        dry_run, making real S3/GCS/Azure connections.
-        """
         from portolan_cli.sync.push import push
 
         with (
@@ -2013,7 +1861,7 @@ class TestDryRunNetworkIsolation:
         assert result.files_uploaded == 0  # dry-run never uploads
         assert result.dry_run is True  # H3: result must indicate dry-run mode
         assert result.would_push_versions > 0  # H3: should show how many would push
-        assert result.would_push_files > 0  # Issue #804: also show file estimate
+        assert result.would_push_files > 0  # Also show file estimate
 
     @pytest.mark.unit
     def test_push_dry_run_does_not_call_upload_assets(self, local_catalog: Path) -> None:
@@ -2070,12 +1918,6 @@ class TestDryRunNetworkIsolation:
 
     @pytest.mark.unit
     def test_push_dry_run_handles_missing_asset_gracefully(self, tmp_path: Path) -> None:
-        """H2: push(dry_run=True) should warn but not crash on missing assets.
-
-        When an asset referenced in versions.json is missing locally, dry-run
-        should warn and continue (not raise FileNotFoundError) so users can
-        see the preview even if local state is inconsistent.
-        """
         import json
 
         from portolan_cli.sync.push import push
@@ -2128,9 +1970,7 @@ class TestDryRunNetworkIsolation:
         assert "missing.parquet" in result.errors[0]
 
 
-# =============================================================================
 # README Discovery Tests
-# =============================================================================
 
 
 class TestDiscoverStacFilesReadmes:
@@ -2195,27 +2035,14 @@ class TestDiscoverStacFilesReadmes:
         assert len(result["readmes"]) == 0
 
 
-# =============================================================================
-# Asset Diffing Tests (Issue #329)
-# =============================================================================
+# Asset Diffing Tests
 
 
 class TestAssetDiffing:
-    """Tests for asset diffing against remote versions (Issue #329).
-
-    Push should only upload assets that are new or changed, not all assets
-    from versions being pushed. This prevents re-uploading 3000 files when
-    adding 1 new file to a large catalog.
-    """
+    """Tests for asset diffing against remote versions."""
 
     @pytest.mark.unit
     def test_skips_assets_already_on_remote_by_sha256(self, tmp_path: Path) -> None:
-        """Assets with sha256 matching remote should be skipped.
-
-        Scenario: Local version 2.0.0 has 2 assets, remote version 1.0.0
-        has 1 of those assets with same sha256. Only the new asset should
-        be uploaded.
-        """
         from portolan_cli.sync.push import _get_assets_to_upload
 
         catalog_dir = tmp_path / "catalog"
@@ -2329,14 +2156,6 @@ class TestAssetDiffing:
 
     @pytest.mark.unit
     def test_uploads_renamed_file_even_with_same_sha256(self, tmp_path: Path) -> None:
-        """Renamed files (same sha256, different href) must be uploaded.
-
-        Regression test: if only sha256 is checked, renamed files are incorrectly
-        skipped because the bytes already exist remotely. But the new href doesn't
-        exist on S3, so the upload is required.
-
-        Scenario: data.parquet renamed to renamed.parquet (same content).
-        """
         from portolan_cli.sync.push import _get_assets_to_upload
 
         catalog_dir = tmp_path / "catalog"
@@ -2432,14 +2251,6 @@ class TestAssetDiffing:
 
     @pytest.mark.unit
     def test_href_only_in_older_remote_version_uploads(self, tmp_path: Path) -> None:
-        """An href that the remote current snapshot omits must upload (Issue #962).
-
-        This test replaces one that expected a skip. That test encoded the
-        any-version rule: a match in any remote version skipped the upload.
-        A versions.json entry is a complete snapshot. The remote current
-        version 1.1.0 does not list legacy.parquet, so nothing tells push
-        that the object key still holds those bytes.
-        """
         from portolan_cli.sync.push import _get_assets_to_upload
 
         catalog_dir = tmp_path / "catalog"
@@ -2531,10 +2342,7 @@ class TestAssetDiffing:
 
     @pytest.mark.unit
     def test_large_catalog_diffing_performance(self, tmp_path: Path) -> None:
-        """Issue #329: Adding 1 file to 3000-file catalog should upload 1 file.
-
-        This is the exact scenario described in the issue.
-        """
+        """Adding 1 file to 3000-file catalog should upload 1 file."""
         from portolan_cli.sync.push import _get_assets_to_upload
 
         catalog_dir = tmp_path / "catalog"
@@ -2695,9 +2503,7 @@ class TestAssetDiffing:
         assert len(assets) == 1
 
 
-# =============================================================================
-# Asset Diffing Against the Remote Current Version (Issue #962)
-# =============================================================================
+# Asset Diffing Against the Remote Current Version
 
 
 def _snapshot(version: str, assets: dict[str, str]) -> dict[str, Any]:
@@ -2717,20 +2523,10 @@ def _history(current: str, *entries: tuple[str, dict[str, str]]) -> dict[str, An
 
 
 class TestAssetDiffingAgainstRemoteCurrent:
-    """Push compares each asset with the remote CURRENT snapshot (Issue #962).
-
-    Every version writes the same object key for an href. So only the remote
-    current snapshot tells push what each key holds now. An older remote
-    version can record bytes that a later push overwrote.
-    """
+    """Push compares each asset with the remote CURRENT snapshot."""
 
     @pytest.mark.unit
     def test_revert_to_bytes_of_older_remote_version_uploads(self, tmp_path: Path) -> None:
-        """Bytes A, then B, then A again. The third push must upload A.
-
-        Before the fix, push found (data.parquet, A) in remote 1.0.3 and
-        skipped the upload. The store kept B while versions.json recorded A.
-        """
         from portolan_cli.sync.push import _get_assets_to_upload
 
         data_file = tmp_path / "data.parquet"
@@ -2752,12 +2548,6 @@ class TestAssetDiffingAgainstRemoteCurrent:
 
     @pytest.mark.unit
     def test_multi_version_push_compares_local_current_sha(self, tmp_path: Path) -> None:
-        """A push of 1.0.4 and 1.0.5 compares the sha256 that 1.0.5 records.
-
-        The file on disk holds the 1.0.5 bytes (C). Before the fix, push read
-        the oldest pushed entry (1.0.4, A), matched remote current A, and
-        skipped the upload. C never reached the store.
-        """
         from portolan_cli.sync.push import _get_assets_to_upload
 
         data_file = tmp_path / "data.parquet"
@@ -2781,11 +2571,6 @@ class TestAssetDiffingAgainstRemoteCurrent:
     def test_multi_version_push_skips_asset_whose_local_current_sha_matches_remote(
         self, tmp_path: Path
     ) -> None:
-        """An asset that changed and then changed back is skipped.
-
-        Pushed 1.0.4 records B and pushed 1.0.5 records A. The file on disk
-        holds A, and remote current also records A, so the key holds A.
-        """
         from portolan_cli.sync.push import _get_assets_to_upload
 
         (tmp_path / "data.parquet").write_bytes(b"bytes A")
@@ -2804,11 +2589,6 @@ class TestAssetDiffingAgainstRemoteCurrent:
 
     @pytest.mark.unit
     def test_asset_identical_to_remote_current_is_skipped(self, tmp_path: Path) -> None:
-        """An asset whose sha256 equals the remote current entry is skipped.
-
-        An older remote version records other bytes for the same href. That
-        older entry must not force an upload.
-        """
         from portolan_cli.sync.push import _get_assets_to_upload
 
         (tmp_path / "data.parquet").write_bytes(b"bytes B")
@@ -2826,12 +2606,6 @@ class TestAssetDiffingAgainstRemoteCurrent:
 
     @pytest.mark.unit
     def test_force_push_without_new_versions_restores_local_current(self, tmp_path: Path) -> None:
-        """A force push with no new local version uploads the local current bytes.
-
-        Local holds 1.0.0 (A). Remote holds 1.0.0 (A) and 1.0.1 (B), so the
-        store holds B. `push --force` writes the local versions.json, which
-        records A. So push must upload A, although no version is local only.
-        """
         from portolan_cli.sync.push import _get_assets_to_upload
 
         data_file = tmp_path / "data.parquet"
@@ -2848,11 +2622,6 @@ class TestAssetDiffingAgainstRemoteCurrent:
 
     @pytest.mark.unit
     def test_asset_removed_by_a_later_pushed_version_is_not_uploaded(self, tmp_path: Path) -> None:
-        """A file that 1.0.1 adds and 1.0.2 removes is not part of the push.
-
-        The user deleted x.parquet. The local current snapshot 1.0.2 does not
-        list it, so push must not look for it on disk.
-        """
         from portolan_cli.sync.push import _get_assets_to_upload
 
         (tmp_path / "data.parquet").write_bytes(b"bytes A")
@@ -2902,11 +2671,6 @@ class TestAssetDiffingAgainstRemoteCurrent:
     def test_unusable_current_version_falls_back_to_last_entry(
         self, tmp_path: Path, current_version: str | None
     ) -> None:
-        """Without a usable current_version, the last remote entry is current.
-
-        The last entry records B. So local A uploads and local B is skipped.
-        The first entry records A, and it must not cause a skip.
-        """
         from portolan_cli.sync.push import _get_assets_to_upload
 
         a_file = tmp_path / "a.parquet"
@@ -2948,25 +2712,14 @@ class TestAssetDiffingAgainstRemoteCurrent:
         assert assets == []
 
 
-# =============================================================================
-# Real SHA256 Hash Tests (Issue #329)
-# =============================================================================
+# Real SHA256 Hash Tests
 
 
 class TestRealSHA256Diffing:
-    """Tests for asset diffing using real SHA256 hashes (Issue #329).
-
-    These tests verify the diffing logic works with actual computed hashes,
-    not placeholder strings like 'sha256_existing1'.
-    """
+    """Tests for asset diffing using real SHA256 hashes."""
 
     @pytest.mark.unit
     def test_real_sha256_diffing_skips_identical_files(self, tmp_path: Path) -> None:
-        """Assets with identical content (same real SHA256) should be skipped.
-
-        This test creates real files, computes actual SHA256 hashes, and verifies
-        that the diffing logic correctly identifies unchanged files.
-        """
         import hashlib
 
         from portolan_cli.sync.push import _get_assets_to_upload
@@ -3025,11 +2778,6 @@ class TestRealSHA256Diffing:
 
     @pytest.mark.unit
     def test_real_sha256_diffing_uploads_modified_files(self, tmp_path: Path) -> None:
-        """Assets with different content (different real SHA256) should be uploaded.
-
-        This test verifies that even a small content change results in a different
-        hash and triggers an upload.
-        """
         import hashlib
 
         from portolan_cli.sync.push import _get_assets_to_upload
@@ -3096,11 +2844,6 @@ class TestRealSHA256Diffing:
 
     @pytest.mark.unit
     def test_real_sha256_incremental_add_scenario(self, tmp_path: Path) -> None:
-        """Issue #329 core scenario: adding 1 file to a large catalog.
-
-        Simulates adding 1 new file to a catalog with 100 existing files.
-        Only the new file should be uploaded.
-        """
         import hashlib
 
         from portolan_cli.sync.push import _get_assets_to_upload

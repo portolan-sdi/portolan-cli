@@ -1,16 +1,4 @@
-"""Unit tests for batched warning output in _print_issues_with_fixability.
-
-Tests verify that repeated warnings of the same IssueType are grouped together
-instead of printing one line per issue. This reduces noise when many files share
-the same issue (e.g., 265 directories with uppercase names).
-
-Expected behavior (batched):
-    ⚠ 265 warnings
-      [--fix] 265 files have invalid_collection_id
-      Examples: USA, GBR, CHN (and 262 more)
-      Hint: STAC recommends lowercase for cross-platform compatibility
-      Run: portolan scan --fix to auto-rename
-"""
+"""Unit tests for batched warning output in _print_issues_with_fixability."""
 
 from __future__ import annotations
 
@@ -24,9 +12,7 @@ from hypothesis import strategies as st
 from portolan_cli.scan.core import IssueType, ScanIssue, ScanResult
 from portolan_cli.scan.core import Severity as ScanSeverity
 
-# =============================================================================
 # Helpers
-# =============================================================================
 
 _ROOT = Path("/tmp/test-root")
 
@@ -80,9 +66,7 @@ def capture_output(result: ScanResult, *, show_all: bool = False) -> str:
     return "\n".join(lines)
 
 
-# =============================================================================
 # Core batching behaviour
-# =============================================================================
 
 
 @pytest.mark.unit
@@ -245,9 +229,7 @@ class TestBatchedWarningOutput:
         assert "2 warning" in output or "warnings" in output
 
 
-# =============================================================================
 # Edge cases
-# =============================================================================
 
 
 @pytest.mark.unit
@@ -304,9 +286,7 @@ class TestBatchingEdgeCases:
         assert "hint" not in output.lower()
 
 
-# =============================================================================
 # Hypothesis property-based tests
-# =============================================================================
 
 
 def _issue_type_strategy() -> st.SearchStrategy[IssueType]:
@@ -379,8 +359,6 @@ class TestBatchingProperties:
             unique_paths = list(dict.fromkeys(i.relative_path for i in group))
             if len(unique_paths) > 3:
                 # Count how many of the unique paths actually appear in the output.
-                # We count unique paths that appear (not issue count), so duplicated
-                # relative_path values don't inflate the count.
                 visible_unique = [p for p in unique_paths if p in output]
                 assert len(visible_unique) <= 3, (
                     f"Group ({sev}, {it}) shows {len(visible_unique)} unique paths > 3"

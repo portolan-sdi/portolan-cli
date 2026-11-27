@@ -1,12 +1,4 @@
-"""Inspect module - file, collection, and catalog metadata inspection.
-
-Provides file-focused inspection that delegates to upstream libraries
-(geoparquet-io, rio-cogeo) for metadata extraction, adding version info
-from versions.json when files are tracked.
-
-All logic lives here; the CLI is a thin wrapper.
-The output format follows the specified structure.
-"""
+"""Inspect module - file, collection, and catalog metadata inspection."""
 
 from __future__ import annotations
 
@@ -27,9 +19,6 @@ _MIN_PATH_PARTS = 2
 @dataclass
 class FileInfo:
     """Metadata extracted from a geospatial file.
-
-    Combines format-specific metadata from upstream libraries with
-    version tracking from versions.json.
 
     Attributes:
         path: Path to the file.
@@ -84,11 +73,6 @@ class FileInfo:
 
         Returns:
             List of output lines in the format:
-                Format: GeoParquet
-                CRS: EPSG:4326
-                Bbox: [-122.5, 37.7, -122.3, 37.9]
-                Features: 4,231
-                Version: v1.2.0
         """
         lines = []
         lines.append(f"Format: {self.format}")
@@ -97,8 +81,6 @@ class FileInfo:
         if self.bbox:
             from portolan_core.bbox import to_2d_bbox
 
-            # Reduce to 2D so a 6-element bbox shows [west, south, east, north]
-            # instead of its [west, south, min_z, east] slice (issue #592).
             west, south, east, north = to_2d_bbox(self.bbox)
             bbox_str = f"[{west}, {south}, {east}, {north}]"
             lines.append(f"Bbox: {bbox_str}")
@@ -119,17 +101,7 @@ class FileInfo:
 
 @dataclass
 class CollectionInfo:
-    """Metadata for a STAC collection.
-
-    Attributes:
-        collection_id: Collection identifier.
-        title: Human-readable title.
-        description: Collection description.
-        item_count: Number of items in the collection.
-        total_size_bytes: Total size of tracked assets in bytes.
-        bbox: Spatial extent bounding box.
-        has_parquet: Whether items.parquet exists for this collection.
-    """
+    """Metadata for a STAC collection."""
 
     collection_id: str
     title: str | None = None
@@ -166,8 +138,6 @@ class CollectionInfo:
         if self.bbox:
             from portolan_core.bbox import to_2d_bbox
 
-            # Reduce to 2D so a 6-element bbox shows [west, south, east, north]
-            # instead of its [west, south, min_z, east] slice (issue #592).
             west, south, east, north = to_2d_bbox(self.bbox)
             bbox_str = f"[{west}, {south}, {east}, {north}]"
             lines.append(f"Bbox: {bbox_str}")
@@ -179,14 +149,7 @@ class CollectionInfo:
 
 @dataclass
 class CatalogInfo:
-    """Metadata for a STAC catalog.
-
-    Attributes:
-        catalog_id: Catalog identifier.
-        title: Human-readable title.
-        description: Catalog description.
-        collection_count: Number of collections in the catalog.
-    """
+    """Metadata for a STAC catalog."""
 
     catalog_id: str
     title: str | None = None
@@ -215,27 +178,10 @@ class CatalogInfo:
 
 
 def inspect_file(path: Path, *, catalog_root: Path | None = None) -> FileInfo:
-    """Inspect a geospatial file and extract metadata.
-
-    Delegates to geoparquet-io for GeoParquet files and rio-cogeo for COGs.
-    If catalog_root is provided and the file is tracked in versions.json,
-    includes the version information.
-
-    Args:
-        path: Path to the file to inspect.
-        catalog_root: Optional catalog root to look up version info.
-
-    Returns:
-        FileInfo with extracted metadata.
-
-    Raises:
-        FileNotFoundError: If file doesn't exist.
-        ValueError: If file format is unsupported.
-    """
+    """Inspect a geospatial file and extract metadata."""
     if not path.exists():
         raise FileNotFoundError(f"File not found: {path}")
 
-    # The format handler describes its own format (#947).
     from portolan_cli.plugins.formats import handler_for
 
     handler = handler_for(path, catalog_root)
@@ -255,7 +201,6 @@ def inspect_geoparquet(path: Path, *, catalog_root: Path | None = None) -> FileI
     Returns:
         FileInfo with GeoParquet metadata.
     """
-    # Lazy: the extractor loads pyarrow, and importing inspect must not (#944).
     from portolan_cli.metadata.geoparquet import extract_geoparquet_metadata
 
     metadata = extract_geoparquet_metadata(path)
@@ -290,7 +235,6 @@ def inspect_cog(path: Path, *, catalog_root: Path | None = None) -> FileInfo:
     Returns:
         FileInfo with COG metadata.
     """
-    # Lazy: the extractor loads rasterio, and importing inspect must not (#944).
     from portolan_cli.metadata.cog import extract_cog_metadata
 
     metadata = extract_cog_metadata(path)
@@ -314,15 +258,7 @@ def inspect_cog(path: Path, *, catalog_root: Path | None = None) -> FileInfo:
 
 
 def _lookup_version(path: Path, catalog_root: Path) -> str | None:
-    """Look up version from versions.json for a tracked file.
-
-    Args:
-        path: Path to the file.
-        catalog_root: Root of the catalog.
-
-    Returns:
-        Version string (e.g., "v1.2.0") or None if not tracked.
-    """
+    """Look up version from versions.json for a tracked file."""
     # Try to determine collection from file path
     try:
         relative = path.resolve().relative_to(catalog_root.resolve())
@@ -372,17 +308,7 @@ def _lookup_version(path: Path, catalog_root: Path) -> str | None:
 
 
 def inspect_collection(collection_path: Path) -> CollectionInfo:
-    """Inspect a STAC collection and extract metadata.
-
-    Args:
-        collection_path: Path to the collection directory.
-
-    Returns:
-        CollectionInfo with collection metadata.
-
-    Raises:
-        FileNotFoundError: If collection.json doesn't exist.
-    """
+    """Inspect a STAC collection and extract metadata."""
     collection_json_path = collection_path / "collection.json"
     if not collection_json_path.exists():
         raise FileNotFoundError(f"Collection not found: {collection_path}")
@@ -427,26 +353,13 @@ def inspect_collection(collection_path: Path) -> CollectionInfo:
 
 
 def inspect_catalog(catalog_root: Path) -> CatalogInfo:
-    """Inspect a STAC catalog and extract metadata.
-
-    Args:
-        catalog_root: Path to the catalog root directory.
-
-    Returns:
-        CatalogInfo with catalog metadata.
-
-    Raises:
-        FileNotFoundError: If catalog.json doesn't exist.
-    """
+    """Inspect a STAC catalog and extract metadata."""
     catalog_json_path = catalog_root / "catalog.json"
     if not catalog_json_path.exists():
         raise FileNotFoundError(f"Catalog not found: {catalog_root}")
 
     data = json.loads(catalog_json_path.read_text(encoding="utf-8"))
 
-    # The containment walk counts the same collections as `check` (#944). A
-    # child link to a sub-catalog is not a collection, and an unlinked
-    # collection still is one.
     collection_count = len(catalog_collections(catalog_root))
 
     return CatalogInfo(
@@ -460,24 +373,7 @@ def inspect_catalog(catalog_root: Path) -> CatalogInfo:
 def inspect_target(
     target: Path | None, *, catalog_root: Path
 ) -> FileInfo | CollectionInfo | CatalogInfo:
-    """Inspect the file, collection, or catalog that ``target`` names.
-
-    This is the library function of ``portolan info``.
-
-    Args:
-        target: A file, a catalog or collection directory, or None for the
-            catalog at ``catalog_root``.
-        catalog_root: The catalog root. It reports the catalog when ``target``
-            is None, and it gives a file its version.
-
-    Returns:
-        The report for the kind of target.
-
-    Raises:
-        FileNotFoundError: If ``target`` does not exist.
-        ValueError: If ``target`` is a directory with no catalog.json or
-            collection.json, or a file of an unsupported format.
-    """
+    """Inspect the file, collection, or catalog that ``target`` names."""
     if target is None:
         return inspect_catalog(catalog_root)
     if target.is_file():

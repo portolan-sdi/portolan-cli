@@ -1,11 +1,4 @@
-"""Tests for clone command git-style ergonomics (Issue #146).
-
-These tests cover:
-1. URL inference for local path (infer_local_path_from_url)
-2. Listing remote collections (list_remote_collections)
-3. Clone with optional collection (clone all collections)
-4. Clone to current directory ('.')
-"""
+"""Tests for clone command git-style ergonomics."""
 
 from __future__ import annotations
 
@@ -20,9 +13,7 @@ from hypothesis import strategies as st
 if TYPE_CHECKING:
     from click.testing import CliRunner
 
-# =============================================================================
 # Tests for infer_local_path_from_url
-# =============================================================================
 
 
 class TestInferLocalPathFromUrl:
@@ -148,9 +139,7 @@ class TestInferLocalPathFromUrlHypothesis:
         assert result == Path(catalog_name)
 
 
-# =============================================================================
 # Tests for list_remote_collections
-# =============================================================================
 
 
 class TestListRemoteCollections:
@@ -285,9 +274,7 @@ class TestFetchRemoteCatalogJson:
                 _fetch_remote_catalog_json("s3://bucket/catalog")
 
 
-# =============================================================================
 # Tests for clone with optional collection
-# =============================================================================
 
 
 class TestCloneAllCollections:
@@ -457,9 +444,7 @@ class TestCloneToCurrentDirectory:
         assert any("not empty" in err for err in result.errors)
 
 
-# =============================================================================
 # Tests for CloneResult with multiple collections
-# =============================================================================
 
 
 class TestCloneResultMultiCollection:
@@ -485,9 +470,7 @@ class TestCloneResultMultiCollection:
         assert result.total_files_downloaded == 15
 
 
-# =============================================================================
 # CLI Integration Tests
-# =============================================================================
 
 
 class TestCloneCLIErgonomics:

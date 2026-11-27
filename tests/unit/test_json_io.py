@@ -1,10 +1,4 @@
-"""Unit tests for the shared atomic JSON writer (``portolan_core.json_io``).
-
-Every STAC/Portolan JSON write funnels through :func:`write_json_atomic`, so the
-guarantees tested here — atomicity, unescaped unicode, trailing newline — hold
-for ``catalog.json``, ``collection.json``, ``item.json``, and ``versions.json``
-alike.
-"""
+"""Unit tests for the shared atomic JSON writer (``portolan_core.json_io``)."""
 
 from __future__ import annotations
 
@@ -191,12 +185,7 @@ def _fail_replace(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 class TestSitesAdoptedInIssue687:
-    """The write sites converted in #687 cannot truncate what was already there.
-
-    Each test kills the write at ``os.replace`` — the last step, after the new
-    bytes are on disk — because that is the window an in-place writer cannot
-    survive: it has already truncated the destination by then.
-    """
+    """These write sites cannot truncate what was already there."""
 
     def test_pmtiles_extension_write_preserves_the_prior_collection(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -302,7 +291,7 @@ class TestSitesAdoptedInIssue687:
 
 
 class TestWriteCounters:
-    """The perf gates count each versions.json and collection.json write here (#992)."""
+    """The perf gates count each versions.json and collection.json write here."""
 
     @pytest.mark.parametrize(
         ("name", "counter"),

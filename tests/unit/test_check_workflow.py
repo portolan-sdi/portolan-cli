@@ -1,10 +1,4 @@
-"""Tests for the check/fix workflow orchestration in check.py (issue #620).
-
-These exercise the Click-free workflow layer extracted from cli.py:
-- resolve_catalog_root_for_check: walk up to catalog.json
-- build_check_rules: rule construction honoring config + strict
-- run_fix_workflow: metadata/geo-asset fix orchestration returning reports
-"""
+"""Tests for the check/fix workflow orchestration in check.py."""
 
 from __future__ import annotations
 
@@ -61,7 +55,7 @@ class TestResolveCatalogRootForCheck:
 
 
 class TestRunFixWorkflow:
-    """Tests for run_fix_workflow returning a FixWorkflowOutcome (#620)."""
+    """Tests for run_fix_workflow returning a FixWorkflowOutcome."""
 
     @pytest.mark.unit
     def test_metadata_only_without_catalog_sets_fatal_error(self, tmp_path: Path) -> None:

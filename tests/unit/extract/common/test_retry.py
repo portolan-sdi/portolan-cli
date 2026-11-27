@@ -160,7 +160,6 @@ class TestRetryWithBackoff:
         assert len(calls) == 1
 
     def test_give_up_on_ends_the_retries_with_a_failed_result(self) -> None:
-        """An empty layer is not retried: the next answer is empty too (#1034)."""
         calls: list[int] = []
         error = LookupError("no features")
 
@@ -183,7 +182,7 @@ def _http_error(status: int) -> httpx.HTTPStatusError:
 
 
 class TestRetryClassification:
-    """The maintainer rule: retry a transient failure only (#1035)."""
+    """The maintainer rule: retry a transient failure only."""
 
     @pytest.mark.parametrize(
         ("code", "transient"),

@@ -1,10 +1,4 @@
-"""Integration tests: `portolan add` produces human-readable titles (Issue #502).
-
-Verifies the full add workflow yields:
-- a humanized collection title + non-placeholder description,
-- a child link in the root catalog carrying that title + type,
-- and that a metadata.yaml title/description override wins.
-"""
+"""Integration tests: `portolan add` produces human-readable titles."""
 
 from __future__ import annotations
 
@@ -112,7 +106,7 @@ class TestAddProducesHumanReadableTitles:
 
 @pytest.mark.integration
 class TestRootMetadataTitleReachesCatalog:
-    """`portolan add` applies the root metadata.yaml title (issue #815)."""
+    """`portolan add` applies the root metadata.yaml title."""
 
     def test_root_title_and_description_reach_catalog_json(self, tmp_path: Path) -> None:
         root = tmp_path / "catalog"
@@ -135,7 +129,6 @@ class TestRootMetadataTitleReachesCatalog:
         assert catalog["description"] == "Ten collections about property and zoning."
 
     def test_root_title_does_not_replace_collection_title(self, tmp_path: Path) -> None:
-        """A collection with its own title keeps it (issue #815)."""
         root = tmp_path / "catalog"
         _init_catalog(root)
         (root / ".portolan" / "metadata.yaml").write_text(
@@ -165,7 +158,6 @@ class TestRootMetadataTitleReachesCatalog:
         assert readme.startswith("# Philadelphia Housing and Land Use")
 
     def test_collection_without_a_title_keeps_the_humanized_one(self, tmp_path: Path) -> None:
-        """The root title must not rename every collection (issue #815)."""
         root = tmp_path / "catalog"
         _init_catalog(root)
         (root / ".portolan" / "metadata.yaml").write_text(
@@ -191,12 +183,7 @@ class TestRootMetadataTitleReachesCatalog:
 
 @pytest.mark.integration
 class TestCheckFixAppliesTheMetadataTitle:
-    """`portolan check --fix` applies a title edited after creation (#815).
-
-    No rashid rule reports the drift, because rashid grades `catalog.json` and
-    never reads `metadata.yaml`. A user who renames the catalog must not have to
-    re-run `add` over the data to publish the new name.
-    """
+    """`portolan check --fix` applies a title edited after creation."""
 
     def test_check_fix_applies_the_edited_title(self, tmp_path: Path) -> None:
         root = tmp_path / "catalog"
@@ -236,7 +223,6 @@ class TestCheckFixAppliesTheMetadataTitle:
         assert catalog["title"] == "Demo Catalog"
 
     def test_collection_readme_does_not_show_the_root_description(self, tmp_path: Path) -> None:
-        """A description names one object and never inherits (#815)."""
         root = tmp_path / "catalog"
         _init_catalog(root)
         (root / ".portolan" / "metadata.yaml").write_text(

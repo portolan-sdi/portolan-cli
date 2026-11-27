@@ -1,10 +1,4 @@
-"""Regression tests for asset role/media-type assignment (issue #558).
-
-`.webp` and `.gif` were documented and scan-classified as thumbnails but were
-absent from add.py's `_ROLE_MAP` / `_MEDIA_TYPE_MAP`, so such assets were
-mis-typed as role "data" / "application/octet-stream". `.svg` was already a
-thumbnail in the role map but missing from the scan image set.
-"""
+"""Regression tests for asset role/media-type assignment."""
 
 from __future__ import annotations
 

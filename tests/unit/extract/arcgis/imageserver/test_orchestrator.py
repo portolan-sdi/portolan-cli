@@ -230,7 +230,7 @@ class TestRunImageServerExtraction:
 
 
 class TestRetriesAndFailureHint:
-    """Retries reach the extractor and failures print a next step (issue #870)."""
+    """Retries reach the extractor and failures print a next step."""
 
     def test_max_retries_default(self) -> None:
         assert ImageServerCLIOptions().max_retries == 3
@@ -317,7 +317,7 @@ class TestRetriesAndFailureHint:
 
 
 class TestLicenseOptions:
-    """--license and --license-url reach the extractor (issue #870)."""
+    """--license and --license-url reach the extractor."""
 
     def test_license_defaults_to_none(self) -> None:
         options = ImageServerCLIOptions()
@@ -398,11 +398,6 @@ class TestEmptyTileOutcome:
     async def test_a_resumed_run_with_skipped_tiles_succeeds(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """A resumed run holds the data its earlier run wrote (CodeRabbit review).
-
-        Before the fix the counters read as a total failure. The earlier run
-        wrote every tile, so the resumed run downloads none and skips them all.
-        """
         mock_extract = AsyncMock(return_value=self._result(0, 2, 6))
 
         with patch(

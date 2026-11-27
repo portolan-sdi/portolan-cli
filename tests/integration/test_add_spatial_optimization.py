@@ -1,16 +1,5 @@
-"""`add` writes GeoParquet that conforms to the Portolan profile (issue #805).
-
-The default workflow used to produce data that failed Portolan's own ``check``.
-``add`` copied every ``.parquet`` source through untouched and never read the
-catalog's ``conversion.vector`` settings, so the written file carried no bbox
-covering column. rashid resolves both ``PTL-DAT-006`` and ``PTL-DAT-007``
-through that column, so its absence failed one rule and left the other
-unevaluated.
-
-These tests read the written Parquet footer rather than the rashid verdict, so
-they name the mechanism. The end-to-end proof lives in
-``test_generated_catalog_conformance.py``.
-"""
+"""`add` writes GeoParquet that conforms to the Portolan profile: it carries the bbox column.
+The tests read the Parquet footer. test_generated_catalog_conformance.py holds the rashid proof."""
 
 from __future__ import annotations
 
@@ -155,12 +144,7 @@ class TestTheSourceFooterIsReadOnce:
 
 
 class TestAnAddReadsEachFooterOnce:
-    """Every footer reader of one add shares one footer read per file.
-
-    The file filter, the geometry check, the layout check, the handler, the
-    output check, and the PMTiles and thumbnail side steps each ask whether
-    the file is GeoParquet. The run memo answers all but the first.
-    """
+    """Every footer reader of one add shares one footer read per file through the run memo."""
 
     @staticmethod
     def _opens(root: Path, target: Path, monkeypatch: pytest.MonkeyPatch) -> int:
@@ -256,13 +240,7 @@ class TestAddLeavesFilesAlone:
 
 
 class TestReconvertRepairsRowOrder:
-    """`add --force --reconvert` is the documented repair for unsorted rows.
-
-    The footer test cannot see row order, so a file that carries the covering
-    column but holds unordered rows is copied and still fails PTL-DAT-006. The
-    operator's answer is an explicit re-convert, and the docs and the `convert`
-    fixer's decline message both name it, so it has to work.
-    """
+    """`add --force --reconvert` repairs unsorted rows, which the footer test cannot see."""
 
     @pytest.mark.integration
     def test_reconvert_reorders_a_file_that_already_has_the_column(self, tmp_path: Path) -> None:
@@ -297,14 +275,7 @@ class TestReconvertRepairsRowOrder:
 
 
 class TestForceStillWritesAConformingFile:
-    """`add --force` must not hand back a file that fails `check`.
-
-    `--force` means "ignore change detection", not "convert again", so the add
-    pipeline skips conversion when the output already exists (issue #386). For
-    a single-file collection the output *is* the source, so that skip used to
-    return a file with no covering column and no warning. The catalog then
-    failed its own `check` on PTL-DAT-007, which is the failure #805 removes.
-    """
+    """`add --force` skips conversion but still returns a file with the covering column."""
 
     def test_force_rewrites_a_file_it_did_not_convert(self, tmp_path: Path) -> None:
         """A never-added, non-conforming file gets the column under `--force`."""
@@ -356,13 +327,7 @@ class TestForceStillWritesAConformingFile:
 
 
 class TestRewriteScratchFileIsNeverIngested:
-    """A leftover scratch file must not become a source or an asset.
-
-    `_rewrite_parquet_in_place` writes a sibling and swaps it in. `add` reads
-    the collection directory before it converts anything, and a hard kill skips
-    the cleanup, so a leftover would otherwise be collected as a source. The
-    rewrite then deletes it mid-run and the add fails on a missing file.
-    """
+    """A leftover rewrite scratch file must not become a source or an asset."""
 
     @pytest.mark.parametrize(
         "leftover", [".roads.portolan-rewrite.parquet", "x.portolan-rewrite.parquet"]
@@ -388,13 +353,8 @@ class TestRewriteScratchFileIsNeverIngested:
 
 
 class TestRewritePreservesPublisherMetadata:
-    """geoparquet-io writes a fresh `geo` key and keeps a publisher's keys.
-
-    Publishers set other keys, such as provenance. The rewrite mutates the
-    operator's own file, so those keys must survive it. geoparquet-io 1.7.0
-    keeps them (gpio#1280). It drops `pandas` on purpose, because that key
-    names the columns of the input (gpio#1268).
-    """
+    """The rewrite keeps a publisher's metadata keys and drops only `pandas`.
+    See https://github.com/geoparquet/geoparquet-io/issues/1280"""
 
     def test_extra_schema_metadata_survives_the_rewrite(self, tmp_path: Path) -> None:
         """A publisher key set on the source is still there afterwards."""
@@ -419,12 +379,7 @@ class TestRewritePreservesPublisherMetadata:
     def test_a_geopandas_file_is_rewritten_with_one_write(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """geoparquet-io 1.7.0 keeps publisher keys (gpio#1280), so the rewrite writes once.
-
-        Before the bump, a second full read and write put the keys back. The
-        ``pandas`` key is the one key gpio drops on purpose: it names the columns
-        of the input, and the rewrite adds a column (gpio#1268).
-        """
+        """geoparquet-io keeps publisher keys, so the rewrite writes once."""
         import geopandas
         from geoparquet_io.api.table import Table
 
@@ -482,13 +437,7 @@ class TestRewritePreservesPublisherMetadata:
 
 
 class TestPartialOptOutKeepsTheCopy:
-    """`add_bbox: false` with sorting on must not rewrite on every add.
-
-    The footer is the only thing the decision can read cheaply. With the bbox
-    column off there is nothing to detect and no outcome a rewrite would
-    change, so rewriting anyway would repeat forever and report a reason the
-    rewrite cannot fix.
-    """
+    """`add_bbox: false` with sorting on does not rewrite on every add."""
 
     @pytest.mark.parametrize(
         "vector_config",
@@ -541,16 +490,7 @@ class TestPartialOptOutKeepsTheCopy:
 
 class TestTheRewriteNeverLosesData:
     """The rewrite replaces the operator's file, so it proves it lost nothing.
-
-    ``preparation._assert_rewrite_kept_everything`` compares the row count, the
-    columns and the CRS before and after, and refuses the swap on any loss. The
-    gate guards a destructive operation against any cause. It is not tied to one
-    dependency bug.
-
-    geoparquet-io 1.4.0 fixed the Table API dropping the source CRS on write
-    (gpio#625). A projected file now keeps its CRS through the rewrite, so the
-    gate lets that swap through.
-    """
+    The gate compares row count, columns, and CRS, and refuses the swap on any loss."""
 
     def test_a_projected_file_keeps_its_crs_through_the_rewrite(self, tmp_path: Path) -> None:
         """`add` rewrites an EPSG:3857 file and leaves it in EPSG:3857."""
@@ -612,8 +552,7 @@ class TestTheRewriteNeverLosesData:
         collection.mkdir(parents=True)
         target = collection / "roads.parquet"
 
-        # A truncated WKB point. geoparquet-io raises on it, and `add` used to
-        # copy such a file through untouched.
+        # A truncated WKB point. geoparquet-io raises on it.
         table = pa.table(
             {
                 "geometry": pa.array([bytes.fromhex("0101000000000000000000")], type=pa.binary()),
@@ -639,11 +578,7 @@ class TestTheRewriteNeverLosesData:
         assert "Kept roads.parquet as it is" in output
 
     def test_the_scratch_file_is_gone_after_a_refused_rewrite(self, tmp_path: Path) -> None:
-        """A refused swap still cleans up after itself.
-
-        The truncated WKB makes geoparquet-io raise, which is the refusal path
-        that survives the geoparquet-io 1.4.0 CRS fix.
-        """
+        """A refused swap still cleans up its scratch file."""
         root = tmp_path / "catalog"
         collection = root / "roads"
         collection.mkdir(parents=True)
@@ -674,15 +609,10 @@ class TestTheRewriteNeverLosesData:
 
 
 class TestTheGuardsCoverEveryRewritePath:
-    """Findings from the adversarial review of PR #808."""
+    """Guards on every rewrite path, from an adversarial review."""
 
     def test_a_different_destination_keeps_the_crs_too(self, tmp_path: Path) -> None:
-        """`convert_vector` gates the copy path, not only the in-place path.
-
-        Converting straight into a new destination used to skip
-        `_assert_rewrite_kept_everything`, so a `.parquet` source lost its CRS
-        on that path while the same file kept it in place.
-        """
+        """`convert_vector` gates the copy path to a new destination, not only the in-place path."""
         import geopandas
         from shapely.geometry import Point
 
@@ -769,23 +699,12 @@ class TestTheGuardsCoverEveryRewritePath:
 
 
 class TestAProjjsonCrsSurvivesAdd:
-    """A CRS with no authority code reaches `add` as PROJJSON (issue #810).
-
-    geoparquet-io 1.4.0 keeps the source CRS on write. An ESRI ``.prj`` such as
-    POSGAR 1994 carries no authority code, so pyproj renders it as a PROJJSON
-    dict rather than an ``EPSG:NNNN`` string. Portolan used to raise
-    ``PROJJSON CRS not supported`` on that value. pyproj reads PROJJSON, so the
-    CRS layer now takes the dict.
-    """
+    """A CRS with no authority code reaches `add` as PROJJSON, and the CRS layer takes it."""
 
     SHAPEFILE = FIXTURES / "scan" / "complete_shapefile"
 
     def test_a_posgar_shapefile_publishes_a_lon_lat_extent(self, tmp_path: Path) -> None:
-        """`add` converts POSGAR meters and declares a WGS84 extent.
-
-        The data keeps its POSGAR coordinates. Only the STAC extent is WGS84,
-        which is what the specification requires.
-        """
+        """`add` keeps the POSGAR coordinates and declares a WGS84 STAC extent."""
         root = tmp_path / "catalog"
         collection = root / "boundaries"
         collection.mkdir(parents=True)
@@ -835,14 +754,7 @@ class TestAProjjsonCrsSurvivesAdd:
 
 
 class TestAWgs84FileGainsItsCoveringColumn:
-    """A WGS84 source must complete the rewrite, not be refused (#805).
-
-    geoparquet-io omits the ``crs`` key for WGS84 data. GeoParquet reads an
-    absent ``crs`` as OGC:CRS84, so nothing is lost. The fidelity gate used to
-    read that absence as a lost CRS and keep the file, which left every WGS84
-    file without a covering column. That is the common case, so the default
-    workflow failed at the thing #805 exists to fix.
-    """
+    """A WGS84 source with no ``crs`` key completes the rewrite. The gate reads it as OGC:CRS84."""
 
     def test_a_wgs84_parquet_is_rewritten(self, tmp_path: Path) -> None:
         """`add` rewrites an EPSG:4326 file and adds the covering column."""
@@ -866,11 +778,7 @@ class TestAWgs84FileGainsItsCoveringColumn:
         assert len(geopandas.read_parquet(target)) == 2
 
     def test_a_partitioned_add_rewrites_the_source_once(self, tmp_path: Path) -> None:
-        """The source gains the column, so no partition needs its own rewrite.
-
-        A refused source rewrite made `add` rewrite every partition instead.
-        With 513 partitions that turned an 11s add into a 248s one.
-        """
+        """The source gains the column, so no partition needs its own rewrite."""
         import geopandas
         import numpy as np
 

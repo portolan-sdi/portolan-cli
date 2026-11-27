@@ -1,11 +1,4 @@
-"""Unit tests for thumbnail_style module.
-
-Tests parsing of Mapbox GL styles for thumbnail rendering, including:
-- Simple color extraction
-- Match expression parsing (categorical styles)
-- Case-insensitive field matching
-- Edge cases (missing fields, no fill layer, etc.)
-"""
+"""Unit tests for thumbnail_style module."""
 
 from __future__ import annotations
 
@@ -21,9 +14,7 @@ from portolan_cli.viz.thumbnail_style import (
     resolve_colors_for_gdf,
 )
 
-# =============================================================================
 # parse_match_expression tests
-# =============================================================================
 
 
 @pytest.mark.unit
@@ -95,9 +86,7 @@ def test_parse_match_expression_invalid_format():
     assert parse_match_expression(["match", "not_a_get", "val", "#000", "#fff"]) is None
 
 
-# =============================================================================
 # load_thumbnail_style tests
-# =============================================================================
 
 
 @pytest.mark.unit
@@ -277,9 +266,7 @@ def test_load_thumbnail_style_from_fixture():
     assert "residential" in style.color_map
 
 
-# =============================================================================
 # resolve_colors_for_gdf tests
-# =============================================================================
 
 
 @pytest.mark.unit
@@ -403,11 +390,6 @@ def test_resolve_colors_unmapped_values():
 
 @pytest.mark.unit
 def test_resolve_colors_unmapped_uses_explicit_fallback():
-    """An explicit fallback overrides the style's (pale) default for unmapped values.
-
-    The thumbnail floor passes a punchy fallback so the WFS pale default never
-    reaches the canvas (#518).
-    """
     pytest.importorskip("geopandas")
     import geopandas
     from shapely.geometry import Point

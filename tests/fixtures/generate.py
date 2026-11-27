@@ -1,10 +1,6 @@
 #!/usr/bin/env python3
-"""Generate test fixtures for geospatial formats.
-
+"""Generate deterministic test fixtures for geospatial formats.
 Run with: uv run python tests/fixtures/generate.py
-
-All fixtures are deterministic (fixed coordinates, no random data).
-Regenerate anytime to ensure consistency.
 """
 
 from __future__ import annotations
@@ -17,9 +13,7 @@ from typing import Any
 
 import numpy as np
 
-# Lazy imports for optional dependencies
-# These are imported inside functions to allow the script to be parsed
-# even if dependencies aren't installed yet.
+# Optional dependencies import inside functions, so the script parses without them.
 
 FIXTURES_DIR = Path(__file__).parent
 
@@ -378,10 +372,8 @@ def generate_edge_cases() -> None:
     }
     (edge_dir / "special_filename spaces.geojson").write_text(json.dumps(special_feat, indent=2))
 
-    # antimeridian.geojson - Crosses date line
-    # Per RFC 7946 §3.1.9, geometries crossing the antimeridian SHOULD be split
-    # into a MultiPolygon with separate parts on each side of the date line.
-    # This represents a narrow strip crossing the antimeridian (10° on each side).
+    # antimeridian.geojson: RFC 7946 section 3.1.9 says to split a crossing geometry
+    # into a MultiPolygon with one part on each side of the date line.
     antimeridian_feat = {
         "type": "FeatureCollection",
         "features": [
@@ -442,16 +434,8 @@ def generate_vector_fixtures() -> None:
 
 
 def convert_to_geoparquet() -> None:
-    """Convert points.geojson to GeoParquet using geoparquet-io.
-
-    The realdata Parquet fixtures stay the primary real-world inputs (issue
-    #57), but they declare GeoParquet 1.0.0, which PTL-DAT-012 rejects. The
-    conformance gate needs an input a conformant catalog can be built from, so
-    this writes one: ten points in CRS84, GeoParquet 1.1, about 1.5 KB.
-
-    Running the conversion through geoparquet-io rather than writing the file by
-    hand keeps the fixture identical to what ``portolan add`` would emit from the
-    same GeoJSON.
+    """Convert points.geojson to a conformant GeoParquet 1.1 file through geoparquet-io.
+    The realdata Parquet fixtures declare GeoParquet 1.0.0, which PTL-DAT-012 rejects.
     """
     import geoparquet_io as gpio
 
@@ -631,11 +615,7 @@ def generate_raster_fixtures() -> None:  # noqa: PLR0914, PLR0915 - writes each 
 
 
 def generate_versions_fixtures() -> None:
-    """Generate versions.json test fixtures.
-
-    Creates valid and invalid fixtures for testing the versions module
-    and metadata check functionality.
-    """
+    """Generate valid and invalid versions.json test fixtures."""
     valid_dir = FIXTURES_DIR / "metadata" / "versions" / "valid"
     invalid_dir = FIXTURES_DIR / "metadata" / "versions" / "invalid"
     valid_dir.mkdir(parents=True, exist_ok=True)
@@ -960,9 +940,6 @@ def main() -> None:
 
     print("\n--- Metadata fixtures (versions.json) ---")
     generate_versions_fixtures()
-
-    # Note: Shapefile fixtures deferred - GeoJSON/GeoParquet sufficient for now
-    # See issue #30 for real-world data fixtures including Shapefiles
 
     print("\n" + "=" * 50)
     print("Done! All fixtures generated.")

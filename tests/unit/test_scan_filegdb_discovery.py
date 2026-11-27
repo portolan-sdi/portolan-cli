@@ -1,8 +1,4 @@
-"""Unit tests for FileGDB directory detection during scan.
-
-Issue #139: FileGDB directories should be detected as single assets during scan,
-not walked into with internal files reported as "unknown format".
-"""
+"""Unit tests for FileGDB directory detection during scan."""
 
 from __future__ import annotations
 
@@ -189,7 +185,7 @@ class TestFileGDBDirectorySizeCalculation:
 
         result = scan_directory(tmp_path)
 
-        # Issue #154: FileGDB now appears in ready list (not special_formats)
+        # FileGDB appears in the ready list, not in special_formats.
         filegdb_files = [f for f in result.ready if f.path == gdb_dir]
         assert len(filegdb_files) == 1, f"Expected 1 FileGDB in ready, got {len(filegdb_files)}"
 
@@ -200,17 +196,14 @@ class TestFileGDBDirectorySizeCalculation:
         )
 
     def test_filegdb_appears_in_ready_not_skipped(self, tmp_path: Path) -> None:
-        """FileGDB directories MUST appear in ready list, NOT in skipped.
-
-        Issue #154: FileGDB promoted from special_formats to ready for `portolan add` support.
-        """
+        """FileGDB directories MUST appear in ready list, NOT in skipped."""
         gdb_dir = tmp_path / "test.gdb"
         gdb_dir.mkdir()
         (gdb_dir / "a00000001.gdbtable").write_bytes(b"x")
 
         result = scan_directory(tmp_path)
 
-        # MUST be in ready list (Issue #154 change)
+        # MUST be in ready list
         filegdb_files = [f for f in result.ready if f.path == gdb_dir]
         assert len(filegdb_files) == 1, f"FileGDB must be in ready list, got {len(filegdb_files)}"
         assert filegdb_files[0].extension == ".gdb"
@@ -221,9 +214,7 @@ class TestFileGDBDirectorySizeCalculation:
         assert gdb_dir not in skipped_paths, f"FileGDB must NOT be in skipped list: {skipped_paths}"
 
 
-# =============================================================================
 # Hypothesis Property-Based Tests
-# =============================================================================
 
 
 @pytest.mark.unit

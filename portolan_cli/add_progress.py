@@ -1,23 +1,4 @@
-"""Progress reporting for file add operations.
-
-This module provides:
-1. Fast file pre-counting for determinate progress bars
-2. A thread-safe progress reporter context manager using Rich
-3. Suppression of progress in JSON mode (agent/batch usage)
-
-Example:
-    >>> from portolan_cli.add_progress import count_files, AddProgressReporter
-    >>> total = count_files(paths)
-    >>> with AddProgressReporter(total, json_mode=False) as reporter:
-    ...     for file in files:
-    ...         process(file)
-    ...         reporter.advance()
-    ... print(f"Added in {reporter.elapsed_seconds:.1f}s")
-
-Note:
-    The pre-count may differ slightly from actual processing if the filesystem
-    changes between counting and processing. This is acceptable for UX purposes.
-"""
+"""Progress reporting for file add operations."""
 
 from __future__ import annotations
 
@@ -39,29 +20,7 @@ def count_files(
     *,
     include_hidden: bool = False,
 ) -> int:
-    """Fast pre-count of files for progress reporting.
-
-    Handles both file paths and directory paths. For directories,
-    recursively counts all files.
-
-    Args:
-        paths: List of file or directory paths to count.
-        include_hidden: Include hidden files (starting with .) when recursing.
-            Note: Explicitly passed file paths are always counted regardless
-            of this flag—hidden filtering only applies to directory traversal.
-
-    Returns:
-        Total number of files.
-
-    Note:
-        This should complete quickly for typical directory trees.
-        Uses os.scandir for efficient enumeration.
-
-        The count may differ from actual processing if:
-        - Files are added/removed between count and processing (race condition)
-        - Permission errors occur (silently skipped during count)
-        This is acceptable for progress bar UX purposes.
-    """
+    """Fast pre-count of files for progress reporting."""
     count = 0
 
     for path in paths:
@@ -98,21 +57,7 @@ def _count_dir_files(root: Path, *, include_hidden: bool = False) -> int:
 
 
 class AddProgressReporter:
-    """Thread-safe context manager for add progress reporting.
-
-    Provides a progress bar using Rich library, with automatic
-    suppression in JSON mode or non-TTY environments.
-
-    Thread Safety:
-        The advance() method is thread-safe and can be called from multiple
-        threads concurrently (e.g., when using parallel workers).
-
-    Attributes:
-        total_files: Total number of files to add.
-        json_mode: If True, suppress all progress output.
-        files_processed: Number of files processed.
-        elapsed_seconds: Time elapsed since entering context.
-    """
+    """Thread-safe context manager for add progress reporting."""
 
     def __init__(
         self,
@@ -120,12 +65,7 @@ class AddProgressReporter:
         *,
         json_mode: bool = False,
     ) -> None:
-        """Initialize the progress reporter.
-
-        Args:
-            total_files: Total number of files to add.
-            json_mode: If True, suppress progress output.
-        """
+        """Initialize the progress reporter."""
         self.total_files = total_files
         self.json_mode = json_mode
         self.files_processed = 0
@@ -188,13 +128,7 @@ class AddProgressReporter:
             self._progress.__exit__(exc_type, exc_val, exc_tb)
 
     def advance(self, steps: int = 1) -> None:
-        """Advance the progress by the given number of files.
-
-        Thread-safe: Can be called from multiple threads concurrently.
-
-        Args:
-            steps: Number of files processed.
-        """
+        """Advance the progress by the given number of files."""
         with self._lock:
             self.files_processed += steps
 

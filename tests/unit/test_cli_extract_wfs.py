@@ -1,4 +1,4 @@
-"""CLI wiring tests for `extract wfs` page-size and auto-tile flags (Issue #529)."""
+"""CLI wiring tests for `extract wfs` page-size and auto-tile flags."""
 
 from __future__ import annotations
 
@@ -79,7 +79,6 @@ def test_extract_wfs_no_auto_tile_threads_false(monkeypatch: pytest.MonkeyPatch)
 
 @pytest.mark.unit
 def test_extract_wfs_id_threads_into_options(monkeypatch: pytest.MonkeyPatch) -> None:
-    """--id threads catalog_id into ExtractionOptions (issue #821)."""
     captured: dict[str, object] = {}
     monkeypatch.setattr(
         "portolan_cli.extract.wfs.orchestrator.extract_wfs_catalog",
@@ -112,7 +111,6 @@ def test_extract_wfs_id_defaults_to_none(monkeypatch: pytest.MonkeyPatch) -> Non
 
 @pytest.mark.unit
 def test_extract_wfs_rejects_bad_id_before_extraction(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A bad --id fails before the download starts, not after it (issue #821)."""
     calls: list[str] = []
 
     def _never_called(*args: object, **kwargs: object) -> None:
@@ -131,7 +129,6 @@ def test_extract_wfs_rejects_bad_id_before_extraction(monkeypatch: pytest.Monkey
 
 @pytest.mark.unit
 def test_extract_wfs_warns_that_raw_ignores_id(monkeypatch: pytest.MonkeyPatch) -> None:
-    """--raw writes no catalog, so --id does nothing and says so (issue #821)."""
     captured: dict[str, object] = {}
     monkeypatch.setattr(
         "portolan_cli.extract.wfs.orchestrator.extract_wfs_catalog",
@@ -158,7 +155,6 @@ def test_extract_wfs_warns_that_raw_ignores_id(monkeypatch: pytest.MonkeyPatch) 
 
 @pytest.mark.unit
 def test_prompt_names_the_service_without_its_key() -> None:
-    """#981: the confirmation prompt names the service, not the key in its URL."""
     result = CliRunner().invoke(
         cli, ["extract", "wfs", "https://h.example/geoserver/wfs?api_key=SECRET"], input="n\n"
     )

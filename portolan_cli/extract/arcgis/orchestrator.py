@@ -1,32 +1,4 @@
-"""ArcGIS extraction through the shared LayerSource driver.
-
-``ArcGISLayerSource`` implements ``LayerSource`` for ArcGIS FeatureServer and
-MapServer services, and ``extract_arcgis_catalog`` runs it with
-``run_layer_extraction``. ImageServer rasters take their own path in
-``imageserver/``.
-
-- ``discover`` handles a single service, a layer URL, or a services root.
-  A layer URL such as ``.../MapServer/0`` selects that one layer and marks
-  it ``explicit`` (issue #652). For a root it walks the folders, applies the
-  service filters, and lists each service's layers in service order (issue
-  #1012). A single-layer service becomes one collection at the service
-  directory. A multi-layer service nests one collection per layer. Tables
-  join the layers only with ``include_tables`` (issue #812).
-- ``fetch`` calls ``gpio.extract_arcgis``, applies the catalog's
-  ``conversion.vector`` layout (issues #805, #834), writes, and restores the
-  source CRS (issue #802). A failure names the layer (issue #866).
-- ``styles`` converts the layer's ESRI drawingInfo (issue #490).
-
-Typical usage:
-    from portolan_cli.extract.arcgis.orchestrator import extract_arcgis_catalog
-
-    result = extract_arcgis_catalog(
-        url="https://services.arcgis.com/.../FeatureServer",
-        output_dir=Path("./output"),
-        layer_filter=["Census*"],
-    )
-    print(f"Extracted {result.summary.succeeded}/{result.summary.total_layers} layers")
-"""
+"""ArcGIS extraction through the shared LayerSource driver."""
 
 from __future__ import annotations
 
@@ -100,16 +72,7 @@ def _coverage_from_traversal(traversal: FolderTraversal) -> FolderCoverage:
 
 @dataclass
 class ServicesRootDiscoveryResult:
-    """Result of listing services from a services root URL.
-
-    Used for --list-services mode and JSON output.
-
-    Attributes:
-        services: List of discovered services.
-        folders: List of folder names in the services root.
-        base_url: The services root URL that was queried.
-        coverage: Optional folder traversal coverage when recursion was used.
-    """
+    """Result of listing services from a services root URL."""
 
     services: list[ServiceInfo]
     folders: list[str]
@@ -145,25 +108,7 @@ def list_services(
     recurse: bool = True,
     timeout: float = 60.0,
 ) -> ServicesRootDiscoveryResult:
-    """List services from an ArcGIS services root or folder URL.
-
-    Recurses into folders by default. Folders that error are skipped and
-    recorded in the returned coverage.
-
-    Args:
-        url: ArcGIS services root or folder URL.
-        service_types: Filter by service types (e.g., ["FeatureServer"]).
-        service_filter: Glob patterns to filter service names.
-        token: Optional ArcGIS token for authenticated endpoints.
-        recurse: Whether to recurse into sub-folders (default True).
-        timeout: Request timeout in seconds.
-
-    Returns:
-        ServicesRootDiscoveryResult with services, folders, and optional coverage.
-
-    Raises:
-        ValueError: If URL is not a services root or folder URL.
-    """
+    """List services from an ArcGIS services root or folder URL."""
     from portolan_cli.extract.common.filters import filter_services
 
     parsed = parse_arcgis_url(url)
@@ -203,15 +148,7 @@ def list_services(
 def _service_output_dir(output_dir: Path, service_name: str) -> Path:
     """Map a (possibly folder-qualified) service name to a nested directory.
 
-    "ecml/active_faults" -> output_dir/ecml/active_faults
-    "Top" -> output_dir/top
-    Each path segment is slugified independently so the folder hierarchy is
-    preserved as nested subcatalogs.
-
-    Slugification can collide when two service names differ only in characters
-    it strips, ``turkiye`` and ``turkiye-alt`` for example. The second extraction
-    writes into the first one's directory. This is a known limitation and is not
-    mitigated; no uniquifying suffix is appended.
+    Known limit: names that slugify alike (``Flood Risk``, ``flood_risk``) share one directory.
     """
     parts = [slugify(p) for p in service_name.split("/") if p]
     result = output_dir
@@ -222,35 +159,7 @@ def _service_output_dir(output_dir: Path, service_name: str) -> Path:
 
 @dataclass
 class ExtractionOptions:
-    """Options for the extraction process.
-
-    Attributes:
-        workers: Number of parallel page requests per layer (gpio max_workers)
-        retries: Attempts per layer, and per discovery request that fails
-            with a transient error (issue #811)
-        timeout: Per-request timeout in seconds, for layer discovery and for
-            the feature-page requests gpio makes (issue #898)
-        resume: Whether to resume from existing extraction report
-        dry_run: If True, list layers without extracting
-        vector: The GeoParquet layout to write. ``extract_arcgis_catalog``
-            reads it from the catalog's ``conversion.vector`` block, except
-            with ``raw``, which runs without a catalog (issue #834).
-        raw: If True, skip auto-init (only create extraction files, no STAC catalog)
-        no_styles: If True, skip style extraction from ESRI drawingInfo
-        token: Optional ArcGIS token for authenticated endpoints
-        recurse: Whether to recurse into sub-folders during discovery (default True)
-        license: SPDX identifier for the harvested data, or "other" with
-            license_url. Overrides any license URL found in the source's own
-            license text (issue #686).
-        license_url: URL of the license text.
-        output_crs: CRS for the extracted GeoParquet. "native" keeps the
-            service's source CRS (default). An EPSG code (e.g. "EPSG:4326")
-            reprojects the coordinates to that CRS (issue #802).
-        catalog_id: Catalog id for the created catalog. None derives it from
-            the output directory name, which is the behavior before issue #821.
-        include_tables: Extract the tables of a service too, as Parquet with
-            no geometry (issue #812).
-    """
+    """Options for the extraction process."""
 
     workers: int = 3
     retries: int = 3
@@ -275,12 +184,7 @@ class ExtractionOptions:
 
 
 def _is_wgs84_crs(crs: dict[str, object]) -> bool:
-    """Return True when the PROJJSON CRS is WGS84 (EPSG:4326 or OGC:CRS84).
-
-    A null CRS in GeoParquet already means CRS84, so a WGS84 output needs no
-    explicit CRS tag (issue #802). gpio tags a native-4326 GeoJSON extraction as
-    OGC:CRS84, whose ``to_epsg()`` is None, so this matches CRS84 as well.
-    """
+    """Return True when the PROJJSON CRS is WGS84 (EPSG:4326 or OGC:CRS84)."""
     from pyproj import CRS
     from pyproj.exceptions import CRSError
 
@@ -293,16 +197,7 @@ def _is_wgs84_crs(crs: dict[str, object]) -> bool:
 
 
 def _ensure_geoparquet_crs(output_path: Path, source_crs: dict[str, object] | None) -> None:
-    """Write the source CRS into the GeoParquet metadata when the writer drops it.
-
-    gpio.Table.write() emits ``crs: null`` even for a native extraction, so a file
-    with projected coordinates would claim WGS84 (issue #802). This restamps the
-    primary geometry column with ``source_crs`` and preserves the row groups.
-
-    Args:
-        output_path: The written GeoParquet file.
-        source_crs: PROJJSON CRS the extractor detected, or None when unknown.
-    """
+    """Write the source CRS into the GeoParquet metadata when the writer drops it."""
     if source_crs is None or _is_wgs84_crs(source_crs):
         # No CRS to preserve, or WGS84 where the null tag is already correct.
         return
@@ -330,9 +225,7 @@ def _ensure_geoparquet_crs(output_path: Path, source_crs: dict[str, object] | No
         column["crs"] = source_crs
         new_schema = schema.with_metadata({**metadata, b"geo": json.dumps(geo).encode("utf-8")})
 
-        # Parquet keeps its CRS in the footer, so a rewrite is the only way to
-        # change it. Copy the row groups verbatim to keep the covering
-        # statistics intact.
+        # Parquet keeps its CRS in the footer, so rewrite. Copy row groups verbatim to keep stats.
         with pq.ParquetWriter(temp_path, new_schema, compression="zstd") as writer:
             for row_group in range(parquet_file.num_row_groups):
                 writer.write_table(parquet_file.read_row_group(row_group))
@@ -345,18 +238,7 @@ def _ensure_geoparquet_crs(output_path: Path, source_crs: dict[str, object] | No
 def _report_metadata_to_arcgis_metadata(
     report_metadata: MetadataExtracted,
 ) -> ArcGISMetadata:
-    """Convert report MetadataExtracted to ArcGISMetadata.
-
-    The extraction report stores a flattened version of the metadata.
-    This function reconstructs the ArcGISMetadata object for conversion
-    to ExtractedMetadata.
-
-    Args:
-        report_metadata: MetadataExtracted from the extraction report.
-
-    Returns:
-        ArcGISMetadata instance with the same data.
-    """
+    """Convert report MetadataExtracted to ArcGISMetadata."""
     from portolan_cli.extract.arcgis.metadata import ArcGISMetadata
 
     return ArcGISMetadata(
@@ -380,12 +262,7 @@ def _discover_and_filter_services(
     folder: str | None = None,
     recurse: bool = True,
 ) -> tuple[list[ServiceInfo], FolderCoverage | None]:
-    """Discover services (recursively by default), scope to a folder, and apply filters.
-
-    Returns (services, coverage). When recurse is False the flat (non-recursive)
-    discovery is used and coverage is None. When folder is set (SERVICES_FOLDER
-    URL) only services under that folder prefix are kept.
-    """
+    """Discover services (recursively by default), scope to a folder, and apply filters."""
     from portolan_cli.extract.common.filters import filter_services
 
     coverage: FolderCoverage | None
@@ -476,12 +353,7 @@ class ArcGISLayerSource:
         self.service_exclude = service_exclude
 
     def discover(self, source: str, options: LayerSourceOptions) -> Discovery:  # noqa: ARG002 - LayerSource signature
-        """List the layers of a service, of one layer URL, or of every service under a root.
-
-        A token in the URL query works as ``--token``. Each request URL is
-        built from the URL without its query, so a pasted ``?f=json`` does
-        not end up in front of a layer id.
-        """
+        """List the layers of a service, of one layer URL, or of every service under a root."""
         from urllib.parse import parse_qsl, urlparse
 
         query = {name.lower(): value for name, value in parse_qsl(urlparse(source).query)}
@@ -495,7 +367,7 @@ class ArcGISLayerSource:
         layers = self._service_refs(found, service_url)
         empty_reason = None
         if parsed.layer_id is not None:
-            # A layer URL names one layer of the service (issue #652).
+            # A layer URL names one layer of the service.
             named = self._service_refs(found, service_url, tables=True)
             layers = [replace(ref, explicit=True) for ref in named if ref.id == parsed.layer_id]
             if not layers:
@@ -536,15 +408,7 @@ class ArcGISLayerSource:
         tables: bool | None = None,
         service: ServiceInfo | None = None,
     ) -> list[LayerRef]:
-        """Return a service's layers, then its tables, then its skipped layers.
-
-        Args:
-            found: The service's discovery result.
-            service_url: The service URL that each layer's data keeps.
-            tables: Include the tables. None follows ``include_tables``.
-            service: The service of a services-root walk. Each layer then
-                gets a path under the service directory.
-        """
+        """Return a service's layers, then its tables, then its skipped layers."""
         extractable = [(info, "layer") for info in found.layers]
         if self.options.include_tables if tables is None else tables:
             extractable += [(info, "table") for info in found.tables]
@@ -582,17 +446,7 @@ class ArcGISLayerSource:
         return refs
 
     def _discover_root(self, source: str, base_url: str, folder: str | None) -> Discovery:
-        """Walk a services root. Each layer keeps the URL of its own service.
-
-        The layers keep the service order, skipped layers included, so the
-        ``[i/N]`` progress index follows the services (issue #1012). A
-        service that fails discovery is logged and left out.
-
-        A services root spans services with different licenses and the
-        catalog carries one metadata.yaml, so no harvested license applies
-        (issue #686). The services' shared attribution, when they agree on
-        one, names the producer (issue #1039).
-        """
+        """Walk a services root. Each layer keeps the URL of its own service."""
         client = self.options.client()
         services, coverage = _discover_and_filter_services(
             source,
@@ -641,12 +495,7 @@ class ArcGISLayerSource:
         *,
         license_info: str | None = None,
     ) -> Discovery:
-        """Add the catalog metadata to the layers (issue #369).
-
-        The service name titles the catalog and the service description
-        describes it. A technical name is kept out of ``init_catalog`` and
-        written to ``catalog.json`` only after a new catalog exists.
-        """
+        """Add the catalog metadata to the layers."""
         from portolan_cli.stac import is_technical_name
 
         title = None
@@ -681,14 +530,10 @@ class ArcGISLayerSource:
             kwargs["max_workers"] = options.workers
         if options.token and "token" in sig.parameters:
             kwargs["token"] = options.token
-        # Apply the timeout to the feature-page requests too, not only to discovery.
-        # Slow layers with complex geometry time out at gpio's 60s default otherwise,
-        # and --timeout appears to do nothing (issue #898).
+        # Pass the timeout to the feature-page requests too, not only to discovery.
         if "timeout" in sig.parameters:
             kwargs["timeout"] = options.timeout
-        # Keep the service's source CRS instead of the silent WGS84 reprojection that
-        # the GeoJSON path forces (issue #802). Older gpio versions without output_crs
-        # cannot preserve the CRS, so warn that the output stays WGS84.
+        # Keep the source CRS. A gpio without output_crs reprojects to WGS84, so warn.
         if "output_crs" in sig.parameters:
             kwargs["output_crs"] = options.output_crs
         else:
@@ -701,28 +546,25 @@ class ArcGISLayerSource:
             table = gpio.extract_arcgis(arcgis_layer.url, **kwargs)
         except Exception as err:
             # gpio reads the features through DuckDB, whose error names only a
-            # temp file. Keep the layer identity with it (issue #866).
+            # temp file. Keep the layer identity with it.
             raise ArcGISLayerError(
                 f"Layer {layer.name} (id {layer.id}) at {arcgis_layer.url}: "
                 f"{type(err).__name__}: {err}"
             ) from err
 
-        # Capture the CRS the extractor detected before the write drops it. gpio.Table
-        # tags the native SR on the table but its writer emits crs: null, so a native
-        # extraction would declare WGS84 over projected coordinates (issue #802).
-        # gpio.Table.crs may return a dict, a string, or None. Only a PROJJSON dict
-        # restamps a valid CRS, so ignore the other forms.
+        # Capture the CRS before the write: the gpio writer emits crs: null for a native SR.
+        # Only a PROJJSON dict restamps a valid CRS.
         captured_crs = getattr(table, "crs", None)
         source_crs = captured_crs if isinstance(captured_crs, dict) else None
 
         # The same layout step as `add` and `convert`. It skips a table with
-        # no geometry column, such as an ArcGIS Table layer (issue #805).
+        # no geometry column, such as an ArcGIS Table layer.
         table = apply_vector_settings(table, options.vector)
 
         # Write to parquet
         table.write(str(dest))
 
-        # Restore the source CRS that gpio's writer discarded (issue #802).
+        # Restore the source CRS that gpio's writer discarded.
         _ensure_geoparquet_crs(dest, source_crs)
 
         # gpio.Table uses num_rows property instead of __len__
@@ -756,7 +598,7 @@ class ArcGISLayerSource:
         )
 
     def styles(self, source: str, layer: LayerRef, collection_dir: Path) -> None:  # noqa: ARG002 - LayerSource signature
-        """Convert the layer's ESRI drawingInfo to a style (issue #490)."""
+        """Convert the layer's ESRI drawingInfo to a style."""
         from portolan_cli.extract.arcgis.discovery import fetch_layer_details
 
         if self.options.no_styles or layer.kind == "table":
@@ -775,7 +617,7 @@ class ArcGISLayerSource:
             logger.debug("Extracted style for %s: %s", layer.name, style.path)
 
     def source_link(self, source: str, layer: LayerRef) -> SourceLink:  # noqa: ARG002 - LayerSource signature
-        """Link to the layer's REST endpoint (issue #353)."""
+        """Link to the layer's REST endpoint."""
         arcgis_layer: ArcGISLayer = layer.data
         return SourceLink(href=arcgis_layer.url, title=f"Source ArcGIS layer: {layer.name}")
 
@@ -792,27 +634,7 @@ def extract_arcgis_catalog(
     on_progress: LayerProgressCallback | None = None,
     on_message: MessageCallback | None = None,
 ) -> ExtractionReport:
-    """Extract layers from an ArcGIS service to a Portolan catalog.
-
-    Args:
-        url: ArcGIS FeatureServer, MapServer, or services root URL
-        output_dir: Directory to write extracted data
-        layer_filter: Glob patterns to include layers (if None, include all)
-        layer_exclude: Glob patterns to exclude layers
-        service_filter: Glob patterns to include services (for services root URLs)
-        service_exclude: Glob patterns to exclude services (for services root URLs)
-        options: Extraction options (defaults to ExtractionOptions())
-        on_progress: Callback for progress updates
-        on_message: Called as ``on_message(level, text)`` with each catalog notice.
-
-    Returns:
-        ExtractionReport with results for all layers
-
-    Raises:
-        ValueError: If URL is invalid
-        ArcGISDiscoveryError: If service discovery fails
-        MissingLicenseError: If no license can be resolved (issue #686).
-    """
+    """Extract layers from an ArcGIS service to a Portolan catalog."""
     options = options or ExtractionOptions()
     if not options.raw:
         options = replace(options, vector=get_vector_settings(output_dir))
@@ -852,40 +674,7 @@ def run_extract_arcgis(
     on_tile_progress: Callable[[TileProgress], None] | None = None,
     on_message: MessageCallback | None = None,
 ) -> ServicesRootDiscoveryResult | ExtractRunResult | ImageServerRunResult:
-    """Run ``portolan extract arcgis`` in the mode that the URL and ``list_only`` select.
-
-    The command resolves the token, asks its questions, and then calls this
-    function. It prints ``to_dict()``. ``--list-services`` prints the bare
-    dict, and the other modes emit it as the envelope ``data``.
-
-    Args:
-        url: ArcGIS FeatureServer, MapServer, ImageServer, or services root URL.
-        output_dir: Directory to write extracted data. ``--list-services``
-            writes nothing.
-        options: Options of the list and layer modes.
-        list_only: List the services of a services root or folder URL
-            (``--list-services``). It uses ``service_filter``, ``options.token``,
-            ``options.recurse``, and ``options.timeout``.
-        service_filter: Glob patterns of the services to include.
-        service_exclude: Glob patterns of the services to exclude.
-        imageserver: Options of the ImageServer mode. The token does not
-            apply to it yet (issue #311).
-        layer_filter: Glob patterns of the layers to include (None = all).
-        layer_exclude: Glob patterns of the layers to exclude.
-        on_progress: Called with the progress of each layer.
-        on_tile_progress: Called with the progress of each ImageServer tile.
-        on_message: Called as ``on_message(level, text)`` with each notice for
-            the user, in the ImageServer and layer modes.
-
-    Returns:
-        The service list, the layer extraction, or the ImageServer extraction.
-
-    Raises:
-        InputValidationError: If the catalog id is not a valid STAC id. The
-            check runs before any request.
-        ValueError: If the URL is not an ArcGIS URL, or ``list_only`` gets a
-            URL that is not a services root or folder.
-    """
+    """Run ``portolan extract arcgis`` in the mode that the URL and ``list_only`` select."""
     options = options or ExtractionOptions()
     if list_only:
         return list_services(

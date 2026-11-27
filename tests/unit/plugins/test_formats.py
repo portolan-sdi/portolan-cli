@@ -1,4 +1,4 @@
-"""Tests for format handler discovery and precedence (#947)."""
+"""Tests for format handler discovery and precedence."""
 
 from __future__ import annotations
 

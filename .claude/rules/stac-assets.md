@@ -25,8 +25,7 @@ executable form: it owns the rule set (`PTL-*` ids citing `PORTO-*` spec
 requirements) that `portolan check` reports. What Portolan generates
 must satisfy it, so when you change STAC output, run
 `tests/integration/test_generated_catalog_conformance.py` — the gate that runs
-rashid over a freshly generated catalog. The `RULE-*` ids some comments below
-still cite are the retired native namespace; treat them as historical.
+rashid over a freshly generated catalog.
 
 ## The `add` flow (where each artifact is written)
 
@@ -91,7 +90,7 @@ Derive collection-level asset keys from the **file stem** (`census.parquet` ->
 `census`), never a hardcoded literal like `"data"`. Multiple vector assets in one
 collection all keyed `"data"` silently overwrite each other.
 
-Two files with one stem must never both get the stem key (issue #933).
+Two files with one stem must never both get the stem key.
 `_stem_group_keys` in `preparation.py` holds the rule. It groups every scanned
 file by stem, including the companions of other stems that a single-file add
 scans. The lowest rank owns the stem: GeoParquet, then other data files, then
@@ -184,8 +183,8 @@ pystac fights this in two ways.
 - Generate STAC **v1.1.0**. Use the `STAC_VERSION` constant from
   `constants.py` (models read it through `models/_stac_version.py`)
   everywhere. **Never hardcode `"1.0.0"`**
-  in serialization (this regressed in `models/catalog.py`).
-- Raster band metadata (`bands`, formerly `raster:bands`) goes on the **data
+  in serialization.
+- Raster band metadata (`bands`, not `raster:bands`) goes on the **data
   asset**, never on `item.properties`. Declare the raster extension (v2.0.0)
   only when a `raster:`-prefixed field was actually written — v2.0.0 requires
   a declared item to carry at least one `raster:` field, and the unified
@@ -206,8 +205,7 @@ pystac fights this in two ways.
   `application/x-parquet`. PMTiles is `application/vnd.pmtiles`.
 - Tabular (non-geo) status is **derived**, never flagged: a `.parquet` with no
   `geo` schema-metadata key is NOT GeoParquet, route it to the
-  tabular pipeline. Do not reintroduce `portolan:geospatial` (issue #654,
-  as amended) — the spec defines no `portolan:` namespace.
+  tabular pipeline. Do not add `portolan:geospatial`: the spec defines no `portolan:` namespace.
 - Every `catalog.json` and `collection.json` declares the versioned Portolan
   profile URI (`constants.PORTOLAN_SCHEMA_URI`) in `stac_extensions`, and
   carries a `README.md` behind a `rel="describedby"` link plus an `AGENTS.md`

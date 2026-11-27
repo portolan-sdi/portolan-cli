@@ -1,19 +1,4 @@
-"""Fix mode implementations for portolan scan.
-
-This module provides fix operations for detected issues:
-- Safe fixes (--fix): Rename files, no data loss possible
-- Unsafe fixes (--fix --unsafe-fix): Move/restructure files
-- Dry-run mode (--dry-run): Preview fixes without applying
-
-Fix Categories:
-- SAFE: Rename invalid characters, transliterate non-ASCII
-- UNSAFE: Split directories, move files to resolve duplicates
-- MANUAL: Cannot be auto-fixed, requires user action
-
-Functions:
-    apply_safe_fixes: Apply safe fixes to scan result.
-    preview_fix: Generate a fix proposal for an issue.
-"""
+"""Fix mode implementations for portolan scan."""
 
 from __future__ import annotations
 
@@ -33,16 +18,12 @@ from portolan_core.constants import WINDOWS_RESERVED_NAMES
 if TYPE_CHECKING:
     from portolan_cli.scan.core import ScanIssue
 
-# Pattern for invalid filename characters
-# Matches: spaces, parentheses, brackets, braces, control chars (0x00-0x1F, 0x7F), and non-ASCII
-# Also matches path separators for defense-in-depth against path traversal
+# Invalid filename characters: whitespace, brackets, control chars, non-ASCII,
+# and path separators (defense in depth against path traversal).
 INVALID_CHAR_PATTERN: re.Pattern[str] = re.compile(r"[\s()\[\]{}/\\\x00-\x1f\x7f]|[^\x00-\x7f]")
 
-# Path length threshold for warnings
-# Set to 200 as a conservative cross-platform value:
-# - Windows MAX_PATH is 260 (leaves room for directory + extension)
-# - Linux PATH_MAX is typically 4096 (not a concern)
-# This threshold is for the FULL path, not just filename
+# Full-path length warning threshold: Windows MAX_PATH is 260, minus room for
+# the directory and the extension.
 LONG_PATH_THRESHOLD: int = 200
 
 # WINDOWS_RESERVED_NAMES imported from portolan_core.constants
@@ -112,24 +93,11 @@ class ProposedFix:
         }
 
 
-# =============================================================================
 # Helper functions
-# =============================================================================
 
 
 def _is_case_only_rename(source: Path, target: Path) -> bool:
-    """Check if source and target refer to the same file (case-only rename).
-
-    On case-insensitive filesystems (macOS, Windows), renaming MyDir/ to mydir/
-    should not be flagged as a collision since they refer to the same inode.
-
-    Args:
-        source: The source path being renamed.
-        target: The target path.
-
-    Returns:
-        True if this is a case-only rename (same file), False if true collision.
-    """
+    """Check if source and target refer to the same file (case-only rename)."""
     if not target.exists():
         return False
 
@@ -147,17 +115,7 @@ def _is_case_only_rename(source: Path, target: Path) -> bool:
 
 
 def _transliterate_to_ascii(text: str) -> str:
-    """Transliterate non-ASCII characters to ASCII equivalents.
-
-    Uses Unicode NFKD normalization to decompose characters, then
-    encodes to ASCII, ignoring characters that can't be represented.
-
-    Example:
-        >>> _transliterate_to_ascii("données")
-        'donnees'
-        >>> _transliterate_to_ascii("naïve")
-        'naive'
-    """
+    """Transliterate non-ASCII characters to ASCII equivalents."""
     # Normalize to decomposed form (é -> e + combining accent)
     normalized = unicodedata.normalize("NFKD", text)
     # Encode to ASCII, ignoring non-ASCII characters
@@ -165,22 +123,7 @@ def _transliterate_to_ascii(text: str) -> str:
 
 
 def _sanitize_filename(name: str) -> str:
-    """Sanitize a filename to lowercase with dashes.
-
-    Normalization rules (issue #208):
-    - Converts to lowercase
-    - Replaces spaces, parentheses, brackets, braces with dashes
-    - Removes path separators (defense-in-depth against traversal)
-    - Transliterates non-ASCII to ASCII
-    - Collapses multiple consecutive dashes
-    - Falls back to hash-based name if result would be empty
-
-    Args:
-        name: Original filename (with or without extension).
-
-    Returns:
-        Sanitized filename (never empty), all lowercase with dashes.
-    """
+    """Sanitize a filename to lowercase with dashes."""
     # FIRST: Sanitize path separators BEFORE using Path() to avoid misinterpretation
     # This is defense-in-depth against path traversal attacks
     name_safe = re.sub(r"[/\\]", "-", name)
@@ -229,14 +172,7 @@ def _is_windows_reserved(stem: str) -> bool:
 
 
 def _needs_rename(path: Path) -> bool:
-    """Check if a file needs to be renamed.
-
-    Returns True if:
-    - Filename contains invalid characters (spaces, non-ASCII, etc.)
-    - Filename contains uppercase letters (should be lowercase)
-    - Filename is a Windows reserved name
-    - Full path exceeds length threshold
-    """
+    """Check if a file needs to be renamed."""
     name = path.name
     stem = path.stem
 
@@ -257,35 +193,12 @@ def _needs_rename(path: Path) -> bool:
 
 
 def _compute_short_hash(text: str, length: int = 8) -> str:
-    """Compute a short hash of text for uniqueness.
-
-    An 8-character hex hash provides 2^32 (~4 billion) unique values,
-    which is sufficient for filename uniqueness in typical catalogs.
-    For extremely large catalogs, collision probability follows the
-    birthday paradox but remains negligible for practical use.
-
-    Args:
-        text: Text to hash.
-        length: Number of characters in the hash (default: 8).
-
-    Returns:
-        Hexadecimal hash string.
-    """
+    """Compute a short hash of text for uniqueness."""
     return hashlib.sha256(text.encode()).hexdigest()[:length]
 
 
 def _find_sidecars(shp_path: Path) -> list[Path]:
-    """Find all sidecar files for a shapefile.
-
-    Sidecars are files with the same stem but different extensions.
-    Handles both simple extensions (.dbf) and compound extensions (.shp.xml).
-
-    Args:
-        shp_path: Path to the .shp file.
-
-    Returns:
-        List of paths to existing sidecar files.
-    """
+    """Find all sidecar files for a shapefile."""
     sidecars: list[Path] = []
     parent = shp_path.parent
     stem = shp_path.stem
@@ -299,26 +212,11 @@ def _find_sidecars(shp_path: Path) -> list[Path]:
     return sidecars
 
 
-# =============================================================================
 # Core fix computation
-# =============================================================================
 
 
 def _compute_safe_rename(path: Path) -> tuple[Path, str] | None:  # noqa: PLR0914 - each name transform of the path is a local
-    """Compute safe rename for a file with normalization issues.
-
-    Handles four types of issues:
-    1. INVALID_CHARACTERS: spaces, parentheses, non-ASCII → dashes
-    2. UPPERCASE: uppercase letters → lowercase
-    3. WINDOWS_RESERVED_NAME: CON, PRN, etc. → _con, _prn
-    4. LONG_PATH: truncate filename with hash suffix
-
-    Args:
-        path: Path to the file needing normalization.
-
-    Returns:
-        Tuple of (new_path, preview_message) or None if no rename needed.
-    """
+    """Compute safe rename for a file with normalization issues."""
     if not _needs_rename(path):
         return None
 
@@ -345,9 +243,7 @@ def _compute_safe_rename(path: Path) -> tuple[Path, str] | None:  # noqa: PLR091
         # No invalid chars but needs lowercase - just lowercase the stem
         new_stem = stem.lower()
 
-    # Re-check if normalized stem is a Windows reserved name
-    # Example: "CON ()" normalizes to "con" which is still reserved
-    # Must check AFTER normalization, not just the original stem
+    # Check the reserved name again after normalization: "CON ()" becomes "con".
     if is_reserved or _is_windows_reserved(new_stem):
         # Ensure lowercase and add underscore prefix
         new_stem = f"_{new_stem.lower()}"
@@ -399,17 +295,7 @@ def _apply_rename(
     old_path: Path,
     new_path: Path,
 ) -> bool:
-    """Apply a file rename operation.
-
-    Uses atomic rename when possible to avoid TOCTOU race conditions.
-
-    Args:
-        old_path: Current file path.
-        new_path: Target file path.
-
-    Returns:
-        True if rename succeeded, False if collision or error.
-    """
+    """Apply a file rename operation."""
     try:
         # Use os.rename for atomic operation on same filesystem
         # This avoids TOCTOU race condition between exists() check and move
@@ -435,18 +321,7 @@ def _apply_shapefile_rename(
     shp_path: Path,
     new_shp_path: Path,
 ) -> bool:
-    """Apply rename for shapefile and all its sidecars.
-
-    Implements rollback on failure: if any sidecar rename fails,
-    all previously renamed files are restored to original names.
-
-    Args:
-        shp_path: Current .shp file path.
-        new_shp_path: Target .shp file path.
-
-    Returns:
-        True if all renames succeeded, False if any collision or error.
-    """
+    """Apply rename for shapefile and all its sidecars."""
     new_stem = new_shp_path.stem
     new_parent = new_shp_path.parent
 
@@ -496,14 +371,7 @@ def _apply_shapefile_rename(
 
 
 def _rollback_renames(completed: list[tuple[Path, Path]]) -> None:
-    """Rollback completed renames by restoring original names.
-
-    Best-effort rollback: logs errors but continues attempting
-    to restore all files.
-
-    Args:
-        completed: List of (original_path, new_path) tuples to rollback.
-    """
+    """Rollback completed renames by restoring original names."""
     for old_path, new_path in reversed(completed):
         # Best effort. A failed rollback leaves the rename in place, and the
         # caller already reports the original failure.
@@ -511,32 +379,16 @@ def _rollback_renames(completed: list[tuple[Path, Path]]) -> None:
             Path(str(new_path)).rename(str(old_path))
 
 
-# =============================================================================
 # Public API
-# =============================================================================
 
 
 def _is_fix_flag_issue(issue: ScanIssue) -> bool:
-    """Check if an issue is a FIX_FLAG issue (safe to auto-fix).
-
-    Args:
-        issue: The scan issue to check.
-
-    Returns:
-        True if the issue can be safely auto-fixed.
-    """
+    """Check if an issue is a FIX_FLAG issue (safe to auto-fix)."""
     return issue.issue_type.value in FIX_FLAG_ISSUE_TYPES
 
 
 def _compute_collection_id_fix(dir_path: Path) -> tuple[Path, str] | None:
-    """Compute fix for an invalid collection ID (directory rename).
-
-    Args:
-        dir_path: Path to the collection directory with invalid ID.
-
-    Returns:
-        Tuple of (new_path, preview_message) or None if cannot be fixed.
-    """
+    """Compute fix for an invalid collection ID (directory rename)."""
     old_name = dir_path.name
 
     try:
@@ -556,19 +408,7 @@ def _compute_collection_id_fix(dir_path: Path) -> tuple[Path, str] | None:
 
 
 def _apply_directory_rename(old_path: Path, new_path: Path) -> bool:
-    """Apply a directory rename operation.
-
-    Uses atomic rename when possible. Handles case-only renames on
-    case-insensitive filesystems (Windows, macOS) via a two-step rename
-    through a temporary intermediate name.
-
-    Args:
-        old_path: Current directory path.
-        new_path: Target directory path.
-
-    Returns:
-        True if rename succeeded, False if collision or error.
-    """
+    """Apply a directory rename operation."""
     import uuid
 
     try:
@@ -614,21 +454,7 @@ def apply_safe_fixes(
     issues: list[ScanIssue],
     dry_run: bool = False,
 ) -> tuple[list[ProposedFix], list[ProposedFix]]:
-    """Apply safe fixes to detected issues.
-
-    Safe fixes include:
-    - Renaming files with invalid characters
-    - Renaming Windows reserved names
-    - Truncating long paths
-
-    Args:
-        issues: List of scan issues to fix.
-        dry_run: If True, compute fixes but don't apply them.
-
-    Returns:
-        Tuple of (proposed_fixes, applied_fixes).
-        If dry_run=True, applied_fixes is empty.
-    """
+    """Apply safe fixes to detected issues."""
     proposed: list[ProposedFix] = []
     applied: list[ProposedFix] = []
 
@@ -715,14 +541,7 @@ def apply_safe_fixes(
 
 
 def preview_fix(issue: ScanIssue) -> ProposedFix | None:
-    """Generate a fix proposal for an issue.
-
-    Args:
-        issue: The scan issue to fix.
-
-    Returns:
-        ProposedFix if the issue is fixable, None if manual only.
-    """
+    """Generate a fix proposal for an issue."""
     # Only handle FIX_FLAG issues (safe fixes)
     if not _is_fix_flag_issue(issue):
         return None

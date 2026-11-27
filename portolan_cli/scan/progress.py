@@ -1,18 +1,4 @@
-"""Progress reporting for directory scanning.
-
-This module provides:
-1. Fast directory pre-counting for determinate progress bars
-2. A progress reporter context manager using rich
-3. Suppression of progress in JSON mode (agent/batch usage)
-
-Example:
-    >>> from portolan_cli.scan.progress import count_directories, ScanProgressReporter
-    >>> total = count_directories(Path("/data"))
-    >>> with ScanProgressReporter(total, json_mode=False) as reporter:
-    ...     for directory in scan_directories():
-    ...         reporter.advance()
-    ... print(f"Scanned in {reporter.elapsed_seconds:.1f}s")
-"""
+"""Progress reporting for directory scanning."""
 
 from __future__ import annotations
 
@@ -49,28 +35,7 @@ def count_directories(
     recursive: bool = True,
     follow_symlinks: bool = False,
 ) -> int:
-    """Fast pre-count of directories for progress reporting.
-
-    Uses os.scandir for efficient directory enumeration without
-    reading file contents.
-
-    Args:
-        root: Root directory to count from.
-        include_hidden: Include hidden directories (starting with .).
-        max_depth: Maximum recursion depth (None = unlimited).
-        recursive: If False, only count the root directory.
-        follow_symlinks: If True, follow symlinks when counting directories.
-            Should match the value used for actual scanning to ensure
-            accurate progress reporting.
-
-    Returns:
-        Total number of directories (including root).
-
-    Note:
-        This should complete in < 100ms for typical directory trees.
-        For accurate progress bars, use the same follow_symlinks value
-        as the actual scan operation.
-    """
+    """Fast pre-count of directories for progress reporting."""
     if not root.is_dir():
         return 0
 
@@ -125,17 +90,7 @@ def count_directories(
 
 
 class ScanProgressReporter:
-    """Context manager for scan progress reporting.
-
-    Provides a progress bar using rich library, with automatic
-    suppression in JSON mode or non-TTY environments.
-
-    Attributes:
-        total_directories: Total number of directories to scan.
-        json_mode: If True, suppress all progress output.
-        directories_processed: Number of directories processed.
-        elapsed_seconds: Time elapsed since entering context.
-    """
+    """Context manager for scan progress reporting."""
 
     def __init__(
         self,
@@ -143,12 +98,7 @@ class ScanProgressReporter:
         *,
         json_mode: bool = False,
     ) -> None:
-        """Initialize the progress reporter.
-
-        Args:
-            total_directories: Total number of directories to scan.
-            json_mode: If True, suppress progress output.
-        """
+        """Initialize the progress reporter."""
         self.total_directories = total_directories
         self.json_mode = json_mode
         self.directories_processed = 0
@@ -212,11 +162,7 @@ class ScanProgressReporter:
             self._progress.__exit__(exc_type, exc_val, exc_tb)
 
     def advance(self, steps: int = 1) -> None:
-        """Advance the progress by the given number of directories.
-
-        Args:
-            steps: Number of directories processed.
-        """
+        """Advance the progress by the given number of directories."""
         self.directories_processed += steps
 
         if self._progress is not None and self._task_id is not None:

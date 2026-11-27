@@ -1,14 +1,6 @@
-"""Atomic JSON writing shared by every module that persists STAC/Portolan JSON.
+"""Atomic JSON writing for every module that persists STAC or Portolan JSON.
 
-One helper, :func:`write_json_atomic`, so that every JSON file Portolan writes
-lands the same way: UTF-8, two-space indent, unescaped non-ASCII, a trailing
-newline, and an atomic ``os.replace`` so an interrupted write can never leave a
-half-written ``collection.json`` behind.
-
-Deliberately stdlib-only apart from ``trace``, so validation and generation
-paths alike can import it without dragging ``click``/``rich``/``config`` into a
-leaf module. Every write of ``versions.json`` and ``collection.json`` that does
-not go through pystac passes here, so this is where the perf gates count them.
+Stdlib-only apart from ``trace``, so leaf modules can import it; the perf gates count writes here.
 """
 
 from __future__ import annotations
@@ -30,18 +22,9 @@ _COUNTED_WRITES = {
 
 
 def write_json_atomic(path: Path, data: Any) -> None:
-    r"""Serialize ``data`` to ``path`` as JSON, atomically.
+    """Write ``data`` to ``path`` as UTF-8 JSON through a temp file and ``os.replace``.
 
-    Writes to a temporary file in the destination's own directory and then
-    ``os.replace``s it into position, so readers observe either the previous
-    content or the complete new content — never a truncated file. The temporary
-    file is removed if serialization or writing fails, and ``path`` is left
-    untouched in that case.
-
-    Output format (identical at every call site):
-    ``json.dumps(data, indent=2, ensure_ascii=False)`` plus a trailing newline,
-    encoded UTF-8. ``ensure_ascii=False`` keeps accented titles ("Córdoba")
-    literal instead of ``\\u00f3`` escapes.
+    Readers see the old content or the full new content, never a truncated file.
 
     Args:
         path: Destination file. Parent directories are created if needed.
@@ -58,12 +41,9 @@ def write_json_atomic(path: Path, data: Any) -> None:
 
 
 def write_text_atomic(path: Path, content: str) -> None:
-    """Write ``content`` to ``path`` atomically, UTF-8.
+    """Write ``content`` verbatim to ``path`` atomically, UTF-8.
 
-    The temp-file-then-``os.replace`` half of :func:`write_json_atomic`, for
-    the few non-JSON files (``config.yaml``) that need the same guarantee.
-    ``content`` is written verbatim; the caller owns formatting and the
-    trailing newline.
+    The non-JSON half of :func:`write_json_atomic`, for files such as ``config.yaml``.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -74,11 +54,10 @@ def write_text_atomic(path: Path, content: str) -> None:
     )
     tmp_path = Path(tmp_name)
     try:
-        # newline="" disables platform newline translation: without it Windows
-        # writes \r\n, and catalogs stop being byte-identical across platforms.
+        # newline="" stops Windows writing \r\n, so catalogs stay byte-identical.
         with os.fdopen(fd, "w", encoding="utf-8", newline="") as handle:
             handle.write(content)
-        # Atomic rename (POSIX guarantees atomicity for same-filesystem renames).
+        # Atomic: POSIX renames within one filesystem are atomic.
         tmp_path.replace(path)
     except BaseException:
         with contextlib.suppress(OSError):

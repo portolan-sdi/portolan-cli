@@ -1,15 +1,7 @@
 #!/usr/bin/env python3
-"""Generate auto-updated sections for AGENTS.md.
+"""Generate the test-marker and CLI-command sections of AGENTS.md.
 
-This script generates sections that should stay in sync with the codebase:
-1. Test Markers - from pyproject.toml
-2. CLI Commands - from portolan_cli/cli.py
-
-Usage:
-    python scripts/generate_agents_md_sections.py [--section SECTION] [--dry-run]
-
-The script outputs the generated content to stdout. Use --dry-run to preview
-without updating AGENTS.md.
+Usage: ``python scripts/generate_agents_md_sections.py [--section SECTION] [--dry-run]``.
 """
 
 from __future__ import annotations
@@ -34,11 +26,6 @@ def get_project_root() -> Path:
             return current
         current = current.parent
     return Path.cwd()
-
-
-# =============================================================================
-# Test Markers Generator
-# =============================================================================
 
 
 def generate_test_markers(root: Path) -> str:
@@ -77,11 +64,6 @@ def generate_test_markers(root: Path) -> str:
 
     except (FileNotFoundError, ValueError):
         return "Error reading pyproject.toml"
-
-
-# =============================================================================
-# CLI Commands Generator
-# =============================================================================
 
 
 @dataclass
@@ -171,19 +153,8 @@ def generate_cli_commands(root: Path) -> str:
     return "\n".join(lines)
 
 
-# =============================================================================
-# Section Updater
-# =============================================================================
-
-
 def update_generated_section(claude_md: str, section_name: str, new_content: str) -> str:
-    """Update an auto-generated section in AGENTS.md.
-
-    Sections are marked with:
-    <!-- auto-generated: {section_name} -->
-    ... content ...
-    <!-- /auto-generated: {section_name} -->
-    """
+    """Update an auto-generated section in AGENTS.md."""
     pattern = (
         rf"(<!--\s*auto-generated:\s*{re.escape(section_name)}\s*-->\n)"
         rf".*?"
@@ -202,11 +173,6 @@ def update_generated_section(claude_md: str, section_name: str, new_content: str
         return claude_md
 
     return updated
-
-
-# =============================================================================
-# Main
-# =============================================================================
 
 
 GENERATORS = {

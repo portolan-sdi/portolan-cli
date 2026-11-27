@@ -1,10 +1,6 @@
-"""Bounding box validation and utilities.
+"""Bounding box validation, WGS84 range checks, antimeridian splits, and unions.
 
-Centralized bbox validation for issue #516:
-- Filter inf/nan coordinates that poison union computations
-- Validate WGS84 coordinate ranges
-- Handle antimeridian-crossing bboxes per RFC 7946 / STAC spec
-- Compute unions with proper multi-bbox support
+Inf and NaN coordinates poison a union, so every check here rejects them first.
 """
 
 from __future__ import annotations
@@ -29,19 +25,12 @@ LAT_MAX = 90.0
 BBOX_2D_LEN = 4
 BBOX_3D_LEN = 6
 
-# How far past a WGS84 bound a coordinate may sit and still count as that bound.
-# A whole-world extent rarely lands on exactly 180.0 after a reprojection or a
-# bbox union: the specification's own natural-earth-countries.parquet carries
-# 180.00000000000006, which is 6e-14 degrees, about 7 nanometres on the ground.
-# One micro-degree is about 10 centimetres, so the slack cannot admit a projected
-# coordinate, which lands in the thousands or millions (issue #882).
+# Whole-world extents land on 180.00000000000006 after reprojection; 1e-6 degrees
+# (about 10 cm) absorbs that but no projected coordinate.
 WGS84_EDGE_TOLERANCE = 1e-6
 
-# Sanity bound for any CRS. No real-world coordinate on Earth, in any projection,
-# approaches this magnitude (Web Mercator maxes near 2e7 m; the most extreme
-# projected grids stay well under 1e8). Values beyond it are "effectively
-# infinite" sentinels (e.g. WFS-served ±1.79e308 ~ ±float-max), not real data.
-# Used to reject such poison even for projected (non-WGS84) bboxes (issue #516).
+# No real coordinate in any CRS nears 1e9; larger values are sentinels such as
+# WFS-served ±1.79e308.
 MAX_SANE_COORD = 1e9
 
 
@@ -57,10 +46,7 @@ def _snap(value: float, low: float, high: float) -> float:
 def snap_to_wgs84_range(bbox: list[float]) -> list[float]:
     """Pull each coordinate that rounds past a WGS84 bound back onto it.
 
-    A coordinate further out than :data:`WGS84_EDGE_TOLERANCE` is returned
-    unchanged, so a projected bbox still fails the range checks below and a
-    real out-of-range value still reports. Elevation coordinates on a
-    6-element bbox carry no lon/lat bound and pass through.
+    Values further out than :data:`WGS84_EDGE_TOLERANCE`, and elevations, pass through unchanged.
     """
     snapped = list(bbox)
     for i, (low, high) in enumerate(_wgs84_bounds(len(bbox))):
@@ -106,9 +92,7 @@ class BboxUnionResult:
     bboxes: list[list[float]] | None = None
     """The STAC 1.1.0 ``extent.spatial.bbox`` list, or None if no input is valid.
 
-    STAC allows one bbox, or three or more with the overall envelope first. A
-    union that crosses the antimeridian is the envelope, then its western and
-    eastern parts. Two entries are never written (issue #852).
+    One bbox, or the envelope then the western and eastern parts; never two entries.
     """
 
     skipped: list[tuple[list[float], str]] = field(default_factory=list)
@@ -116,22 +100,9 @@ class BboxUnionResult:
 
 
 def to_2d_bbox(bbox: Sequence[float]) -> list[float]:
-    """Reduce a STAC bbox to its 2D ``[west, south, east, north]`` components.
+    """Reduce a STAC bbox to ``[west, south, east, north]`` using indices 0, 1, 3, 4 for 3D.
 
-    STAC allows a 6-element 3D bbox ordered
-    ``[west, south, min_z, east, north, max_z]``. The correct 2D reduction keeps
-    indices ``[0, 1, 3, 4]``. A naive ``bbox[:4]`` slice wrongly keeps ``min_z``
-    (index 2) as the easting and drops ``north`` (index 4), silently producing a
-    bogus extent (issue #592). Use this helper anywhere a possibly-3D STAC bbox
-    is reduced to 2D for containment, union, validation, or geometry.
-
-    Args:
-        bbox: A 4-element 2D bbox or a 6-element 3D bbox.
-
-    Returns:
-        A new 2-D ``[west, south, east, north]`` list. Inputs that are neither 4
-        nor 6 elements are passed through as ``list(bbox[:4])`` (their validity
-        is the caller's concern; see :func:`is_valid_bbox`).
+    ``bbox[:4]`` is wrong for 3D bboxes; other lengths pass through as ``list(bbox[:4])``.
     """
     if len(bbox) == BBOX_3D_LEN:
         return [bbox[0], bbox[1], bbox[3], bbox[4]]
@@ -139,20 +110,9 @@ def to_2d_bbox(bbox: Sequence[float]) -> list[float]:
 
 
 def is_finite_bbox(bbox: list[float]) -> bool:
-    """Check if a bbox has finite coordinates (no inf/nan).
+    """Return True if a bbox has 4 or 6 elements, all finite, in any CRS.
 
-    This is the universal validity check that applies to ANY CRS.
-    Use is_valid_wgs84_bbox() for WGS84-specific range checks.
-
-    Validates:
-    - Exactly 4 or 6 elements (2D or 3D bbox)
-    - All coordinates are finite (no inf, -inf, nan)
-
-    Args:
-        bbox: Bounding box as [west, south, east, north] or 6-element 3D variant.
-
-    Returns:
-        True if bbox has finite values, False otherwise.
+    Use :func:`is_valid_bbox` for the WGS84 range checks.
     """
     if len(bbox) not in (4, 6):
         return False
@@ -161,23 +121,9 @@ def is_finite_bbox(bbox: list[float]) -> bool:
 
 
 def is_valid_bbox(bbox: list[float], *, wgs84_only: bool = True) -> bool:
-    """Check if a bbox is valid.
+    """Return True if a bbox is finite and, with ``wgs84_only``, in WGS84 range with south <= north.
 
-    Validates:
-    - Exactly 4 or 6 elements (2D or 3D bbox)
-    - All coordinates are finite (no inf, -inf, nan)
-    - If wgs84_only=True: Longitude in [-180, 180], Latitude in [-90, 90]
-    - South <= North (latitude ordering, only checked for WGS84)
-
-    Note: West > East is VALID per RFC 7946 for antimeridian-crossing bboxes.
-
-    Args:
-        bbox: Bounding box as [west, south, east, north] or 6-element 3D variant.
-        wgs84_only: If True (default), check WGS84 coordinate ranges.
-                   Set to False for projected coordinate bboxes.
-
-    Returns:
-        True if bbox is valid, False otherwise.
+    West > east is valid: RFC 7946 uses it for antimeridian-crossing bboxes.
     """
     # Check finite first (universal for all CRS)
     if not is_finite_bbox(bbox):
@@ -187,10 +133,7 @@ def is_valid_bbox(bbox: list[float], *, wgs84_only: bool = True) -> bool:
     if not wgs84_only:
         return True
 
-    # Reduce to 2D so the range checks read east/north from the correct indices
-    # for both 4- and 6-element bboxes (issue #592). Snapping first keeps a
-    # coordinate that rounds past a bound, such as 180.00000000000006, from
-    # failing the range check (issue #882).
+    # Snap first so a coordinate such as 180.00000000000006 passes the range check.
     west, south, east, north = to_2d_bbox(snap_to_wgs84_range(bbox))
 
     # Check longitude range (WGS84 only)
@@ -206,14 +149,7 @@ def is_valid_bbox(bbox: list[float], *, wgs84_only: bool = True) -> bool:
 
 
 def _reason_non_finite(bbox: list[float]) -> str | None:
-    """Return the reason a bbox holds a NaN or an infinite value, or None.
-
-    Args:
-        bbox: Bounding box to check.
-
-    Returns:
-        String that names the bad coordinate, or None when all values are finite.
-    """
+    """Return the reason a bbox holds a NaN or an infinite value, or None."""
     west, south, east, north = to_2d_bbox(bbox)
     for name, val in [("west", west), ("south", south), ("east", east), ("north", north)]:
         if math.isnan(val):
@@ -221,8 +157,7 @@ def _reason_non_finite(bbox: list[float]) -> str | None:
         if math.isinf(val):
             return f"{name} is infinite ({val})"
 
-    # A 6-element bbox carries elevation values after the first four. Check
-    # those too, so a poisoned Z value does not pass (issue #516).
+    # Check elevation values too, so a poisoned Z value does not pass.
     for i in range(4, len(bbox)):
         if math.isnan(bbox[i]):
             return f"elevation coordinate at index {i} is NaN"
@@ -232,14 +167,7 @@ def _reason_non_finite(bbox: list[float]) -> str | None:
 
 
 def _reason_out_of_wgs84_range(bbox: list[float]) -> str | None:
-    """Return the reason a bbox falls outside the WGS84 ranges, or None.
-
-    Args:
-        bbox: Bounding box to check.
-
-    Returns:
-        String that names the bad coordinate, or None when the bbox is in range.
-    """
+    """Return the reason a bbox falls outside the WGS84 ranges, or None."""
     west, south, east, north = to_2d_bbox(bbox)
     if not (LON_MIN <= west <= LON_MAX):
         return f"west longitude {west} out of range [{LON_MIN}, {LON_MAX}]"
@@ -255,51 +183,32 @@ def _reason_out_of_wgs84_range(bbox: list[float]) -> str | None:
 
 
 def get_bbox_validation_reason(bbox: list[float], *, wgs84_only: bool = True) -> str | None:
-    """Get the reason why a bbox is invalid, or None if valid.
+    """Return the reason a bbox is invalid, or None if valid.
 
-    Args:
-        bbox: Bounding box to validate.
-        wgs84_only: If True (default), check WGS84 coordinate ranges.
-                   Set to False for projected coordinate bboxes.
-
-    Returns:
-        String describing why invalid, or None if valid.
+    Set ``wgs84_only`` to False for projected bboxes, where only finiteness and magnitude apply.
     """
     if len(bbox) not in (4, 6):
         return f"wrong element count: {len(bbox)} (expected 4 or 6)"
 
-    # The helpers reduce to 2D, so east and north come from the correct indices
-    # for both a 4-element and a 6-element bbox (issue #592, issue #516).
     non_finite = _reason_non_finite(bbox)
     if non_finite is not None:
         return non_finite
 
-    # Reject an "effectively infinite" sentinel coordinate. The value is finite,
-    # but far beyond any real-world magnitude in any CRS, such as 1.79e308. This
-    # check runs for a projected bbox too, so poison never passes (issue #516).
+    # Reject a finite sentinel such as 1.79e308, also for projected bboxes.
     for i, val in enumerate(bbox):
         if abs(val) > MAX_SANE_COORD:
             return f"coordinate at index {i} ({val}) exceeds sane magnitude"
 
     if wgs84_only:
-        # Snap first, so a coordinate that rounds past a bound, such as
-        # 180.00000000000006, does not report as out of range (issue #882).
         return _reason_out_of_wgs84_range(snap_to_wgs84_range(bbox))
 
     return None
 
 
 def is_antimeridian_crossing(bbox: list[float]) -> bool:
-    """Check if a bbox crosses the antimeridian (180°/-180° line).
+    """Return True if a bbox crosses the antimeridian, that is west > east (RFC 7946).
 
-    Per RFC 7946, a bbox crosses the antimeridian when west > east.
-    Example: Fiji [177, -20, -175, -15] crosses because 177 > -175.
-
-    Args:
-        bbox: Bounding box as [west, south, east, north].
-
-    Returns:
-        True if the bbox crosses the antimeridian.
+    Example: Fiji ``[177, -20, -175, -15]``.
     """
     if len(bbox) < BBOX_2D_LEN:
         return False
@@ -309,17 +218,9 @@ def is_antimeridian_crossing(bbox: list[float]) -> bool:
 
 
 def normalize_antimeridian_bbox(bbox: list[float]) -> list[list[float]]:
-    """Split an antimeridian-crossing bbox into two non-crossing bboxes.
+    """Split an antimeridian-crossing bbox into west-to-180 and -180-to-east parts.
 
-    Per STAC spec, antimeridian-crossing extents should be represented
-    as multiple bboxes: one from west to 180°, one from -180° to east.
-
-    Args:
-        bbox: Bounding box as [west, south, east, north].
-
-    Returns:
-        List of bboxes. Single-element list if not crossing,
-        two-element list if crossing antimeridian.
+    A bbox that does not cross returns as a one-element list.
     """
     if not is_antimeridian_crossing(bbox):
         return [to_2d_bbox(bbox)]
@@ -338,16 +239,9 @@ def filter_valid_bboxes(
     *,
     wgs84_only: bool = True,
 ) -> BboxValidationResult:
-    """Filter a list of bboxes, separating valid from invalid.
+    """Split bboxes into valid (snapped) and invalid with reasons.
 
-    Args:
-        bboxes: List of bboxes to filter.
-        wgs84_only: When True, also reject bboxes outside WGS84 ranges. Set to
-            False for source-CRS (e.g. projected) bboxes, where only finiteness
-            is universally meaningful (issue #516).
-
-    Returns:
-        BboxValidationResult with valid and invalid (with reasons) lists.
+    Set ``wgs84_only`` to False for projected bboxes, where only finiteness applies.
     """
     valid: list[list[float]] = []
     invalid: list[tuple[list[float], str]] = []
@@ -370,20 +264,9 @@ def compute_bbox_union(
     collection_ids: list[str] | None = None,
     wgs84_only: bool = True,
 ) -> BboxUnionResult:
-    """Compute the union of multiple bboxes with validation and antimeridian handling.
+    """Union the valid bboxes into a STAC extent, splitting at the antimeridian when needed.
 
-    Filters out invalid bboxes, handles antimeridian-crossing bboxes properly,
-    and produces STAC-compliant multi-bbox output when needed.
-
-    Args:
-        bboxes: List of bboxes to union.
-        collection_ids: Optional list of collection IDs for logging (parallel to bboxes).
-        wgs84_only: When True, also reject bboxes outside WGS84 ranges. Set to
-            False when unioning source-CRS (e.g. projected) bboxes, where only
-            finiteness is universally meaningful (issue #516).
-
-    Returns:
-        BboxUnionResult with union bbox(es) and any skipped invalid bboxes.
+    Set ``wgs84_only`` to False for projected bboxes; ``collection_ids`` label skip warnings.
     """
     if not bboxes:
         return BboxUnionResult(bbox=None, skipped=[])
@@ -395,9 +278,7 @@ def compute_bbox_union(
     if not validation.valid:
         return BboxUnionResult(bbox=None, skipped=validation.invalid)
 
-    # Reduce every valid bbox to 2D before any geometric union math so 6-element
-    # 3D bboxes union on [west, south, east, north], never the min_z slice
-    # (issue #592). Validation above already checked their elevation coordinates.
+    # Union on 2D only; validation above already checked the elevations.
     valid_2d = [to_2d_bbox(b) for b in validation.valid]
 
     # Separate crossing and non-crossing bboxes
@@ -457,10 +338,8 @@ def _compute_antimeridian_union(
     # part in each hemisphere, so neither list is empty.
     result_bboxes = _build_hemisphere_unions(western, eastern)
     envelope = cast("list[float]", _compute_simple_union(all_parts))
-    # STAC 1.1.0: one bbox, or the envelope first and then the parts (#852).
-    # The envelope spans every longitude. A crossing bbox (west > east) would be
-    # tighter, but rashid's PTL-DAT-005 compares bbox[0] with the plain min/max
-    # of the data and warns on it.
+    # The envelope spans every longitude: rashid PTL-DAT-005 warns on a tighter
+    # west > east envelope.
     parts = result_bboxes if len(result_bboxes) > 1 else []
     return BboxUnionResult(bbox=envelope, bboxes=[envelope, *parts], skipped=skipped)
 
@@ -486,19 +365,10 @@ def _build_hemisphere_unions(
 
 
 def _compute_simple_union(bboxes: list[list[float]]) -> list[float] | None:
-    """Compute simple min/max union of bboxes (no antimeridian handling).
-
-    Args:
-        bboxes: List of valid, non-crossing bboxes.
-
-    Returns:
-        Union bbox or None if empty.
-    """
+    """Return the min/max union of non-crossing bboxes, or None if empty."""
     if not bboxes:
         return None
 
-    # Reduce defensively so a stray 6-element bbox cannot poison the union with
-    # its min_z as the easting (issue #592).
     reduced = [to_2d_bbox(b) for b in bboxes]
 
     west = min(b[0] for b in reduced)

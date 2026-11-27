@@ -1,12 +1,4 @@
-"""Unit tests for the collection-level thumbnail orchestrator (Issue #683).
-
-``portolan init`` followed by ``portolan add`` used to produce a catalog that
-failed its own ``portolan check``: rashid's ``PTL-VIZ-001`` requires every
-geospatial collection to carry a ``thumbnail``-role asset, and the default add
-pipeline registered none. These tests pin the ladder that closes the gap —
-opt-out, already-registered, adopt, reference, render — and the guarantee that a
-render failure never fails the add.
-"""
+"""Unit tests for the collection-level thumbnail orchestrator."""
 
 from __future__ import annotations
 
@@ -276,7 +268,7 @@ class TestAdoption:
 
 
 class TestRasterCollections:
-    """Rasters reference the item sidecar that add already generates (#657)."""
+    """Rasters reference the item sidecar that add already generates."""
 
     @pytest.mark.unit
     def test_references_an_item_thumbnail_without_rendering(self, tmp_path: Path) -> None:
@@ -337,7 +329,6 @@ class TestVectorRendering:
 
     @pytest.mark.unit
     def test_tracks_the_rendered_file_in_versions_json(self, tmp_path: Path) -> None:
-        """An untracked derived asset breaks push (#519, #735)."""
         from portolan_core.versions import read_versions
 
         collection_dir = _vector_collection(tmp_path)
@@ -357,12 +348,6 @@ class TestVectorRendering:
 
     @pytest.mark.unit
     def test_adoption_records_one_version(self, tmp_path: Path) -> None:
-        """Adopting a file still records it: versions.json is the source of truth.
-
-        This asserted the opposite until the adopted image was found to reach the
-        remote through push's directory walk while staying invisible to every
-        check that reads ``current_version.assets``.
-        """
         collection_dir = _vector_collection(tmp_path)
         (collection_dir / "preview.png").write_bytes(PNG_BYTES)
 
@@ -386,7 +371,6 @@ class TestVectorRendering:
 
     @pytest.mark.unit
     def test_render_returning_none_registers_nothing_and_warns(self, tmp_path: Path) -> None:
-        """Issue #1038: the failure went to a debug log only."""
         from portolan_cli.report import reporting
 
         collection_dir = _vector_collection(tmp_path)
@@ -444,13 +428,7 @@ class TestNonGeospatialCollections:
 
 @pytest.mark.unit
 class TestSymlinkedCatalogRoot:
-    """A symlink anywhere in the path must not silently drop the registration.
-
-    ``_item_paths`` resolves its candidates. Comparing one resolved path against
-    an unresolved collection directory raised ValueError, so the raster branch
-    wrote nothing while still reporting a thumbnail. macOS hits this on every
-    temp directory, where ``/var`` is a symlink to ``/private/var``.
-    """
+    """A symlink anywhere in the path must not silently drop the registration."""
 
     def test_item_sidecar_registers_through_a_symlink(self, tmp_path: Path) -> None:
         real = tmp_path / "real"
@@ -502,19 +480,9 @@ class TestSymlinkedCatalogRoot:
 
 @pytest.mark.unit
 class TestConfigOptOutOnEveryEntryPoint:
-    """``thumbnails.enabled: false`` binds the fixer path too.
-
-    ``check --fix`` calls the singular entry point. Only the plural wrapper read
-    the setting, so a catalog that opted out got thumbnails anyway.
-    """
+    """``thumbnails.enabled: false`` binds the fixer path too."""
 
     def test_disabled_config_blocks_the_singular_entry_point(self, tmp_path: Path) -> None:
-        """The adoption branch is the reachable hole.
-
-        ``generate_vector_thumbnail`` already refuses when the config is off, so
-        the render branch was covered by accident. Adoption never reaches the
-        renderer, so a disabled catalog still got a thumbnail asset from it.
-        """
         from portolan_cli.collection_thumbnail import ensure_collection_thumbnail
 
         (tmp_path / ".portolan").mkdir()
@@ -606,15 +574,7 @@ class TestEveryRegisteredThumbnailIsTracked:
 
 @pytest.mark.unit
 class TestFileExtensionDeclaration:
-    """``file:`` fields oblige the collection to declare the file extension.
-
-    The spec extension registry makes the declaration a conditional MUST once an
-    asset carries ``file:size`` or ``file:checksum`` (Issue #654). The two writers
-    that already sync it — ``declare_file_extension`` and
-    ``stac_parquet.sync_file_extension`` — both run before the thumbnail
-    side-step, so a collection whose only ``file:``-bearing asset is the
-    thumbnail used to end up with the fields and no declaration.
-    """
+    """``file:`` fields oblige the collection to declare the file extension."""
 
     FILE_EXT = "https://stac-extensions.github.io/file/v2.1.0/schema.json"
 
@@ -681,12 +641,7 @@ class TestFileExtensionDeclaration:
 
 @pytest.mark.unit
 class TestOneAddIsOneVersion:
-    """A side-step's derived asset folds into the snapshot ``add`` just wrote.
-
-    Thumbnails joined the default pipeline, so a second version per add would
-    double every collection's history. PMTiles never showed this because it is
-    gated on ``--pmtiles`` (Issue #519).
-    """
+    """A side-step's derived asset folds into the snapshot ``add`` just wrote."""
 
     def _seed_version(self, collection_dir: Path, catalog_root: Path) -> None:
         """Stand in for the snapshot ``add`` writes before the side-steps run."""

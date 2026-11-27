@@ -1,9 +1,4 @@
-"""The terminal output of `portolan add` is the same as before the library move (#1133).
-
-Each expected text is the output of the command on f7f8214, the commit before
-`add` moved into `add.run_add`. A line keeps its text, its stream, its marker,
-and its place, in every output mode.
-"""
+"""The terminal output of `portolan add`."""
 
 from __future__ import annotations
 

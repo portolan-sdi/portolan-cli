@@ -1,9 +1,4 @@
-"""Integration tests verifying geoparquet-io works with our fixtures.
-
-These tests confirm that geoparquet-io can convert our test fixtures
-to GeoParquet format. Portolan delegates conversion
-to geoparquet-io—these tests verify that delegation will work.
-"""
+"""Integration tests verifying geoparquet-io works with our fixtures."""
 
 from __future__ import annotations
 

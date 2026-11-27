@@ -1,7 +1,5 @@
-"""The ``example`` versioning backend.
-
-It keeps each collection's history in
-``.portolan/example-versions/<collection>.json``. It has no rollback or prune.
+"""The ``example`` versioning backend, with no rollback or prune.
+It keeps each history in ``.portolan/example-versions/<collection>.json``.
 """
 
 from __future__ import annotations
@@ -105,7 +103,7 @@ class ExampleBackend:
             message="The example backend keeps no remote copy.",
         )
 
-    # The four lifecycle hooks of the protocol (#977).
+    # The four lifecycle hooks of the protocol.
     def on_post_add(self, context: PostAddContext) -> None:
         """Record which items the last add of a collection wrote."""
         record = self._path(context["collection_id"]).with_suffix(".post-add.json")

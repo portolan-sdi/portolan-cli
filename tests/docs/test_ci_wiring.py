@@ -1,15 +1,4 @@
-"""Check that every CI gate can block a merge or fail a nightly run (#1035).
-
-A gate that cannot go red is not a gate. On ``ff0c61b`` the ``plugin-test``
-job ran on every pull request but ``CI Success`` did not wait for it, the
-nightly benchmark compared each run with itself, and nothing ran diff-cover.
-These tests read the workflow files and the pytest configuration and fail
-when a job drops out of the aggregate check or a nightly gate stops failing.
-
-The last tests run the cheap faults of ``scripts/gate_selftest.py`` on a copy
-of the tree, so a gate that stops catching its fault fails a pull request and
-not only the nightly run.
-"""
+"""Check that every CI gate can block a merge or fail a nightly run."""
 
 from __future__ import annotations
 
@@ -74,7 +63,7 @@ def test_every_job_feeds_ci_success() -> None:
 
 
 def test_iceberg_tests_run_when_core_python_changes() -> None:
-    """#977 merged because a core change skipped the Iceberg tests."""
+    """A core Python change runs the Iceberg tests too."""
     jobs = _jobs("ci.yml")
 
     assert jobs["iceberg-test"]["if"] == (
@@ -88,12 +77,7 @@ def test_iceberg_tests_run_when_core_python_changes() -> None:
 
 
 def test_pytest_rejects_unknown_markers(pytestconfig: pytest.Config) -> None:
-    """A misspelled marker must fail collection, not move the test out of its lane.
-
-    The ini key and not ``--strict-markers`` in addopts: pytest 9.0.3 ignores
-    the flag there (pytest-dev/pytest#14442). The unknown-marker fault below
-    proves the behavior. This test pins the key.
-    """
+    """pytest 9.0.3 ignores --strict-markers in addopts: https://github.com/pytest-dev/pytest/issues/14442"""
     config = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
 
     assert config["tool"]["pytest"]["ini_options"]["strict_markers"] is True
@@ -119,11 +103,7 @@ def _cells(job: dict[str, Any]) -> list[dict[str, str]]:
 
 
 def coverage_artifacts(job: dict[str, Any]) -> list[str]:
-    """Return the coverage artifact names that ``job`` uploads.
-
-    The upload step runs on the ubuntu 3.11 cell only. The list holds the
-    name of that cell, and holds no name when the condition matches no cell.
-    """
+    """Return the coverage artifact names that ``job`` uploads, from the ubuntu 3.11 cell only."""
     uploads = [
         step
         for step in job["steps"]
@@ -156,15 +136,7 @@ def _pytest_step(job: dict[str, Any], prefix: str) -> dict[str, Any]:
     ],
 )
 def test_only_the_linux_cell_measures_coverage(job: str, prefix: str, flag: str) -> None:
-    """The ``coverage`` array is empty except on the ubuntu 3.11 cell, and pytest reads it.
-
-    The step opens with an empty array. Only the block under the ubuntu 3.11
-    condition fills it. The pytest call ends with the array and holds no
-    ``--cov`` flag of its own. A filled first line puts coverage on every
-    cell. A pytest call without the array puts coverage on no cell. An
-    earlier design used a ``cov_args`` variable and lost coverage on some
-    cells, so the pin checks the condition and not a variable name.
-    """
+    """Only the ubuntu 3.11 condition fills the ``coverage`` array, and pytest reads the array."""
     step = _pytest_step(_jobs("ci.yml")[job], prefix)
     run = str(step["run"])
     lines = [line.strip() for line in run.splitlines() if line.strip()]
@@ -220,23 +192,13 @@ def test_diff_cover_reads_the_two_linux_reports() -> None:
 
 
 def test_coverage_reports_name_files_relative_to_the_checkout() -> None:
-    """The report names each file relative to the checkout.
-
-    The diff-cover job reads the report from the artifact store and joins
-    each file name with the checkout of its own runner. A relative name
-    matches that checkout. An absolute source path does not.
-    """
     config = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
 
     assert config["tool"]["coverage"]["run"]["relative_files"] is True
 
 
 def test_diff_cover_gates_the_changed_lines() -> None:
-    """diff-cover measures the diff of the pull request against its own base branch.
-
-    A stacked pull request into an integration or release branch is measured
-    on its own lines, not on every line its base branch adds to main.
-    """
+    """A stacked pull request is measured on its own lines, not on the lines its base adds."""
     jobs = _jobs("ci.yml")
     job = jobs["diff-cover"]
     run = _run_text(job)
@@ -260,12 +222,6 @@ def test_diff_cover_gates_the_changed_lines() -> None:
 
 
 def test_only_the_live_network_step_continues_on_error() -> None:
-    """A soft-fail step gates nothing. Live third-party servers are the one exception.
-
-    The check reads every workflow. The security audit once had two soft-fail
-    steps. One ran the ruff S rules that the quality job already gates, and it
-    could only warn. The other let a pip-audit crash end in a green run.
-    """
     soft: list[tuple[str, str, str | None]] = []
     soft_jobs: list[tuple[str, str]] = []
     for workflow in sorted(WORKFLOWS.glob("*.yml")):
@@ -284,13 +240,7 @@ def test_only_the_live_network_step_continues_on_error() -> None:
 
 
 def test_security_audit_fails_when_pip_audit_cannot_run() -> None:
-    """A crash or invalid JSON from pip-audit must turn the run red.
-
-    The vulnerability path stays green and opens the tracking issue instead.
-    The capture must keep stderr out of the JSON. A clean pip-audit run writes
-    "No known vulnerabilities found" to stderr, and ``2>&1`` made that run
-    look like a crash.
-    """
+    """The capture keeps stderr out of the JSON: a clean run writes to stderr."""
     (step,) = [s for s in _jobs("security-audit.yml")["audit"]["steps"] if s.get("id") == "audit"]
     capture = step["run"].split("AUDIT_OUTPUT=$(uv run pip-audit", 1)[1].split(")", 1)[0]
     error_branch = step["run"].split("::error::pip-audit failed", 1)[1]
@@ -301,11 +251,7 @@ def test_security_audit_fails_when_pip_audit_cannot_run() -> None:
 
 @pytest.mark.parametrize("workflow", ["ci.yml", "nightly.yml"])
 def test_every_step_that_pipes_into_tee_sets_pipefail(workflow: str) -> None:
-    """A step with no ``shell:`` runs ``bash -e``, so ``cmd | tee`` returns tee's status.
-
-    The nightly live-network step piped pytest into tee without pipefail. Its
-    outcome was success on every run, so the tracking issue never opened.
-    """
+    """A step with no ``shell:`` runs ``bash -e``, so ``cmd | tee`` returns the status of tee."""
     unsafe = [
         (name, step.get("name"))
         for name, job in _jobs(workflow).items()
@@ -329,11 +275,7 @@ def test_nightly_runs_every_property_test_unseeded() -> None:
 
 
 def test_the_property_selector_picks_decorated_tests_only() -> None:
-    """A file that names the decorator in a docstring is not a property test.
-
-    The first nightly run on this branch selected this module, because its
-    text holds the selector, and ran the whole module under the nightly profile.
-    """
+    """A file that names the decorator in a docstring is not a property test."""
     decorated = re.compile(r"^\s*@given\(", re.MULTILINE)
     selected = {
         path.relative_to(REPO_ROOT).as_posix()
@@ -346,15 +288,11 @@ def test_the_property_selector_picks_decorated_tests_only() -> None:
 
 
 def test_no_hypothesis_profile_keeps_a_deadline() -> None:
-    """A deadline measures machine load under xdist, not a property.
-
-    Five property tests failed in one of four full runs on a loaded machine
-    with DeadlineExceeded, and passed alone.
-    """
+    """A deadline measures machine load under xdist, not a property."""
     from hypothesis import settings
     from hypothesis.errors import InvalidArgument
 
-    import tests.conftest  # noqa: F401  (registers the profiles)
+    import tests.conftest  # noqa: F401 - registers the profiles
 
     default = settings.default
     assert default is not None
@@ -375,7 +313,6 @@ def test_nightly_runs_the_gate_selftest() -> None:
 
 
 def test_scenario_regressions_fail_the_nightly_run() -> None:
-    """The nightly job compares wall time and peak RSS with the committed baseline (#992)."""
     jobs = _jobs("nightly.yml")
     run = _run_text(jobs["scenarios"])
 
@@ -442,7 +379,7 @@ def test_the_counter_gates_run_once_per_pull_request() -> None:
 
 
 def test_codspeed_measures_the_benchmarks() -> None:
-    """CodSpeed replaces the wall-time compare of pytest-benchmark (#992)."""
+    """CodSpeed replaces the wall-time compare of pytest-benchmark."""
     job = _jobs("ci.yml")["codspeed"]
     (step,) = [s for s in job["steps"] if str(s.get("uses", "")).startswith("CodSpeedHQ/action@")]
 
@@ -460,12 +397,7 @@ BUILD_PACKAGE = re.compile(r"uv build --package (\S+) --out-dir (\S+)")
 
 
 def test_release_publishes_portolan_core_before_portolan_cli() -> None:
-    """portolan-cli pins portolan-core exactly, so PyPI must hold portolan-core first.
-
-    Each distribution builds into its own directory, as in rashid's
-    publish.yml. The publish step for the portolan-core directory comes
-    before the publish step for the portolan-cli directory.
-    """
+    """portolan-cli pins portolan-core exactly, so PyPI must hold portolan-core first."""
     steps = _jobs("release.yml")["release"]["steps"]
     out_dirs = {
         package: out_dir
@@ -498,7 +430,6 @@ def test_release_checks_the_versions_before_the_tag() -> None:
 
 
 def test_ci_runs_the_wheel_smoke() -> None:
-    """The wheel-smoke job installs the built portolan-core wheel alone (#1133)."""
     job = _jobs("ci.yml")["wheel-smoke"]
 
     assert "python scripts/wheel_smoke.py" in _run_text(job)
@@ -512,11 +443,7 @@ def _builds(job: dict[str, Any]) -> list[tuple[str, str]]:
 
 
 def test_release_builds_into_the_ignored_dist_folder() -> None:
-    """The portolan-cli sdist holds every file that .gitignore does not exclude.
-
-    A dist-core/ folder at the root went into the portolan-cli sdist with the
-    portolan-core wheel in it. .gitignore excludes dist/.
-    """
+    """A dist-core/ folder at the root goes into the portolan-cli sdist; .gitignore excludes dist/."""
     out_dirs = [out_dir for _, out_dir in _builds(_jobs("release.yml")["release"])]
     gitignore = (REPO_ROOT / ".gitignore").read_text(encoding="utf-8").splitlines()
 
@@ -594,23 +521,21 @@ def test_the_digest_check_names_each_file_with_other_bytes(
     assert _load_digests().mismatches(local, published) == expected
 
 
-# ---------------------------------------------------------------------------
 # Cheap gate faults, run on every pull request
-# ---------------------------------------------------------------------------
 
 selftest = _load_selftest()
 CHEAP_FAULTS = ("library-print", "dead-function", "ci-success-wiring", "unknown-marker")
 
 
 def test_the_gate_env_puts_both_copied_packages_first(tmp_path: Path) -> None:
-    """Without the core folder a gate imports portolan_core from the editable install (#1133)."""
+    """Without the core folder a gate imports portolan_core from the editable install."""
     path = selftest.gate_env(tmp_path)["PYTHONPATH"].split(os.pathsep)
 
     assert path == [str(tmp_path), str(tmp_path / "packages" / "portolan-core" / "src")]
 
 
 def test_the_duplicate_gate_runs_the_prek_jscpd_command() -> None:
-    """The self-test proves the hook that CI runs, so both read portolan-core (#1133)."""
+    """The self-test proves the hook that CI runs, so both read portolan-core."""
     prek = (REPO_ROOT / "prek.toml").read_text(encoding="utf-8")
     (entry,) = re.findall(r'entry = "(uvx jscpd@[^"]+)"', prek)
     (gate,) = selftest.FAULTS_BY_NAME["duplicate-block"].gates

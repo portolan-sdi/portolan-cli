@@ -1,9 +1,4 @@
-"""Tests for ESRI renderer to Mapbox GL converter.
-
-Uses real fixture data from ESRI REST endpoints:
-- esri_classbreaks.json: Census MapServer graduated symbol sizes
-- esri_uniquevalue.json: PAD-US categorical fill colors
-"""
+"""Tests for ESRI renderer to Mapbox GL converter."""
 
 from __future__ import annotations
 
@@ -166,8 +161,7 @@ class TestClassBreaksRenderer:
         radius = style["layers"][0]["paint"]["circle-radius"]
 
         # Step expression: ["step", ["get", "field"], initial, break1, val1, break2, val2, ...]
-        # From fixture: breaks at 61, 264, 759, 1900
-        # Sizes: 4, 7.5, 11, 14.5, 18 (divided by 2 for Mapbox radius)
+        # The fixture has breaks at 61, 264, 759, 1900.
         assert 61 in radius
         assert 264 in radius
         assert 759 in radius
@@ -256,12 +250,7 @@ class TestWarningsAndPartialConversion:
 
 
 class TestNullColorHandling:
-    """Regression tests for ESRI API returning null colors (Arcade expression renderers).
-
-    Some ArcGIS layers use Arcade expressions (e.g., ``"valueExpression":"$view.scale"``)
-    for scale-based rendering. Their symbol JSON may contain ``"color": null``.
-    The converter must handle these gracefully without raising TypeError.
-    """
+    """Regression tests for ESRI API returning null colors (Arcade expression renderers)."""
 
     def test_simple_renderer_null_color_does_not_crash(self) -> None:
         """Simple renderer with null symbol color falls back to grey without error."""
@@ -394,18 +383,12 @@ class TestParseFillSymbol:
         }
 
     def test_missing_color_uses_esri_default_gray(self) -> None:
-        """A symbol with no color renders opaque #808080."""
         layer = _parse_fill_symbol({"type": "esriSFS"}, "layer-0", "src")
 
         assert layer["paint"]["fill-color"] == DEFAULT_HEX
         assert layer["paint"]["fill-opacity"] == 1.0
 
     def test_outline_without_color_omits_outline(self) -> None:
-        """An outline carrying only a width adds no fill-outline-color.
-
-        Guards the `outline and outline.get("color")` conjunction: reading
-        ``outline["color"]`` on this symbol would raise KeyError.
-        """
         symbol = {"type": "esriSFS", "color": [1, 2, 3, 255], "outline": {"width": 3}}
         layer = _parse_fill_symbol(symbol, "layer-0", "src")
 
@@ -495,7 +478,6 @@ class TestParseCircleSymbol:
         assert layer["type"] == "circle"
 
     def test_missing_color_uses_esri_default_gray(self) -> None:
-        """A marker with no color renders opaque #808080."""
         layer = _parse_circle_symbol({"type": "esriSMS", "size": 10}, "sms", "src")
 
         assert layer["paint"]["circle-color"] == DEFAULT_HEX
@@ -572,7 +554,6 @@ class TestParseLineSymbol:
         }
 
     def test_defaults_when_color_and_width_missing(self) -> None:
-        """A bare esriSLS renders opaque #808080 at width 1."""
         layer = _parse_line_symbol({"type": "esriSLS"}, "my-line", "src")
 
         assert layer["paint"]["line-color"] == DEFAULT_HEX
@@ -777,14 +758,12 @@ class TestUniqueValueRendererDetails:
         assert style["layers"][0]["paint"]["fill-opacity"] == 51 / 255.0
 
     def test_info_without_color_uses_default_gray(self) -> None:
-        """An info whose symbol omits color contributes #808080."""
         renderer = self._renderer(uniqueValueInfos=[{"value": "a", "symbol": {"type": "esriSFS"}}])
         style = parse_uniquevalue_renderer(renderer, source_layer="src")
 
         assert style["layers"][0]["paint"]["fill-color"][2:] == ["a", DEFAULT_HEX, "#cccccc"]
 
     def test_info_without_symbol_uses_default_gray(self) -> None:
-        """An info with no symbol at all contributes #808080 at full opacity."""
         renderer = self._renderer(uniqueValueInfos=[{"value": "a"}])
         style = parse_uniquevalue_renderer(renderer, source_layer="src")
 
@@ -924,12 +903,6 @@ class TestClassBreaksRendererDetails:
         assert style["layers"][0]["paint"]["circle-radius"][4] == 5.0
 
     def test_uniform_marker_sizes_are_not_graduated(self) -> None:
-        """Same-size markers are treated as color-varying, not size-varying.
-
-        Sizes must actually differ for the graduated-symbol branch. With one
-        distinct size the renderer falls through to the color branch, and
-        because the layer type is not fill it emits a line layer.
-        """
         renderer = self._graduated()
         for info in renderer["classBreakInfos"]:
             info["symbol"]["size"] = 8
@@ -969,7 +942,6 @@ class TestClassBreaksRendererDetails:
         assert style["layers"][0]["paint"]["fill-opacity"] == 0.7
 
     def test_choropleth_class_without_color_uses_default_gray(self) -> None:
-        """A class whose symbol omits color contributes #808080."""
         renderer = self._choropleth()
         del renderer["classBreakInfos"][1]["symbol"]["color"]
         style = parse_classbreaks_renderer(renderer, source_layer="src")
@@ -977,7 +949,6 @@ class TestClassBreaksRendererDetails:
         assert style["layers"][0]["paint"]["fill-color"][4] == DEFAULT_HEX
 
     def test_choropleth_class_without_symbol_uses_default_gray(self) -> None:
-        """A class with no symbol contributes #808080."""
         renderer = self._choropleth()
         del renderer["classBreakInfos"][1]["symbol"]
         style = parse_classbreaks_renderer(renderer, source_layer="src")

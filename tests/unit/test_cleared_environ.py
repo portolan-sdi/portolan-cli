@@ -1,9 +1,4 @@
-"""The ``cleared_environ`` helper in tests/conftest.py.
-
-A cleared environment must still let the interpreter run. On Windows, CPython
-3.12.15 cannot build an SSL context without the system variables, and botocore
-builds one while it resolves credentials.
-"""
+"""The ``cleared_environ`` helper in tests/conftest.py."""
 
 from __future__ import annotations
 

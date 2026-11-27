@@ -1,28 +1,4 @@
-"""How `portolan check` remediates each rashid rule id.
-
-rashid says what is wrong. This table says who fixes it:
-
-- ``AUTO`` — mechanical. ``--fix`` applies a fixer and the defect disappears.
-- ``INSTRUCT`` — judgment. Portolan cannot invent a license, a provider, or a
-  readable title, so it emits the requirement and the agent or human acts.
-- ``EXTERNAL`` — not in the catalog at all. Range and CORS defects are settings
-  on the server hosting the published bytes.
-
-The ``fixer`` key on an AUTO row is what ``--fix`` dispatches on:
-:data:`portolan_cli.validation.fixers.FIXERS` maps each key to the repairer that
-runs, and ``fixers.auto_fixer_keys`` selects the keys by membership in that
-dict. The key is therefore a live identifier, not a label — renaming one here
-without renaming it in ``FIXERS`` silently drops the rule out of the AUTO
-selection and ``--fix`` stops repairing it, with no error anywhere. That is why
-``TestRegistryCompleteness`` in ``tests/unit/validation/test_fixers.py`` pins the
-correspondence in both directions.
-
-``--fix`` still also drives ``scan.check.run_fix_workflow`` alongside the
-registry, but for item freshness against the filesystem, which no rule reports.
-
-``requirement`` is the imperative sentence shown for a finding, phrased so it
-reads as an instruction on its own, without the rule id or the message.
-"""
+"""How `portolan check` remediates each rashid rule id."""
 
 from __future__ import annotations
 
@@ -43,13 +19,7 @@ class Bucket(Enum):
 
 @dataclass(frozen=True)
 class Remediation:
-    """The remediation policy for one rule id.
-
-    Attributes:
-        bucket: Who resolves it.
-        fixer: Fixer-registry key, set only on AUTO rows.
-        requirement: Imperative sentence describing what conformance demands.
-    """
+    """The remediation policy for one rule id."""
 
     bucket: Bucket
     fixer: str | None
@@ -76,9 +46,7 @@ def _external(requirement: str) -> Remediation:
 
 RULE_REMEDIATION: dict[str, Remediation] = {
     # ---- files: scaffolding and links are mechanical, prose is not ----
-    # fixer `required_files` composes the `agents` and `readme` fixers.
-    # It subsumes `agents` and `readme`: when this row fires, fixers.auto_fixer_keys
-    # drops those two from the selection so the same repair does not run three times.
+    # `required_files` subsumes `agents` and `readme`, so auto_fixer_keys drops those two.
     "PTL-FIL-001": _auto(
         "required_files",
         "Every catalog and collection directory must contain README.md and AGENTS.md.",
@@ -129,10 +97,7 @@ RULE_REMEDIATION: dict[str, Remediation] = {
         "links",
         "Repoint the structural link at the object it claims to reference.",
     ),
-    # The three logo rules arrived with rashid 0.1.5. `portolan logo` and
-    # `init --logo` write a conformant link, so a defect here means the link was
-    # hand-edited or predates the command. Repairing it needs the image, which
-    # `--fix` has no way to choose, so all three instruct.
+    # `portolan logo` writes a conformant link, so a defect means a hand edit; the fix needs an image, so instruct.
     "PTL-LNK-007": _instruct(
         "Give the rel:'icon' link a browser-displayable image type: apng, avif, "
         "gif, jpeg, png, svg+xml, or webp. Re-run `portolan logo <file>` to have "
@@ -147,9 +112,7 @@ RULE_REMEDIATION: dict[str, Remediation] = {
         "`portolan logo <file>` publishes the image under _assets/ and links it "
         "relatively."
     ),
-    # A translated tree sits outside the containment tree. Choosing between
-    # dropping the link and moving the object is the publisher's call, so the
-    # `links` fixer does not guess.
+    # Dropping the link or moving the object is the publisher's call, so the `links` fixer does not guess.
     "PTL-LNK-010": _instruct(
         "Link the alternate-language object as an alternate, not as a child or an item; "
         "a translated tree stays outside the containment tree."
@@ -176,10 +139,7 @@ RULE_REMEDIATION: dict[str, Remediation] = {
     "PTL-AST-005": _instruct(
         "Move the asset onto a collection or an item; a catalog organizes, it does not carry data."
     ),
-    # Not AUTO despite looking mechanical. The `assets` fixer backfills a media
-    # type only when one is missing, and never overwrites a type already there.
-    # A wrong type here is a claim about the bytes, and correcting it without
-    # reading them would be a guess.
+    # Not AUTO: the `assets` fixer only backfills a missing media type, and a wrong one needs the bytes read.
     "PTL-AST-006": _instruct(
         "Set the raster data asset's type to "
         "'image/tiff; application=geotiff; profile=cloud-optimized', or convert "
@@ -215,11 +175,7 @@ RULE_REMEDIATION: dict[str, Remediation] = {
         "Declare the STAC version extension on the versioned collection, "
         "then populate its version fields."
     ),
-    # The rule that would have caught the raster v1.1.0 drift in #654. It is a
-    # warning upstream and it instructs here, for the same reason: a catalog
-    # published before the registry moved is behind, not broken. Rewriting the
-    # URI also changes which schema the object must satisfy, which is a decision
-    # a sweep should not make on the operator's behalf.
+    # Warning upstream, instruct here: a catalog behind the registry is not broken, and a URI rewrite changes the schema.
     "PTL-CNF-004": _instruct(
         "Move the declared extension URI to the version the Portolan registry "
         "pins, then re-run generation so the fields match that version's schema."
@@ -490,8 +446,7 @@ RULE_REMEDIATION: dict[str, Remediation] = {
     "PTL-LIV-005": _external(
         "Configure the host to answer CORS preflight (OPTIONS) requests for asset URLs."
     ),
-    # The host lacks a file the catalog links. The fix is a push, not a host
-    # setting, so this live rule is INSTRUCT (issue #935).
+    # The host lacks a file the catalog links. The fix is a push, so INSTRUCT.
     "PTL-LIV-006": _instruct(
         "Run `portolan push` again so the host serves every file a link names; if the file is "
         "missing locally too, restore it or remove the link."
@@ -541,14 +496,7 @@ def remediation_for(rule_id: str) -> Remediation:
 
 
 def remediation_of(finding: Any) -> Remediation:
-    """How one finding is remediated: its rule's row, except an INFO is never AUTO.
-
-    An INFO is a note, not a defect, so no fixer runs for it and it never
-    counts toward ``auto`` or as a survivor. rashid 0.4 reports PTL-DAT-006 as
-    an INFO when a file has too few rows to judge its order. Read as AUTO, that
-    note selected ``convert`` and kept ``auto`` above zero after every ``--fix``.
-    It keeps its requirement sentence as an INSTRUCT row.
-    """
+    """How one finding is remediated: its rule's row, except an INFO is never AUTO."""
     remediation = remediation_for(finding.rule_id)
     if remediation.bucket is Bucket.AUTO and finding.severity is Severity.INFO:
         return Remediation(Bucket.INSTRUCT, None, remediation.requirement)

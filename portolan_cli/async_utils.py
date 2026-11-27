@@ -1,18 +1,4 @@
-"""Async utilities for concurrent I/O operations.
-
-This module provides async primitives for high-throughput parallel operations:
-- AsyncIOExecutor: Semaphore-bounded concurrent task execution
-- AsyncProgressReporter: Thread-safe progress tracking for async operations
-- Circuit breaker pattern for resilience against cascading failures
-
-Used by push_async() and pull_async() for efficient cloud storage operations.
-
-Design Decisions:
-- Uses asyncio for non-blocking I/O (vs ThreadPoolExecutor for CPU-bound)
-- Semaphore limits concurrency to prevent overwhelming cloud APIs
-- Circuit breaker trips after consecutive failures to fail fast
-- Progress reporter is thread-safe for mixed sync/async usage
-"""
+"""Async utilities for concurrent I/O operations."""
 
 from __future__ import annotations
 
@@ -33,43 +19,17 @@ if TYPE_CHECKING:
 T = TypeVar("T")
 
 
-# =============================================================================
-# Default Configuration (Issue #344: Conservative defaults for home networks)
-# =============================================================================
-
-# Maximum concurrent HTTP connections considered safe for consumer networks.
-# Consumer routers typically cap NAT sessions around 1k-4k, but connection-
-# tracking pressure appears well before that. 100 is a safe upper bound.
+# Safe upper bound: consumer routers hit connection-tracking pressure well before 1k NAT sessions.
 MAX_SAFE_CONNECTIONS = 100
 
 
 def get_default_concurrency() -> int:
-    """Get default concurrency limit for file-level async operations.
-
-    Returns a conservative default that won't overwhelm home networks.
-    The total connection footprint is: file_concurrency × chunk_concurrency.
-
-    Issue #344: Lowered from 50 to 8 to prevent NAT table exhaustion.
-    With default chunk_concurrency=4, this yields 32 concurrent connections.
-
-    Returns:
-        Default file concurrency limit (8).
-    """
+    """Get default concurrency limit for file-level async operations."""
     return 8
 
 
 def get_default_chunk_concurrency() -> int:
-    """Get default concurrency limit for per-file multipart chunks.
-
-    Each file upload can use multiple concurrent HTTP connections for
-    multipart upload chunks. This multiplies with file concurrency.
-
-    Issue #344: Lowered from 12 to 4 to prevent connection storms.
-    With default file_concurrency=8, this yields 32 concurrent connections.
-
-    Returns:
-        Default chunk concurrency limit (4).
-    """
+    """Get default concurrency limit for per-file multipart chunks."""
     return 4
 
 
@@ -78,24 +38,7 @@ def calculate_connection_footprint(
     chunk_concurrency: int,
     workers: int = 1,
 ) -> int:
-    """Calculate total concurrent HTTP connections for given settings.
-
-    The connection footprint is: workers × file_concurrency × chunk_concurrency.
-
-    Args:
-        file_concurrency: Concurrent file uploads per worker.
-        chunk_concurrency: Concurrent chunks per file.
-        workers: Number of parallel workers (for catalog-wide operations).
-
-    Returns:
-        Maximum concurrent HTTP connections.
-
-    Example:
-        >>> calculate_connection_footprint(8, 4)  # Default
-        32
-        >>> calculate_connection_footprint(50, 12, workers=4)  # Old defaults
-        2400
-    """
+    """Calculate total concurrent HTTP connections for given settings."""
     return workers * file_concurrency * chunk_concurrency
 
 
@@ -104,23 +47,7 @@ def adjust_concurrency_for_max_connections(
     chunk_concurrency: int,
     max_connections: int,
 ) -> tuple[int, int]:
-    """Adjust concurrency values to stay within max_connections limit.
-
-    Reduces file_concurrency first (larger impact), then chunk_concurrency
-    if needed. Never reduces either below 1.
-
-    Args:
-        file_concurrency: Desired file concurrency.
-        chunk_concurrency: Desired chunk concurrency.
-        max_connections: Maximum allowed concurrent connections.
-
-    Returns:
-        Tuple of (adjusted_file_concurrency, adjusted_chunk_concurrency).
-
-    Example:
-        >>> adjust_concurrency_for_max_connections(50, 4, 32)
-        (8, 4)
-    """
+    """Adjust concurrency values to stay within max_connections limit."""
     # If already under limit, no adjustment needed
     if file_concurrency * chunk_concurrency <= max_connections:
         return file_concurrency, chunk_concurrency
@@ -145,35 +72,9 @@ def adjust_concurrency_for_max_connections(
     return max(1, adjusted_file), max(1, adjusted_chunk)
 
 
-# =============================================================================
-# Adaptive Concurrency Manager (Issue #344: Slow-start)
-# =============================================================================
-
-
 @dataclass
 class AdaptiveConcurrencyManager:
-    """Adaptive concurrency manager with slow-start and backoff.
-
-    Starts with low concurrency and ramps up on success, backs off on errors.
-    This prevents overwhelming home networks during initial connection burst.
-
-    Attributes:
-        max_concurrency: Maximum concurrency to ramp up to.
-        initial_concurrency: Starting concurrency (default: 2).
-        current_concurrency: Current active concurrency level.
-        ramp_up_factor: Multiplier for increasing concurrency (default: 1.5).
-        backoff_factor: Multiplier for decreasing concurrency (default: 0.5).
-        success_window: Successes needed before ramping up (default: 5).
-
-    Example:
-        >>> manager = AdaptiveConcurrencyManager(max_concurrency=50)
-        >>> manager.current_concurrency  # Starts low
-        2
-        >>> for _ in range(10):
-        ...     manager.record_success()
-        >>> manager.current_concurrency  # Ramped up
-        4
-    """
+    """Adaptive concurrency manager with slow-start and backoff."""
 
     max_concurrency: int
     initial_concurrency: int = 2
@@ -223,28 +124,13 @@ class AdaptiveConcurrencyManager:
         self.record_error()
 
 
-# =============================================================================
-# Circuit Breaker
-# =============================================================================
-
-
 class CircuitBreakerError(Exception):
     """Raised when circuit breaker trips due to consecutive failures."""
 
 
 @dataclass
 class CircuitBreaker:
-    """Circuit breaker for failing fast on repeated errors.
-
-    When consecutive failures exceed the threshold, the circuit "opens"
-    and raises CircuitBreakerError on subsequent calls, preventing
-    cascading failures and wasted retries.
-
-    Attributes:
-        failure_threshold: Number of consecutive failures to trip.
-        consecutive_failures: Current count of consecutive failures.
-        is_open: True if circuit is tripped (failing fast).
-    """
+    """Circuit breaker for failing fast on repeated errors."""
 
     failure_threshold: int = 5
     consecutive_failures: int = 0
@@ -265,11 +151,7 @@ class CircuitBreaker:
                 self.is_open = True
 
     def check(self) -> None:
-        """Check if circuit is open, raising if so.
-
-        Raises:
-            CircuitBreakerError: If circuit is open.
-        """
+        """Check if circuit is open, raising if so."""
         with self._lock:
             if self.is_open:
                 raise CircuitBreakerError(
@@ -277,21 +159,9 @@ class CircuitBreaker:
                 )
 
 
-# =============================================================================
-# Execution Result
-# =============================================================================
-
-
 @dataclass
 class AsyncExecutionResult(Generic[T]):
-    """Result of executing an async operation on a single item.
-
-    Attributes:
-        item: The item that was processed (e.g., file path).
-        result: The operation result, or None if an exception occurred.
-        error: Error message if an exception occurred, or None on success.
-        duration_seconds: Time taken for this operation.
-    """
+    """Result of executing an async operation on a single item."""
 
     item: str
     result: T | None
@@ -299,31 +169,8 @@ class AsyncExecutionResult(Generic[T]):
     duration_seconds: float = 0.0
 
 
-# =============================================================================
-# Async IO Executor
-# =============================================================================
-
-
 class AsyncIOExecutor(Generic[T]):
-    """Semaphore-bounded async executor for concurrent I/O operations.
-
-    Provides controlled concurrency with:
-    - Configurable concurrency limit via semaphore
-    - Circuit breaker for cascading failure protection
-    - Progress callback for UI updates
-    - Graceful error handling without stopping batch
-    - Dynamic concurrency adjustment via AdaptiveConcurrencyManager
-
-    Example:
-        >>> async def upload(path: str) -> int:
-        ...     return await upload_file(path)
-        >>> executor = AsyncIOExecutor(concurrency=50)
-        >>> results = await executor.execute(
-        ...     items=paths,
-        ...     operation=upload,
-        ...     on_complete=progress_callback,
-        ... )
-    """
+    """Semaphore-bounded async executor for concurrent I/O operations."""
 
     def __init__(
         self,
@@ -332,16 +179,7 @@ class AsyncIOExecutor(Generic[T]):
         circuit_breaker_threshold: int = 5,
         adaptive_manager: AdaptiveConcurrencyManager | None = None,
     ) -> None:
-        """Initialize the executor.
-
-        Args:
-            concurrency: Maximum concurrent operations (default: 8).
-            circuit_breaker_threshold: Failures before circuit trips.
-            adaptive_manager: Optional adaptive concurrency manager for slow-start.
-                When provided, concurrency will be adjusted dynamically based on
-                success/failure rates. The executor will gate admission based on
-                the manager's current_concurrency, not a fixed semaphore.
-        """
+        """Initialize the executor."""
         self.concurrency = concurrency
         self._semaphore: asyncio.Semaphore | None = None
         self._circuit_breaker = CircuitBreaker(failure_threshold=circuit_breaker_threshold)
@@ -351,12 +189,7 @@ class AsyncIOExecutor(Generic[T]):
         self._in_flight_lock: asyncio.Lock | None = None
 
     async def _acquire_adaptive_permit(self) -> None:
-        """Acquire permission to start work under adaptive concurrency.
-
-        When adaptive_manager is set, this gates admission based on the
-        manager's current_concurrency rather than a fixed semaphore.
-        Polls with backoff until a slot opens.
-        """
+        """Acquire permission to start work under adaptive concurrency."""
         if self._adaptive_manager is None or self._in_flight_lock is None:
             return
 
@@ -383,20 +216,7 @@ class AsyncIOExecutor(Generic[T]):
         *,
         on_complete: Callable[[str, T | None, str | None, int, int], None] | None = None,
     ) -> list[AsyncExecutionResult[T]]:
-        """Execute operation on all items with bounded concurrency.
-
-        Args:
-            items: List of item identifiers to process.
-            operation: Async callable that takes an item and returns a result.
-            on_complete: Optional callback called after each item completes.
-                Signature: (item, result, error, completed_count, total)
-
-        Returns:
-            List of AsyncExecutionResult objects, one per item.
-
-        Raises:
-            CircuitBreakerError: If too many consecutive failures occur.
-        """
+        """Execute operation on all items with bounded concurrency."""
         if not items:
             return []
 
@@ -486,29 +306,8 @@ class AsyncIOExecutor(Generic[T]):
         return await asyncio.gather(*tasks, return_exceptions=False)
 
 
-# =============================================================================
-# Async Progress Reporter
-# =============================================================================
-
-
 class AsyncProgressReporter:
-    """Thread-safe progress reporter for async operations.
-
-    Compatible with asyncio event loops while maintaining thread-safety
-    for callbacks from mixed sync/async code.
-
-    Displays:
-    - File progress: N/M files
-    - Data progress: transferred / total (e.g., "54.2 MB / 1.2 GB")
-    - Upload speed: current speed (e.g., "10.5 MiB/s")
-    - Time elapsed and ETA
-
-    Example:
-        >>> async with AsyncProgressReporter(total_files=100, total_bytes=1_000_000) as reporter:
-        ...     async for file in files:
-        ...         await upload(file)
-        ...         reporter.advance(bytes_uploaded=file.size)
-    """
+    """Thread-safe progress reporter for async operations."""
 
     def __init__(
         self,
@@ -518,14 +317,7 @@ class AsyncProgressReporter:
         json_mode: bool = False,
         description: str = "Uploading",
     ) -> None:
-        """Initialize the progress reporter.
-
-        Args:
-            total_files: Total number of files to process.
-            total_bytes: Total bytes to process (for accurate progress).
-            json_mode: If True, suppress progress output.
-            description: Description shown in progress bar.
-        """
+        """Initialize the progress reporter."""
         self.total_files = total_files
         self.total_bytes = total_bytes
         self.json_mode = json_mode
@@ -595,13 +387,7 @@ class AsyncProgressReporter:
             self._progress.__exit__(exc_type, exc_val, exc_tb)
 
     def advance(self, bytes_uploaded: int = 0) -> None:
-        """Advance the progress by one file and the given bytes.
-
-        Thread-safe for use from async callbacks.
-
-        Args:
-            bytes_uploaded: Number of bytes processed for this file.
-        """
+        """Advance the progress by one file and the given bytes."""
         with self._lock:
             self.files_completed += 1
             self.bytes_completed += bytes_uploaded

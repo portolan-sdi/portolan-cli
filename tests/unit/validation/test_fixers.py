@@ -1,10 +1,4 @@
-"""The fixer registry: the mechanical half of `portolan check --fix`.
-
-Each fixer is a whole-catalog sweep keyed by the name an AUTO row in
-``RULE_REMEDIATION`` names. These tests corrupt one aspect of a catalog, run the
-fixer that owns it, and assert the specific repair — plus the two completeness
-gates that keep the registry and the remediation table in agreement.
-"""
+"""The fixer registry: the mechanical half of `portolan check --fix`."""
 
 from __future__ import annotations
 
@@ -76,12 +70,7 @@ def _tiny_catalog(root: Path, *, collection: str = "roads") -> Path:
 
 
 def _organizing_catalog(root: Path, *, collection: str = "roads") -> Path:
-    """A collection whose items sit under an organizing catalog (core.md:168-170).
-
-    ``roads/collection.json`` -> ``roads/US/catalog.json`` -> ``roads/US/US_AB.json``.
-    Returns the item's path. Links are written already correct, so any change the
-    fixer makes to the item's ``collection`` link is a regression.
-    """
+    """A collection whose items sit under an organizing catalog (core.md:168-170)."""
     collection_dir = _tiny_catalog(root, collection=collection)
     _write_json(
         collection_dir / "US" / "catalog.json",
@@ -165,12 +154,6 @@ class TestAutoFixerKeys:
         assert auto_fixer_keys([_finding("PTL-ZZZ-999")]) == []
 
     def test_an_info_finding_selects_no_fixer(self) -> None:
-        """An INFO is a note, not a defect, so it never starts a repair.
-
-        rashid 0.4 reports PTL-DAT-006 as an INFO when a file has too few rows
-        to judge its order. Selecting ``convert`` for it claimed a repair the
-        file did not need.
-        """
         info = Finding(
             rule_id="PTL-DAT-006",
             severity=Severity.INFO,
@@ -463,13 +446,6 @@ class TestLinksFixer:
     def test_item_under_an_organizing_catalog_keeps_its_collection_link(
         self, tmp_path: Path
     ) -> None:
-        """A catalog may organize a collection's items (core.md:168-170).
-
-        The item's parent is then that catalog while its collection link points
-        past it to the enclosing collection. The rebuild used to emit no
-        ``collection`` pair for such an item and then drop the existing link as
-        an unexpected structural rel, stripping a link PORTO-CORE-035 requires.
-        """
         item_json = _organizing_catalog(tmp_path)
 
         FIXERS["links"](tmp_path, False)
@@ -493,11 +469,6 @@ class TestLinksFixer:
     def test_rebuild_survives_a_non_tuple_structural_rels(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """``STRUCTURAL_RELS`` is rashid's to shape; we only need membership.
-
-        Concatenating it with a tuple raised ``TypeError`` the moment upstream
-        exported anything but a tuple.
-        """
         from rashid_core.api import STRUCTURAL_RELS
 
         monkeypatch.setattr(fixers_module, "STRUCTURAL_RELS", frozenset(STRUCTURAL_RELS))
@@ -646,11 +617,7 @@ class TestLinksFixer:
 
 
 def _add_translation(root: Path, tag: str = "ro") -> None:
-    """Make ``root/<tag>`` an alternate-language tree of the catalog at ``root``.
-
-    core.md, Alternate-Language Trees: the translation has its own root and joins
-    the source tree only by ``alternate`` links, never by ``child`` links.
-    """
+    """Make ``root/<tag>`` an alternate-language tree of the catalog at ``root``."""
     _tiny_catalog(root / tag)
     for path, href in (
         (root / "catalog.json", f"./{tag}/catalog.json"),
@@ -662,11 +629,7 @@ def _add_translation(root: Path, tag: str = "ro") -> None:
 
 
 def _link_and_file_findings_after_fix(root: Path) -> list[str]:
-    """Run ``check --fix``'s fixers, then list the PTL-LNK and PTL-FIL findings left.
-
-    Each collection gets a README that names its license and source first, so
-    PTL-FIL-005 (README prose, an INSTRUCT rule) does not fire.
-    """
+    """Run ``check --fix``'s fixers, then list the PTL-LNK and PTL-FIL findings left."""
     for collection_json in root.rglob("collection.json"):
         (collection_json.parent / "README.md").write_text(
             "# Roads\n\nLicense: CC-BY-4.0. Source: a test.\n", encoding="utf-8"
@@ -681,12 +644,7 @@ def _link_and_file_findings_after_fix(root: Path) -> list[str]:
 
 
 class TestLinksFixerAgreesWithRashid:
-    """The links fixer writes the links rashid expects, so a re-check finds none.
-
-    The fixer used to compute its own link block. It linked every tree to the
-    catalog root, wrote hrefs without percent-encoding, and linked children that
-    are not STAC. ``rashid_core.api.expected_links`` is the rule's own answer.
-    """
+    """The links fixer writes the links rashid expects, so a re-check finds none."""
 
     def test_translated_catalog_has_no_link_findings(self, tmp_path: Path) -> None:
         """Each language tree links to its own root, and no child crosses languages."""
@@ -749,12 +707,6 @@ class TestBboxFixer:
         assert extent == [[0.0, -1.0, 3.0, 2.0]]
 
     def test_extent_covers_items_under_an_organizing_catalog(self, tmp_path: Path) -> None:
-        """A broken extent must recompute from items held through a catalog.
-
-        Walking direct children only found the organizing catalog, which carries
-        no extent of its own, so the union came back empty and the repair was
-        reported as skipped instead of recomputed.
-        """
         _organizing_catalog(tmp_path)
         collection_json = tmp_path / "roads" / "collection.json"
         data = _read_json(collection_json)
@@ -767,7 +719,6 @@ class TestBboxFixer:
         assert [r.action for r in results] == [FixAction.UPDATED]
 
     def test_an_antimeridian_extent_is_rebuilt_as_add_writes_it(self, tmp_path: Path) -> None:
-        """Issue #852: the envelope, then the two parts, as ``add`` writes them."""
         collection = self._collection_with_items(tmp_path, [200.0, -95.0, 300.0, 95.0])
         item = _read_json(collection / "b" / "b.json")
         item["bbox"] = [177.0, -20.0, -175.0, -15.0]
@@ -855,7 +806,6 @@ class TestAssetsFixer:
         assert results == []
 
     def test_unknown_extension_is_skipped_not_guessed(self, tmp_path: Path) -> None:
-        """`application/octet-stream` carries no information; do not write it (#682)."""
         collection = self._collection_with_asset(tmp_path, {"href": "./notes.qqq"})
 
         results = FIXERS["assets"](tmp_path, False)
@@ -1460,11 +1410,6 @@ class TestItemMirrorCogPredicate:
         assert [r.action for r in results] == [FixAction.CREATED]
 
     def test_a_cog_under_an_organizing_catalog_requests_a_mirror(self, tmp_path: Path) -> None:
-        """PTL-MIR-001 scopes by ownership, not by directory depth.
-
-        A scene collection that groups its items under year catalogs still owes
-        a mirror. Probing direct children only saw the catalog, never the COG.
-        """
         collection = _tiny_catalog(tmp_path)
         _write_json(
             collection / "2024" / "catalog.json",
@@ -1646,11 +1591,6 @@ class TestThumbnailFixer:
         assert asset["type"] == "text/csv"
 
     def test_dry_run_reports_only_what_the_real_run_would_do(self, tmp_path: Path) -> None:
-        """A tabular collection offers no thumbnail source, so neither run acts.
-
-        The dry-run branch used to skip the orchestrator's gates and promise a
-        thumbnail for every collection that lacked one.
-        """
         collection_dir = _tiny_catalog(tmp_path)
         (collection_dir / "rates.csv").write_text("a,b\n1,2\n", encoding="utf-8")
         data = _read_json(collection_dir / "collection.json")

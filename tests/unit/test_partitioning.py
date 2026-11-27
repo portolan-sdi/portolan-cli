@@ -1,10 +1,4 @@
-"""Tests for portolan_cli.partitioning module.
-
-Tests the partitioning functionality including:
-- Size threshold detection (should_partition)
-- Partitioning via geoparquet-io wrapper
-- Config integration
-"""
+"""Tests for portolan_cli.partitioning module."""
 
 from __future__ import annotations
 
@@ -211,7 +205,7 @@ class TestGetPartitionInfo:
 
 
 class TestGlobPatterns:
-    """Tests for glob pattern building functions (Issue #351)."""
+    """Tests for glob pattern building functions."""
 
     @pytest.mark.unit
     def test_build_glob_pattern_returns_relative_path_with_strategy(self) -> None:
@@ -252,7 +246,7 @@ class TestGlobPatterns:
 
 
 class TestGlobTransformation:
-    """Tests for partition:glob field transformation on push (Issue #351)."""
+    """Tests for partition:glob field transformation on push."""
 
     @pytest.mark.unit
     def test_transform_adds_glob_field_to_pattern_assets(self) -> None:
@@ -619,7 +613,7 @@ class TestPartitionExtensionInStac:
 
 
 class TestFinalizeItemPartitionWiring:
-    """Tests for partition metadata wiring through finalize_items (Issue #232 Phase 3)."""
+    """Tests for partition metadata wiring through finalize_items."""
 
     @pytest.mark.unit
     def test_finalize_items_applies_partition_metadata_to_collection(self, tmp_path: Path) -> None:
@@ -679,7 +673,7 @@ class TestFinalizeItemPartitionWiring:
 
 
 class TestGlobTransformationPartitionExtension:
-    """Only partition:glob survives the transition (issue #654)."""
+    """Only partition:glob survives the transition."""
 
     @pytest.mark.unit
     def test_transform_writes_only_the_spec_field(self) -> None:
@@ -738,15 +732,10 @@ class TestGlobTransformationPartitionExtension:
 
 
 class TestGlobAssetKeyCollision:
-    """Tests for glob asset insertion avoiding key collision (Issue #443)."""
+    """Tests for glob asset insertion avoiding key collision."""
 
     @pytest.mark.unit
     def test_glob_asset_uses_alternate_key_when_target_occupied(self, tmp_path: Path) -> None:
-        """When 'partitioned_data' key has non-glob asset, use alternate key.
-
-        Per Issue #443: Don't overwrite user-defined assets when auto-adding
-        glob assets for Hive partitions.
-        """
         import pystac
 
         from portolan_cli.add import _ensure_partition_metadata
@@ -823,11 +812,7 @@ def _init_catalog(path: Path, config: str = "") -> None:
 
 
 class TestFindLargePartitionCandidates:
-    """Tests for find_large_partition_candidates (config decision, issue #620).
-
-    These exercise the Click-free decision layer extracted from cli.py: config
-    gating plus the file scan. The TTY check and prompt stay in the CLI.
-    """
+    """Tests for find_large_partition_candidates (config decision)."""
 
     @pytest.mark.unit
     def test_disabled_returns_no_candidates(self, tmp_path: Path) -> None:
@@ -941,11 +926,7 @@ def _points_geoparquet(path: Path) -> Path:
 
 
 class TestPartitionFile:
-    """Tests for partition_file, the library function of `portolan partition`.
-
-    The command has no `--json` flag, so the parity harness cannot run it.
-    These tests compare the `--format json` envelope with the library result.
-    """
+    """Tests for partition_file, the library function of `portolan partition`."""
 
     @pytest.mark.integration
     def test_preview_envelope_is_the_library_result(
@@ -1038,7 +1019,7 @@ class TestPartitionFile:
         data = json.loads(result.stdout)["data"]
 
         def expected(output_dir: Path) -> dict[str, object]:
-            # str(Path), as the command output did before #1133: backslashes on Windows.
+            # str(Path) gives backslashes on Windows.
             on_disk = sorted(str(f) for f in output_dir.rglob("*.parquet"))
             return {
                 "input": "points.parquet",
@@ -1053,13 +1034,6 @@ class TestPartitionFile:
 
     @pytest.mark.integration
     def test_the_library_call_prints_nothing(self, tmp_path: Path) -> None:
-        """A fresh process that calls partition_file gets no terminal output.
-
-        geoparquet-io logs progress through the ``geoparquet_io`` logger. When
-        that logger has no handler and the root logger has none, geoparquet-io
-        installs a stream handler at INFO. The NullHandler that
-        ``portolan_cli`` attaches stops that.
-        """
         source = _points_geoparquet(tmp_path / "points.parquet")
 
         result = _python(_PARTITION_CALL, str(source), str(tmp_path / "out"))

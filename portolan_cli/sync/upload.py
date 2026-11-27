@@ -1,65 +1,4 @@
-"""Upload files to cloud object storage (S3, GCS, Azure).
-
-This module provides functionality to upload files and directories to cloud
-object storage using the obstore library. It supports:
-
-- S3 (including S3-compatible endpoints like MinIO)
-- Google Cloud Storage (GCS)
-- Azure Blob Storage
-
-Credential discovery follows the obstore/cloud provider conventions:
-- S3: the shared AWS credentials file, environment variables, an explicit
-  profile, or a profile that sets ``credential_process`` in the AWS config
-  file. ``AWS_SHARED_CREDENTIALS_FILE`` and ``AWS_CONFIG_FILE`` name those
-  files. Without them the files are ~/.aws/credentials and ~/.aws/config
-- GCS: GOOGLE_APPLICATION_CREDENTIALS or gcloud auth
-- Azure: AZURE_STORAGE_ACCOUNT_KEY, SAS token, or Azure CLI
-
-An AWS profile can also set ``endpoint_url`` and ``region``. Both apply to the
-profile the caller names, to ``AWS_PROFILE``, or to the default profile, as
-they do for the AWS CLI. This reads the files directly, so it applies without
-the ``aws`` extra. An explicit endpoint and ``PORTOLAN_S3_ENDPOINT`` still win,
-and the upload names the profile that supplies an endpoint.
-
-The upload prints nothing. Each function that sends a message takes a
-``report`` callback (``portolan_cli.sync.report``). Without one, the messages
-go to the log.
-
-Basic Usage:
-    from portolan_cli.sync.upload import upload_file, upload_directory, check_credentials
-
-    # Check credentials before upload
-    valid, hint = check_credentials("s3://mybucket/path")
-    if not valid:
-        print(hint)
-
-Return:
-    # Upload a single file
-    result = upload_file(
-        source=Path("data.parquet"),
-        destination="s3://mybucket/data.parquet",
-    )
-
-    # Upload a directory
-    result = upload_directory(
-        source=Path("output/"),
-        destination="s3://mybucket/dataset/",
-        pattern="*.parquet",  # Optional filter
-    )
-
-Custom S3 Endpoints (MinIO, source.coop):
-    result = upload_file(
-        source=Path("data.parquet"),
-        destination="s3://mybucket/data.parquet",
-        s3_endpoint="minio.example.com:9000",
-        s3_region="us-east-1",
-    )
-
-Note:
-    This module provides internal library functionality only. It does not
-    include a CLI command - that will be added as part of the sync command
-    (issue #16).
-"""
+"""Upload files to cloud object storage (S3, GCS, Azure)."""
 
 from __future__ import annotations
 
@@ -103,22 +42,12 @@ ObjectStore = S3Store | GCSStore | AzureStore | HTTPStore | LocalStore | MemoryS
 # count.
 UploadResultFuture = Future[tuple[Path, Exception | None, int]]
 
-# =============================================================================
 # Data Classes
-# =============================================================================
 
 
 @dataclass
 class UploadResult:
-    """Result of an upload operation.
-
-    Attributes:
-        success: True if all files were uploaded successfully.
-        files_uploaded: Number of files successfully uploaded.
-        files_failed: Number of files that failed to upload.
-        total_bytes: Total bytes uploaded (only successful files).
-        errors: List of (file_path, exception) tuples for failed uploads.
-    """
+    """Result of an upload operation."""
 
     success: bool
     files_uploaded: int
@@ -127,42 +56,22 @@ class UploadResult:
     errors: list[tuple[Path, Exception]] = field(default_factory=list)
 
 
-# =============================================================================
 # URL Parsing
-# =============================================================================
 
 
 def parse_object_store_url(url: str) -> tuple[str, str]:
-    """Parse object store URL into (bucket_url, prefix).
-
-    The bucket_url is what obstore needs to create a store.
-    The prefix is the path within that bucket.
-
-    Examples:
-        s3://bucket/prefix/path -> (s3://bucket, prefix/path)
-        gs://bucket/path -> (gs://bucket, path)
-        az://account/container/path -> (az://account/container, path)
-
-    Args:
-        url: Full object store URL
-
-    Returns:
-        Tuple of (bucket_url, prefix)
-
-    Raises:
-        ValueError: If URL scheme is not supported
-    """
+    """Parse object store URL into (bucket_url, prefix)."""
     if url.startswith("s3://"):
         parts = url[5:].split("/", 1)
         bucket = parts[0]
-        # Strip trailing slashes to prevent double-slash in path construction (issue #144)
+        # Strip trailing slashes to prevent double-slash in path construction
         prefix = parts[1].rstrip("/") if len(parts) > 1 else ""
         return f"s3://{bucket}", prefix
 
     if url.startswith("gs://"):
         parts = url[5:].split("/", 1)
         bucket = parts[0]
-        # Strip trailing slashes to prevent double-slash in path construction (issue #144)
+        # Strip trailing slashes to prevent double-slash in path construction
         prefix = parts[1].rstrip("/") if len(parts) > 1 else ""
         return f"gs://{bucket}", prefix
 
@@ -172,7 +81,7 @@ def parse_object_store_url(url: str) -> tuple[str, str]:
         if len(parts) < _AZURE_MIN_PARTS:
             raise ValueError(f"Invalid Azure URL: {url}. Expected az://account/container/path")
         account, container = parts[0], parts[1]
-        # Strip trailing slashes to prevent double-slash in path construction (issue #144)
+        # Strip trailing slashes to prevent double-slash in path construction
         prefix = parts[_AZURE_PREFIX_INDEX].rstrip("/") if len(parts) > _AZURE_PREFIX_INDEX else ""
         return f"az://{account}/{container}", prefix
 
@@ -183,28 +92,13 @@ def parse_object_store_url(url: str) -> tuple[str, str]:
     raise ValueError(f"Unsupported URL scheme: {url}")
 
 
-# =============================================================================
 # Credential Loading
-# =============================================================================
 
 
 def _load_aws_credentials_from_profile(
     profile: str = "default",
 ) -> tuple[str | None, str | None, str | None, str | None]:
-    """Load AWS credentials from the shared AWS credentials file.
-
-    Uses Python's built-in configparser to read credentials without requiring boto3.
-    ``AWS_SHARED_CREDENTIALS_FILE`` and ``AWS_CONFIG_FILE`` move the files away
-    from ~/.aws, as they do for boto3 and the AWS CLI.
-
-    Args:
-        profile: AWS profile name (default: "default")
-
-    Returns:
-        Tuple of (access_key_id, secret_access_key, session_token, region)
-        Any value may be None if not found. session_token is present for
-        temporary (STS) credentials (access key id starting with "ASIA").
-    """
+    """Load AWS credentials from the shared AWS credentials file."""
     creds_file = _aws_shared_file("AWS_SHARED_CREDENTIALS_FILE", "credentials")
     config_file = _aws_shared_file("AWS_CONFIG_FILE", "config")
 
@@ -244,19 +138,7 @@ def _load_aws_credentials_from_profile(
 
 
 def _aws_shared_file(env_var: str, name: str) -> Path | None:
-    """Return the path of a shared AWS file.
-
-    boto3 and the AWS CLI read ``AWS_CONFIG_FILE`` and
-    ``AWS_SHARED_CREDENTIALS_FILE`` before they use ~/.aws.
-
-    Args:
-        env_var: The environment variable that names the file.
-        name: The file name under ~/.aws.
-
-    Returns:
-        The path, or None when the environment names no file and no home
-        directory.
-    """
+    """Return the path of a shared AWS file."""
     configured = os.environ.get(env_var)
     if configured:
         return Path(configured).expanduser()
@@ -268,15 +150,7 @@ def _aws_shared_file(env_var: str, name: str) -> Path | None:
 
 
 def _read_profile_setting(profile: str, key: str) -> str | None:
-    """Read one key of a profile from the AWS config file.
-
-    Args:
-        profile: AWS profile name.
-        key: The key to read.
-
-    Returns:
-        The value, or None when the profile does not set the key.
-    """
+    """Read one key of a profile from the AWS config file."""
     config_file = _aws_shared_file("AWS_CONFIG_FILE", "config")
     if config_file is None or not config_file.exists():
         return None
@@ -294,49 +168,17 @@ def _read_profile_setting(profile: str, key: str) -> str | None:
 
 
 def _effective_profile(profile: str | None) -> str:
-    """Return the profile the AWS tools read when the caller names none.
-
-    boto3 reads ``AWS_PROFILE`` when no code names a profile. An explicit
-    profile, including "default", stays higher.
-
-    Args:
-        profile: AWS profile name, or None when the caller named none.
-
-    Returns:
-        The profile name to read settings from.
-    """
+    """Return the profile the AWS tools read when the caller names none."""
     return profile or os.environ.get("AWS_PROFILE") or "default"
 
 
 def _read_profile_endpoint_url(profile: str) -> str | None:
-    """Read the ``endpoint_url`` a profile sets in the AWS config file.
-
-    The AWS CLI and boto3 read this key to address an S3-compatible service.
-
-    Args:
-        profile: AWS profile name.
-
-    Returns:
-        The endpoint URL, or None when the profile sets no endpoint.
-    """
+    """Read the ``endpoint_url`` a profile sets in the AWS config file."""
     return _read_profile_setting(profile, "endpoint_url")
 
 
 def _try_infer_region_from_bucket(bucket: str) -> str | None:
-    """Try to infer AWS region from bucket name.
-
-    Some S3-compatible services include region in bucket name, e.g.:
-    - us-west-2.opendata.source.coop -> us-west-2
-    - eu-central-1.example.com -> eu-central-1
-
-    This is a best-effort heuristic and should not be relied upon.
-
-    Args:
-        bucket: S3 bucket name
-
-    Returns:
-        Region string if detected, None otherwise
-    """
+    """Try to infer AWS region from bucket name."""
     # Pattern matches AWS region format at start of bucket name
     region_pattern = (
         r"^(us|eu|ap|sa|ca|me|af)-"
@@ -351,23 +193,13 @@ def _try_infer_region_from_bucket(bucket: str) -> str | None:
     return None
 
 
-# =============================================================================
 # Credential Checking
-# =============================================================================
 
 
 def _check_s3_credentials(profile: str | None = None) -> tuple[bool, str]:
-    """Check if S3 credentials are available.
-
-    Args:
-        profile: AWS profile name to check (optional)
-
-    Returns:
-        Tuple of (credentials_found, hint_message)
-    """
-    # If a profile supplies the credentials, check the file, then
-    # credential_process. `_should_load_profile` decides that, so the check
-    # agrees with the upload: environment keys beat the default profile.
+    """Check if S3 credentials are available."""
+    # With profile credentials, check the file, then credential_process.
+    # `_should_load_profile` decides, as the upload does: env keys beat the default profile.
     if profile and _should_load_profile(profile):
         access_key, secret_key, _, _ = _load_aws_credentials_from_profile(profile)
         if access_key and secret_key:
@@ -429,13 +261,7 @@ def _check_s3_credentials(profile: str | None = None) -> tuple[bool, str]:
 
 
 def _check_gcs_credentials() -> tuple[bool, str]:
-    """Check if GCS credentials are available.
-
-    Checks all credential sources that obstore's GCSStore.from_url() supports.
-
-    Returns:
-        Tuple of (credentials_found, hint_message)
-    """
+    """Check if GCS credentials are available."""
     # Check for application default credentials file
     gcloud_creds = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
     if gcloud_creds and Path(gcloud_creds).exists():
@@ -473,13 +299,7 @@ def _check_gcs_credentials() -> tuple[bool, str]:
 
 
 def _check_azure_credentials() -> tuple[bool, str]:
-    """Check if Azure credentials are available.
-
-    Checks all credential sources that obstore's AzureStore.from_url() supports.
-
-    Returns:
-        Tuple of (credentials_found, hint_message)
-    """
+    """Check if Azure credentials are available."""
     # Check for storage account key (multiple aliases)
     if any(
         os.environ.get(key)
@@ -520,15 +340,7 @@ def _check_azure_credentials() -> tuple[bool, str]:
 
 
 def check_credentials(destination: str, profile: str | None = None) -> tuple[bool, str]:
-    """Check if credentials are available for the destination.
-
-    Args:
-        destination: Object store URL (s3://, gs://, az://)
-        profile: AWS profile name (for S3 only)
-
-    Returns:
-        Tuple of (credentials_ok, hint_message)
-    """
+    """Check if credentials are available for the destination."""
     if destination.startswith("s3://"):
         return _check_s3_credentials(profile)
     if destination.startswith("gs://"):
@@ -539,9 +351,7 @@ def check_credentials(destination: str, profile: str | None = None) -> tuple[boo
     return True, ""
 
 
-# =============================================================================
 # Store Setup
-# =============================================================================
 
 
 def _resolve_s3_endpoint_settings(
@@ -551,21 +361,7 @@ def _resolve_s3_endpoint_settings(
     *,
     report: Report | None = None,
 ) -> tuple[str | None, bool]:
-    """Resolve S3 endpoint settings from the argument, the environment, or the profile.
-
-    An explicit argument wins, then ``PORTOLAN_S3_ENDPOINT``. Next come
-    ``AWS_ENDPOINT_URL_S3`` and ``AWS_ENDPOINT_URL``, then ``endpoint_url`` in
-    the AWS config file. The AWS CLI uses the same order for the last three.
-
-    Args:
-        s3_endpoint: An explicit endpoint, or None.
-        s3_use_ssl: An explicit TLS setting, or None.
-        profile: AWS profile name, or None when the caller named none.
-        report: Receives each line of the run, with its level.
-
-    Returns:
-        The resolved endpoint and TLS setting.
-    """
+    """Resolve S3 endpoint settings from the argument, the environment, or the profile."""
     from portolan_core.config import resolve_s3_endpoint_settings
 
     environment_settings = resolve_s3_endpoint_settings()
@@ -628,18 +424,7 @@ def _resolve_s3_credentials(profile: str | None) -> S3Credentials:
 
 
 class _GuardedCredentialProvider:
-    """Report a credential failure of a later call with its profile.
-
-    obstore calls the provider again when the credentials expire. botocore
-    runs ``credential_process`` again at that point, and refreshes an assumed
-    role or an SSO token. A transfer that outlives the first credentials can
-    meet a failure that the build never saw. Without this the raw botocore
-    error reaches the user in the middle of an upload.
-
-    Args:
-        provider: The provider to call.
-        profile: The profile that supplies the credentials.
-    """
+    """Report a credential failure of a later call with its profile."""
 
     def __init__(self, provider: S3CredentialProvider, profile: str) -> None:
         self._provider = provider
@@ -659,34 +444,11 @@ class _GuardedCredentialProvider:
             raise ProfileCredentialsError(self._profile, str(error)) from error
 
 
+# shortcut: keyed on the profile name only, so a later AWS env var change keeps the first
+# provider. Key on the config file paths too if a process changes them.
 @lru_cache(maxsize=8)
 def _boto3_credential_provider(profile: str | None) -> S3CredentialProvider | None:
-    """Build the provider that botocore backs, once for each profile.
-
-    botocore reads the AWS files, runs ``credential_process``, and probes the
-    instance metadata service. `push_async` sets up a store for each
-    collection, and again for the root files, so a push of N collections asks
-    N+1 times. A `credential_process` that prompts a password manager would
-    prompt that many times. obstore refreshes the credentials through the
-    provider, so a cached provider does not hold an expired key pair.
-
-    `lru_cache` does not cache an exception, so a profile that fails raises
-    every time.
-
-    ponytail: the key is the profile name. A process that changes an AWS
-    environment variable between calls keeps the first provider. Key on the
-    file paths too if that ever matters.
-
-    Args:
-        profile: AWS profile name, or None when the caller named none.
-
-    Returns:
-        A provider, or None when the profile supplies no credentials.
-
-    Raises:
-        ProfileCredentialsError: The profile names a credential source that
-            fails.
-    """
+    """Build the provider that botocore backs, once for each profile."""
     try:
         import boto3
         from botocore.exceptions import ProfileNotFound
@@ -709,29 +471,7 @@ def _boto3_credential_provider(profile: str | None) -> S3CredentialProvider | No
 
 
 def _resolve_credential_provider(profile: str | None) -> S3CredentialProvider | None:
-    """Build a credential provider that botocore backs, through obstore.
-
-    obstore's ``Boto3CredentialProvider`` wraps a botocore session, so every
-    mechanism botocore reads from a profile works here. That covers
-    ``credential_process``, an assumed role, a web identity token, and IAM
-    Identity Center. obstore calls the provider again when the credentials
-    expire, so a long transfer refreshes them.
-
-    A static key pair short-circuits this, because that path needs no session.
-    boto3 is optional, so an environment without it keeps the older behavior.
-
-    Args:
-        profile: AWS profile name, or None when the caller named none.
-
-    Returns:
-        A provider, or None when no profile supplies credentials.
-
-    Raises:
-        ProfileCredentialsError: The profile names a credential source that
-            fails. A failed ``credential_process`` and a refused assume-role
-            both stop here, because the store must not go out with no
-            credentials.
-    """
+    """Build a credential provider that botocore backs, through obstore."""
     if profile is not None and not _should_load_profile(profile):
         return None
 
@@ -836,26 +576,7 @@ def _setup_store_and_kwargs(
     *,
     report: Report | None = None,
 ) -> tuple[ObjectStore, dict[str, int]]:
-    """Setup object store and upload kwargs.
-
-    Args:
-        bucket_url: The object store bucket URL (e.g., s3://bucket)
-        profile: AWS profile name (loads credentials from the shared AWS
-            credentials file)
-        chunk_concurrency: Max concurrent chunks per file
-        s3_endpoint: Custom S3-compatible endpoint (e.g., "minio.example.com:9000")
-        s3_region: S3 region (auto-detected from env var or profile config)
-        s3_use_ssl: Whether to use HTTPS for S3 endpoint (default: True)
-        report: Receives each line of the run, with its level.
-
-    Returns:
-        Tuple of (store, kwargs) where kwargs are passed to put_object
-
-    Note: For S3, credentials are loaded from (in order):
-    1. --profile flag (reads the shared AWS credentials file)
-    2. Environment variables (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY)
-    3. Default profile in the shared AWS credentials file (automatic fallback)
-    """
+    """Setup object store and upload kwargs."""
     if bucket_url.startswith("s3://"):
         store = _create_s3_store(
             bucket_url, profile, s3_endpoint, s3_region, s3_use_ssl, report=report
@@ -874,31 +595,7 @@ def setup_store(
     region: str | None = None,
     report: Report | None = None,
 ) -> tuple[ObjectStore, str]:
-    """Setup object store from a destination URL.
-
-    This is a convenience wrapper that parses the destination URL and creates
-    the appropriate object store. Use this when you need the store and prefix
-    but don't need upload-specific kwargs.
-
-    Supports:
-    - S3 (s3://): Uses AWS credentials from profile or environment
-    - GCS (gs://): Uses GOOGLE_APPLICATION_CREDENTIALS or gcloud auth
-    - Azure (az://): Uses AZURE_STORAGE_ACCOUNT + key/SAS token
-
-    Args:
-        destination: Object store URL (e.g., s3://bucket/prefix, gs://bucket/prefix,
-            az://container/prefix).
-        profile: AWS profile name (for S3 only).
-        region: AWS region (for S3 only). Takes precedence over profile/env config.
-        report: Receives each line of the run, with its level.
-
-    Returns:
-        Tuple of (store, prefix).
-
-    Example:
-        >>> store, prefix = setup_store("s3://mybucket/data/v1")
-        >>> # store is S3Store instance, prefix is "data/v1"
-    """
+    """Setup object store from a destination URL."""
     bucket_url, prefix = parse_object_store_url(destination)
     store, _ = _setup_store_and_kwargs(
         bucket_url,
@@ -910,22 +607,11 @@ def setup_store(
     return store, prefix
 
 
-# =============================================================================
 # Target Key Building
-# =============================================================================
 
 
 def _build_target_key(file_path: Path, source: Path, prefix: str) -> str:
-    """Build target key preserving directory structure.
-
-    Args:
-        file_path: Path to the file being uploaded
-        source: Source directory (base for relative path calculation)
-        prefix: Prefix to prepend to the key
-
-    Returns:
-        Target key for the object store (always uses forward slashes)
-    """
+    """Build target key preserving directory structure."""
     rel_path = file_path.relative_to(source)
     # Always use POSIX separators for object store keys (forward slashes)
     rel_posix = rel_path.as_posix()
@@ -935,16 +621,7 @@ def _build_target_key(file_path: Path, source: Path, prefix: str) -> str:
 
 
 def _get_target_key(source: Path, prefix: str, is_dir_destination: bool) -> str:
-    """Determine the target key for a single file upload.
-
-    Args:
-        source: Source file path
-        prefix: Prefix extracted from destination URL
-        is_dir_destination: True if destination ends with '/'
-
-    Returns:
-        Target key for the object store
-    """
+    """Determine the target key for a single file upload."""
     if is_dir_destination:
         # Destination is a directory, append filename
         return f"{prefix}/{source.name}".strip("/")
@@ -952,13 +629,10 @@ def _get_target_key(source: Path, prefix: str, is_dir_destination: bool) -> str:
     return prefix.strip("/")
 
 
-# =============================================================================
-# The one put helper (issues #807, #908)
-# =============================================================================
+# The one put helper
 
-# Azure stores no type that the client does not send, so an object without one
-# is served as application/octet-stream (#807). The stdlib table lacks or
-# disagrees on these types. bertt proposed the table in PR #1022.
+# Azure serves an object sent without a type as application/octet-stream.
+# The stdlib table lacks or disagrees on these types.
 _CONTENT_TYPES: dict[str, str] = {
     ".json": "application/json",
     ".geojson": "application/geo+json",
@@ -972,9 +646,8 @@ _CONTENT_TYPES: dict[str, str] = {
     ".xml": "application/xml",
 }
 
-# S3 and GCS accept at most 10000 parts in one multipart upload. obstore sends
-# 5 MiB parts by default, so a file over 48.8 GiB fails at part 10001 (#908).
-# The part size grows so that no file needs more than 9000 parts.
+# S3 and GCS accept at most 10000 parts, and obstore sends 5 MiB parts by
+# default. The part size grows so that no file needs more than 9000 parts.
 MIN_PART_SIZE = 5 * 1024 * 1024
 _MAX_PARTS = 9000
 
@@ -1015,22 +688,7 @@ def put_object(
     mode: PutMode | None = None,
     max_concurrency: int | None = None,
 ) -> PutResult:
-    """Write one object. Every write in portolan goes through this function.
-
-    The Content-Type comes from the key, and the multipart part size from the
-    size of ``data``.
-
-    Args:
-        store: Object store instance.
-        key: Object key.
-        data: The bytes, or a file path that obstore streams.
-        mode: The obstore put mode, such as ``"create"`` or ``{"e_tag": ...}``.
-            None overwrites.
-        max_concurrency: The parts in flight at once. None uses the obstore default.
-
-    Returns:
-        The obstore put result, which holds the new ETag.
-    """
+    """Write one object. Every write in portolan goes through this function."""
     return obs.put(store, key, data, **_put_kwargs(key, data, mode, max_concurrency))
 
 
@@ -1055,11 +713,7 @@ COPY_SOURCE_LIMIT = 5 * 2**30
 
 
 async def copy_object_async(store: ObjectStore, src: str, dst: str, size: int | None) -> None:
-    """Copy ``src`` to ``dst``. A source of unknown size tries the server copy.
-
-    The streamed copy keeps the attributes of the source, so it does not go
-    through ``put_object_async``.
-    """
+    """Copy ``src`` to ``dst``. A source of unknown size tries the server copy."""
     if size is None or size <= COPY_SOURCE_LIMIT:
         await obs.copy_async(store, src, dst)
         return
@@ -1074,9 +728,7 @@ async def copy_object_async(store: ObjectStore, src: str, dst: str, size: int | 
     )
 
 
-# =============================================================================
 # Upload Functions
-# =============================================================================
 
 
 def _upload_one_file(
@@ -1089,23 +741,7 @@ def _upload_one_file(
     report: Report | None = None,
     **kwargs: int,
 ) -> tuple[Path, Exception | None, int]:
-    """Upload a single file and return result tuple for parallel processing.
-
-    Per-file output only shown in verbose mode when used in
-    batch operations. Errors are always shown.
-
-    Args:
-        store: Object store instance
-        file_path: Path to file to upload
-        source: Source directory for relative path calculation
-        prefix: Prefix for target key
-        verbose: If True, show per-file upload/success messages.
-        report: Receives each line of the upload. Without it, the lines go to the log.
-        **kwargs: Additional args passed to put_object
-
-    Returns:
-        Tuple of (file_path, error_or_none, bytes_uploaded)
-    """
+    """Upload a single file and return result tuple for parallel processing."""
     try:
         target_key = _build_target_key(file_path, source, prefix)
         file_size = file_path.stat().st_size
@@ -1154,19 +790,13 @@ def upload_file(
         s3_region: S3 region (default: auto-detected)
         s3_use_ssl: Whether to use HTTPS for S3 endpoint (default: True)
         chunk_concurrency: Max concurrent chunks per file (default: 4)
-        report: Receives each line of the upload, with its level. Without
-            it, the lines go to the log.
+        report: Receives each line of the upload. Without it, the lines go to the log.
 
     Returns:
         UploadResult with upload statistics
 
     Raises:
         FileNotFoundError: If source file does not exist
-
-    Example:
-        >>> result = upload_file(Path("data.parquet"), "s3://bucket/data.parquet")
-        >>> if result.success:
-        ...     print(f"Uploaded {result.files_uploaded} file(s)")
     """
     if not source.exists():
         raise FileNotFoundError(f"Source file not found: {source}")
@@ -1227,15 +857,7 @@ def upload_file(
 
 
 def _find_files_to_upload(source: Path, pattern: str | None) -> list[Path]:
-    """Find files to upload from a source directory.
-
-    Args:
-        source: Source directory path
-        pattern: Optional glob pattern for filtering files
-
-    Returns:
-        List of file paths to upload
-    """
+    """Find files to upload from a source directory."""
     files = list(source.rglob(pattern)) if pattern else list(source.rglob("*"))
     return [f for f in files if f.is_file()]
 
@@ -1273,24 +895,7 @@ def _execute_parallel_uploads(
     verbose: bool = False,
     report: Report | None = None,
 ) -> list[tuple[Path, Exception | None, int]]:
-    """Execute parallel uploads using ThreadPoolExecutor.
-
-    Per-file output controlled by verbose parameter.
-
-    Args:
-        store: Object store instance
-        files: List of files to upload
-        source: Source directory for relative path calculation
-        prefix: Prefix for target keys
-        max_files: Max concurrent file uploads
-        fail_fast: Stop on first error if True
-        kwargs: Additional args for put_object
-        verbose: If True, show per-file upload messages.
-        report: Receives each line of the upload.
-
-    Returns:
-        List of (file_path, error_or_none, bytes_uploaded) tuples
-    """
+    """Execute parallel uploads using ThreadPoolExecutor."""
     results: list[tuple[Path, Exception | None, int]] = []
 
     if fail_fast:
@@ -1388,38 +993,7 @@ def upload_directory(  # noqa: PLR0913 - each upload option is an argument
     verbose: bool = False,
     report: Report | None = None,
 ) -> UploadResult:
-    """Upload a directory to S3/GCS/Azure with parallel uploads.
-
-    Per-file output controlled by verbose parameter.
-    Progress is shown via summary messages at start/end.
-
-    Args:
-        source: Local directory path
-        destination: Object store URL (e.g., s3://bucket/prefix/)
-        pattern: Optional glob pattern for filtering files (e.g., "*.parquet")
-        profile: AWS profile name (for S3 only)
-        max_files: Max number of files to upload in parallel (default: 4)
-        chunk_concurrency: Max concurrent chunks per file (default: 4)
-        fail_fast: If True, stop on first error; otherwise continue and report at end
-        dry_run: If True, show what would be uploaded without actually uploading
-        s3_endpoint: Custom S3-compatible endpoint (e.g., "minio.example.com:9000")
-        s3_region: S3 region (default: auto-detected)
-        s3_use_ssl: Whether to use HTTPS for S3 endpoint (default: True)
-        verbose: If True, show per-file upload messages.
-        report: Receives each line of the upload, with its level. Without
-            it, the lines go to the log.
-
-    Returns:
-        UploadResult with upload statistics
-
-    Example:
-        >>> result = upload_directory(
-        ...     Path("output/"),
-        ...     "s3://bucket/dataset/",
-        ...     pattern="*.parquet",
-        ... )
-        >>> print(f"Uploaded {result.files_uploaded} files")
-    """
+    """Upload a directory to S3/GCS/Azure with parallel uploads."""
     if not source.exists():
         raise FileNotFoundError(f"Source directory not found: {source}")
 

@@ -1,8 +1,4 @@
-"""Tests for the CLI info command.
-
-TDD-first tests for the top-level `portolan info` command.
-Tests file-level, collection-level, and catalog-level info display.
-"""
+"""Tests for the CLI info command."""
 
 from __future__ import annotations
 
@@ -15,9 +11,7 @@ from click.testing import CliRunner
 if TYPE_CHECKING:
     from pathlib import Path
 
-# =============================================================================
 # Fixtures
-# =============================================================================
 
 
 @pytest.fixture
@@ -209,9 +203,7 @@ def catalog_with_subcatalog(tmp_path: Path, valid_points_parquet: Path) -> Path:
     return catalog_root
 
 
-# =============================================================================
 # Test: File Info Command
-# =============================================================================
 
 
 class TestInfoCommandFile:
@@ -294,9 +286,7 @@ class TestInfoCommandFile:
         assert result.exit_code != 0
 
 
-# =============================================================================
 # Test: Collection Info Command
-# =============================================================================
 
 
 class TestInfoCommandCollection:
@@ -340,9 +330,7 @@ class TestInfoCommandCollection:
         assert "collection_id" in data["data"]
 
 
-# =============================================================================
 # Test: Catalog Info Command (no argument)
-# =============================================================================
 
 
 class TestInfoCommandCatalog:
@@ -381,17 +369,11 @@ class TestInfoCommandCatalog:
         assert "catalog_id" in data["data"]
 
 
-# =============================================================================
-# Test: Info with "." argument (GitHub Issues #291, #292)
-# =============================================================================
+# Test: Info with "." argument
 
 
 class TestInfoDotArgument:
-    """Tests for `portolan info .` to show catalog info when at catalog root.
-
-    Fixes GitHub issues #291 and #292 where `portolan info .` failed with
-    "Collection not found" instead of showing catalog-level information.
-    """
+    """Tests for `portolan info .` to show catalog info when at catalog root."""
 
     @pytest.mark.unit
     def test_info_dot_at_catalog_root_shows_catalog_info(
@@ -505,13 +487,6 @@ class TestInfoDotArgument:
     def test_info_directory_with_both_catalog_and_collection_prefers_catalog(
         self, cli_runner: CliRunner, tmp_path: Path
     ) -> None:
-        """Test that catalog.json takes precedence when both files exist.
-
-        Pattern 2, a directory CAN have both catalog.json and
-        collection.json (e.g., a collection with sub-catalogs organizing items).
-        When both exist, we prefer catalog.json since it represents the
-        organizational structure.
-        """
         from portolan_cli.cli import cli
 
         # Create a directory with BOTH catalog.json and collection.json

@@ -1,9 +1,4 @@
-"""Tests for root-level file upload in push operations (Issue #357).
-
-This module verifies that root README.md and versions.json are uploaded
-when pushing all collections. Root catalog.json was already being uploaded;
-root README.md and versions.json were being skipped.
-"""
+"""Tests for root-level file upload in push operations."""
 
 from __future__ import annotations
 
@@ -61,7 +56,7 @@ def _create_root_readme(catalog_root: Path) -> Path:
 
 
 def _create_root_versions(catalog_root: Path) -> Path:
-    """Create a versions.json at catalog root (Issue #357)."""
+    """Create a versions.json at catalog root."""
     versions = catalog_root / "versions.json"
     versions.write_text(
         json.dumps(
@@ -129,7 +124,7 @@ def _push_all(tmp_path: Path, *, dry_run: bool = False) -> Any:
 
 
 class TestPushAllCollectionsRootFiles:
-    """Tests for root-level file uploads in push_all_collections (Issue #357)."""
+    """Tests for root-level file uploads in push_all_collections."""
 
     @patch("portolan_cli.sync.push.push_async", new_callable=AsyncMock)
     def test_uploads_all_root_files_after_collections(

@@ -1,10 +1,4 @@
-"""Spatial utilities for geohash partitioning and bbox computation.
-
-Adds geohash columns for Iceberg partition specs and per-row bounding box
-columns for manifest-level min/max statistics.
-
-Uses vectorized shapely 2.0+ operations for performance on large data.
-"""
+"""Spatial utilities for geohash partitioning and bbox computation."""
 
 from __future__ import annotations
 
@@ -19,13 +13,7 @@ _COARSE_PARTITION_MAX_ROWS = 10_000_000
 
 
 def detect_geohash_precision(row_count: int) -> int | None:
-    """Determine geohash precision based on data size.
-
-    Returns:
-        None if row_count < 100K (no partitioning needed).
-        3 (~150km cells) if row_count < 10M.
-        4 (~20km cells) if row_count >= 10M.
-    """
+    """Determine geohash precision based on data size."""
     if row_count < _PARTITION_MIN_ROWS:
         return None
     if row_count < _COARSE_PARTITION_MAX_ROWS:
@@ -57,7 +45,7 @@ def compute_geohash_column(table: pa.Table, precision: int = 4) -> pa.Table:
 
     geoms, present = _geometries(table, col_name)
     # get_coordinates skips missing and empty geometries, so encode only the
-    # rows that have one and write null for the rest (issue #961).
+    # rows that have one and write null for the rest.
     coords = shapely.get_coordinates(shapely.centroid(geoms[present]))
     # pygeohash.encode is per-element (C extension, still fast)
     encoded = iter([pgh.encode(y, x, precision=precision) for x, y in coords])
@@ -79,7 +67,7 @@ def compute_bbox_columns(table: pa.Table) -> pa.Table:
     geoms, present = _geometries(table, col_name)
     bounds = shapely.bounds(geoms)  # (N, 4) array: xmin, ymin, xmax, ymax
     # A row without geometry has NaN bounds. Write null, which a spatial
-    # filter on the table skips (issue #961).
+    # filter on the table skips.
     for index, name in enumerate(("bbox_xmin", "bbox_ymin", "bbox_xmax", "bbox_ymax")):
         column = pa.array(bounds[:, index], type=pa.float64(), mask=~present)
         table = table.append_column(name, column)
@@ -94,11 +82,7 @@ def _geometries(table: pa.Table, col_name: str) -> tuple[Any, Any]:
 
 
 def add_spatial_columns(table: pa.Table, precision: int | None = None) -> pa.Table:
-    """Add geohash and bbox columns if the table has geometry.
-
-    If precision is None, auto-detect from row count.
-    If the table has no geometry column, returns it unchanged.
-    """
+    """Add geohash and bbox columns if the table has geometry."""
     if _find_geometry_column(table) is None:
         return table
 

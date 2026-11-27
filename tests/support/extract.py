@@ -1,8 +1,4 @@
-"""Builders for extraction tests (#947).
-
-Reports come from the shared ``build_report``, so a test builds the same
-report shape that ``run_layer_extraction`` writes.
-"""
+"""Builders for extraction tests, through the shared ``build_report``."""
 
 from __future__ import annotations
 
@@ -35,16 +31,7 @@ def make_report(
     *,
     metadata: MetadataExtracted | None = None,
 ) -> ExtractionReport:
-    """Build an extraction report for ``layers``.
-
-    Args:
-        layers: Layer results in report order.
-        source_url: The report's source URL.
-        metadata: Service metadata. None records the source URL only.
-
-    Returns:
-        The report with its summary.
-    """
+    """Build an extraction report for ``layers``; ``metadata`` None records the source URL only."""
     return build_report(Discovery(source_url=source_url, layers=[], metadata=metadata), layers)
 
 
@@ -110,11 +97,7 @@ def build_arcgis_catalog(
     resolved_license: ResolvedLicense | None = None,
     catalog_id: str | None = None,
 ) -> None:
-    """Build the catalog for an ArcGIS ``report`` through the shared driver.
-
-    Each layer comes from the report. Its collection is the parent directory
-    of its output path, and its service URL is the report's source URL.
-    """
+    """Build the catalog for an ArcGIS ``report`` through the shared driver."""
     from pathlib import PurePath
 
     layers = [

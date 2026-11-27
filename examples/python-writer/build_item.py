@@ -1,16 +1,6 @@
-"""Build STAC Items from GeoParquet files and write a catalog with them.
+"""Build STAC Items from the GeoParquet files in ./wetlands and write ./wetlands-catalog.
 
-The script reads each GeoParquet file in ./wetlands and writes the catalog
-into ./wetlands-catalog in the current folder. To try it with the NWI fixture,
-which is in EPSG:5070:
-
-    mkdir wetlands
-    cp tests/fixtures/realdata/nwi-wetlands.parquet wetlands/dc-2023.parquet
-    cp tests/fixtures/realdata/nwi-wetlands.parquet wetlands/dc-2024.parquet
-    uv run python examples/python-writer/build_item.py
-
-tests/docs/test_python_writer_guide.py runs this script and validates the
-catalog it writes. docs/guides/python-writer.md includes its sections.
+tests/docs/test_python_writer_guide.py runs this script and validates its catalog.
 """
 
 from __future__ import annotations

@@ -1,14 +1,4 @@
-"""Unit tests for the license gate on ``portolan add`` (issue #686).
-
-Before this gate, an add with no license in metadata.yaml wrote a collection
-carrying ``license: "other"`` and no ``rel="license"`` link, which is a PTL-LIC-002
-ERROR. The gate runs after phase 1 and before any conversion, so a refused add
-leaves no collection.json behind at all.
-
-The catalog here is hand-built rather than created through ``portolan init``,
-because ``init`` now seeds a license of its own and these cases need the state a
-pre-gate catalog is in.
-"""
+"""Unit tests for the license gate on ``portolan add``."""
 
 from __future__ import annotations
 
@@ -99,7 +89,6 @@ class TestAddRefusesAnUnlicensedCollection:
         assert "license_url" in result.output
 
     def test_the_seeded_todo_placeholder(self, runner: CliRunner, tmp_path: Path) -> None:
-        """extract seeds this marker, and it used to reach collection.license verbatim."""
         root = _catalog(tmp_path / "catalog")
         _write_metadata(root, {"license": TODO_MARKER})
 
@@ -148,7 +137,6 @@ class TestAddRefusesAMisspelledIdentifier:
     def test_a_case_mismatch_is_refused_and_the_spelling_named(
         self, runner: CliRunner, tmp_path: Path
     ) -> None:
-        """Issue #727: this used to pass ``add`` and fail ``check`` as PTL-LIC-001."""
         root = _catalog(tmp_path / "catalog")
         _write_metadata(root, {"license": "cc-by-4.0"})
 
@@ -184,7 +172,6 @@ class TestAddAcceptsALicensedCollection:
     def test_an_identifier_outside_the_popular_shortlist(
         self, runner: CliRunner, tmp_path: Path
     ) -> None:
-        """Issue #727: EUPL-1.2 is real SPDX and must reach collection.json."""
         root = _catalog(tmp_path / "catalog")
         _write_metadata(root, {"license": "EUPL-1.2"})
 

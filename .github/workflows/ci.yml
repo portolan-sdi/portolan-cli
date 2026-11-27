@@ -1,21 +1,10 @@
-# Tier 2 CI - Runs on every PR and push to main
-#
-# Philosophy: Starting from zero, all quality gates are STRICT.
-# Nothing passes with warnings - fix issues or they block the PR.
-#
-# Supply-chain hardening:
-# - Least-privilege GITHUB_TOKEN: read-only at the top level, widened per job.
-# - Third-party actions are SHA-pinned with a trailing version comment
-#   (Dependabot maintains the pins). actionlint + zizmor (prek.toml) guard this.
-# - persist-credentials: false on every checkout (no job pushes to the repo).
-# - Every job has a timeout so a hung step can't burn the runner budget.
+# Tier 2 CI: every gate is strict. Actions are SHA-pinned, checkouts set
+# persist-credentials: false, and the token is read-only unless a job widens it.
 name: CI
 on:
   push:
     branches: [main]
-  # No `branches:` filter. The full suite runs on every pull request whatever
-  # it targets, including release branches and long-lived feature branches.
-  # Restricting this to main silently gave release-branch PRs zero CI.
+  # No `branches:` filter, so a pull request into any branch gets the full CI.
   pull_request:
   workflow_dispatch:  # Allow manual triggering
 
@@ -54,9 +43,7 @@ jobs:
               - 'portolan_cli/backends/iceberg/**'
               - 'tests/iceberg/**'
               - 'pyproject.toml'
-              # pyiceberg can move in the lock alone, through a transitive
-              # bump or an explicit upgrade. Without this the Iceberg jobs
-              # skip the very change that needs them.
+              # pyiceberg can move in the lock alone, so a lock change runs the Iceberg jobs.
               - 'uv.lock'
             python:
               - 'portolan_cli/**/*.py'
@@ -88,15 +75,8 @@ jobs:
           command: uv sync --all-extras
 
       - name: Run all quality gates
-        # ONE rule source: CI runs the SAME hooks developers run locally
-        # (prek.toml), not a re-listing of each tool with its own drifting args.
-        # This covers ruff, ruff-format, mypy, import-linter, codespell, vulture,
-        # jscpd, deptry, actionlint, zizmor, and the builtin file hooks.
-        #
-        # SKIP:
-        # - no-commit-to-branch: meaningless in CI and fails on push-to-main
-        #   (HEAD is `main`).
-        # - fast-tests: the full matrix runs in the `test` job below.
+        # CI runs the same prek.toml hooks as a developer. no-commit-to-branch fails on
+        # push to main, and the test job runs the full suite, so both skip here.
         env:
           SKIP: no-commit-to-branch,fast-tests
         run: uvx prek run --all-files --show-diff-on-failure
@@ -127,22 +107,8 @@ jobs:
           command: uv sync --all-extras
 
       - name: Audit dependencies (runtime + extras only)
-        # Audit only what we ship: core runtime deps plus the publishable extras
-        # (iceberg, pmtiles, thumbnails). Dev-group deps (moto, pytest, pip-audit
-        # itself...) and doc-build deps (zensical, pymdown-extensions...) are excluded
-        # because they never reach users via the wheel.
-        #
-        # Ignores come from the single-source .pip-audit-ignores file (each entry
-        # has an expiry + reason; expired entries drop automatically). The same
-        # file feeds nightly.yml and security-audit.yml — no more triplicated,
-        # never-expiring inline --ignore-vuln lists.
-        #
-        # The export pins every package with hashes, so pip-audit audits the
-        # list as written and builds no virtual environment. On the Ubuntu
-        # 26.04 runner, the temporary environment fails in ensurepip.
-        # --no-emit-workspace leaves out portolan-cli and portolan-core. Their
-        # editable lines carry no hash, and --require-hashes rejects them.
-        # The third-party dependencies of both members stay in the export.
+        # Audit only what ships in the wheel. The hashed export needs no venv (ensurepip fails on
+        # the 26.04 runner), and --no-emit-workspace drops the unhashed editable member lines.
         run: |
           uv export --no-dev --no-emit-workspace \
             --extra iceberg --extra pmtiles --extra thumbnails \
@@ -160,11 +126,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Anchor cells (suite: full) run the whole suite on every event: the
-        # newest interpreter on each OS, plus the ubuntu-3.11 coverage cell.
-        # The other cells run the unit lane on pull requests and the full
-        # suite on push to main, so an interpreter-specific integration break
-        # surfaces at merge instead of never.
+        # Anchor cells run the full suite on every event. The other cells run the unit lane on
+        # pull requests and the full suite on push to main.
         include:
           - {os: ubuntu-latest, python-version: '3.11', suite: full}
           - {os: ubuntu-latest, python-version: '3.13', suite: full}
@@ -214,20 +177,8 @@ jobs:
           command: uv sync --all-extras
 
       - name: Run tests (unit + integration, no network, no iceberg)
-        # Speed decisions:
-        # - `-n logical`: `-n auto` counts physical cores and started only 2
-        #   workers on the 4-vCPU ubuntu/windows runners. Logical count starts 4.
-        # - Only the ubuntu-latest 3.11 cell measures coverage. The other
-        #   cells run pytest without --cov, which saves their trace
-        #   overhead. A line that only Windows or macOS runs shows as
-        #   missed in the diff-cover summary. No `# pragma: no cover` for
-        #   platform-only code. The summary lists the missed lines, so no
-        #   cell prints the term-missing report.
-        # - HYPOTHESIS_PROFILE=ci selects the reduced deterministic profile
-        #   from tests/conftest.py. Nightly keeps the full default profile.
-        # - --durations=25 records the slowest tests so a slow-test regression
-        #   is visible in the log.
-        # - tests/perf runs once, in the perf-gates job.
+        # `-n logical` starts 4 workers where `-n auto` started 2. Only ubuntu 3.11 measures
+        # coverage. HYPOTHESIS_PROFILE=ci is the reduced profile, and tests/perf runs in perf-gates.
         env:
           HYPOTHESIS_PROFILE: ci
           MATRIX_SUITE: ${{ matrix.suite }}
@@ -257,9 +208,7 @@ jobs:
           slug: portolan-sdi/portolan-cli
           flags: main
 
-      # Only the ubuntu-latest 3.11 cell writes a report. The diff-cover job
-      # reads it. A missing report fails the upload, so the cell cannot stop
-      # writing it quietly.
+      # A missing report fails the upload, so the coverage cell cannot stop writing it quietly.
       - name: Upload coverage XML
         if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -271,11 +220,7 @@ jobs:
 
   perf-gates:
     name: Perf Counter Gates
-    # tests/perf runs each scenario at n and 2n in cold child processes and
-    # compares the slope and intercept of each counter with the constants in
-    # tests/perf/expected. A count does not depend on machine load, so one
-    # Linux cell gates it, and the test matrix skips tests/perf. The slow
-    # thumbnail memory ceiling runs in the nightly slow job.
+    # Counters do not depend on machine load, so one Linux cell gates them at n and 2n.
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -311,14 +256,8 @@ jobs:
 
   codspeed:
     name: CodSpeed Benchmarks
-    # CodSpeed runs tests/benchmark under CPU simulation and counts
-    # instructions, so a CPU regression in a pure-Python hot path shows on a
-    # shared runner. It compares each pull request with the base branch. The
-    # upload uses OpenID Connect, which a public repository needs no token
-    # for. It needs the CodSpeed GitHub app on the repository.
-    # CodSpeed publishes its valgrind package for ubuntu 24.04. On a newer
-    # image the action builds valgrind from source, and PyArrow then stops
-    # with an illegal instruction.
+    # CodSpeed counts instructions, so a CPU regression shows on a shared runner.
+    # ubuntu-24.04: on a newer image the action builds valgrind, and PyArrow hits an illegal instruction.
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
@@ -361,7 +300,7 @@ jobs:
           ARROW_USER_SIMD_LEVEL: NONE
 
   plugin-test:
-    # The example plugin uses the public plugin API alone (#947). A change to
+    # The example plugin uses the public plugin API alone. A change to
     # portolan_cli.api or portolan_cli.hookspecs that breaks a plugin fails here.
     name: Example Plugin (Python ${{ matrix.python-version }} / ${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -400,9 +339,7 @@ jobs:
           retry_wait_seconds: 15
           command: uv sync --all-extras
 
-      # Install into the project environment. With uv 0.6.14, `uv run --with`
-      # built its overlay on the runner's system Python, not the synced 3.11
-      # environment, and pytest could not import the plugin.
+      # Install into the project venv: `uv run --with` built its overlay on the system Python.
       - name: Install the example plugin
         run: uv pip install ./tests/plugins/portolan_example
 
@@ -412,9 +349,7 @@ jobs:
   iceberg-test:
     name: Iceberg Unit & Integration Tests (Python ${{ matrix.python-version }} / ${{ matrix.os }})
     needs: changes
-    # Core Python changes run these tests too. #977 merged because a change to
-    # the core backend calls skipped them. The Docker e2e job below keeps the
-    # narrow filter, and nightly runs the full e2e suite.
+    # A core Python change can break the backend, so it runs these tests too.
     if: needs.changes.outputs.iceberg == 'true' || needs.changes.outputs.python == 'true' || github.event_name == 'push'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
@@ -472,9 +407,7 @@ jobs:
           slug: portolan-sdi/portolan-cli
           flags: iceberg
 
-      # Only the ubuntu-latest 3.11 cell uploads a report. On a change that
-      # touches neither filter, the job skips and the diff-cover job reads no
-      # Iceberg report.
+      # Only the ubuntu-latest 3.11 cell uploads a report.
       - name: Upload coverage XML
         if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -485,32 +418,15 @@ jobs:
           retention-days: 7
 
   diff-cover:
-    # The coverage gate on the lines a pull request changes. Codecov reports
-    # but never blocks (codecov.yml), so this job is the gate.
-    #
-    # Only the ubuntu-latest 3.11 cell of the test matrix and of the Iceberg
-    # matrix uploads a coverage report, named coverage-ubuntu-latest-3.11 and
-    # coverage-iceberg-ubuntu-latest-3.11. This job downloads every artifact
-    # that matches coverage-* and passes the two reports to diff-cover. A line
-    # that only Windows or macOS runs shows as missed in the diff-cover
-    # summary. relative_files in [tool.coverage.run] writes paths relative to
-    # the checkout, so the reports match the checkout here.
-    #
-    # FLOOR comes from the last five merged pull requests that changed
-    # portolan_cli, measured with the marker sets of the two coverage cells:
-    # #868 100%, #985 100%, #1004 97%, #1011 100%, #1031 99%. The floor is
-    # min(90, median rounded down to a multiple of 5), so 90. This matches
-    # the portolan-ops norm for Python repos.
+    # The coverage gate on changed lines. Codecov never blocks, so this job is the gate.
+    # FLOOR is min(90, median of recent PRs rounded down to 5), per the portolan-ops norm.
     name: Diff Coverage
     needs: [test, iceberg-test]
     if: always() && github.event_name == 'pull_request' && needs.test.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
-      # diff-cover compares against the base branch of the pull request, so
-      # a stacked pull request into an integration or release branch is
-      # measured on its own diff. Passed through env, not spliced into the
-      # script (zizmor).
+      # Passed through env, not spliced into the script (zizmor).
       BASE_REF: ${{ github.base_ref }}
       # renovate: datasource=pypi depName=diff-cover
       DIFF_COVER_VERSION: "10.6.0"
@@ -526,9 +442,7 @@ jobs:
         with:
           version: ${{ env.UV_VERSION }}
 
-      # Each artifact lands in coverage/<artifact name>/coverage.xml. Do not
-      # set merge-multiple: the reports share one file name and overwrite
-      # each other.
+      # No merge-multiple: the reports share one file name and would overwrite each other.
       - name: Download the coverage of every cell
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -670,18 +584,14 @@ jobs:
         if: always()
         run: docker compose -f tests/iceberg/e2e/docker-compose.yml down -v
 
-  # Checks the relative links in the built site. zensical --strict checks
-  # Markdown links only. This also covers theme templates, navigation, and
-  # raw HTML. The docs job uploads the site on pull requests only.
+  # zensical --strict checks Markdown links only. This also checks templates, nav, and raw HTML.
   site-links:
     needs: docs
     if: github.event_name == 'pull_request'
     uses: portolan-sdi/portolan-ops/.github/workflows/reusable-links.yml@v1
     permissions:
       contents: read
-      # The reusable job declares issues: write for its weekly mode. A
-      # caller must grant at least that, even though this mode never
-      # writes an issue.
+      # The reusable job declares issues: write for its weekly mode, so the caller must grant it.
       issues: write
     with:
       site-artifact: documentation-site
@@ -724,11 +634,8 @@ jobs:
           done
 
   wheel-smoke:
-    # Installs the portolan-core wheel alone in a fresh environment and writes
-    # a catalog with it (#1133). The job fails when portolan-core pulls in the
-    # geospatial stack or portolan-cli, or when the portolan-cli wheel does not
-    # pin portolan-core to the shared version. The script needs only the
-    # standard library and uv, so the job syncs no project environment.
+    # Installs the portolan-core wheel alone and writes a catalog with it. The script needs
+    # only the standard library and uv, so the job syncs no project environment.
     name: Wheel Smoke (portolan-core alone)
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -750,12 +657,8 @@ jobs:
 
   ci-success:
     name: CI Success
-    # Single aggregated status check for branch protection. Requiring THIS one
-    # context (see scripts/apply_branch_protection.sh) instead of every matrix
-    # cell means adding a Python version or OS never silently drops a required
-    # check, and the conditionally-skipped iceberg jobs don't block PRs that
-    # don't touch iceberg. needs lists every job but `changes`, and
-    # tests/docs/test_ci_wiring.py fails when one is missing.
+    # The one required check for branch protection. needs lists every job but `changes`,
+    # and tests/docs/test_ci_wiring.py fails when one is missing.
     if: always()
     needs: [quality, security, test, plugin-test, perf-gates, codspeed, iceberg-test, iceberg-e2e, diff-cover, docs, site-links, build, wheel-smoke]
     runs-on: ubuntu-latest

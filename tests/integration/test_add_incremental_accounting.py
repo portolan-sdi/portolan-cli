@@ -1,13 +1,4 @@
-"""Integration tests for incremental add asset accounting (Issue #447).
-
-Four bugs in portolan add's read-modify-write logic:
-1. Duplicate asset entries for the same href
-2. table:row_count double-counts on re-add
-3. Stale asset entries persist after files are deleted
-4. extent.spatial.bbox not updated from real data
-
-These tests verify correct reconciliation of new files against existing collection.json.
-"""
+"""Integration tests for incremental add asset accounting."""
 
 from __future__ import annotations
 
@@ -52,7 +43,7 @@ def two_parquet_files(tmp_path: Path, valid_points_parquet: Path) -> tuple[Path,
 
 
 class TestRowCountAccounting:
-    """Tests for table:row_count correctness on incremental adds (Bug #2)."""
+    """Tests for table:row_count correctness on incremental adds."""
 
     @pytest.mark.integration
     def test_row_count_not_doubled_on_readd(
@@ -61,11 +52,7 @@ class TestRowCountAccounting:
         initialized_catalog: Path,
         valid_points_parquet: Path,
     ) -> None:
-        """Re-adding the same file should NOT double the row count.
-
-        Bug: Adding file A (1000 rows) then re-adding file A gave row_count=2000.
-        Expected: row_count=1000 (same file, same count).
-        """
+        """Re-adding the same file should NOT double the row count."""
         collection_dir = initialized_catalog / "testcol"
         collection_dir.mkdir()
         data_file = collection_dir / "data.parquet"
@@ -210,16 +197,7 @@ class TestRowCountAccounting:
         initialized_catalog: Path,
         two_parquet_files: tuple[Path, Path],
     ) -> None:
-        """Untracked parquet files in collection dir should NOT inflate row count.
-
-        Bug: Stray parquet files (temp files, internal state) should not be
-        included in table:row_count aggregation.
-
-        Note: Portolan add auto-discovers ALL files in the
-        collection directory, so the only way to have a truly "untracked"
-        parquet is to place it in .portolan/ (which is explicitly excluded
-        from both discovery and row counting).
-        """
+        """Untracked parquet files in collection dir should NOT inflate row count."""
         file_a, file_b = two_parquet_files
         collection_dir = initialized_catalog / "testcol"
         collection_dir.mkdir()
@@ -266,7 +244,7 @@ class TestRowCountAccounting:
 
 
 class TestAssetDeduplication:
-    """Tests for asset href deduplication (Bug #1)."""
+    """Tests for asset href deduplication."""
 
     @pytest.mark.integration
     def test_no_duplicate_assets_for_same_href(
@@ -275,11 +253,7 @@ class TestAssetDeduplication:
         initialized_catalog: Path,
         valid_points_parquet: Path,
     ) -> None:
-        """Re-adding a file should not create duplicate asset entries.
-
-        Bug: Hand-named asset "data" -> ./data.parquet, re-add creates
-        "data.parquet" -> ./data.parquet. Both point to same file.
-        """
+        """Re-adding a file should not create duplicate asset entries."""
         collection_dir = initialized_catalog / "testcol"
         collection_dir.mkdir()
         data_file = collection_dir / "data.parquet"
@@ -336,11 +310,7 @@ class TestAssetDeduplication:
         initialized_catalog: Path,
         valid_points_parquet: Path,
     ) -> None:
-        """No duplicate when human-authored key differs from filename stem.
-
-        Bug: Human key "census_2020" -> ./data.parquet, re-add creates
-        "data" (stem) -> ./data.parquet. Both point to same file.
-        """
+        """No duplicate when human-authored key differs from filename stem."""
         collection_dir = initialized_catalog / "testcol"
         collection_dir.mkdir()
         data_file = collection_dir / "data.parquet"
@@ -398,10 +368,7 @@ class TestAssetDeduplication:
 
 
 class TestStaleAssetWarning:
-    """Tests for stale asset detection (Bug #3).
-
-    Per design: `add` warns about stale assets, `check --fix` removes them.
-    """
+    """Tests for stale asset detection."""
 
     @pytest.mark.integration
     def test_warns_about_missing_asset_files(
@@ -503,7 +470,7 @@ class TestStaleAssetWarning:
 
 
 class TestExtentUpdate:
-    """Tests for extent.spatial.bbox recomputation (Bug #4)."""
+    """Tests for extent.spatial.bbox recomputation."""
 
     @pytest.mark.integration
     def test_extent_updated_from_placeholder(
@@ -586,10 +553,8 @@ class TestExtentUpdate:
         collection_json = json.loads((collection_dir / "collection.json").read_text())
         bbox_after_b = collection_json["extent"]["spatial"]["bbox"][0]
 
-        # The extent should have changed (expanded or shifted)
-        # We can't know exact values without knowing fixture contents,
-        # but at minimum it shouldn't be unchanged if the files have different extents
-        # For now, just verify extent is set and is a valid bbox
+        # The exact values depend on the fixture contents,
+        # so verify only that the extent is set and is a valid bbox.
         assert len(bbox_after_b) == 4, f"Invalid bbox: {bbox_after_b}"
         assert bbox_after_b[0] <= bbox_after_b[2], "min_x should be <= max_x"
         assert bbox_after_b[1] <= bbox_after_b[3], "min_y should be <= max_y"
@@ -603,11 +568,7 @@ class TestExtentUpdate:
         valid_points_parquet: Path,
         declared_in_metadata_yaml: bool,
     ) -> None:
-        """The extent is derived under every strategy (#801).
-
-        A bbox written into collection.json is replaced by the data. A bbox in
-        the collection's own metadata.yaml is the one override, and it widens.
-        """
+        """The extent is derived under every strategy."""
         collection_dir = initialized_catalog / "testcol"
         collection_dir.mkdir()
 

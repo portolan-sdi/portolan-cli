@@ -1,14 +1,4 @@
-"""Unit tests for pull --restore functionality (Issue #325).
-
-Tests for restoring missing files when local versions.json matches remote
-but actual data files are missing from disk.
-
-Test categories:
-- find_missing_files() helper function
-- pull with restore=True when versions match but files missing
-- Interaction between --restore and --force flags
-- Dry-run behavior with --restore
-"""
+"""Unit tests for pull --restore functionality."""
 
 from __future__ import annotations
 
@@ -21,17 +11,12 @@ import pytest
 if TYPE_CHECKING:
     from pathlib import Path
 
-# =============================================================================
 # Test Fixtures
-# =============================================================================
 
 
 @pytest.fixture
 def catalog_with_matching_versions(tmp_path: Path) -> Path:
-    """Create a catalog where local and remote versions match.
-
-    Used to test the restore scenario where versions match but files are missing.
-    """
+    """Create a catalog where local and remote versions match."""
     catalog_root = tmp_path / "catalog"
     catalog_root.mkdir()
 
@@ -118,9 +103,7 @@ def matching_remote_versions() -> dict[str, Any]:
     }
 
 
-# =============================================================================
-# Tests for find_missing_files()
-# =============================================================================
+# Tests for find_missing_files
 
 
 class TestFindMissingFiles:
@@ -208,9 +191,7 @@ class TestFindMissingFiles:
         assert missing == []
 
 
-# =============================================================================
 # Tests for pull with restore=True
-# =============================================================================
 
 
 class TestPullRestore:
@@ -358,12 +339,6 @@ class TestPullRestore:
         self,
         catalog_with_matching_versions: Path,
     ) -> None:
-        """restore=True should work alongside normal version updates.
-
-        Note: When a file is deleted locally and remote has a newer version,
-        the deleted file is considered an "uncommitted change". We need --force
-        to proceed with the pull in this case.
-        """
         from portolan_cli.sync.pull import pull
         from portolan_core.versions import _parse_versions_file
 
@@ -550,9 +525,7 @@ class TestPullRestoreAndForce:
         assert "data.parquet" in downloaded_files
 
 
-# =============================================================================
 # Tests for PullResult with restore
-# =============================================================================
 
 
 class TestPullResultRestore:

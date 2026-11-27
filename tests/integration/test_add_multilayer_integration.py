@@ -1,12 +1,4 @@
-"""Integration tests for adding multi-layer files (GeoPackage, FileGDB).
-
-Tests that `portolan add` correctly handles multi-layer formats by:
-1. Detecting all layers in the file
-2. Converting each layer to a separate GeoParquet file
-3. Creating proper STAC structure for all layers
-
-Per GitHub issue #265.
-"""
+"""Integration tests for adding multi-layer files (GeoPackage, FileGDB)."""
 
 from __future__ import annotations
 
@@ -86,7 +78,6 @@ class TestAddMultilayerIntegration:
         monkeypatch: pytest.MonkeyPatch,
         existed: bool,
     ) -> None:
-        """A layer that fails on its CRS loses the file this run wrote, and keeps an old one (#928)."""
         from portolan_cli import preparation
         from portolan_core.errors import CRSTransformError
 

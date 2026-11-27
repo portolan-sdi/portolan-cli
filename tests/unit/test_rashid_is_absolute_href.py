@@ -1,9 +1,4 @@
-"""The href rule the CLI takes from ``rashid_core.api.is_absolute_href``.
-
-The CLI skips an absolute href instead of resolving it against the catalog
-directory. These cases pin what it relies on, so a rashid release that changes
-the rule fails here and not in a fixer.
-"""
+"""The href rule the CLI takes from ``rashid_core.api.is_absolute_href``."""
 
 from __future__ import annotations
 

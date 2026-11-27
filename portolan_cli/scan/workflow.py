@@ -1,9 +1,4 @@
-"""The `scan` workflow: scan a directory, infer collections, and apply safe fixes.
-
-`run_scan` takes the options of the `scan` command and returns a `ScanOutcome`.
-It does not print. The CLI renders the outcome, and the JSON envelope `data`
-of the command is `ScanOutcome.to_dict()`.
-"""
+"""The `scan` workflow: scan a directory, infer collections, and apply safe fixes."""
 
 from __future__ import annotations
 
@@ -71,28 +66,7 @@ def run_scan(
     dry_run: bool = False,
     progress_callback: Callable[[], None] | None = None,
 ) -> ScanOutcome:
-    """Scan `path`, infer collections, and apply safe fixes, as `portolan scan` does.
-
-    Args:
-        path: The directory to scan.
-        recursive: Scan subdirectories.
-        max_depth: The maximum recursion depth. 0 is the target directory only.
-        include_hidden: Include files whose name starts with a dot.
-        follow_symlinks: Follow symbolic links.
-        show_all: Keep every issue without truncation.
-        suggest_collections: Suggest collection groupings from filename patterns.
-        strict: Treat warnings as errors.
-        fix: Apply safe fixes (renames). The result records the proposed and applied fixes.
-        dry_run: With `fix`, propose the fixes and apply none.
-        progress_callback: Called once for each directory scanned.
-
-    Returns:
-        The outcome of the scan.
-
-    Raises:
-        PathNotFoundError: If `path` does not exist.
-        NotADirectoryError: If `path` is not a directory.
-    """
+    """Scan `path`, infer collections, and apply safe fixes, as `portolan scan` does."""
     from portolan_core.errors import PathNotFoundError
 
     if not path.exists():

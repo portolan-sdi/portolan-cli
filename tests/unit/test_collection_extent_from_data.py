@@ -1,13 +1,4 @@
-"""Regression tests for collection extents measured from data (PTL-DAT-005).
-
-``wgs84_bbox`` reprojected the GeoParquet's stored bbox — a *rectangle*
-in the source CRS. For a projected CRS the WGS84 envelope of that rectangle is
-strictly larger than the envelope of the data inside it, because the corners of
-a UTM bbox hold no data and the grid lines curve. The declared extent therefore
-overstated the data on every collection built in a native projected CRS, and
-`check` rejected it against the PMTiles built from the same file (PTL-DAT-005),
-which report the tighter, correct box.
-"""
+"""Regression tests for collection extents measured from data (PTL-DAT-005)."""
 
 from __future__ import annotations
 

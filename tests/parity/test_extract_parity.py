@@ -1,14 +1,5 @@
-"""Command parity for `extract arcgis`, `extract carto`, and `extract wfs`.
-
-Each test serves a recorded service from ``tests/fixtures/network/`` on the
-loopback interface. The command and the library function both read that one
-server, so they see the same service. ``tests/replay_server.py`` gives the
-reason for the loopback replay.
-
-Equal results alone do not prove an extraction. Two empty reports are equal
-too. So each success test also checks what the library side wrote: the layers,
-the feature counts, the asset files, and ``versions.json``. It also checks the
-requests that reached the server.
+"""Command parity for `extract arcgis`, `extract carto`, and `extract wfs` on loopback replays.
+Each success test also checks the written layers, assets, ``versions.json`` and server requests.
 """
 
 from __future__ import annotations
@@ -77,11 +68,7 @@ def _gets(server: ReplayServer) -> set[str]:
 
 
 def _extracted(out: Path) -> list[tuple[Any, str, str, int]]:
-    """Return (id, name, status, features) for each layer, and check the files of each.
-
-    Each successful layer has its asset file and a ``versions.json`` in its
-    collection directory.
-    """
+    """Return (id, name, status, features) for each layer, and check its asset and ``versions.json``."""
     report = json.loads((out / ".portolan" / "extraction-report.json").read_text())
     for layer in report["layers"]:
         if layer["status"] == "success":
@@ -169,12 +156,7 @@ def test_extract_arcgis_imageserver_dry_run(
 def test_extract_arcgis_imageserver_failure(
     run_cli: RunCli, replay: Callable[[str | Path], ReplayServer], tmp_path: Path
 ) -> None:
-    """A service that discovery rejects fails in the command and in the library.
-
-    The command reports every ImageServer error as ``ExtractionError``, as it
-    did before #1133. So ``parity.error`` cannot compare it, and the test
-    checks each side.
-    """
+    """The command reports every ImageServer error as ``ExtractionError``, so each side is checked alone."""
     server = replay(_imageserver_scenario(tmp_path, {"name": "No_Extent"}))
     url = server.url + IMAGESERVER
     root = tmp_path / "command"
@@ -219,11 +201,7 @@ def test_imageserver_run_logs_no_token(
 def test_extract_arcgis_list_services(
     run_cli: RunCli, replay: Callable[[str | Path], ReplayServer], tmp_path: Path
 ) -> None:
-    """`extract arcgis --list-services --json` prints the library result.
-
-    This mode prints the bare result, with no envelope, so the ``parity``
-    fixture cannot compare it. The test compares the printed JSON instead.
-    """
+    """This mode prints the bare result with no envelope, so the test compares the printed JSON."""
     url = replay("arcgis/philadelphia").url + "/ArcGIS/rest/services"
     result = run_cli("extract", "arcgis", url, "--list-services", "--no-recurse", "--json")
     expected = run_extract_arcgis(

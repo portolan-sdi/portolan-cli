@@ -1,10 +1,5 @@
-"""Integration tests for PMTiles generation (Issue #115).
-
-Tests the complete PMTiles generation workflow with real tippecanoe execution.
-These tests require tippecanoe to be installed; they skip gracefully if not.
-
-Tests use collection-level asset structure.
-"""
+"""Integration tests for PMTiles generation with real tippecanoe on collection-level assets.
+The tests skip when tippecanoe is not installed."""
 
 from __future__ import annotations
 
@@ -30,14 +25,7 @@ pytestmark = [
 
 @pytest.fixture
 def collection_with_geoparquet(tmp_path: Path, fixtures_dir: Path) -> Path:
-    """Create a minimal collection with a GeoParquet asset.
-
-    Structure:
-        collection/
-            collection.json  (with assets section)
-            roads.parquet
-            versions.json
-    """
+    """Create a collection with collection.json, roads.parquet, and versions.json."""
     collection_dir = tmp_path / "roads"
     collection_dir.mkdir()
 
@@ -263,12 +251,7 @@ class TestPMTilesGeneration:
         assert "tiles" in pmtiles_asset["title"].lower()
 
     def test_version_tracked(self, collection_with_geoparquet: Path) -> None:
-        """PMTiles and its thumbnail share a single versions.json snapshot.
-
-        The side-step generates the PMTiles and (when rendering succeeds) a
-        thumbnail. Both belong to ONE version bump, not two (Issue #519), and
-        the snapshot carries both with checksum and size.
-        """
+        """PMTiles and its thumbnail share one versions.json snapshot with checksum and size."""
         from portolan_cli.viz.pmtiles import generate_pmtiles_for_collection
 
         catalog_root = collection_with_geoparquet.parent
@@ -287,7 +270,7 @@ class TestPMTilesGeneration:
         # Read updated versions.json
         versions_data_after = json.loads((collection_with_geoparquet / "versions.json").read_text())
 
-        # Exactly one new version snapshot for the whole side-step (Issue #519).
+        # Exactly one new version snapshot for the whole side-step.
         assert versions_data_after["current_version"] != initial_version
         assert len(versions_data_after["versions"]) == len(versions_data_before["versions"]) + 1
 
@@ -299,9 +282,8 @@ class TestPMTilesGeneration:
         assert "sha256" in pmtiles_asset
         assert pmtiles_asset["size_bytes"] > 0
 
-        # If a thumbnail was actually rendered (matplotlib/contextily available;
-        # basemap fetch is networked, so it may be absent offline), it must live
-        # in the SAME snapshot as the PMTiles with its own checksum (Issue #519).
+        # A rendered thumbnail (the basemap fetch can fail offline) must live in the
+        # SAME snapshot as the PMTiles with its own checksum.
         if (collection_with_geoparquet / "roads.thumb.jpg").exists():
             assert "roads.thumb.jpg" in latest_version["assets"]
             thumb_asset = latest_version["assets"]["roads.thumb.jpg"]
@@ -311,10 +293,7 @@ class TestPMTilesGeneration:
     @staticmethod
     def _reset_versions_to_baseline(collection: Path) -> None:
         """Drop generated version snapshots, leaving only the empty 1.0.0 baseline.
-
-        Reproduces the original #519 state: artifacts exist on disk and in
-        collection.json, but versions.json does not track them.
-        """
+        The artifacts stay on disk and in collection.json, but versions.json does not track them."""
         data = json.loads((collection / "versions.json").read_text())
         data["versions"] = data["versions"][:1]
         data["current_version"] = data["versions"][0]["version"]
@@ -323,14 +302,8 @@ class TestPMTilesGeneration:
     def test_skip_path_backfills_untracked_artifacts(
         self, collection_with_geoparquet: Path
     ) -> None:
-        """Skip path heals artifacts left untracked by the old code (Issue #519).
-
-        Reproduce the pre-fix state (PMTiles + thumbnail on disk and in
-        collection.json, absent from versions.json), then run generation again.
-        The PMTiles is up-to-date so generation is skipped, but the untracked
-        artifacts must still be backfilled into versions.json — without forcing
-        a regenerate.
-        """
+        """The skip path backfills untracked PMTiles and thumbnail into versions.json.
+        The PMTiles is up to date, so generation is skipped, and nothing is regenerated."""
         from portolan_cli.viz.pmtiles import generate_pmtiles_for_collection
 
         catalog_root = collection_with_geoparquet.parent
@@ -344,9 +317,8 @@ class TestPMTilesGeneration:
         assert pmtiles.exists(), "PMTiles should have been generated"
         thumb_rendered = thumb.exists()
 
-        # Simulate the #519 bug state: forget the artifacts in versions.json. Also
-        # drop the thumbnail STAC asset from collection.json so the skip path must
-        # re-register it (no orphaned versions.json entry).
+        # Forget the artifacts in versions.json, and drop the thumbnail STAC asset from
+        # collection.json so the skip path must re-register it.
         self._reset_versions_to_baseline(collection_with_geoparquet)
         coll_path = collection_with_geoparquet / "collection.json"
         coll = json.loads(coll_path.read_text())
@@ -369,9 +341,8 @@ class TestPMTilesGeneration:
         assert "roads.pmtiles" in latest, "Untracked PMTiles must be backfilled on skip"
         if thumb_rendered:
             assert "roads.thumb.jpg" in latest, "Untracked thumbnail must be backfilled on skip"
-            # And it must end up a STAC asset, not left orphaned. Registering moved
-            # to collection_thumbnail in #683, which `add` runs right after the
-            # PMTiles side-step; it adopts exactly the file the backfill tracked.
+            # It must end up a STAC asset. collection_thumbnail, which `add` runs after the
+            # PMTiles side-step, adopts the file that the backfill tracked.
             from portolan_cli.collection_thumbnail import ensure_collection_thumbnails
 
             ensure_collection_thumbnails(catalog_root, {collection_with_geoparquet.name})
@@ -385,7 +356,7 @@ class TestPMTilesGeneration:
     def test_backfill_is_idempotent_when_already_tracked(
         self, collection_with_geoparquet: Path
     ) -> None:
-        """A skip with everything already tracked creates NO new version (Issue #519)."""
+        """A skip with everything already tracked creates NO new version."""
         from portolan_cli.viz.pmtiles import generate_pmtiles_for_collection
 
         catalog_root = collection_with_geoparquet.parent
@@ -411,11 +382,7 @@ class TestPMTilesGeneration:
         self, collection_with_two_geoparquet: Path
     ) -> None:
         """Each source asset's side-step is one version; the latest is cumulative.
-
-        Two GeoParquet assets -> two side-steps -> two new version snapshots
-        (one per asset, each bundling that asset's PMTiles + thumbnail), and the
-        final snapshot carries every generated artifact (Issue #519).
-        """
+        Two GeoParquet assets give two new snapshots, and the last carries every artifact."""
         from portolan_cli.viz.pmtiles import generate_pmtiles_for_collection
 
         collection = collection_with_two_geoparquet
@@ -614,14 +581,10 @@ class TestPMTilesAdvancedParameters:
 
 
 class TestForcePMTilesFlagEndToEnd:
-    """`portolan add --force-pmtiles` generates tiles on its own (Issue #760)."""
+    """`portolan add --force-pmtiles` generates tiles on its own."""
 
     def test_force_flag_alone_generates_pmtiles(self, tmp_path: Path, fixtures_dir: Path) -> None:
-        """--force-pmtiles without --pmtiles tiles a catalog that never opted in.
-
-        `pmtiles.enabled` defaults to false. Before the fix the gate read
-        `--pmtiles` alone, so this command exited 0 and wrote no tiles.
-        """
+        """--force-pmtiles without --pmtiles tiles a catalog where `pmtiles.enabled` is false."""
         from click.testing import CliRunner
 
         from portolan_cli import cli

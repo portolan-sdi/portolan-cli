@@ -1,8 +1,6 @@
-"""Pin the static analysis gates and their ratchets (#1035).
+"""Pin the static analysis gates and their ratchets.
 
-Each ratchet below is a list of exemptions that exists today. A ratchet only
-shrinks. When a module becomes clean, delete its line from the config and from
-the pinned set here in the same commit. Never add a line to either side.
+A ratchet only shrinks: delete a clean module from the config and here in one commit.
 """
 
 from __future__ import annotations
@@ -68,14 +66,11 @@ NOT_CLI_LAYER = frozenset(
     }
 )
 
-# Delete only. Each module here still imports portolan_cli.output or calls
-# obstore.put directly. Its owning #1035 agent deletes the line when the
-# module is clean.
+# Delete only. Each module here still imports portolan_cli.output or calls obstore.put.
 RATCHET_TID251: frozenset[str] = frozenset()
 
-# Ruff lifts TID251 per file, not per banned name. sync/upload.py keeps its
-# obstore.put calls, so ruff exempts it for good. import-linter still sees its
-# output import, and that edge is a ratchet line there.
+# Ruff lifts TID251 per file. import-linter sees each output import of a module
+# that ruff exempts for obstore.put.
 OUTPUT_RATCHET_ONLY_IN_IMPORT_LINTER: frozenset[str] = frozenset()
 
 OBJECT_STORE_IMPORTERS = frozenset(
@@ -90,7 +85,7 @@ OBJECT_STORE_IMPORTERS = frozenset(
 
 # Delete only. Lower these numbers when a name or a clone goes away.
 VULTURE_WHITELIST_NAMES = 95
-JSCPD_BASELINE_FINGERPRINTS = 516
+JSCPD_BASELINE_FINGERPRINTS = 498
 
 
 def _pyproject() -> dict[str, Any]:
@@ -109,7 +104,7 @@ def _tid251_ignored_paths() -> set[str]:
     return {
         path
         for path, codes in ignores.items()
-        # portolan-core sits under packages/ and is held to the same bans (#1133).
+        # portolan-core sits under packages/ and is held to the same bans.
         if path.startswith(("portolan_cli/", "packages/")) and "TID251" in codes
     }
 
@@ -155,11 +150,7 @@ def test_tid251_is_selected_and_bans_the_three_names() -> None:
 
 
 def test_tid251_ratchet_only_shrinks() -> None:
-    """Delete only: the TID251 exemptions are the permanent set plus the ratchet.
-
-    Delete a ratchet line when its module stops importing portolan_cli.output
-    and stops calling obstore.put. Never add one.
-    """
+    """Delete only: the TID251 exemptions are the permanent set plus the ratchet."""
     ignores: dict[str, list[str]] = _ruff_lint()["per-file-ignores"]
     assert _tid251_ignored_paths() == PERMANENT_TID251 | RATCHET_TID251
     for path in PERMANENT_TID251 | RATCHET_TID251:
@@ -225,12 +216,7 @@ def test_vulture_whitelist_is_pinned() -> None:
 
 
 def test_vulture_whitelist_entries_are_still_unused() -> None:
-    """A whitelist name whose code is gone or used now must leave the list.
-
-    vulture runs at 60 without the whitelist. Every whitelisted name must be
-    in its findings, so a stale line fails here the way a stale import-linter
-    ignore fails lint-imports.
-    """
+    """Every whitelisted name must be in the findings of vulture run without the whitelist."""
     vulture = _pyproject()["tool"]["vulture"]
     paths = [path for path in vulture["paths"] if path != "vulture_whitelist.py"]
     run = subprocess.run(  # fixed argument list
@@ -262,11 +248,7 @@ def test_vulture_min_confidence_is_60() -> None:
 
 
 def test_prek_vulture_hook_has_no_args() -> None:
-    """The hook reads ``[tool.vulture]``, so CI and a local run use one config.
-
-    prek.toml uses multi-line inline tables, which tomllib (TOML 1.0) rejects.
-    Each ``[[repos]]`` block is parsed on its own instead.
-    """
+    """The hook reads ``[tool.vulture]``, so CI and a local run use one config."""
     blocks = PREK.read_text(encoding="utf-8").split("[[repos]]")
     vulture = [block for block in blocks if "jendrikseipp/vulture" in block]
     assert len(vulture) == 1
@@ -284,6 +266,28 @@ def test_prek_mypy_hook_has_no_args() -> None:
     assert files == ["portolan_cli", "packages/portolan-core/src", "scripts", "tests"]
 
 
+def test_prek_check_comments_hook_covers_the_code_and_config() -> None:
+    """The hook checks each changed file, and ruff leaves docstring coverage to it."""
+    prek = PREK.read_text(encoding="utf-8")
+    (hook,) = re.findall(r'\{\s*id = "check-comments",.*?\n  \}', prek, flags=re.DOTALL)
+    assert 'entry = "uv run python scripts/check_comments.py",' in hook
+    assert 'language = "system",' in hook
+    assert "pass_filenames = true," in hook
+    globs = set(re.findall(r'"([^"]+)"', hook.split("glob = ", 1)[1]))
+    assert globs == {
+        "portolan_cli/**/*.py",
+        "packages/**/*.py",
+        "scripts/**/*.py",
+        "tests/**/*.py",
+        "examples/**/*.py",
+        "vulture_whitelist.py",
+        "pyproject.toml",
+        "prek.toml",
+        ".github/workflows/*.yml",
+    }
+    assert "D1" in _ruff_lint()["ignore"]
+
+
 def test_jscpd_baseline_only_shrinks() -> None:
     """Delete only: lower the pinned count after a real deduplication."""
     config = json.loads(JSCPD_CONFIG.read_text(encoding="utf-8"))
@@ -294,7 +298,8 @@ def test_jscpd_baseline_only_shrinks() -> None:
 
 
 def test_mypy_reports_unreachable_code_everywhere() -> None:
-    """The #1035 ratchet is empty, so no override turns warn_unreachable off."""
+    """No override turns warn_unreachable off."""
+
     mypy = _pyproject()["tool"]["mypy"]
     assert mypy["warn_unreachable"] is True
     assert [block for block in mypy["overrides"] if "warn_unreachable" in block] == []

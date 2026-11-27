@@ -1,18 +1,4 @@
-"""ArcGIS ImageServer service discovery.
-
-This module fetches raster service metadata from ArcGIS ImageServer REST API
-endpoints. It's the first step in raster extraction, providing information
-about band count, pixel type, extent, and resolution.
-
-The discovery client uses httpx for HTTP requests, following the same
-pattern as the FeatureServer discovery module.
-
-Typical usage:
-    # Discover metadata from an ImageServer
-    metadata = discover_imageserver("https://services.arcgis.com/.../ImageServer")
-    print(f"Bands: {metadata.band_count}, Type: {metadata.pixel_type}")
-    print(f"Resolution: {metadata.pixel_size_x}m x {metadata.pixel_size_y}m")
-"""
+"""ArcGIS ImageServer service discovery."""
 
 from __future__ import annotations
 
@@ -32,63 +18,19 @@ from portolan_cli.extract.common.urls import redact_credentials
 
 logger = logging.getLogger(__name__)
 
-# ArcGIS Server defaults for the "Max Image Height" and "Max Image Width"
-# service properties. Hosted tiled imagery layers on ArcGIS Online omit the
-# maxImageHeight and maxImageWidth fields from the service JSON (issue #870).
-# Discovery applies these defaults when a field is absent, so the tile size
-# check in the extractor still has a limit to compare against.
+# ArcGIS Server defaults for a service JSON that omits maxImageHeight and maxImageWidth,
+# as hosted tiled imagery layers on ArcGIS Online do.
 DEFAULT_MAX_IMAGE_HEIGHT = 4100
 DEFAULT_MAX_IMAGE_WIDTH = 15000
 
 
 class ImageServerDiscoveryError(Exception):
-    """Error during ArcGIS ImageServer discovery.
-
-    Raised when:
-    - HTTP request fails (connection, timeout, status errors)
-    - Response is not valid JSON
-    - Required fields are missing from response
-    - ArcGIS returns an error response (e.g., authentication required)
-    """
+    """Error during ArcGIS ImageServer discovery."""
 
 
 @dataclass
 class ImageServerMetadata:
-    """Metadata from an ArcGIS ImageServer service.
-
-    Contains raster service information needed for extraction planning:
-    band count, pixel type, resolution, extent, and capabilities.
-
-    Also includes metadata fields matching FeatureServer extraction pattern
-    for consistent metadata.yaml population.
-
-    Attributes:
-        name: Service name
-        band_count: Number of bands in the raster
-        pixel_type: Pixel data type (e.g., U8, U16, F32, F64)
-        pixel_size_x: Pixel width in the service's coordinate system units
-        pixel_size_y: Pixel height in the service's coordinate system units
-        full_extent: Bounding box with spatial reference
-            {xmin, ymin, xmax, ymax, spatialReference: {wkid, latestWkid?}}
-        max_image_width: Maximum image width that can be requested. Falls
-            back to DEFAULT_MAX_IMAGE_WIDTH when the service omits the field.
-        max_image_height: Maximum image height that can be requested. Falls
-            back to DEFAULT_MAX_IMAGE_HEIGHT when the service omits the field.
-        capabilities: List of service capabilities (e.g., Image, Metadata, Catalog)
-        description: Optional service description
-        copyright_text: Optional copyright information (maps to attribution)
-        service_data_type: Optional service data type classification
-
-        # FeatureServer-parity fields (for metadata.yaml population):
-        service_description: Extended service description (processing_notes)
-        author: Author from documentInfo (a producer provider, never the contact)
-        keywords: Keywords from documentInfo (comma-separated list)
-        license_info: License text from licenseInfo
-        access_information: Access restrictions from accessInformation (known_issues)
-        tile_cache: Tile cache grid from tileInfo, or None when the service
-            publishes no cache. A hosted tiled imagery layer serves only this
-            cache (issue #870).
-    """
+    """Metadata from an ArcGIS ImageServer service."""
 
     name: str
     band_count: int
@@ -112,28 +54,11 @@ class ImageServerMetadata:
 
     @property
     def export_image_supported(self) -> bool:
-        """Report whether the service accepts exportImage requests.
-
-        A service that lists the TilesOnly capability answers exportImage with
-        HTTP 400 at every size. The extractor reads its cache instead
-        (issue #870).
-
-        Returns:
-            False when the service is cache-only, True otherwise.
-        """
+        """Report whether the service accepts exportImage requests."""
         return export_image_supported(self.capabilities)
 
     def get_crs_string(self) -> str:
-        """Get CRS as EPSG string from spatial reference.
-
-        Returns:
-            CRS string like 'EPSG:4326' or 'EPSG:102719'
-
-        Note:
-            Logs a warning if CRS cannot be determined and falls back to WGS84.
-            This can result in incorrect coordinate transformations if the
-            service is not actually in WGS84.
-        """
+        """Get CRS as EPSG string from spatial reference."""
         import logging
 
         sr = self.full_extent.get("spatialReference", {})
@@ -152,14 +77,7 @@ class ImageServerMetadata:
         return "EPSG:4326"  # Default fallback
 
     def get_bbox_tuple(self) -> tuple[float, float, float, float]:
-        """Get extent as (minx, miny, maxx, maxy) tuple.
-
-        Returns:
-            Bounding box tuple (xmin, ymin, xmax, ymax).
-
-        Raises:
-            ValueError: If full_extent is missing required keys or values are not numeric.
-        """
+        """Get extent as (minx, miny, maxx, maxy) tuple."""
         required_keys = ("xmin", "ymin", "xmax", "ymax")
         missing = [k for k in required_keys if k not in self.full_extent]
         if missing:
@@ -179,17 +97,7 @@ class ImageServerMetadata:
 
 
 def _parse_capabilities(capabilities_value: str | list[str] | None) -> list[str]:
-    """Parse capabilities from various formats.
-
-    ArcGIS returns capabilities as a comma-separated string.
-    Handle missing, empty, or already-parsed values.
-
-    Args:
-        capabilities_value: Raw capabilities from response
-
-    Returns:
-        List of capability strings
-    """
+    """Parse capabilities from various formats."""
     if not capabilities_value:
         return []
 
@@ -201,18 +109,7 @@ def _parse_capabilities(capabilities_value: str | list[str] | None) -> list[str]
 
 
 async def _fetch_json(url: str, timeout: float) -> dict[str, Any]:
-    """Fetch JSON from URL with standard error handling.
-
-    Args:
-        url: URL to fetch (will have f=json added if needed)
-        timeout: Request timeout in seconds
-
-    Returns:
-        Parsed JSON response
-
-    Raises:
-        ImageServerDiscoveryError: On HTTP or parsing errors
-    """
+    """Fetch JSON from URL with standard error handling."""
     request_url = ensure_json_format(url)
 
     try:
@@ -238,17 +135,7 @@ async def _fetch_json(url: str, timeout: float) -> dict[str, Any]:
 
 
 def _check_arcgis_error(data: dict[str, Any]) -> None:
-    """Check for ArcGIS error response and raise if found.
-
-    ArcGIS returns errors as JSON with an 'error' key containing
-    code, message, and details.
-
-    Args:
-        data: Parsed JSON response
-
-    Raises:
-        ImageServerDiscoveryError: If response contains an error
-    """
+    """Check for ArcGIS error response and raise if found."""
     if "error" in data:
         error_info = data["error"]
         code = error_info.get("code", "unknown")
@@ -257,15 +144,7 @@ def _check_arcgis_error(data: dict[str, Any]) -> None:
 
 
 def _validate_required_fields(data: dict[str, Any], url: str) -> None:
-    """Validate that all required fields are present.
-
-    Args:
-        data: Parsed JSON response
-        url: Original URL (for error message)
-
-    Raises:
-        ImageServerDiscoveryError: If required field is missing
-    """
+    """Validate that all required fields are present."""
     required_fields = [
         "name",
         "bandCount",
@@ -285,16 +164,7 @@ def _validate_required_fields(data: dict[str, Any], url: str) -> None:
 
 
 def _image_size_limit(data: dict[str, Any], field_name: str, default: int) -> int:
-    """Read an optional image size limit, with the ArcGIS Server default.
-
-    Args:
-        data: Parsed JSON response
-        field_name: "maxImageWidth" or "maxImageHeight"
-        default: Value to use when the field is absent or empty
-
-    Returns:
-        The limit from the response, or the default
-    """
+    """Read an optional image size limit, with the ArcGIS Server default."""
     value = data.get(field_name)
     if not value:
         logger.warning(
@@ -307,22 +177,7 @@ def _image_size_limit(data: dict[str, Any], field_name: str, default: int) -> in
 
 
 def parse_imageserver_response(data: dict[str, Any]) -> ImageServerMetadata:
-    """Parse ImageServer metadata from a JSON response.
-
-    Use this when you already have the JSON response (e.g., from a file
-    or mocked response). For fetching from a live service, use
-    `discover_imageserver()` instead.
-
-    Args:
-        data: Parsed JSON response from ImageServer REST API
-
-    Returns:
-        ImageServerMetadata with service information
-
-    Raises:
-        ImageServerDiscoveryError: If required fields are missing or
-            response contains an error
-    """
+    """Parse ImageServer metadata from a JSON response."""
     # Check for ArcGIS error response
     _check_arcgis_error(data)
 
@@ -373,29 +228,7 @@ async def discover_imageserver(
     *,
     timeout: float = 60.0,
 ) -> ImageServerMetadata:
-    """Discover metadata from an ArcGIS ImageServer.
-
-    Fetches service metadata from the ArcGIS REST API and extracts
-    information about the raster data: band count, pixel type,
-    resolution, extent, and capabilities.
-
-    This is the primary entry point for live service discovery. It fetches
-    JSON from the URL and delegates parsing to parse_imageserver_response().
-
-    Args:
-        url: ImageServer URL (e.g., "https://services.arcgis.com/.../ImageServer")
-        timeout: Request timeout in seconds
-
-    Returns:
-        ImageServerMetadata with service information
-
-    Raises:
-        ImageServerDiscoveryError: If request fails, response is invalid,
-            or required fields are missing
-    """
+    """Discover metadata from an ArcGIS ImageServer."""
     data = await _fetch_json(url, timeout=timeout)
 
-    # Delegate to parse_imageserver_response for validation and parsing
-    # Note: parse_imageserver_response uses "<parsed response>" for error context,
-    # but the URL context is already captured in _fetch_json errors
     return parse_imageserver_response(data)

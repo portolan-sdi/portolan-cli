@@ -1,8 +1,4 @@
-"""Unit tests for AGENTS.md scaffolding, link injection, and gap detection.
-
-Covers the framework-free leaf ``portolan_core.agents_md``. The ``check --fix``
-repair is ``validation.fixers`` fixer ``agents`` (PTL-FIL-001/-002).
-"""
+"""Unit tests for AGENTS.md scaffolding, link injection, and gap detection."""
 
 from __future__ import annotations
 

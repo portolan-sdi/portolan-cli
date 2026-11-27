@@ -1,25 +1,4 @@
-"""WFS extraction through the shared LayerSource driver.
-
-``WFSLayerSource`` implements ``LayerSource`` for a WFS endpoint, and
-``extract_wfs_catalog`` runs it with ``run_layer_extraction``. Unlike ArcGIS,
-WFS is always a single service endpoint (no services root).
-
-- ``discover`` negotiates the WFS version once. Discovery and every fetch use
-  that version, so ``LayerRef.data`` carries it with the layer.
-- ``fetch`` calls geoparquet-io's ``convert_wfs_to_geoparquet``.
-- ``styles`` reads the WMS style and legend of the layer.
-- ``layer_metadata`` prefers an ISO 19139 record from the layer's MetadataURL.
-
-Typical usage:
-    from portolan_cli.extract.wfs.orchestrator import extract_wfs_catalog
-
-    result = extract_wfs_catalog(
-        url="https://example.com/wfs",
-        output_dir=Path("./output"),
-        layer_filter=["buildings*"],
-    )
-    print(f"Extracted {result.summary.succeeded}/{result.summary.total_layers} layers")
-"""
+"""WFS extraction through the shared LayerSource driver."""
 
 from __future__ import annotations
 
@@ -63,39 +42,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class ExtractionOptions:
-    """Options for WFS extraction.
-
-    Attributes:
-        workers: Number of parallel workers for layer extraction.
-            Each layer is extracted independently; this controls how many
-            layers are processed concurrently.
-        retries: Number of retry attempts per failed layer.
-        timeout: Per-layer timeout in seconds. Note: geoparquet-io uses a
-            10-minute internal HTTP timeout for large responses; this timeout
-            wraps the entire layer extraction including retries.
-        resume: Whether to resume from existing extraction report.
-        raw: If True, skip auto-init (only create extraction files, no STAC catalog).
-        dry_run: If True, list layers without extracting.
-        no_styles: If True, skip style extraction from WMS GetStyles.
-        wfs_version: WFS version ("1.0.0", "1.1.0", "2.0.0", or "auto").
-            When "auto", the version is negotiated with the server once and
-            used consistently for both discovery and extraction.
-        output_crs: Target CRS for output (e.g., "EPSG:4326"). None keeps source CRS.
-        bbox: Bounding box filter (xmin, ymin, xmax, ymax) in output CRS.
-        limit: Maximum features per layer (None for unlimited).
-        page_size: Features per page when gpio uses parallel pagination for
-            very large layers (1M+ features). Default: 100000 (gpio 1.3+ default,
-            ~10x fewer HTTP roundtrips than the old 10000).
-        auto_tile: When True (default), gpio subdivides the bbox and retries when
-            a server caps maxFeatures below the requested page, so capped layers
-            extract completely instead of silently truncating (gpio 1.3+).
-        license: SPDX identifier for the harvested data, or "other" with
-            license_url. Overrides any license URL found in the service's own
-            license text (issue #686).
-        license_url: URL of the license text.
-        catalog_id: Catalog id for the created catalog. None derives it from
-            the output directory name, which is the behavior before issue #821.
-    """
+    """Options for WFS extraction."""
 
     workers: int = 1
     retries: int = 3
@@ -116,17 +63,7 @@ class ExtractionOptions:
 
 
 def _assign_slugs(layers: list[LayerInfo]) -> dict[int, str]:
-    """Assign a collection slug to each layer, with a hash suffix only on collision.
-
-    Two typenames can slug to the same name (``ns:Roads`` and ``ns_roads``).
-    Each colliding layer then gets a short hash of its name and id (issue #379).
-
-    Args:
-        layers: The layers that this run extracts.
-
-    Returns:
-        Slug by layer id.
-    """
+    """Assign a collection slug to each layer, with a hash suffix only on collision."""
     base = {layer.id: slugify(layer.name) for layer in layers}
     counts = Counter(base.values())
     slugs: dict[int, str] = {}
@@ -157,11 +94,7 @@ class WFSLayerSource:
         self.options = options or ExtractionOptions()
 
     def discover(self, source: str, options: LayerSourceOptions) -> Discovery:
-        """Negotiate the version, list the layers, and read the service metadata.
-
-        The slugs come from the filtered layers, so a collision with a layer
-        that the filter drops does not add a hash suffix.
-        """
+        """Negotiate the version, list the layers, and read the service metadata."""
         version = _negotiate_version(source, self.options.wfs_version)
         logger.debug("Using WFS version: %s", version)
         return self.discovery_from(
@@ -175,17 +108,7 @@ class WFSLayerSource:
         version: str,
         options: LayerSourceOptions,
     ) -> Discovery:
-        """Turn a GetCapabilities result into the driver's ``Discovery``.
-
-        Args:
-            source: WFS service URL.
-            found: The parsed GetCapabilities result.
-            version: The negotiated WFS version.
-            options: The driver options, for the layer filter.
-
-        Returns:
-            The filtered layers with their slugs, and the catalog metadata.
-        """
+        """Turn a GetCapabilities result into the driver's ``Discovery``."""
         refs = filter_refs(
             [
                 LayerRef(id=layer.id, name=layer.name, data=WFSLayer(layer, version))
@@ -197,7 +120,7 @@ class WFSLayerSource:
         slugs = _assign_slugs([ref.data.info for ref in refs])
         metadata = _build_metadata(source, found)
         title, description = _derive_catalog_titles(found)
-        # GetCapabilities carries the licence in Fees and AccessConstraints (issue #686).
+        # GetCapabilities carries the licence in Fees and AccessConstraints.
         license_text = "; ".join(part for part in (found.fees, found.access_constraints) if part)
         return Discovery(
             source_url=source,
@@ -212,11 +135,7 @@ class WFSLayerSource:
         )
 
     def fetch(self, source: str, layer: LayerRef, dest: Path) -> int:
-        """Write the layer with geoparquet-io's ``convert_wfs_to_geoparquet``.
-
-        geoparquet-io raises a WFS error for a layer with no features. That
-        error becomes ``EmptyLayerError`` (issue #450).
-        """
+        """Write the layer with geoparquet-io's ``convert_wfs_to_geoparquet``."""
         from geoparquet_io.core.wfs import convert_wfs_to_geoparquet
 
         wfs_layer: WFSLayer = layer.data
@@ -265,7 +184,7 @@ class WFSLayerSource:
         )
 
     def styles(self, source: str, layer: LayerRef, collection_dir: Path) -> None:
-        """Write the WMS style (issue #490) and legend (issue #498) of the layer."""
+        """Write the WMS style and legend of the layer."""
         if self.options.no_styles:
             return
         style = extract_wms_style(
@@ -302,7 +221,7 @@ def driver_options(
 ) -> LayerSourceOptions:
     """Map WFS options to the driver's options.
 
-    ``timeout`` is the per-layer deadline of a parallel run (issues #508, #526).
+    ``timeout`` is the per-layer deadline of a parallel run.
     """
     return LayerSourceOptions(
         layer_filter=layer_filter,
@@ -329,24 +248,7 @@ def extract_wfs_catalog(
     on_progress: LayerProgressCallback | None = None,
     on_message: MessageCallback | None = None,
 ) -> ExtractionReport:
-    """Extract layers from a WFS service to a Portolan catalog.
-
-    Args:
-        url: WFS service endpoint URL.
-        output_dir: Directory to write extracted data.
-        layer_filter: Glob patterns to include layers (if None, include all).
-        layer_exclude: Glob patterns to exclude layers.
-        options: Extraction options (defaults to ExtractionOptions()).
-        on_progress: Callback for progress updates.
-        on_message: Called as ``on_message(level, text)`` with each catalog notice.
-
-    Returns:
-        ExtractionReport with results for all layers.
-
-    Raises:
-        WFSDiscoveryError: If service discovery fails.
-        MissingLicenseError: If no license can be resolved (issue #686).
-    """
+    """Extract layers from a WFS service to a Portolan catalog."""
     options = options or ExtractionOptions()
     return run_layer_extraction(
         WFSLayerSource(options),
@@ -390,39 +292,15 @@ def _build_metadata(url: str, discovery_result: WFSDiscoveryResult | None) -> Me
 
 
 def _is_empty_layer_error(error_msg: str | None) -> bool:
-    """Check if an error message indicates an empty WFS layer.
-
-    gpio raises WFSError with specific messages when a layer has 0 features:
-    - "No features returned from WFS service for layer '{typename}'."
-    - "No features returned from any spatial tile."
-
-    This detection is string-based and coupled to gpio's error messages.
-    See: https://github.com/portolan-sdi/portolan-cli/issues/450
-
-    Upstream: https://github.com/geoparquet/geoparquet-io/issues/448
-    (EmptyLayerError subclass requested)
-
-    Args:
-        error_msg: The error message from a failed extraction.
-
-    Returns:
-        True if the error indicates an empty layer (0 features).
-    """
+    """Check if an error message indicates an empty WFS layer."""
     if not error_msg:
         return False
+    # gpio has no EmptyLayerError yet: https://github.com/geoparquet/geoparquet-io/issues/448
     return "No features returned" in error_msg
 
 
 def _negotiate_version(url: str, wfs_version: str) -> str:
-    """Negotiate WFS version with the server.
-
-    Args:
-        url: WFS service URL.
-        wfs_version: User-requested version ("auto" or specific version).
-
-    Returns:
-        Negotiated version string (e.g., "1.1.0", "2.0.0").
-    """
+    """Negotiate WFS version with the server."""
     if wfs_version != "auto":
         return wfs_version
 
@@ -442,11 +320,7 @@ def _negotiate_version(url: str, wfs_version: str) -> str:
 def _derive_catalog_titles(
     discovery_result: WFSDiscoveryResult | None,
 ) -> tuple[str | None, str | None]:
-    """Derive filtered catalog title/description from the WFS discovery result.
-
-    Technical names and boilerplate descriptions are dropped (Issue #376) so the
-    catalog is not populated with service-generated placeholders.
-    """
+    """Derive filtered catalog title/description from the WFS discovery result."""
     from portolan_cli.extract.wfs.metadata import is_boilerplate_description
     from portolan_cli.stac import is_technical_name
 
@@ -464,18 +338,7 @@ def _derive_catalog_titles(
 def _report_metadata_to_wfs_metadata(
     report_metadata: MetadataExtracted,
 ) -> WFSMetadata:
-    """Convert report MetadataExtracted back to WFSMetadata.
-
-    The extraction report stores a flattened version of the metadata.
-    This function reconstructs the WFSMetadata object for conversion
-    to ExtractedMetadata.
-
-    Args:
-        report_metadata: MetadataExtracted from the extraction report.
-
-    Returns:
-        WFSMetadata instance with the same data.
-    """
+    """Convert report MetadataExtracted back to WFSMetadata."""
     from portolan_cli.extract.wfs.metadata import WFSMetadata
 
     return WFSMetadata(
@@ -490,14 +353,7 @@ def _report_metadata_to_wfs_metadata(
 def _try_fetch_iso_metadata(
     metadata_urls: list[dict[str, Any]] | None,
 ) -> ISOMetadata | None:
-    """Try to fetch ISO 19139 metadata from MetadataURLs.
-
-    Args:
-        metadata_urls: List of metadata URL dicts from layer.
-
-    Returns:
-        Parsed ISOMetadata if successful, None otherwise.
-    """
+    """Try to fetch ISO 19139 metadata from MetadataURLs."""
     if not metadata_urls:
         return None
 

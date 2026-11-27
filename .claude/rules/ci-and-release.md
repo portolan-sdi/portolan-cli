@@ -9,7 +9,7 @@ paths:
 ## CI Pipeline
 
 **Source of truth:** the workflow files in `.github/workflows/` and
-`prek.toml`. Each job and hook records its own rationale in comments.
+`prek.toml`. The commit and PR bodies record why a job or hook exists.
 
 | Tier | When | What |
 |------|------|------|

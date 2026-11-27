@@ -1,9 +1,4 @@
-"""The scenario inputs are the same bytes for the same seed (#992).
-
-The gates compare counts across runs and machines. Inputs that change from
-run to run would change a count that depends on the data, such as the number
-of row groups to read.
-"""
+"""The scenario inputs are the same bytes for the same seed, so data-driven counts stay fixed."""
 
 from __future__ import annotations
 

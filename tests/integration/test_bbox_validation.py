@@ -1,8 +1,4 @@
-"""Integration tests for bbox validation (issue #516).
-
-Tests that inf/nan coordinates are properly filtered during add
-and detected by the check command.
-"""
+"""Integration tests for bbox validation."""
 
 from __future__ import annotations
 
@@ -20,9 +16,6 @@ from portolan_cli.cli import cli
 
 if TYPE_CHECKING:
     from tests.catalog_invariants import RunCli
-
-# The #852 extent of two bboxes breaks S-BBOX-COUNT, so run_cli must not
-# check this catalog at teardown while the bug is open.
 
 
 def _write_point_geoparquet(path: Path, bbox: list[float]) -> None:
@@ -45,12 +38,7 @@ def _write_point_geoparquet(path: Path, bbox: list[float]) -> None:
 
 
 def _create_geoparquet_with_inf_bbox(path: Path) -> None:
-    """Create a GeoParquet file with inf values in the bbox metadata.
-
-    This simulates the IGN Argentina issue where upstream WFS served
-    coordinates like -1.79e308 (near float min, effectively -inf). The bbox
-    is the issue #516 sentinel value.
-    """
+    """Create a GeoParquet file with inf values in the bbox metadata."""
     _write_point_geoparquet(path, [-1.79e308, -1.79e308, 180.0, 66.55])
 
 
@@ -123,10 +111,8 @@ class TestBboxValidationIntegration:
                 encoding="utf-8",
             )
 
-            # Create a collection with BOTH a valid and an invalid parquet file.
-            # The invalid file carries the IGN Argentina poison bbox (effectively
-            # -inf sentinels). Adding them together must succeed by filtering the
-            # invalid bbox out of the aggregated collection extent (issue #516).
+            # A valid and an invalid parquet file. Adding them together succeeds and
+            # filters the IGN Argentina -inf sentinel bbox out of the collection extent.
             collection_dir = Path("test-collection")
             collection_dir.mkdir()
 
@@ -150,7 +136,7 @@ class TestBboxValidationIntegration:
             spatial = extent.get("spatial", {})
             bboxes = spatial.get("bbox", [[]])
 
-            # The poison bbox of the invalid file contributes nothing (issue #516).
+            # The poison bbox of the invalid file contributes nothing.
             assert bboxes == [[-74.0, 40.0, -73.0, 41.0]]
 
     def test_check_detects_invalid_bbox_in_collection(self) -> None:
@@ -254,14 +240,7 @@ class TestAntimeridianBboxIntegration:
     def test_collection_with_antimeridian_crossing_item(
         self, tmp_path: Path, run_cli: RunCli
     ) -> None:
-        """Collection with an anti-meridian crossing item writes a STAC 1.1.0 extent.
-
-        STAC 1.1.0 allows one bbox, or an overall bbox followed by two or more
-        sub-bboxes. A list of exactly two is invalid (#852). The overall bbox is
-        the [-180, ..., 180] envelope, because rashid's PTL-DAT-005 compares
-        bbox[0] with the plain min/max of the data. The two parts that follow
-        it keep the gap over the prime meridian.
-        """
+        """Collection with an anti-meridian crossing item writes a STAC 1.1.0 extent."""
         root = tmp_path / "catalog"
         collection_dir = root / "fiji-data"
         collection_dir.mkdir(parents=True)
@@ -285,8 +264,7 @@ class TestAntimeridianBboxIntegration:
             assert -180 <= bbox[2] <= 180
             assert -90 <= bbox[3] <= 90
         # STAC 1.1.0 allows one bbox, or three or more with the envelope first,
-        # never two (issue #852). The crossing input is the envelope, then its
-        # western and eastern parts.
+        # never two. The crossing input is the envelope, then its two parts.
         assert [b[:4] for b in bboxes] == [
             [-180.0, -20.0, 180.0, -15.0],
             [-180.0, -20.0, -175.0, -15.0],
@@ -298,7 +276,8 @@ class TestAntimeridianBboxIntegration:
 
     def test_add_fails_loudly_when_projected_bbox_assumed_wgs84(self, tmp_path: Path) -> None:
         """A projected source whose CRS is lost in conversion must not publish
-        meter-valued extents as degrees (issue #785)."""
+        meter-valued extents as degrees.
+        """
         import shutil
 
         runner = CliRunner()
@@ -327,15 +306,13 @@ class TestAntimeridianBboxIntegration:
 
             result = runner.invoke(cli, ["add", str(collection_dir / "radios_sample.shp")])
 
-            # POSGAR meters must never be published as degrees: either the add
-            # fails with the CRS mismatch (conversion dropped the CRS), or a
-            # future conversion fix preserves the CRS and the bbox is WGS84.
+            # POSGAR meters are never published as degrees: either add fails on the
+            # CRS mismatch, or the conversion keeps the CRS and the bbox is WGS84.
             if result.exit_code != 0:
                 assert "PRTLN-CNV004" in result.output or "mismatch" in result.output.lower()
             else:
-                # geoparquet-io 1.4.0 preserves the CRS, so `add` now takes this
-                # branch. An Item carries `bbox` at the top level. A Collection
-                # carries it under `extent.spatial.bbox`, so read both.
+                # geoparquet-io 1.4.0 keeps the CRS. An Item has `bbox` at the top level,
+                # a Collection has it under `extent.spatial.bbox`, so read both.
                 written = list(collection_dir.glob("*.json"))
                 assert written, "expected STAC metadata to be written"
                 bboxes: list[list[float]] = []

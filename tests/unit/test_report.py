@@ -1,4 +1,4 @@
-"""Tests for the report callback of the library (#1133)."""
+"""Tests for the report callback of the library."""
 
 from __future__ import annotations
 

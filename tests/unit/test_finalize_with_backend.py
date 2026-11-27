@@ -1,9 +1,4 @@
-"""Unit tests for add._finalize_with_backend.
-
-Covers the versioning + on_post_add dispatch that occurs after a batch of
-items has been written to the filesystem.  All I/O is mocked so no real
-Iceberg installation is required.
-"""
+"""Unit tests for add._finalize_with_backend."""
 
 from __future__ import annotations
 
@@ -19,9 +14,7 @@ from portolan_core.run_state import RunState
 if TYPE_CHECKING:
     from pathlib import Path
 
-# ---------------------------------------------------------------------------
 # Helpers
-# ---------------------------------------------------------------------------
 
 
 def _publish_through_iceberg(tmp_path: Path, item: PreparedItem, state: RunState) -> MagicMock:
@@ -77,9 +70,7 @@ def _make_item(
     )
 
 
-# ---------------------------------------------------------------------------
 # Tests
-# ---------------------------------------------------------------------------
 
 
 @pytest.fixture
@@ -212,7 +203,6 @@ class TestFinalizeWithBackend:
     def test_item_id_does_not_rename_the_asset_directory(
         self, tmp_path: Path, state: RunState
     ) -> None:
-        """Issue #840: --item-id names the item. The key follows the file."""
         item_dir = tmp_path / "imagery" / "rapidai4eo"
         item_dir.mkdir(parents=True)
         tif = item_dir / "rapidai4eo.tif"

@@ -471,12 +471,6 @@ class TestMetadataReport:
 
     @pytest.mark.unit
     def test_heuristics_unchanged_when_both_bboxes_are_none(self) -> None:
-        """Collection-level assets path the scanner with both stored and
-        current bbox = None (no item.json bbox source). The previous logic
-        flagged that as `heuristics_changed=True`, producing false STALE on
-        a touched-but-unchanged collection asset. When BOTH sides are None,
-        the check should fall through to feature_count + schema comparisons.
-        """
         from portolan_cli.metadata.models import FileMetadataState
 
         state = FileMetadataState(
@@ -494,9 +488,6 @@ class TestMetadataReport:
 
     @pytest.mark.unit
     def test_heuristics_changed_when_only_stored_bbox_is_none(self) -> None:
-        """New-file detection must still work: stored_bbox=None but
-        current_bbox=[0,0,1,1] means we have new data and no baseline,
-        which IS a change. Don't regress this case."""
         from portolan_cli.metadata.models import FileMetadataState
 
         state = FileMetadataState(
@@ -514,9 +505,6 @@ class TestMetadataReport:
 
     @pytest.mark.unit
     def test_orphaned_does_not_pass(self) -> None:
-        """ORPHANED is a warning, not a pass. the rule emits
-        passed=False for orphan-only reports; the report property must agree
-        so JSON callers and the rule do not diverge."""
         from portolan_cli.metadata.models import (
             MetadataCheckResult,
             MetadataReport,
@@ -620,11 +608,6 @@ class TestMetadataStatusSeverity:
 
     @pytest.mark.unit
     def test_status_severity_ordering(self) -> None:
-        """MetadataStatus should have a sensible severity ordering.
-
-        BREAKING > MISSING > STALE > FRESH
-        This allows sorting issues by severity.
-        """
         from portolan_cli.metadata.models import MetadataStatus
 
         # Verify severity can be compared (relies on enum ordering)

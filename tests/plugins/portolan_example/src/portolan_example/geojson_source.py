@@ -1,7 +1,5 @@
 """The ``example`` extractor: each GeoJSON file in a directory is a layer.
-
-It implements ``LayerSource``. ``portolan_cli.api.extractor_from`` gives it
-filters, resume, retry, the report, and catalog setup.
+``portolan_cli.api.extractor_from`` adds filters, resume, retry, the report, and catalog setup.
 """
 
 from __future__ import annotations

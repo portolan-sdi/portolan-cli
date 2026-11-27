@@ -1,13 +1,4 @@
-"""Extraction report models.
-
-This module defines dataclasses for tracking extraction progress and results:
-- LayerResult: Status of individual layer extraction
-- ExtractionSummary: Aggregate statistics for the extraction
-- MetadataExtracted: Harvested metadata from source service
-- ExtractionReport: Complete extraction report
-
-Report files are stored at `.portolan/extraction-report.json`.
-"""
+"""Extraction report models."""
 
 from __future__ import annotations
 
@@ -24,20 +15,7 @@ if TYPE_CHECKING:
 
 @dataclass
 class LayerResult:
-    """Result of extracting a single layer.
-
-    Attributes:
-        id: Layer ID (integer from service).
-        name: Layer name from service metadata.
-        status: Extraction status ("success", "failed", "skipped", "pending", "empty").
-        features: Number of features extracted (None if failed, 0 if empty).
-        size_bytes: Output file size in bytes (None if failed, 0 if empty).
-        duration_seconds: Extraction duration (None if failed).
-        output_path: Relative path to output parquet file (None if failed/empty).
-        warnings: List of non-fatal warnings during extraction.
-        error: Error message if status is "failed" or "empty" (None otherwise).
-        attempts: Number of extraction attempts (including retries).
-    """
+    """Result of extracting a single layer."""
 
     id: int
     name: str
@@ -92,23 +70,7 @@ class LayerResult:
 
 @dataclass
 class ExtractionSummary:
-    """Aggregate statistics for an extraction operation.
-
-    Attributes:
-        total_layers: Total number of layers in the service.
-        succeeded: Number of successfully extracted layers.
-        failed: Number of failed layer extractions.
-        skipped: Number of skipped layers (e.g., from resume).
-        empty: Number of empty layers (0 features, skipped with warning).
-        total_features: Total features across all succeeded layers.
-        total_size_bytes: Total output size in bytes.
-        total_duration_seconds: The sum of the per-layer fetch durations. With
-            parallel workers the layers overlap, so this sum is larger than
-            the time the run took.
-        wall_duration_seconds: The wall-clock time of the fetch stage (issue
-            #991). None for a dry run and for a report written before the
-            field existed.
-    """
+    """Aggregate statistics for an extraction operation."""
 
     total_layers: int
     succeeded: int
@@ -138,11 +100,7 @@ class ExtractionSummary:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> ExtractionSummary:
-        """Create ExtractionSummary from dict.
-
-        Note: empty field defaults to 0 for backward compatibility with
-        reports created before Issue #450 (graceful empty layer handling).
-        """
+        """Create ExtractionSummary from dict."""
         return cls(
             total_layers=data["total_layers"],
             succeeded=data["succeeded"],
@@ -158,22 +116,7 @@ class ExtractionSummary:
 
 @dataclass
 class MetadataExtracted:
-    """Metadata harvested from source service.
-
-    Captures what was found in the service metadata. Null values indicate
-    the field was checked but not present in the source.
-
-    Attributes:
-        source_url: The service URL that was extracted.
-        description: Service description.
-        attribution: Copyright/attribution text from service.
-        keywords: Keywords from service metadata.
-        producer: Organization the source names as the author of the data.
-            The report never records a contact from the source.
-        processing_notes: Additional processing notes.
-        known_issues: Access information or caveats.
-        license_info_raw: Raw license text (not SPDX, for human review).
-    """
+    """Metadata harvested from source service."""
 
     source_url: str
     description: str | None
@@ -214,13 +157,7 @@ class MetadataExtracted:
 
 @dataclass
 class FolderCoverage:
-    """Coverage of a recursive services-root traversal.
-
-    Attributes:
-        folders_visited: Folder names successfully traversed.
-        folders_skipped: (folder, reason) pairs for folders that errored.
-        services_found: Total services discovered.
-    """
+    """Coverage of a recursive services-root traversal."""
 
     folders_visited: list[str]
     folders_skipped: list[tuple[str, str]]
@@ -247,9 +184,6 @@ class FolderCoverage:
 @dataclass
 class ExtractionReport:
     """Complete extraction report for a service.
-
-    This is the top-level report that gets written to
-    `.portolan/extraction-report.json`.
 
     Attributes:
         extraction_date: ISO 8601 timestamp of extraction.
@@ -307,15 +241,7 @@ class ExtractionReport:
 
 @dataclass(frozen=True)
 class ExtractRunResult:
-    """One run of ``extract arcgis``, ``extract carto``, ``extract wfs``, or a plugin source.
-
-    ``to_dict()`` is the envelope ``data`` of the command. It holds a short
-    view of the report, not the full report file.
-
-    Attributes:
-        report: The extraction report.
-        output_dir: The directory the run wrote, as the caller gave it.
-    """
+    """One run of ``extract arcgis``, ``extract carto``, ``extract wfs``, or a plugin source."""
 
     report: ExtractionReport
     output_dir: Path
@@ -359,28 +285,7 @@ def run_extract_command(
     options: Any,
     **arguments: Any,
 ) -> ExtractRunResult:
-    """Run ``portolan extract carto``, ``extract wfs``, or the layer mode of ``extract arcgis``.
-
-    The command calls this function and emits ``to_dict()`` as the envelope
-    ``data``. ``init_catalog`` checks ``options.catalog_id`` only after the
-    whole download, so this function checks that same value first.
-
-    Args:
-        extract: ``extract_carto_catalog``, ``extract_wfs_catalog``, or
-            ``extract_arcgis_catalog``.
-        url: The service URL.
-        output_dir: The directory to write.
-        options: The ``ExtractionOptions`` of ``extract``. Its ``catalog_id``
-            holds the ``--id`` value.
-        **arguments: The other keyword arguments of ``extract``.
-
-    Returns:
-        The report and the output directory.
-
-    Raises:
-        InputValidationError: If ``options.catalog_id`` is not a valid STAC id. No
-            request runs before the check.
-    """
+    """Run ``portolan extract carto``, ``extract wfs``, or the layer mode of ``extract arcgis``."""
     from portolan_cli.input_hardening import validate_catalog_id
 
     if options.catalog_id is not None:

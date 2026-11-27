@@ -1,10 +1,4 @@
-"""Schema export/import functionality for Portolan.
-
-This module provides round-trip schema editing capabilities:
-- Export schema.json to JSON, CSV, or Parquet for editing
-- Import edited schema back with validation
-- Detect breaking changes between schema versions
-"""
+"""Schema export/import functionality for Portolan."""
 
 from __future__ import annotations
 

@@ -11,20 +11,11 @@ from typing import TYPE_CHECKING, Any
 
 from portolan_cli.lazy_exports import lazy_exports
 
-# PyArrow 26 bundles mimalloc 3.3.1. On Linux it commits each arena eagerly
-# and asks for transparent huge pages, so each touched arena chunk stays
-# resident in 2 MiB pages. That added about 45 MB to the peak RSS of a
-# 3,984-raster add. mimalloc reads the option once, when PyArrow loads, so it
-# must be set before any import of pyarrow. A value the user sets wins.
-# tests/unit/test_arrow_allocator.py checks the option.
+# PyArrow 26 mimalloc commits huge pages eagerly; set before pyarrow loads (tests/unit/test_arrow_allocator.py).
 os.environ.setdefault("MIMALLOC_ARENA_EAGER_COMMIT", "0")
 
-# A library user who sets no handler sees no Portolan records (issue #991).
 logging.getLogger(__name__).addHandler(logging.NullHandler())
-# geoparquet-io installs an INFO stream handler on first use when its logger
-# and the root logger have none. A handler here stops that. Records still
-# propagate to a root handler, so the CLI and a host that configures logging
-# see the warnings. The logger name loads nothing.
+# geoparquet-io installs its own INFO stream handler when no logger has one.
 logging.getLogger("geoparquet_io").addHandler(logging.NullHandler())
 
 if TYPE_CHECKING:
@@ -39,9 +30,7 @@ __all__ = [
     "detect_format",
 ]
 
-# Python runs this file before any submodule. An eager import here makes
-# `import portolan_cli.stac` load cli.py, Click, and the geospatial stack
-# (issue #944). Each export loads from its module on first access instead.
+# Lazy: an eager import loads cli.py, Click and the geospatial stack for every submodule.
 _EXPORTS = {
     "Catalog": "portolan_cli.catalog",
     "CatalogExistsError": "portolan_cli.catalog",
@@ -54,14 +43,7 @@ __getattr__, __dir__ = lazy_exports(__name__, _EXPORTS, __all__, globals())
 
 
 class _Package(types.ModuleType):
-    """The package module, with ``cli`` bound to the Click group.
-
-    The export ``cli`` and the submodule ``portolan_cli.cli`` share one name.
-    When the submodule loads, the import system binds the module object to
-    that name, and ``__getattr__`` does not run again. ``from portolan_cli
-    import cli`` then returns the module. This property always returns the
-    group, and the setter drops the module object the import system assigns.
-    """
+    """The package module, with ``cli`` bound to the Click group."""
 
     @property
     def cli(self) -> Any:

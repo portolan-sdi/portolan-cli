@@ -43,9 +43,7 @@ def untitled(build_conformant_catalog: Callable[..., Path]) -> Callable[[Path], 
 @pytest.fixture
 def retitled(build_conformant_catalog: Callable[..., Path]) -> Callable[[Path], None]:
     """Build a catalog whose metadata.yaml title differs from catalog.json.
-
-    No rule reports the drift, so the check passes. The title sweep of `--fix`
-    rewrites catalog.json, and `--fix --dry-run` must leave it alone.
+    `--fix` rewrites catalog.json, and `--fix --dry-run` must leave it alone.
     """
 
     def build(root: Path) -> None:

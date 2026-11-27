@@ -1,18 +1,4 @@
-"""In JSON mode, stdout holds exactly one JSON document (#1005).
-
-An agent pipes ``portolan --format json <command>`` into a JSON parser. A
-notice on stdout before or after the envelope breaks the parse. The add JSON
-tests once patched ``add_files``, so the notices that ``add`` prints never
-reached them (#1005).
-
-Each case here runs the real command through ``run_cli`` on a catalog that
-``init`` and ``add`` build. Nothing in this module patches the code under
-test. ``test_the_module_patches_nothing`` enforces that. The moto server
-stands in for object storage, and a replay server stands in for ArcGIS.
-
-click 8.4 keeps stdout and stderr apart in ``result.stdout``, so a log line
-on stderr does not fail a case.
-"""
+"""In JSON mode, stdout holds exactly one JSON document."""
 
 from __future__ import annotations
 
@@ -46,12 +32,7 @@ LOGO_PNG = bytes.fromhex(
 
 @dataclass(frozen=True)
 class Case:
-    """One command in JSON mode, and the exit code it must return.
-
-    ``args`` may hold the placeholders ``{root}`` (the catalog), ``{tmp}``
-    (the test's temporary directory), and ``{remote}`` (an S3 URL on the
-    moto server). ``needs`` names a precondition.
-    """
+    """One command in JSON mode, and the exit code it must return."""
 
     args: tuple[str, ...]
     expect: int = 0
@@ -267,11 +248,7 @@ def _add_catalog(tmp_path: Path, run_cli: RunCli, files: dict[str, Path]) -> Pat
 
 
 class TestAddEnvelope:
-    """The ``add`` envelope from the real ``add_files``, with no mock of it.
-
-    These replace tests that patched ``portolan_cli.cli.add_files`` and so
-    never saw what ``add`` prints (#1005).
-    """
+    """The ``add`` envelope from the real ``add_files``, with no mock of it."""
 
     def test_add_dot_at_the_catalog_root(self, tmp_path: Path, run_cli: RunCli) -> None:
         """``add .`` at the root infers the collection from the file's directory."""

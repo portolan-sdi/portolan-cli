@@ -57,11 +57,6 @@ def _record_fetches(monkeypatch: pytest.MonkeyPatch, extracted: list[str]) -> No
 def test_extracts_non_spatial_tables_as_tabular(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Non-geo tables are extracted as plain Parquet (geometry=False), not skipped.
-
-    gpio's ``geometry`` flag is threaded per table; ``bbox`` is dropped for the
-    non-geo table because a bounding-box filter requires a geometry column.
-    """
     _patch_discovery(
         monkeypatch,
         [

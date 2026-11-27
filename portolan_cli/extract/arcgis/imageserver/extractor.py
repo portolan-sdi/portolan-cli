@@ -1,30 +1,4 @@
-"""ImageServer extraction orchestrator.
-
-This module orchestrates the extraction pipeline for ArcGIS ImageServer:
-1. Discover service metadata (pixel type, extent, spatial reference)
-2. Compute tile grid based on service limits and desired tile size
-3. Download tiles via exportImage API (async, parallel with rate limiting)
-4. Convert each tile to COG format using rio-cogeo
-5. Save extraction report for resume support (atomic writes)
-6. Auto-init Portolan catalog (unless raw mode) using standard API
-
-The extractor does NOT create STAC metadata directly. Instead, it extracts
-COG files and then calls the Portolan API (init_catalog + add_files) to
-create proper STAC structure with items per raster.
-
-Typical usage:
-    from portolan_cli.extract.arcgis.imageserver.extractor import (
-        extract_imageserver,
-        ExtractionConfig,
-    )
-
-    result = await extract_imageserver(
-        url="https://services.arcgis.com/.../ImageServer",
-        output_dir=Path("./output"),
-        config=ExtractionConfig(tile_size=4096),
-    )
-    print(f"Extracted {result.tiles_downloaded} tiles ({result.total_bytes} bytes)")
-"""
+"""ImageServer extraction orchestrator."""
 
 from __future__ import annotations
 
@@ -97,17 +71,7 @@ _TIFF_MAGIC_LEN = 4
 
 @dataclass
 class TileProgress:
-    """Progress callback data for tile extraction.
-
-    Matches FeatureServer's ExtractionProgress structure for consistency.
-
-    Attributes:
-        tile_index: Current tile index (0-based).
-        total_tiles: Total number of tiles to extract.
-        tile_id: ID of current tile (e.g., "0_0").
-        status: Current status - one of "starting", "downloading",
-            "converting", "success", "failed", or "skipped".
-    """
+    """Progress callback data for tile extraction."""
 
     tile_index: int
     total_tiles: int
@@ -136,30 +100,13 @@ CACHE_REQUEST_WARNING_THRESHOLD = 10_000
 
 
 class ImageServerExtractionError(Exception):
-    """Error during ImageServer extraction.
-
-    Attributes:
-        arcgis_code: Code of an ArcGIS JSON error that came with HTTP 200, or
-            None. The retry rule in ``extract/common/retry.py`` reads it.
-    """
+    """Error during ImageServer extraction."""
 
     arcgis_code: int | None = None
 
 
 def _pool_limits(in_flight: int) -> httpx.Limits:
-    """Build connection pool limits that match the request concurrency.
-
-    The httpx default keeps 20 connections alive. A tile cache run holds more
-    requests in flight than that, so the pool closes and reopens connections
-    on every tile. Matching the two measured 112 to 280 requests per second
-    against a live ArcGIS Online cache (issue #870).
-
-    Args:
-        in_flight: Maximum requests the caller runs at the same time.
-
-    Returns:
-        Limits for httpx.AsyncClient.
-    """
+    """Build connection pool limits that match the request concurrency."""
     return httpx.Limits(max_connections=in_flight, max_keepalive_connections=in_flight)
 
 
@@ -173,25 +120,7 @@ class RateLimitError(ImageServerExtractionError):
 
 @dataclass
 class ExtractionConfig:
-    """Configuration for ImageServer extraction.
-
-    Attributes:
-        tile_size: Desired tile size in pixels (default 4096, per service limits).
-        cog_settings: COG conversion settings (from config.yaml or defaults).
-        max_retries: Maximum retry attempts per tile on failure.
-        dry_run: If True, compute tiles but don't download anything.
-        raw: If True, skip auto-init (only create COGs + report, no STAC catalog).
-        timeout: HTTP request timeout in seconds.
-        max_concurrent: Maximum concurrent tile downloads.
-        rate_limit_delay: Minimum delay between requests per slot (seconds).
-        catalog_id: Catalog id for the created catalog. None derives it from
-            the output directory name, which is the behavior before issue #821.
-        coarse_scan: Ask a coarse cache level which blocks hold data before
-            reading them. It turns one request per cache tile into one request
-            per block for the empty parts of a sparse cache (issue #870). It
-            is a heuristic, because a cache pyramid can drop a thin feature at
-            a coarse level. It is off by default.
-    """
+    """Configuration for ImageServer extraction."""
 
     tile_size: int = 4096
     cog_settings: CogSettings = field(default_factory=CogSettings)
@@ -226,20 +155,7 @@ class ExtractionConfig:
 
 @dataclass
 class ExtractionResult:
-    """Result of an ImageServer extraction.
-
-    Attributes:
-        output_dir: Directory containing extracted COG files.
-        tiles_downloaded: Number of tiles successfully downloaded.
-        tiles_skipped: Number of tiles skipped (from resume).
-        tiles_failed: Number of tiles that failed after retries.
-        tiles_empty: Number of tiles that hold no valid pixel. A tile cache is
-            sparse, so a service extent covers far more area than the data
-            does. An empty tile writes no COG (issue #870).
-        total_bytes: Total bytes downloaded.
-        catalog_initialized: Whether Portolan catalog was auto-initialized.
-        report: Full extraction report with metadata and tile results.
-    """
+    """Result of an ImageServer extraction."""
 
     output_dir: Path
     tiles_downloaded: int
@@ -252,17 +168,7 @@ class ExtractionResult:
 
 
 def _validate_tiff(data: bytes) -> bool:
-    """Validate that data is a valid TIFF file.
-
-    Checks magic bytes to ensure the downloaded data is actually a TIFF,
-    not an HTML error page or other response.
-
-    Args:
-        data: Raw bytes to validate.
-
-    Returns:
-        True if data appears to be a valid TIFF, False otherwise.
-    """
+    """Validate that data is a valid TIFF file."""
     if len(data) < _TIFF_MAGIC_LEN:
         return False
 
@@ -271,15 +177,7 @@ def _validate_tiff(data: bytes) -> bool:
 
 
 def _build_export_url(service_url: str, tile: TileSpec) -> str:
-    """Build exportImage URL for a tile.
-
-    Args:
-        service_url: ImageServer base URL.
-        tile: Tile specification with bbox and dimensions.
-
-    Returns:
-        Full exportImage URL with parameters.
-    """
+    """Build exportImage URL for a tile."""
     base_url = service_url.rstrip("/")
     minx, miny, maxx, maxy = tile.bbox
 
@@ -327,22 +225,7 @@ def _describe_arcgis_error(
     content: bytes,
     export_url: str,
 ) -> str | None:
-    """Describe an ArcGIS JSON error body, or return None if it is not one.
-
-    ArcGIS returns errors as ``{"error": {"code", "message", "details"}}``.
-    The server sends this body with HTTP 200 for request errors and with
-    HTTP 4xx/5xx for server errors. The details list often carries the real
-    reason (issue #870), so the message includes it.
-
-    Args:
-        tile: Tile whose request failed.
-        status_code: HTTP status of the response.
-        content: Raw response body.
-        export_url: Full exportImage URL that was requested.
-
-    Returns:
-        Error message, or None when the body is not an ArcGIS error.
-    """
+    """Describe an ArcGIS JSON error body, or return None if it is not one."""
     arcgis_error = _arcgis_error(content)
     if arcgis_error is None:
         return None
@@ -367,21 +250,7 @@ def _describe_http_error(
     content: bytes,
     export_url: str,
 ) -> str:
-    """Build the error message for a non-2xx exportImage response.
-
-    Prefers the ArcGIS JSON error when the body has one. Otherwise quotes an
-    excerpt of the body, or says the body was empty. Every message ends with
-    the request URL so the user can reproduce the failure (issue #870).
-
-    Args:
-        tile: Tile whose request failed.
-        status_code: HTTP status of the response.
-        content: Raw response body.
-        export_url: Full exportImage URL that was requested.
-
-    Returns:
-        Error message.
-    """
+    """Build the error message for a non-2xx exportImage response."""
     arcgis_msg = _describe_arcgis_error(tile, status_code, content, export_url)
     if arcgis_msg is not None:
         return arcgis_msg
@@ -399,19 +268,7 @@ def _describe_http_error(
 
 
 def _body_excerpt(content: bytes) -> str:
-    """Quote the part of an error body that tells the user something.
-
-    A server error page spends its first 200 characters on a doctype, a head,
-    and a style block. The request URL is the useful part of the message, so
-    an HTML body reports its title alone (pull request #871 review).
-
-    Args:
-        content: Raw response body.
-
-    Returns:
-        The excerpt to quote, which is empty when the body holds nothing
-        useful.
-    """
+    """Quote the part of an error body that tells the user something."""
     text = content[:_ERROR_BODY_SCAN_CHARS].decode("utf-8", errors="replace").strip()
     if not text:
         return ""
@@ -430,17 +287,7 @@ def _describe_non_tiff_body(
     content: bytes,
     export_url: str,
 ) -> str:
-    """Build the error message for a 2xx response that is not a TIFF.
-
-    Args:
-        tile: Tile whose request failed.
-        status_code: HTTP status of the response.
-        content: Raw response body.
-        export_url: Full exportImage URL that was requested.
-
-    Returns:
-        Error message.
-    """
+    """Build the error message for a 2xx response that is not a TIFF."""
     # HTML error page
     if content.startswith((b"<!", b"<html")):
         return (
@@ -468,21 +315,7 @@ async def download_tile(
     output_path: Path,
     client: httpx.AsyncClient,
 ) -> int:
-    """Download a single tile via exportImage API.
-
-    Args:
-        url: ImageServer base URL.
-        tile: Tile specification.
-        output_path: Path to write the downloaded TIFF.
-        client: Async HTTP client for connection pooling.
-
-    Returns:
-        Number of bytes downloaded.
-
-    Raises:
-        ImageServerExtractionError: On HTTP or I/O errors.
-        RateLimitError: On HTTP 429 response.
-    """
+    """Download a single tile via exportImage API."""
     export_url = _build_export_url(url, tile)
 
     try:
@@ -540,23 +373,11 @@ async def _convert_to_cog(
     cog_settings: CogSettings,
     add_mask: bool = False,
 ) -> None:
-    """Convert a TIFF to COG format using settings from config.
-
-    Runs rio-cogeo in a thread executor since it's CPU-bound.
-    Uses settings from .portolan/config.yaml.
-
-    Args:
-        input_path: Path to input TIFF.
-        output_path: Path for output COG.
-        cog_settings: COG conversion settings.
-        add_mask: Keep the input's validity mask in the COG. The tile cache
-            path sets this, because a sparse cache leaves parts of a tile with
-            no data and the pixel values alone do not say which (issue #870).
-    """
+    """Convert a TIFF to COG format using settings from config."""
     loop = asyncio.get_event_loop()
 
     def _do_convert() -> None:
-        # Fill in any "auto" field from the downloaded tile (Issue #690)
+        # Fill in any "auto" field from the downloaded tile
         settings = resolve_cog_settings(cog_settings, input_path)
 
         # Get base profile and customize with our settings
@@ -589,22 +410,7 @@ async def _convert_to_cog(
 
 
 def _is_likely_wgs84(bbox: tuple[float, float, float, float]) -> bool:
-    """Detect if bbox coordinates appear to be in WGS84 (EPSG:4326).
-
-    WGS84 coordinates have characteristic ranges:
-    - Longitude: -180 to 180
-    - Latitude: -90 to 90
-
-    This heuristic checks if all values fall within these ranges.
-    False positives are possible for small-extent projected coordinates,
-    but unlikely for typical imagery bboxes.
-
-    Args:
-        bbox: Bounding box (minx, miny, maxx, maxy).
-
-    Returns:
-        True if bbox appears to be in WGS84, False otherwise.
-    """
+    """Detect if bbox coordinates appear to be in WGS84 (EPSG:4326)."""
     minx, miny, maxx, maxy = bbox
     return (
         LON_MIN <= minx <= LON_MAX
@@ -619,19 +425,7 @@ def _reproject_bbox(
     from_crs: str,
     to_crs: str,
 ) -> tuple[float, float, float, float]:
-    """Reproject a bounding box between coordinate reference systems.
-
-    Args:
-        bbox: Bounding box (minx, miny, maxx, maxy) in source CRS.
-        from_crs: Source CRS (e.g., "EPSG:4326").
-        to_crs: Target CRS (e.g., "EPSG:3857").
-
-    Returns:
-        Reprojected bounding box (minx, miny, maxx, maxy).
-
-    Raises:
-        ValueError: If CRS transformation fails.
-    """
+    """Reproject a bounding box between coordinate reference systems."""
     from pyproj import CRS, Transformer
 
     try:
@@ -654,21 +448,7 @@ def reproject_bbox_if_needed(
     service_crs: str,
     bbox_crs: str | None = None,
 ) -> tuple[float, float, float, float]:
-    """Auto-detect WGS84 bbox and reproject to service CRS if needed.
-
-    If bbox_crs is explicitly provided, it is used directly. Otherwise,
-    if the bbox appears to be in WGS84 (based on coordinate ranges) and the
-    service uses a different CRS, the bbox is automatically reprojected.
-
-    Args:
-        bbox: User-provided bounding box (minx, miny, maxx, maxy).
-        service_crs: Service CRS string (e.g., "EPSG:3857").
-        bbox_crs: Optional explicit CRS of the bbox (e.g., "EPSG:4326").
-            If provided, auto-detection is skipped and this CRS is used.
-
-    Returns:
-        Bbox in service CRS (reprojected if needed, original otherwise).
-    """
+    """Auto-detect WGS84 bbox and reproject to service CRS if needed."""
     # If explicit bbox_crs provided, use it directly (no heuristics)
     if bbox_crs is not None:
         bbox_crs_upper = bbox_crs.upper()
@@ -709,15 +489,7 @@ def _intersect_bbox(
     bbox: tuple[float, float, float, float],
     extent: dict[str, float],
 ) -> dict[str, float] | None:
-    """Intersect user bbox with service extent.
-
-    Args:
-        bbox: User-provided bbox (minx, miny, maxx, maxy).
-        extent: Service extent dict with xmin, ymin, xmax, ymax.
-
-    Returns:
-        Intersected extent dict, or None if no intersection.
-    """
+    """Intersect user bbox with service extent."""
     intersect_xmin = max(bbox[0], extent["xmin"])
     intersect_ymin = max(bbox[1], extent["ymin"])
     intersect_xmax = min(bbox[2], extent["xmax"])
@@ -736,34 +508,12 @@ def _intersect_bbox(
 
 
 def _save_resume_state(state: ImageServerResumeState, path: Path) -> None:
-    """Save resume state atomically.
-
-    Concurrent tile tasks each save the whole state, so two saves can overlap.
-    :func:`write_json_atomic` gives each one its own temp file and lands it with
-    ``os.replace``, so a reader sees one complete state and the last writer wins.
-    That replaces the old shared-``.tmp``-plus-``flock`` dance, which serialized
-    writers only after both had already truncated the same temp file.
-
-    The resume module owns the file format, and this wrapper keeps one writer
-    for it. A second copy of the format here dropped the coarse-empty tiles
-    and the tile grid from every saved state (pull request #871 review).
-
-    Args:
-        state: Resume state to save.
-        path: Path to write the JSON file.
-    """
+    """Save resume state atomically."""
     save_resume_state(state, path)
 
 
 def _create_empty_result(output_dir: Path) -> ExtractionResult:
-    """Create an empty ExtractionResult for early returns.
-
-    Args:
-        output_dir: Output directory.
-
-    Returns:
-        ExtractionResult with all counts set to zero.
-    """
+    """Create an empty ExtractionResult for early returns."""
     return ExtractionResult(
         output_dir=output_dir,
         tiles_downloaded=0,
@@ -801,15 +551,7 @@ class _TileProcessResult:
 
 @dataclass(frozen=True)
 class _TilePlan:
-    """Tiles to extract, and the source they come from.
-
-    Attributes:
-        tiles: Output tiles, in row-major order.
-        cache: Tile cache to read, or None when the extractor calls
-            exportImage.
-        lod: Cache level to read, or None when the extractor calls
-            exportImage.
-    """
+    """Tiles to extract, and the source they come from."""
 
     tiles: list[TileSpec]
     cache: TileCacheInfo | None = None
@@ -821,23 +563,7 @@ def _extent_in_cache_crs(
     extent: dict[str, Any],
     cache: TileCacheInfo,
 ) -> tuple[dict[str, Any], float]:
-    """Convert an extent and the service pixel size to the cache CRS.
-
-    The cache grid arithmetic subtracts the cache origin from the extent, so
-    both must use the same CRS. The pixel size keeps the pixel count across
-    the extent, so the reader selects a level of the same detail.
-
-    Args:
-        metadata: Service metadata.
-        extent: Extent to cover, in the service CRS.
-        cache: Cache grid.
-
-    Returns:
-        Tuple of the extent and the pixel size, both in the cache CRS.
-
-    Raises:
-        ImageServerExtractionError: If the extent cannot be reprojected.
-    """
+    """Convert an extent and the service pixel size to the cache CRS."""
     service_sr = metadata.full_extent.get("spatialReference") or {}
     if not (service_sr.get("latestWkid") or service_sr.get("wkid")):
         # get_crs_string() would guess EPSG:4326. Assume the cache CRS instead.
@@ -879,27 +605,7 @@ def _plan_tiles(
     *,
     on_message: MessageCallback | None = None,
 ) -> _TilePlan:
-    """Choose the tile source and compute the tile grid.
-
-    A service that lists the TilesOnly capability rejects exportImage with
-    HTTP 400 at every size. The extractor reads its cache instead, at the
-    level whose resolution matches the service pixel size (issue #870).
-
-    Args:
-        metadata: Service metadata.
-        extent: Extent to cover, in the service CRS.
-        config: Extraction configuration.
-        on_message: Called with each message for the user.
-
-    Returns:
-        The tile plan.
-
-    Raises:
-        ImageServerExtractionError: If the service rejects exportImage and
-            publishes no tile cache, so no path can read it. Also if the cache
-            format has no decoder here, or the decoder does not load, or the
-            extent cannot be reprojected to the cache CRS.
-    """
+    """Choose the tile source and compute the tile grid."""
     if metadata.export_image_supported:
         tiles = list(
             compute_tile_grid(
@@ -942,19 +648,7 @@ def _warn_on_cache_request_count(
     *,
     on_message: MessageCallback | None = None,
 ) -> None:
-    """Report how many cache requests the run still costs.
-
-    The reader must ask for every cache tile of every block it keeps, because
-    the cache reports an empty tile the same way at every level. A full-extent
-    read of a continental service costs hundreds of thousands of requests, so
-    the user must see the number before the reads start (issue #870). When
-    the coarse scan runs, this counts only the blocks that hold data.
-
-    Args:
-        tiles: Output tiles the reader still has to read.
-        cache: Cache grid.
-        on_message: Called with each message for the user.
-    """
+    """Report how many cache requests the run still costs."""
     requests = sum(
         math.ceil(tile.width_px / cache.tile_width) * math.ceil(tile.height_px / cache.tile_height)
         for tile in tiles
@@ -976,22 +670,7 @@ async def _download_one_tile(
     client: httpx.AsyncClient,
     plan: _TilePlan,
 ) -> tuple[int, bool]:
-    """Write one raw GeoTIFF, from exportImage or from the tile cache.
-
-    Args:
-        tile: Tile to read.
-        url: ImageServer URL.
-        raw_path: Path for the raw GeoTIFF.
-        client: HTTP client.
-        plan: Tile plan, which says which source to read.
-
-    Returns:
-        Tuple of the bytes read and whether the tile holds no valid pixel.
-
-    Raises:
-        RateLimitError: If the cache answers HTTP 429.
-        ImageServerExtractionError: If the read fails.
-    """
+    """Write one raw GeoTIFF, from exportImage or from the tile cache."""
     if plan.cache is None or plan.lod is None:
         downloaded = await download_tile(
             url=url,
@@ -1049,28 +728,7 @@ async def _process_tile(  # noqa: PLR0915, PLR0917 - one ordered sequence over e
     *,
     on_message: MessageCallback | None = None,
 ) -> _TileProcessResult:
-    """Process a single tile: download and convert to COG.
-
-    STAC metadata is NOT created here - that's handled by the Portolan API
-    via _auto_init_catalog() after extraction completes.
-
-    Args:
-        tile: Tile to process.
-        url: ImageServer URL.
-        output_dir: Output directory.
-        config: Extraction configuration.
-        client: HTTP client.
-        semaphore: Concurrency limiter.
-        rate_limit_lock: Lock for rate limiting coordination.
-        last_request_time: Shared dict tracking last request time per slot.
-        collection_name: Name for the collection directory (default: 'tiles').
-        plan: Tile plan, which says whether to call exportImage or read the
-            tile cache. None calls exportImage.
-        on_message: Called with each message for the user.
-
-    Returns:
-        _TileProcessResult with tile, success status, bytes, duration, error, attempts.
-    """
+    """Process a single tile: download and convert to COG."""
     if plan is None:
         plan = _TilePlan(tiles=[tile])
     start_time = time.monotonic()
@@ -1079,9 +737,7 @@ async def _process_tile(  # noqa: PLR0915, PLR0917 - one ordered sequence over e
 
     async with semaphore:
         slot_id = str(id(asyncio.current_task()))
-        # Create proper STAC structure: collection/item/asset.tif
-        # The collection is named per --collection-name flag (default: 'tiles')
-        # tile.get_id() already returns "tile_X_Y" format
+        # STAC layout: collection/tile_X_Y/tile_X_Y.tif
         tile_id = tile.get_id()
         item_dir = output_dir / collection_name / tile_id
         item_dir.mkdir(parents=True, exist_ok=True)
@@ -1233,26 +889,14 @@ async def _process_tile(  # noqa: PLR0915, PLR0917 - one ordered sequence over e
 
 
 def _remove_empty_item_dir(item_dir: Path) -> None:
-    """Remove the item directory of a tile that holds no data.
-
-    Args:
-        item_dir: Directory created for the tile.
-    """
+    """Remove the item directory of a tile that holds no data."""
     # Best effort: a non-empty directory stays.
     with contextlib.suppress(OSError):
         item_dir.rmdir()
 
 
 def _setup_extraction_dirs(output_dir: Path, collection_name: str = "tiles") -> tuple[Path, Path]:
-    """Create extraction output directories.
-
-    Args:
-        output_dir: Base output directory.
-        collection_name: Name for the collection directory (default: 'tiles').
-
-    Returns:
-        Tuple of (collection_dir, portolan_dir).
-    """
+    """Create extraction output directories."""
     output_dir.mkdir(parents=True, exist_ok=True)
     collection_dir = output_dir / collection_name
     collection_dir.mkdir(exist_ok=True)
@@ -1267,16 +911,7 @@ def _load_effective_config(
     *,
     on_message: MessageCallback | None = None,
 ) -> ExtractionConfig:
-    """Load COG settings from config.yaml if not explicitly provided.
-
-    Args:
-        config: Base extraction config.
-        output_dir: Directory to check for .portolan/config.yaml.
-        on_message: Called with each message for the user.
-
-    Returns:
-        Config with COG settings from config.yaml, or original config.
-    """
+    """Load COG settings from config.yaml if not explicitly provided."""
     if config.cog_settings != CogSettings():
         return config  # Explicit settings take precedence
 
@@ -1303,18 +938,7 @@ def _seed_metadata_from_report(
     *,
     on_message: MessageCallback | None = None,
 ) -> None:
-    """Seed metadata.yaml from extraction report.
-
-    Converts the ImageServerMetadataExtracted to the common ExtractedMetadata
-    format and seeds the metadata.yaml file. Does NOT overwrite existing files.
-
-    Args:
-        output_dir: Output directory containing .portolan/.
-        report: Extraction report with metadata_extracted.
-        resolved_license: License resolved before the download, which wins over
-            anything the harvest found (issue #686). None in raw mode.
-        on_message: Called with each message for the user.
-    """
+    """Seed metadata.yaml from extraction report."""
     extracted = report.metadata_extracted.to_extracted()
 
     metadata_path = output_dir / ".portolan" / "metadata.yaml"
@@ -1330,23 +954,7 @@ def _auto_init_catalog(
     *,
     on_message: MessageCallback | None = None,
 ) -> bool:
-    """Initialize a Portolan catalog and add extracted COG files.
-
-    Called automatically after extraction unless raw=True.
-    Uses the Portolan API (init_catalog + add_files) to create
-    proper STAC structure with items per raster.
-
-    Args:
-        output_dir: Directory containing extracted COG files.
-        service_name: Optional name for the catalog.
-        collection_name: Name for the collection directory (default: 'tiles').
-        catalog_id: Catalog id for the created catalog. None derives it from
-            the output directory name, which is the behavior before issue #821.
-        on_message: Called with each message for the user.
-
-    Returns:
-        True if catalog was initialized, False if no files to add.
-    """
+    """Initialize a Portolan catalog and add extracted COG files."""
     from portolan_cli.catalog import CatalogState, detect_state, init_catalog
     from portolan_cli.extract.common.orchestrator_base import add_extracted_files
 
@@ -1357,17 +965,10 @@ def _auto_init_catalog(
     if not cog_files:
         return False  # Nothing to add
 
-    # A directory that is already a Portolan catalog gets the new rasters added to
-    # it, not an abort after the tiles already downloaded (issue #767). init_catalog
-    # raises CatalogAlreadyExistsError on a MANAGED directory, so skip it. The
-    # catalog already carries a license, so the add license gate (issue #686) passes.
+    # An existing catalog gets the rasters added. It already has a license for the add gate.
     if detect_state(output_dir) is not CatalogState.MANAGED:
-        # Initialize the catalog. license_id=None because the ImageServer path seeds
-        # metadata.yaml from --license or the harvested service licenseInfo before
-        # this runs (issue #686, issue #870).
-        # Print what init_catalog had to guess, the way `init` does, so a derived
-        # id that names a tooling artifact does not reach a published catalog
-        # unflagged (issue #821).
+        # license_id=None, because metadata.yaml is already seeded from --license or licenseInfo.
+        # Print what init_catalog had to guess, the way `init` does.
         _, init_warnings = init_catalog(
             output_dir, catalog_id=catalog_id, title=service_name, license_id=None
         )
@@ -1375,7 +976,7 @@ def _auto_init_catalog(
             emit_message(on_message, "warn", message)
     elif catalog_id is not None:
         # The catalog already exists and keeps the id it was created with. Say so,
-        # rather than accept the flag and change nothing (issue #821).
+        # rather than accept the flag and change nothing.
         emit_message(
             on_message,
             "warn",
@@ -1402,24 +1003,7 @@ async def _extract_all_tiles(  # noqa: PLR0917 - one ordered sequence over every
     *,
     on_message: MessageCallback | None = None,
 ) -> _ProcessingStats:
-    """Extract all tiles with concurrency control.
-
-    Args:
-        tiles: List of tiles to process.
-        url: Service URL.
-        output_dir: Output directory.
-        config: Extraction config.
-        resume_state: Resume state to update.
-        resume_path: Path to save resume state.
-        on_progress: Optional progress callback (matches FeatureServer pattern).
-        collection_name: Name for the collection directory (default: 'tiles').
-        plan: Tile plan, which says whether to call exportImage or read the
-            tile cache.
-        on_message: Called with each message for the user.
-
-    Returns:
-        Processing statistics with tile results.
-    """
+    """Extract all tiles with concurrency control."""
     semaphore = asyncio.Semaphore(config.max_concurrent)
     rate_limit_lock = asyncio.Lock()
     last_request_time: dict[str, float] = {}
@@ -1488,24 +1072,7 @@ def _record_empty_tile(
     *,
     on_message: MessageCallback | None = None,
 ) -> None:
-    """Record a tile that holds no valid pixel.
-
-    A tile cache is sparse. The service extent covers far more area than the
-    data does, so many tiles come back empty (issue #870). An empty tile is
-    not a failure and it writes no COG. The resume state marks it complete, so
-    a re-run with --resume does not read it again.
-
-    Args:
-        tile: Processed tile.
-        stats: Statistics to update.
-        resume_state: Resume state to update.
-        index: Current tile index.
-        total: Total tiles to process.
-        duration: Processing duration in seconds.
-        attempts: Number of attempts.
-        on_progress: Optional progress callback.
-        on_message: Called with each message for the user.
-    """
+    """Record a tile that holds no valid pixel."""
     tile_id = tile.get_id()
     stats.tiles_empty += 1
     resume_state.succeeded_tiles.add((tile.x, tile.y))
@@ -1549,24 +1116,7 @@ def _update_stats_and_state(  # noqa: PLR0913, PLR0917 - one ordered sequence ov
     *,
     on_message: MessageCallback | None = None,
 ) -> None:
-    """Update statistics, resume state, and tile results after processing a tile.
-
-    Args:
-        tile: Processed tile.
-        succeeded: Whether tile processing succeeded.
-        bytes_downloaded: Bytes downloaded (0 if failed).
-        stats: Statistics to update.
-        resume_state: Resume state to update.
-        index: Current tile index.
-        total: Total tiles to process.
-        duration: Processing duration in seconds.
-        error_msg: Error message if failed.
-        attempts: Number of attempts.
-        collection_name: Name for the collection directory (default: 'tiles').
-        on_progress: Optional progress callback.
-        empty: True when the tile holds no valid pixel, so it wrote no COG.
-        on_message: Called with each message for the user.
-    """
+    """Update statistics, resume state, and tile results after processing a tile."""
     tile_id = tile.get_id()
 
     if empty:
@@ -1651,17 +1201,7 @@ def _update_stats_and_state(  # noqa: PLR0913, PLR0917 - one ordered sequence ov
 
 
 def _validate_collection_name(name: str) -> str:
-    """Validate and sanitize collection name to prevent path traversal.
-
-    Args:
-        name: User-provided collection name.
-
-    Returns:
-        Sanitized collection name (base name only, no path components).
-
-    Raises:
-        ValueError: If the sanitized name is empty or invalid.
-    """
+    """Validate and sanitize collection name to prevent path traversal."""
     # Extract just the base name (strips any path separators or .. components)
     sanitized = Path(name).name
 
@@ -1692,24 +1232,7 @@ async def _scan_for_empty_blocks(
     *,
     on_message: MessageCallback | None = None,
 ) -> tuple[list[TileSpec], list[TileSpec]]:
-    """Split output tiles into the ones to read and the ones with no data.
-
-    A sparse cache answers an empty tile the same way at every level, so the
-    reader must ask. Asking a coarse level costs one request per block instead
-    of one per cache tile (issue #870). A block the coarse level calls empty is
-    skipped. Any doubt reads the block in full, so a probe failure costs time
-    rather than data.
-
-    Args:
-        url: ImageServer URL.
-        tiles: Output tiles from the plan.
-        plan: Tile plan, which must carry a cache and a level.
-        config: Extraction configuration.
-        on_message: Called with each message for the user.
-
-    Returns:
-        Tuple of the tiles to read and the tiles the coarse level calls empty.
-    """
+    """Split output tiles into the ones to read and the ones with no data."""
     cache, read_lod = plan.cache, plan.lod
     if cache is None or read_lod is None or not config.coarse_scan:
         return tiles, []
@@ -1751,18 +1274,7 @@ def _record_coarse_empty_tiles(
     stats: _ProcessingStats,
     resume_state: ImageServerResumeState,
 ) -> None:
-    """Record the blocks the coarse scan called empty.
-
-    A coarse verdict reads a lower-resolution level, which can drop a thin
-    feature. It therefore goes to its own set rather than to the succeeded
-    tiles, so --no-coarse-scan reads the block again (pull request #871
-    review).
-
-    Args:
-        tiles: Blocks the coarse scan skipped.
-        stats: Statistics to update.
-        resume_state: Resume state to update, so --resume does not re-probe.
-    """
+    """Record the blocks the coarse scan called empty."""
     for tile in tiles:
         stats.tiles_empty += 1
         resume_state.coarse_empty_tiles.add((tile.x, tile.y))
@@ -1785,12 +1297,7 @@ def _clamp_tile_size(
     *,
     on_message: MessageCallback | None = None,
 ) -> ExtractionConfig:
-    """Clamp the tile size to the exportImage limits of the service.
-
-    This is the proactive check of issue #335. The limits describe exportImage.
-    A cache-only service ignores them, because its tiles come at the size the
-    cache stores (issue #870).
-    """
+    """Clamp the tile size to the exportImage limits of the service."""
     max_tile_size = min(metadata.max_image_width, metadata.max_image_height)
     if not metadata.export_image_supported or config.tile_size <= max_tile_size:
         return config
@@ -1837,38 +1344,7 @@ async def extract_imageserver(  # noqa: PLR0914, PLR0915, PLR0917 - one ordered 
     *,
     on_message: MessageCallback | None = None,
 ) -> ExtractionResult:
-    """Extract raster tiles from ImageServer to COG files.
-
-    This orchestrates the extraction pipeline. STAC metadata is created
-    via the Portolan API after extraction (unless raw=True).
-
-    Args:
-        url: ImageServer URL.
-        output_dir: Directory to write extracted data.
-        config: Extraction configuration (defaults to ExtractionConfig()).
-        resume: If True, resume from previous extraction.
-        bbox: Optional bbox to subset extraction (minx, miny, maxx, maxy).
-        on_progress: Optional callback for progress updates (matches FeatureServer pattern).
-        collection_name: Name for the collection directory (default: 'tiles').
-        bbox_crs: Optional explicit CRS of the bbox (e.g., "EPSG:4326", "EPSG:3857").
-            If provided, skips auto-detection and uses this CRS for reprojection.
-        license_id: SPDX identifier from --license, or "other" with license_url.
-            Overrides any license URL in the service's licenseInfo (issue #686).
-        license_url: URL of the license text from --license-url.
-        on_message: Called with each message for the user, as
-            ``on_message(level, text)``. None logs them. See
-            ``extract.common.progress.emit_message``.
-
-    Returns:
-        ExtractionResult with extraction statistics and full report.
-
-    Raises:
-        ImageServerDiscoveryError: If service discovery fails.
-        MissingLicenseError: If neither the flags nor the service licenseInfo
-            yield a license, unless config.raw is True. Raised before any tile
-            downloads, so the failure costs a re-run rather than a download.
-        ValueError: If collection_name contains path traversal sequences.
-    """
+    """Extract raster tiles from ImageServer to COG files."""
     if config is None:
         config = ExtractionConfig()
 
@@ -1927,9 +1403,7 @@ async def extract_imageserver(  # noqa: PLR0914, PLR0915, PLR0917 - one ordered 
         emit_message(on_message, "info", f"[DRY RUN] Would extract {len(tiles)} tiles")
         return _create_empty_result(output_dir)
 
-    # Resolve the license before downloading anything, so a harvest that cannot be
-    # licensed costs one command re-run rather than a whole download (issue #686).
-    # Raw mode writes no catalog, so it has nothing to license.
+    # Resolve the license before any download. Raw mode writes no catalog, so it needs none.
     resolved_license = (
         None
         if config.raw
@@ -1950,10 +1424,8 @@ async def extract_imageserver(  # noqa: PLR0914, PLR0915, PLR0917 - one ordered 
         resume, resume_path, url, grid, on_message=on_message
     )
 
-    # Split the tiles before the coarse scan. A tile that a previous run
-    # completed keeps the "skipped" status. The scan never probes it, and the
-    # scan verdict never overwrites its completion.
-    # Compute skipped tiles BEFORE extraction (resume_state changes during extraction)
+    # Split before the coarse scan, because resume_state changes during extraction.
+    # A tile that a previous run completed stays "skipped", and the scan never probes it.
     pending_tiles, skipped_tile_specs, known_empty_tiles = _split_tiles_for_resume(
         tiles, resume_state, config
     )
@@ -1969,7 +1441,7 @@ async def extract_imageserver(  # noqa: PLR0914, PLR0915, PLR0917 - one ordered 
         )
 
     # Ask a coarse cache level which blocks hold data, before reading any of
-    # them at full resolution (issue #870).
+    # them at full resolution.
     tiles_to_process, coarse_empty = await _scan_for_empty_blocks(
         url, pending_tiles, plan, config, on_message=on_message
     )
@@ -2053,17 +1525,7 @@ def _split_tiles_for_resume(
     resume_state: ImageServerResumeState,
     config: ExtractionConfig,
 ) -> tuple[list[TileSpec], list[TileSpec], list[TileSpec]]:
-    """Sort the planned tiles into the three groups a resumed run needs.
-
-    Args:
-        tiles: Every planned tile.
-        resume_state: Resume state of the run.
-        config: Extraction configuration, which says whether the scan runs.
-
-    Returns:
-        Tuple of the tiles to read, the tiles a previous run completed, and
-        the blocks a previous coarse scan called empty.
-    """
+    """Sort the planned tiles into the three groups a resumed run needs."""
     pending: list[TileSpec] = []
     skipped: list[TileSpec] = []
     known_empty: list[TileSpec] = []
@@ -2078,15 +1540,7 @@ def _split_tiles_for_resume(
 
 
 def _grid_change_reason(saved: TileGrid, current: TileGrid) -> str:
-    """Say what changed between the saved tile grid and this one.
-
-    Args:
-        saved: Grid the saved state describes.
-        current: Grid this run extracts.
-
-    Returns:
-        One sentence that names the change.
-    """
+    """Say what changed between the saved tile grid and this one."""
     if saved.tile_size != current.tile_size:
         return (
             f"The saved run used --tile-size {saved.tile_size}, and this run uses "
@@ -2103,23 +1557,7 @@ def _load_or_create_resume_state(
     *,
     on_message: MessageCallback | None = None,
 ) -> ImageServerResumeState:
-    """Load existing resume state or create new one.
-
-    A tile id names a position in one tile grid. A run with another tile size,
-    or over another extent, builds a different grid, so a saved tile id then
-    names a different area. Such a state cannot resume, and this starts a
-    fresh one instead (pull request #871 review).
-
-    Args:
-        resume: Whether to attempt loading existing state.
-        resume_path: Path to resume state file.
-        url: Service URL for new state.
-        grid: Tile grid this run extracts.
-        on_message: Called with each message for the user.
-
-    Returns:
-        Resume state (loaded or new).
-    """
+    """Load existing resume state or create new one."""
     if resume:
         state = load_resume_state(resume_path)
         if state and state.grid is not None and not state.grid.matches(grid):

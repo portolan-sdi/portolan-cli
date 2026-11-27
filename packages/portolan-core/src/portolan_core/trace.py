@@ -1,30 +1,6 @@
-"""Stage spans and counters for one ``portolan`` run (issue #991).
+"""Stage spans and counters for one ``portolan`` run, off by default; docs/guides/diagnostics.md.
 
-Tracing is off by default. When it is off, ``span`` returns a shared no-op
-object after one flag check, and ``count`` returns at once.
-
-Usage::
-
-    from portolan_core.trace import count, span
-
-    with span("add.prepare", files=len(batch)) as s:
-        ...
-        s.set(bytes=total)
-    count("checksum.bytes", n)
-
-Spans nest through a ``ContextVar``. Asyncio tasks inherit the current span.
-A thread pool worker does not, so submit work through ``submit``.
-
-``PORTOLAN_TIMINGS=1`` or ``--timings`` turns tracing on.
-``PORTOLAN_TIMINGS=mem`` also records the ``tracemalloc`` growth of each span: its
-peak traced memory less the traced memory at span entry. Memory that an
-earlier stage holds, such as a module imported before the span, does not count.
-tracemalloc traces the whole process, so the growth of a span also holds the
-memory that other threads allocate while it is open.
-``PORTOLAN_TRACE_FILE=<path>`` turns tracing on and names the Chrome trace file.
-
-This module imports only the standard library, so any layer may import it.
-``json_io`` imports it to count the JSON writes.
+Stdlib-only so any layer may import it. Thread pool workers need ``submit`` to inherit the span.
 """
 
 from __future__ import annotations
@@ -59,12 +35,8 @@ R = TypeVar("R")
 TIMINGS_ENV = "PORTOLAN_TIMINGS"
 TRACE_FILE_ENV = "PORTOLAN_TRACE_FILE"
 
-# Counter names that ``meta.counters`` always holds, at 0 when nothing counted.
-# Each one counts at the single choke point of its work, so the scale gates in
-# tests/perf see every call site. One has no product choke point.
-# ``duckdb.connects`` counts through a patch of ``duckdb.connect`` that
-# tests/perf/runner.py installs, because geoparquet-io calls it by attribute
-# lookup.
+# Counter names that ``meta.counters`` always holds, each counted at one choke point.
+# tests/perf/runner.py patches ``duckdb.connect`` to count ``duckdb.connects``.
 KNOWN_COUNTERS: tuple[str, ...] = (
     "checksum.files",
     "checksum.bytes",
@@ -243,11 +215,9 @@ class _Span:
 
 
 def _fold_mem_peak() -> None:
-    """Fold the tracemalloc peak since the last reset into every open span.
+    """Fold the tracemalloc peak into every open span; the caller holds ``_lock``.
 
-    The caller holds ``_lock``. A span that opens in one thread resets the
-    peak of the whole process, so the fold must reach the open spans of every
-    thread, not only the parent of the new span.
+    A span in any thread resets the process-wide peak, so every thread's open spans get the fold.
     """
     _, peak = tracemalloc.get_traced_memory()
     for open_span in _open:
@@ -350,10 +320,9 @@ def counters() -> dict[str, int]:
 def submit(
     executor: Executor, fn: Callable[P, R], /, *args: P.args, **kwargs: P.kwargs
 ) -> Future[R]:
-    """Submit ``fn`` to ``executor`` in a copy of the current context.
+    """Submit ``fn`` to ``executor`` in a copy of the current context, so it sees the open span.
 
-    The worker then sees the open span as its parent. Each call copies the
-    context, because one ``Context`` cannot run in two threads at once.
+    Each call copies, because one ``Context`` cannot run in two threads at once.
     """
     ctx = contextvars.copy_context()
 

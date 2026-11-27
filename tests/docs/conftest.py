@@ -1,13 +1,4 @@
-"""Shared fixtures for documentation example tests.
-
-These fixtures provide the infrastructure needed to test README
-and documentation examples in isolation. They ensure that documented
-workflows actually work.
-
-Philosophy: If it's in the docs, it must be tested. Examples that
-cannot be tested (e.g., installation commands) are marked with
-`# notest` comments in the source documentation.
-"""
+"""Fixtures for the documentation example tests."""
 
 from __future__ import annotations
 
@@ -23,9 +14,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
-# =============================================================================
-# Minimal Test Data
-# =============================================================================
+# Minimal test data
 
 # Minimal valid GeoJSON for testing - 2 point features
 MINIMAL_GEOJSON = """{
@@ -45,9 +34,7 @@ MINIMAL_GEOJSON = """{
 }"""
 
 
-# =============================================================================
-# CLI Runner Fixtures
-# =============================================================================
+# CLI runner fixtures
 
 
 @pytest.fixture
@@ -56,18 +43,12 @@ def runner() -> CliRunner:
     return CliRunner()
 
 
-# =============================================================================
-# Catalog Fixtures
-# =============================================================================
+# Catalog fixtures
 
 
 @pytest.fixture
 def empty_catalog(tmp_path: Path, runner: CliRunner) -> Path:
-    """An initialized but empty Portolan catalog.
-
-    Yields a temporary directory with `portolan init --auto` already run.
-    Useful for testing workflows that start from a clean catalog.
-    """
+    """Yield a temporary catalog after ``portolan init --auto``."""
     result = runner.invoke(cli, ["init", str(tmp_path), "--auto", "--license", "CC-BY-4.0"])
     assert result.exit_code == 0, f"Init failed: {result.output}"
     return tmp_path
@@ -75,12 +56,7 @@ def empty_catalog(tmp_path: Path, runner: CliRunner) -> Path:
 
 @pytest.fixture
 def catalog_with_geojson(empty_catalog: Path, valid_points_geojson: Path) -> Path:
-    """A catalog with a demographics collection containing GeoJSON.
-
-    Sets up the standard demo structure used in README examples:
-    - demographics/
-      - sample.geojson (copied from test fixtures)
-    """
+    """Yield a catalog with ``demographics/sample.geojson``, as the README shows."""
     demographics_dir = empty_catalog / "demographics"
     demographics_dir.mkdir()
     shutil.copy(valid_points_geojson, demographics_dir / "sample.geojson")
@@ -89,24 +65,11 @@ def catalog_with_geojson(empty_catalog: Path, valid_points_geojson: Path) -> Pat
 
 @pytest.fixture
 def catalog_with_minimal_data(empty_catalog: Path) -> Path:
-    """A catalog with minimal inline GeoJSON data.
-
-    Does not depend on external fixtures - creates data inline.
-    Useful for self-contained documentation tests.
-    """
+    """Yield a catalog with inline GeoJSON and no external fixture."""
     demographics_dir = empty_catalog / "demographics"
     demographics_dir.mkdir()
     (demographics_dir / "sample.geojson").write_text(MINIMAL_GEOJSON)
     return empty_catalog
 
 
-# =============================================================================
-# Real Fixture Access (Delegated to Main conftest.py)
-# =============================================================================
-
-# The following fixtures are inherited from tests/conftest.py:
-# - valid_points_geojson
-# - valid_polygons_geojson
-# - fixtures_dir
-#
-# No need to redefine them here - pytest's fixture discovery handles it.
+# Real fixtures come from tests/conftest.py.

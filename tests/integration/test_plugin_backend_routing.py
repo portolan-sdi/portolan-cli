@@ -52,11 +52,7 @@ class RecordingBackend(JsonFileBackend):
     def publish(
         self, collection: str, assets: dict[str, str], *args: Any, **kwargs: Any
     ) -> Version:
-        """Record a publication without writing file-backend history.
-
-        The arguments after ``assets`` are ``schema, breaking, message`` and the
-        keywords ``removed`` and ``version``.
-        """
+        """Record a publication without writing file-backend history."""
         _schema, breaking, message = args[:3]
         version: str | None = kwargs.get("version")
         self.publishes.append((collection, dict(assets)))

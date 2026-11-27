@@ -1,17 +1,4 @@
-"""Tests for COG re-optimization (--force) and parallel conversion (issue #530).
-
-Covers:
-- convert_file(force=True): re-encodes already-valid COGs, adding overviews via
-  current CogSettings.
-- convert_directory(workers=N): parallel conversion via ProcessPoolExecutor with
-  per-file on_progress callbacks, matching the serial result set.
-- check_directory(force=, workers=): unions CLOUD_NATIVE rasters into the fix set
-  and threads force/workers through; dry-run preview lists forced COGs.
-
-Conversion itself is delegated to rio-cogeo; these tests verify
-Portolan's orchestration (the force bypass, parallelism, and check threading),
-not raster math.
-"""
+"""Tests for COG re-optimization (--force) and parallel conversion."""
 
 from __future__ import annotations
 
@@ -33,14 +20,7 @@ if TYPE_CHECKING:
 
 
 def _make_cog_without_overviews(path: Path, size: int = 1500) -> Path:
-    """Write a valid COG that has NO internal overviews.
-
-    rio-cogeo's ``cog_translate`` with ``overview_level=0`` produces a COG that
-    passes ``cog_validate`` (overviews are warnings, not errors) but lacks the
-    pyramid that makes web rendering fast. This reproduces the JRC GloFAS source
-    tiles from issue #530. ``size`` is larger than the 512px default tile size so
-    that a forced re-encode auto-generates at least one overview level.
-    """
+    """Write a valid COG that has NO internal overviews."""
     from rio_cogeo.cogeo import cog_translate
     from rio_cogeo.profiles import cog_profiles
 

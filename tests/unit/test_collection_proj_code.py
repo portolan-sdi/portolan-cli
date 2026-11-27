@@ -1,15 +1,4 @@
-"""Collection-level projection metadata lands as ``proj:code`` on the data asset.
-
-Issue #654 (spec reconciliation): projection v2.0.0 removed ``proj:epsg``.
-The reference catalog in portolan-spec places ``proj:code`` (e.g.
-``"EPSG:4269"``) on the collection's *data asset*, never on the collection
-top level. These tests replace the top-level ``proj:epsg`` behavior that
-tests/unit/test_collection_proj_epsg_488.py used to pin.
-
-The issue #488 clobber scenario (a PMTiles companion's hardcoded Web-Mercator
-tile CRS overwriting the real source CRS) is eliminated structurally: PMTiles
-metadata no longer contributes any projection field at all.
-"""
+"""Collection-level projection metadata lands as ``proj:code`` on the data asset."""
 
 from __future__ import annotations
 
@@ -104,7 +93,6 @@ class TestCollectionProjCode:
 
     @pytest.mark.unit
     def test_pmtiles_never_clobbers_data_crs(self) -> None:
-        """#488 regression, restated: tile CRS never displaces the data CRS."""
         collection = _collection_with_assets(data=_data_asset(), tiles=_pmtiles_asset())
 
         add_collection_properties_from_metadata(collection, _pmtiles(), asset_keys=["tiles"])

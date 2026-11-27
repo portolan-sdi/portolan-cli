@@ -1,4 +1,4 @@
-"""Unit tests for version_ops.commit_run and the batched catalog index (issue #995)."""
+"""Unit tests for version_ops.commit_run and the batched catalog index."""
 
 from __future__ import annotations
 

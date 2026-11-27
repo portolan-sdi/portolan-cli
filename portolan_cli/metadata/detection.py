@@ -1,13 +1,4 @@
-"""Metadata detection functions.
-
-Provides detection and staleness checking for geo-asset metadata:
-- get_stored_metadata(): Read existing STAC item + versions.json data
-- get_current_metadata(): Extract fresh metadata from file
-- is_stale(): MTIME check + heuristic fallback
-- detect_changes(): Return list of what changed
-- check_file_metadata(): Return MetadataCheckResult for single file
-- compute_schema_fingerprint(): Generate hash of file schema
-"""
+"""Metadata detection functions."""
 
 from __future__ import annotations
 
@@ -41,19 +32,7 @@ from portolan_cli.metadata.models import (
 
 @dataclass
 class StoredMetadata:
-    """Metadata stored in STAC item and versions.json.
-
-    Bridges STAC item data with versions.json tracking information.
-
-    Attributes:
-        item_id: STAC item ID.
-        bbox: Bounding box [west, south, east, north].
-        source_mtime: Source file modification time from versions.json.
-        sha256: File checksum from versions.json.
-        feature_count: Number of features/pixels.
-        schema_fingerprint: Hash of the schema.
-        size_bytes: File size from versions.json, for the stat check.
-    """
+    """Metadata stored in STAC item and versions.json."""
 
     item_id: str
     bbox: list[float] | None
@@ -85,13 +64,7 @@ def current_assets(versions_file: VersionsFile) -> dict[str, dict[str, Any]]:
 def load_current_assets(
     collection_dir: Path, state: RunState | None = None
 ) -> dict[str, dict[str, Any]] | None:
-    """The current assets of a collection's versions.json, or None without one.
-
-    With ``state``, the run reads and converts each versions.json once. Every
-    item check reads the map, so a conversion per call made ``check`` cost
-    items x assets. The callers share the result and must not edit it. A file
-    that does not parse counts as absent, as before.
-    """
+    """The current assets of a collection's versions.json, or None without one."""
     try:
         if state is not None:
             versions_path = collection_dir / "versions.json"
@@ -111,17 +84,7 @@ def load_current_assets(
 
 
 def versions_asset_lookup_keys(file_path: Path, collection_dir: Path) -> tuple[str, ...]:
-    """The versions.json keys that can track ``file_path``, most authoritative first.
-
-    The collection-relative key is what ``add`` writes. The bare file name covers
-    a hand-written or older versions.json, and a nested item whose versions.json
-    keys by basename (a sub-catalog inside a collection).
-
-    Drop the bare file name only when a different file already sits at
-    ``collection_dir / file_path.name``. That file owns the bare collection-level
-    key, so an item-level asset with the same name must not fall back onto it and
-    read the wrong baseline (issue #709).
-    """
+    """The versions.json keys that can track ``file_path``, most authoritative first."""
     relative = versions_asset_key(file_path, collection_dir)
     collision = collection_dir / file_path.name
     if collision.exists() and collision.resolve() != file_path.resolve():
@@ -134,22 +97,7 @@ def find_versions_asset(
     file_path: Path,
     collection_dir: Path,
 ) -> dict[str, Any] | None:
-    """The versions.json entry that tracks ``file_path``, or None.
-
-    Three lookups, in order of authority. The collection-relative key is what
-    ``add`` writes. The bare file name covers a hand-written or older
-    versions.json. The ``href`` sweep covers a nested layout, where the key an
-    item carries is not the whole path down from the collection.
-
-    Reading only the bare file name was the #709 defect. An item-level asset is
-    keyed ``{item_id}/{filename}``, so the lookup never matched, every
-    item-level asset read as STALE, and ``check --fix`` rewrote every item on
-    every run.
-
-    The bare file name resolves only when no other file owns it. A collection-level
-    file with the same name owns the bare key, so an item-level asset never falls
-    back onto it and reads the wrong baseline.
-    """
+    """The versions.json entry that tracks ``file_path``, or None."""
     relative = versions_asset_key(file_path, collection_dir)
     for key in versions_asset_lookup_keys(file_path, collection_dir):
         entry = assets.get(key)
@@ -165,26 +113,14 @@ def find_versions_asset(
 
 
 def stored_baseline_mtime(entry: dict[str, Any]) -> float | None:
-    """The freshness baseline on a versions.json entry.
-
-    ``add`` records the asset's own mtime under ``mtime``, while
-    ``update_versions_tracking`` records it under ``source_mtime``. One entry may
-    carry either or both. ``_check_collection_level_asset`` (scan.py) already
-    reads them in this order for #512; the item path needs the same rule.
-    """
+    """The freshness baseline on a versions.json entry."""
     source_mtime = entry.get("source_mtime")
     baseline = source_mtime if source_mtime is not None else entry.get("mtime")
     return baseline if isinstance(baseline, (int, float)) else None
 
 
 def _item_registering(file_path: Path) -> dict[str, Any] | None:
-    """The STAC item beside ``file_path`` that registers it, or None.
-
-    ``add`` names the item ``<stem>.json``, but ``add --item-id`` names it
-    after the id. Then the item is the one whose asset href resolves to the
-    file. Asking only for ``<stem>.json`` reported such a file as MISSING, and
-    ``check --fix`` wrote a second item for it (issue #840).
-    """
+    """The STAC item beside ``file_path`` that registers it, or None."""
     named = file_path.parent / f"{file_path.stem}.json"
     candidates = [named] if named.exists() else sorted(file_path.parent.glob("*.json"))
     target = file_path.resolve()
@@ -214,25 +150,8 @@ def get_stored_metadata(
     *,
     state: RunState | None = None,
 ) -> StoredMetadata | None:
-    """Read existing STAC item and versions.json metadata.
-
-    Looks for the STAC item beside the asset that registers it,
-    and extracts tracking data from versions.json if present.
-
-    Args:
-        file_path: Path to the geo-asset file.
-        collection_dir: Directory containing STAC item and versions.json.
-        state: The run state, for one versions.json read per collection.
-
-    Returns:
-        StoredMetadata if found, None if no metadata exists.
-    """
-    # Item.json sits next to the data file in the hierarchical layout
-    # produced by `add` ({item_dir}/{item_id}.json). Per the
-    # scanner is the single source of truth for layout discovery; the
-    # legacy flat sibling-JSON layout is intentionally not supported here
-    # — the scanner reports such files as ORPHANED and directs the user
-    # to migrate via `portolan add`.
+    """Read existing STAC item and versions.json metadata."""
+    # Item JSON sits at {item_dir}/{item_id}.json; the flat sibling layout is reported as ORPHANED.
     item_data = _item_registering(file_path)
     if item_data is None:
         return None
@@ -268,22 +187,7 @@ def get_stored_metadata(
 
 
 def get_current_metadata(file_path: Path, *, state: RunState | None = None) -> FileMetadataState:
-    """Extract fresh metadata from a geo-asset file.
-
-    Supports GeoParquet (.parquet) and COG (.tif, .tiff) formats. One read of
-    the file gives every field. With ``state``, the run reads each file once.
-
-    Args:
-        file_path: Path to the geo-asset file.
-        state: The run state, for one read per file and run.
-
-    Returns:
-        FileMetadataState with current file metadata.
-
-    Raises:
-        FileNotFoundError: If file doesn't exist.
-        ValueError: If file format is not supported.
-    """
+    """Extract fresh metadata from a geo-asset file."""
     if not file_path.exists():
         raise FileNotFoundError(f"File not found: {file_path}")
 
@@ -341,20 +245,7 @@ def _comparable_bbox(
     *,
     unset_is_wgs84: bool,
 ) -> list[float] | None:
-    """The file's bbox when it is in WGS84, else None.
-
-    The item stores its bbox in WGS84. A file bbox in another CRS, such as the
-    metres of a UTM raster, never equals it, so every touched file read as
-    changed (issue #839). Freshness compares only bboxes in one CRS. For any
-    other file the pixel or feature count and the schema fingerprint carry the
-    signal.
-
-    Args:
-        bbox: The bbox the file declares, in its own CRS.
-        crs: The file's CRS: an EPSG or WKT string, a PROJJSON dict, or None.
-        unset_is_wgs84: Read a missing CRS as WGS84. GeoParquet defines an
-            absent ``crs`` as OGC:CRS84. A GeoTIFF without a CRS has no frame.
-    """
+    """The file's bbox when it is in WGS84, else None."""
     if not bbox:
         return None
     if crs is None:
@@ -375,18 +266,7 @@ def compute_schema_fingerprint(
     file_path: Path,
     cog_metadata: COGMetadata | None = None,
 ) -> str:
-    """Generate a hash fingerprint of the file schema.
-
-    For GeoParquet: hash of column names and types.
-    For COG: hash of band count, dtype, and CRS.
-
-    Args:
-        file_path: Path to the geo-asset file.
-        cog_metadata: Optional pre-extracted COG metadata to avoid re-extraction.
-
-    Returns:
-        Hexadecimal hash string representing the schema.
-    """
+    """Generate a hash fingerprint of the file schema."""
     suffix = file_path.suffix.lower()
 
     if suffix == ".parquet":
@@ -413,22 +293,7 @@ def compute_schema_fingerprint(
 
 
 def is_stale(state: FileMetadataState) -> tuple[bool, str]:
-    """Check if file metadata is stale using MTIME + heuristics.
-
-    Detection strategy:
-    1. If stored_mtime is None → new file
-    2. If mtime unchanged → not stale (fast path)
-    3. If mtime changed but heuristics unchanged → touched but not modified
-    4. If mtime changed AND heuristics changed → stale
-
-    Args:
-        state: FileMetadataState comparing current vs stored values.
-
-    Returns:
-        Tuple of (is_stale: bool, reason: str).
-        Reasons: "new_file", "mtime_unchanged", "touched_unchanged",
-                 "content_changed", "schema_changed"
-    """
+    """Check if file metadata is stale using MTIME + heuristics."""
     # Check for new file (no stored metadata)
     if state.stored_mtime is None:
         return (True, "new_file")
@@ -451,18 +316,7 @@ def is_stale(state: FileMetadataState) -> tuple[bool, str]:
 
 
 def judge_staleness(state: FileMetadataState, *, resized: bool) -> tuple[bool, str]:
-    """Run :func:`is_stale`, except that a new size is a change whatever the mtime.
-
-    ``run_state.stat_matches`` needs the size and the mtime to match.
-    ``FileMetadataState`` holds no size, so the caller passes the comparison.
-
-    Args:
-        state: The current and stored values.
-        resized: True when the file size differs from the size versions.json holds.
-
-    Returns:
-        ``(is_stale, reason)`` with the reasons of :func:`is_stale`.
-    """
+    """Run :func:`is_stale`, except that a new size is a change whatever the mtime."""
     if not resized:
         return is_stale(state)
     if state.stored_mtime is None:
@@ -473,24 +327,14 @@ def judge_staleness(state: FileMetadataState, *, resized: bool) -> tuple[bool, s
 
 
 def detect_changes(state: FileMetadataState) -> list[str]:
-    """Detect what changed between stored and current metadata.
-
-    Compares each metadata field and returns a list of changed fields.
-
-    Args:
-        state: FileMetadataState comparing current vs stored values.
-
-    Returns:
-        List of changed field names: ["mtime", "bbox", "feature_count", "schema"]
-    """
+    """Detect what changed between stored and current metadata."""
     changes: list[str] = []
 
     # Check mtime
     if state.mtime_changed:
         changes.append("mtime")
 
-    # Check bbox with tolerance-aware comparison. A file bbox in another CRS
-    # than the item's WGS84 one is None, and gives no bbox signal (#839).
+    # A file bbox in another CRS is None and gives no bbox signal.
     from portolan_cli.metadata.models import BBOX_TOLERANCE, _bboxes_equal
 
     if state.current_bbox is not None and (
@@ -518,24 +362,7 @@ def check_file_metadata(
     *,
     state: RunState | None = None,
 ) -> MetadataCheckResult:
-    """Check metadata status for a single geo-asset file.
-
-    Combines get_stored_metadata and get_current_metadata to determine
-    if the file's STAC metadata is up to date. A stat that matches the stored
-    size and mtime proves the file unchanged, so the file is not opened
-    (issue #995).
-
-    Args:
-        file_path: Path to the geo-asset file.
-        collection_dir: Directory containing STAC metadata.
-        state: The run state, for one versions.json read per collection.
-
-    Returns:
-        MetadataCheckResult with status and details.
-
-    Raises:
-        FileNotFoundError: If file doesn't exist.
-    """
+    """Check metadata status for a single geo-asset file."""
     if not file_path.exists():
         raise FileNotFoundError(f"File not found: {file_path}")
 
@@ -584,11 +411,7 @@ def check_file_metadata(
             message=f"Metadata is up to date ({reason})",
         )
 
-    # `add` persists no schema fingerprint for an item-level asset, so a moved
-    # mtime alone cannot prove a change. Settle it with the stored content hash,
-    # the same tiebreaker `_check_collection_level_asset` uses for #512. A
-    # byte-identical file (after a `git clone`, which resets mtimes) then reads
-    # FRESH rather than driving a rewrite that alters nothing (#709).
+    # No stored fingerprint, so mtime alone proves nothing; a matching content hash reads FRESH.
     if (
         stored.schema_fingerprint is None
         and stored.sha256
@@ -603,9 +426,7 @@ def check_file_metadata(
     # Determine what changed
     changes = detect_changes(file_state)
 
-    # BREAKING needs a fingerprint to compare against. Without a baseline the
-    # mtime change is unexplained, not proof of a schema break, so it reports
-    # STALE rather than a blocking error.
+    # Without a fingerprint baseline, report STALE, not BREAKING.
     if reason == "schema_changed" and stored.schema_fingerprint is not None:
         return MetadataCheckResult(
             file_path=file_path,

@@ -1,13 +1,4 @@
-"""Tests for CLI --profile flag default behavior.
-
-Tests verify:
-1. Default fallback to 'default' profile when no config or CLI arg
-2. Environment variable PORTOLAN_AWS_PROFILE is used
-3. CLI --profile overrides env var values
-
-Note: aws_profile is a sensitive setting and cannot be set in config.yaml (Issue #356).
-Use PORTOLAN_PROFILE or PORTOLAN_AWS_PROFILE env vars instead.
-"""
+"""Tests for CLI --profile flag default behavior."""
 
 from __future__ import annotations
 
@@ -24,7 +15,7 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
     from pathlib import Path
 
-# Remote URL for tests - set via env var (Issue #356: sensitive settings)
+# Remote URL for tests - set via env var
 TEST_REMOTE = "s3://test-bucket/test-catalog"
 
 
@@ -52,10 +43,7 @@ def _clone_kwargs(tmp_path: Path) -> Mapping[str, Any]:
 
 
 def _write_catalog(tmp_path: Path) -> Path:
-    """Create a catalog with one pushable collection and no sensitive settings.
-
-    The remote and the profile come from environment variables (Issue #356).
-    """
+    """Create a catalog with one pushable collection and no sensitive settings."""
     catalog_root = tmp_path / "catalog"
     catalog_root.mkdir()
     (catalog_root / "catalog.json").write_text('{"type": "Catalog", "id": "test"}')
@@ -79,10 +67,7 @@ class TestProfileDefaultBehavior:
 
     @pytest.fixture
     def mock_catalog(self, tmp_path: Path) -> Path:
-        """Create a minimal catalog structure for testing.
-
-        Note: remote must be set via PORTOLAN_REMOTE env var (Issue #356).
-        """
+        """Create a minimal catalog structure for testing."""
         return _write_catalog(tmp_path)
 
     @pytest.mark.unit
@@ -264,18 +249,11 @@ class TestProfileDefaultBehavior:
 
 
 class TestProfileConfigResolution:
-    """Test that PORTOLAN_AWS_PROFILE env var is used when --profile not specified.
-
-    Note: aws_profile is a sensitive setting and cannot be set in config.yaml (Issue #356).
-    These tests verify env var behavior instead.
-    """
+    """Test that PORTOLAN_AWS_PROFILE env var is used when --profile not specified."""
 
     @pytest.fixture
     def basic_catalog(self, tmp_path: Path) -> Path:
-        """Create a basic catalog without profile configured.
-
-        Note: remote and profile must be set via env vars (Issue #356).
-        """
+        """Create a basic catalog without profile configured."""
         return _write_catalog(tmp_path)
 
     @pytest.mark.unit

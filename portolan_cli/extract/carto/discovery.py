@@ -1,17 +1,4 @@
-"""Carto table discovery.
-
-geoparquet-io extracts a *single* named Carto table but provides no way to
-enumerate the tables in an account. This module fills that gap by issuing
-SQL over the Carto SQL API:
-
-- ``CDB_UserTables()`` lists the user's tables.
-- A ``LIMIT 0`` probe per table returns a ``fields`` schema; a column whose
-  ``type`` is ``"geometry"`` marks the table as spatial.
-
-Terminology is normalized to Portolan's layer-centric model: a Carto *table*
-is exposed as a ``CartoTableInfo`` with ``name``/``id``, so it flows through
-the shared filter, resume, and report steps of ``run_layer_extraction``.
-"""
+"""Carto table discovery."""
 
 from __future__ import annotations
 
@@ -30,13 +17,7 @@ class CartoDiscoveryError(Exception):
 
 @dataclass
 class CartoTableInfo:
-    """Information about a Carto table.
-
-    Attributes:
-        name: Table name (used for filtering and as the collection slug source).
-        id: Numeric ID for filter/resume compatibility (auto-assigned).
-        has_geometry: Whether the table has a geometry column (spatial table).
-    """
+    """Information about a Carto table."""
 
     name: str
     id: int = 0
@@ -45,13 +26,7 @@ class CartoTableInfo:
 
 @dataclass
 class CartoDiscoveryResult:
-    """Result of Carto account discovery.
-
-    Attributes:
-        service_url: Normalized SQL API endpoint that was queried.
-        tables: Discovered tables (spatial and non-spatial).
-        account_name: Account/subdomain parsed from the URL, if available.
-    """
+    """Result of Carto account discovery."""
 
     service_url: str
     tables: list[CartoTableInfo] = field(default_factory=list)
@@ -68,21 +43,7 @@ _NETWORK_ERRORS = (
 
 
 def normalize_sql_api_url(url: str) -> str:
-    """Normalize a Carto URL to its ``/api/v2/sql`` endpoint.
-
-    Accepts either a full SQL API endpoint (``.../api/v2/sql`` or
-    ``.../api/v1/sql``) or a bare account domain (``https://acct.carto.com``),
-    mirroring geoparquet-io's own URL handling. Any query string is dropped.
-
-    Args:
-        url: Carto SQL API URL or account domain.
-
-    Returns:
-        Normalized URL ending in ``/api/v2/sql``.
-
-    Raises:
-        CartoDiscoveryError: If the URL has no scheme or an unexpected path.
-    """
+    """Normalize a Carto URL to its ``/api/v2/sql`` endpoint."""
     parsed = urlparse(url)
     if not parsed.scheme:
         raise CartoDiscoveryError(redact_credentials(f"Invalid Carto URL (missing scheme): {url}"))
@@ -120,21 +81,7 @@ def carto_sql_request(
     api_key: str | None = None,
     timeout: float = 60.0,
 ) -> dict[str, object]:
-    """Issue a SQL query against the Carto SQL API and return the parsed JSON.
-
-    Args:
-        sql_api_url: Normalized ``/api/v2/sql`` endpoint.
-        query: SQL statement to run.
-        api_key: Optional API key (sent as the ``api_key`` query param).
-        timeout: Request timeout in seconds.
-
-    Returns:
-        Parsed JSON response (contains ``rows``, ``fields``, ``total_rows``).
-
-    Raises:
-        CartoDiscoveryError: On network failure, non-2xx status, or a
-            server-reported SQL error.
-    """
+    """Issue a SQL query against the Carto SQL API and return the parsed JSON."""
     params = {"q": query}
     if api_key:
         params["api_key"] = api_key
@@ -144,7 +91,7 @@ def carto_sql_request(
         response.raise_for_status()
         data: dict[str, object] = response.json()
     except _NETWORK_ERRORS as e:
-        # A requests error quotes the request URL with its api_key (#981).
+        # A requests error quotes the request URL with its api_key.
         raise CartoDiscoveryError(redact_credentials(f"Carto SQL request failed: {e}")) from e
 
     if "error" in data:
@@ -154,12 +101,7 @@ def carto_sql_request(
 
 
 def quote_table_identifier(name: str) -> str:
-    """Quote a table name as a SQL identifier for safe interpolation.
-
-    Identifiers cannot be passed as bound parameters, so the correct defense is
-    to wrap the name in double quotes and double any embedded quote (standard SQL
-    identifier escaping). This makes the table name inert as SQL.
-    """
+    """Quote a table name as a SQL identifier for safe interpolation."""
     escaped = name.replace('"', '""')
     return f'"{escaped}"'
 
@@ -171,16 +113,9 @@ def table_has_geometry(
     api_key: str | None = None,
     timeout: float = 60.0,
 ) -> bool:
-    """Return True if a Carto table has a geometry column.
-
-    Issues a ``LIMIT 0`` query — the SQL API returns the full ``fields`` schema
-    even with zero rows — and checks for a column whose ``type`` is
-    ``"geometry"``. Detection keys on the field *type*, never the column name
-    (e.g. ``gdb_geomattr_data`` is a ``bytea``, not geometry).
-    """
-    # table_name is quoted as a SQL identifier (quote_table_identifier); identifiers
-    # cannot be bound parameters, so quoting is the correct injection defense.
-    query = f"SELECT * FROM {quote_table_identifier(table_name)} LIMIT 0"  # noqa: S608
+    """Return True if a Carto table has a geometry column."""
+    # An identifier cannot be a bound parameter, so quoting it is the injection defense.
+    query = f"SELECT * FROM {quote_table_identifier(table_name)} LIMIT 0"  # noqa: S608 - quoted
     data = carto_sql_request(sql_api_url, query, api_key=api_key, timeout=timeout)
     fields = data.get("fields", {})
     if not isinstance(fields, dict):
@@ -196,25 +131,7 @@ def discover_carto_tables(
     api_key: str | None = None,
     timeout: float = 60.0,
 ) -> CartoDiscoveryResult:
-    """Discover table names in a Carto account via ``CDB_UserTables()``.
-
-    Enumeration is a single request; geometry presence is left unresolved
-    (``has_geometry`` defaults True) and should be resolved per table *after*
-    filtering — see ``table_has_geometry`` — to avoid an N+1 probe over the
-    whole account when only a few tables are wanted.
-
-    Args:
-        url: Carto SQL API URL or account domain.
-        api_key: Optional API key for authenticated/private accounts.
-        timeout: Per-request timeout in seconds.
-
-    Returns:
-        CartoDiscoveryResult with one CartoTableInfo per table name.
-
-    Raises:
-        CartoDiscoveryError: If the account cannot be enumerated (e.g.
-            ``CDB_UserTables()`` is unavailable or access is denied).
-    """
+    """Discover table names in a Carto account via ``CDB_UserTables()``."""
     sql_api_url = normalize_sql_api_url(url)
     data = carto_sql_request(
         sql_api_url,
@@ -244,14 +161,9 @@ def tables_from_names(
     names: list[str],
     *,
     api_key: str | None = None,  # noqa: ARG001 - kept for signature parity with discover_carto_tables
-    timeout: float = 60.0,  # noqa: ARG001
+    timeout: float = 60.0,  # noqa: ARG001 - signature parity with discover_carto_tables
 ) -> CartoDiscoveryResult:
-    """Build a discovery result from explicit table names (no enumeration).
-
-    Fallback for when ``CDB_UserTables()`` is unavailable (e.g. a single public
-    table, or an API key without catalog access) but the user named tables
-    explicitly. Geometry presence is resolved later, per table.
-    """
+    """Build a discovery result from explicit table names (no enumeration)."""
     sql_api_url = normalize_sql_api_url(url)
     tables = [CartoTableInfo(name=name, id=i) for i, name in enumerate(names)]
     return CartoDiscoveryResult(

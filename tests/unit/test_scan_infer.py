@@ -325,12 +325,6 @@ class TestInferCollections:
                 assert suggestions[i].confidence >= suggestions[i + 1].confidence
 
     def test_duplicate_filenames_across_directories(self, tmp_path: Path) -> None:
-        """infer_collections handles duplicate filenames across directories.
-
-        Bug fix: path_by_name was a dict that lost files when the same
-        filename appeared in different directories (e.g., 2020/rivers.geojson
-        and 2021/rivers.geojson). Now uses multimap to track all paths.
-        """
         from portolan_cli.scan.core import ScannedFile
 
         # Create directory structure with duplicate filenames
@@ -385,12 +379,6 @@ class TestInferCollections:
             )
 
     def test_no_duplicate_paths_in_suggestions(self, tmp_path: Path) -> None:
-        """infer_collections should not include duplicate paths in files.
-
-        Bug fix: When iterating over 'names' list which contains duplicates
-        (e.g., ["rivers.geojson", "rivers.geojson"] from different dirs),
-        paths_by_name[n] returns ALL paths for that name, causing duplicates.
-        """
         from portolan_cli.scan.core import ScannedFile
 
         # Create directory structure with duplicate filenames

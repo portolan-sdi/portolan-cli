@@ -1,31 +1,4 @@
-"""Shared post-extraction catalog lifecycle for extraction orchestrators.
-
-The ArcGIS, WFS, and Carto orchestrators each run the same lifecycle after their
-(genuinely source-specific) layer extraction finishes:
-
-1. Collect the successfully-extracted assets.
-2. Initialize a Portolan catalog and add those assets.
-3. Register any discovered style/legend sidecars as STAC assets, with
-   ``file:size`` and ``file:checksum`` (PTL-AST-003).
-4. Add a provenance ``via`` link to each collection.
-5. Seed the catalog-level ``metadata.yaml`` from harvested service metadata.
-   The source's attribution names the producer (PTL-PRV-001).
-6. Give each collection a thumbnail (PTL-VIZ-001). ``source.build_catalog``
-   does it last, as ``add`` does.
-
-The output of ``portolan extract`` passes ``portolan check`` when the source
-publishes an attribution.
-
-Only three things actually differ between the sources: the per-source title used
-for a ``via`` link, the source-URL that link points at, and the metadata
-serializer that produces the catalog-level ``ExtractedMetadata``. This module
-provides the shared skeleton and parametrizes those pieces via small callables,
-so each orchestrator keeps only its source-specific glue (: all logic
-lives in the library layer).
-
-All library imports are function-local, matching the orchestrators' existing
-pattern, to keep import time low and sidestep import cycles through ``add.py``.
-"""
+"""Shared post-extraction catalog lifecycle for extraction orchestrators."""
 
 from __future__ import annotations
 
@@ -52,19 +25,7 @@ def collect_successful_parquet_files(
     output_dir: Path,
     report: ExtractionReport,
 ) -> list[Path]:
-    """Return absolute paths of every successfully-extracted asset in the report.
-
-    Layers that failed, were skipped, or produced no output are excluded. The
-    returned list is what gets handed to ``add_files``; an empty list means there
-    is nothing to build a catalog around.
-
-    Args:
-        output_dir: The catalog output directory (asset paths are relative to it).
-        report: The extraction report.
-
-    Returns:
-        Absolute paths to successfully-extracted parquet files.
-    """
+    """Return absolute paths of every successfully-extracted asset in the report."""
     return [
         output_dir / result.output_path
         for result in report.layers
@@ -73,16 +34,7 @@ def collect_successful_parquet_files(
 
 
 def parquet_row_count(path: Path) -> int:
-    """Return the row count of an extracted Parquet file, or 0 when the file is missing.
-
-    The footer read counts as one ``parquet.opens``.
-
-    Args:
-        path: The Parquet file that a source wrote.
-
-    Returns:
-        The number of rows in the file.
-    """
+    """Return the row count of an extracted Parquet file, or 0 when the file is missing."""
     if not path.exists():
         return 0
     import pyarrow.parquet as pq
@@ -104,43 +56,7 @@ def init_extracted_catalog(
     state: RunState | None = None,
     on_message: MessageCallback | None = None,
 ) -> tuple[list[Path], set[str]] | None:
-    """Initialize a catalog and add the extracted assets.
-
-    Shared core of ``build_catalog`` and the ImageServer catalog step: collect
-    assets, bail out if there are none, initialize the catalog, run an optional
-    ``post_init`` hook (used for source-specific work that must happen *after*
-    ``init_catalog`` but *before* ``add_files`` — e.g. re-applying richer catalog
-    metadata, or enabling tabular support for non-geo outputs), then add the
-    assets.
-
-    When ``output_dir`` is already a Portolan catalog, the ``init_catalog`` step
-    is skipped and the assets are added as new collections (issue #767). This lets
-    a caller extract more layers into a catalog they already built, rather than
-    abort after the download wrote the data.
-
-    Args:
-        output_dir: The catalog output directory.
-        report: The extraction report.
-        catalog_id: Catalog id for ``init_catalog``. None derives it from the
-            output directory name, which is the behavior before issue #821.
-        title: Catalog title for ``init_catalog`` (already filtered by caller).
-        description: Catalog description for ``init_catalog``.
-        post_init: Optional hook called as
-            ``post_init(output_dir, parquet_files, fresh)`` between ``init_catalog``
-            and ``add_files``. ``fresh`` is True only when this call created the
-            catalog. A hook must not overwrite root catalog metadata when ``fresh``
-            is False, because the catalog already belongs to an earlier extraction
-            (issue #832).
-        state: The run state of the extraction. The add stages its versions
-            in it, and the caller commits them. None commits the add at once.
-        on_message: Called as ``on_message(level, text)`` with each notice for
-            the user. None logs the notice instead.
-
-    Returns:
-        The added parquet files and the collections that this add wrote a
-        version for, or ``None`` when there was nothing to add. The caller
-        then stops, because no catalog exists.
-    """
+    """Initialize a catalog and add the extracted assets."""
     from portolan_cli.catalog import CatalogState, detect_state, init_catalog
     from portolan_cli.extract.common.progress import emit_message
     from portolan_cli.formats import run_scope
@@ -149,21 +65,11 @@ def init_extracted_catalog(
     if not parquet_files:
         return None
 
-    # A directory that is already a Portolan catalog gets the new collections added
-    # to it, not an abort after the download already wrote the data (issue #767). A
-    # caller who runs extract into a directory they already extracted into wants the
-    # new layers added, not a refusal. init_catalog raises CatalogAlreadyExistsError
-    # on a MANAGED directory, so skip it. The catalog already carries a license, so
-    # the add license gate (issue #686) still passes.
+    # An existing catalog gets the new collections added. It already has a license for the add gate.
     fresh = detect_state(output_dir) is not CatalogState.MANAGED
     if fresh:
-        # license_id=None: extract owns metadata.yaml, seeding it from harvested
-        # service metadata in post_init below. Writing a template here first would
-        # make that seeder's O_EXCL create a no-op and drop everything harvested
-        # (issue #686).
-        # init_catalog reports what it had to guess. `init` prints those warnings,
-        # so extract prints them too. Otherwise a derived id that names a tooling
-        # artifact reaches a published catalog unflagged (issue #821).
+        # license_id=None: a template would make the seeder's O_EXCL create a no-op.
+        # Print what init_catalog had to guess, the way `init` does.
         _, init_warnings = init_catalog(
             output_dir,
             catalog_id=catalog_id,
@@ -176,7 +82,7 @@ def init_extracted_catalog(
 
     elif catalog_id is not None:
         # The catalog already exists and keeps the id it was created with. Say so,
-        # rather than accept the flag and change nothing (issue #821).
+        # rather than accept the flag and change nothing.
         emit_message(
             on_message,
             "warn",
@@ -200,16 +106,7 @@ def init_extracted_catalog(
 def add_extracted_files(
     paths: list[Path], catalog_root: Path, *, state: RunState | None = None
 ) -> list[ItemInfo]:
-    """Run ``add_files`` and log each file that it leaves out of the catalog.
-
-    ``add_files`` prints nothing itself. A file that ``ignored_files`` matches,
-    or that has no valid collection id, would otherwise vanish in silence.
-    With ``state``, the add stages its versions there and the caller commits
-    them. Without it, the add commits its own.
-
-    Returns:
-        The items that the add wrote.
-    """
+    """Run ``add_files`` and log each file that it leaves out of the catalog."""
     from portolan_cli.add import SKIPS_THAT_TRACK, add_files
 
     reasons: dict[Path, str] = {}
@@ -231,19 +128,7 @@ def register_collection_styles(
     include_legends: bool = False,
     on_message: MessageCallback | None = None,
 ) -> None:
-    """Register discovered style (and optionally legend) sidecars as STAC assets.
-
-    Extraction writes style/legend files next to each collection's data; this
-    scans every successful collection and registers whatever it finds (Issue
-    #490 styles, Issue #498 legends).
-
-    Args:
-        output_dir: The catalog output directory.
-        report: The extraction report.
-        include_legends: Also discover and register legend sidecars (WFS/WMS).
-        on_message: Called as ``on_message(level, text)`` with the notice of
-            the default style that Portolan chose.
-    """
+    """Register discovered style (and optionally legend) sidecars as STAC assets."""
     from portolan_cli.report import reporting
     from portolan_cli.viz.style import (
         discover_legends,
@@ -295,18 +180,7 @@ def add_source_links(
     url_builder: Callable[[str, LayerResult], str],
     title_builder: Callable[[LayerResult], str],
 ) -> None:
-    """Add a provenance ``via`` link to each successfully-extracted collection.
-
-    Per Issue #353 every collection points back at the source it came from. The
-    href and title are source-specific, so they are supplied as callables.
-
-    Args:
-        output_dir: The catalog output directory.
-        report: The extraction report (its ``source_url`` is passed to
-            ``url_builder``).
-        url_builder: Builds the ``via`` href from ``(source_url, layer)``.
-        title_builder: Builds the ``via`` link title from ``layer``.
-    """
+    """Add a provenance ``via`` link to each successfully-extracted collection."""
     from portolan_cli.extract.common.urls import sanitize_published_string
     from portolan_cli.stac import add_via_link
 
@@ -322,7 +196,7 @@ def add_source_links(
         if not collection_path.exists():
             continue
 
-        # The link is published, so it carries no credential (issue #981).
+        # The link is published, so it carries no credential.
         href = sanitize_published_string(url_builder(source_url, layer))
         if href is not None:
             add_via_link(collection_path, href, title=title_builder(layer))
@@ -335,21 +209,7 @@ def seed_catalog_metadata(
     *,
     on_message: MessageCallback | None = None,
 ) -> None:
-    """Seed the catalog-level ``metadata.yaml`` from harvested service metadata.
-
-    Writes ``{output_dir}/.portolan/metadata.yaml`` from the given serialized
-    metadata, and reports a confirmation when it creates the file. A ``None``
-    argument (no metadata harvested) is a no-op. This module prints nothing
-    (#1005). Its notices go to ``on_message``.
-
-    Args:
-        output_dir: The catalog output directory.
-        extracted: Source-agnostic metadata to seed, or ``None`` to skip.
-        license_override: License resolved from the command line, which wins over
-            anything harvested (issue #686).
-        on_message: Called as ``on_message(level, text)`` with each notice for
-            the user. None logs the notice instead.
-    """
+    """Seed the catalog-level ``metadata.yaml`` from harvested service metadata."""
     from portolan_cli.extract.common.progress import emit_message
     from portolan_cli.metadata_seeding import seed_metadata_yaml
 
@@ -368,10 +228,8 @@ def seed_catalog_metadata(
                 f"Add a provider with the producer role to {metadata_path}. Until then, "
                 "check reports PTL-PRV-001.",
             )
-        # The host serves the catalog. Only the person who runs extract knows it,
-        # and a placeholder is never published as one (issue #1039).
-        # A collection takes an inherited contact only on its first add, so the
-        # warning names the collection file, which a re-add applies (#755).
+        # Only the person who runs extract knows the host. A collection takes an
+        # inherited contact only on its first add, so the warning names the collection file.
         emit_message(
             on_message,
             "warn",

@@ -1,23 +1,5 @@
-"""Fail any change that adds work per file, per collection, or per run (#992).
-
-Each test runs one scenario of ``scenarios.py`` at size n and 2n in cold child
-processes and compares the slope and intercept of every counter with the
-constants in ``tests/perf/expected/``. ``gates.py`` explains the arithmetic.
-The constants encode the costs of today, the bad ones included. A lane that
-removes work lowers its own constants.
-
-Each scenario that accepts ``--workers`` then runs at 2n with ``--workers 4``.
-The thread pool must not change the work, so each counter must equal its
-``--workers 1`` value. The process pool for ``check --fix`` additionally allows
-one config load per worker, since each process has its own run state. A race
-that loads one file twice raises a count. A race that drops a file lowers one.
-The gate sees a race only when the threads meet in it during the run, so
-``tests/unit/test_run_state.py`` holds the deterministic tests of each lock.
-
-The counts come from the code under test, not from machine load, so the gate
-is exact. A failure prints the pairs to change. When the change is a real
-improvement, rerecord with ``uv run python -m tests.perf.gates --record --write``
-and commit only the file of your lane.
+"""Fail any change that adds work per file, per collection, or per run, or that ``--workers 4`` changes.
+Rerecord a real improvement with ``uv run python -m tests.perf.gates --record --write``.
 """
 
 from __future__ import annotations

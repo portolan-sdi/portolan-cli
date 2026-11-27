@@ -1,10 +1,4 @@
-"""Unit tests for putting metadata.yaml's providers on a collection (issue #684).
-
-A generated collection used to declare no providers at all, which rashid rejects
-under PTL-PRV-001. Two appliers close that: ``apply_human_providers`` writes the
-array, and ``apply_provenance`` reads official-vs-mirror back off it to decide
-whether a ``via`` link and an ``updated`` stamp belong on the collection.
-"""
+"""Unit tests for putting metadata.yaml's providers on a collection."""
 
 from __future__ import annotations
 

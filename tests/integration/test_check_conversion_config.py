@@ -1,12 +1,4 @@
-"""Integration tests for check command with conversion config.
-
-Tests that check_directory respects conversion config settings:
-- Force-convert cloud-native formats
-- Preserve convertible formats
-- Path-based overrides
-
-See GitHub Issue #75 and #103.
-"""
+"""Integration tests for check command with conversion config."""
 
 from __future__ import annotations
 

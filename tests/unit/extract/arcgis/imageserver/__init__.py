@@ -6,11 +6,7 @@ import pytest
 
 
 def _lerc_missing() -> str | None:
-    """Return why the LERC decoder cannot load here, or None when it loads.
-
-    The ``lerc`` wheel ships no aarch64 build of ``libLerc.so``, so the import
-    fails on that platform. CI runs on x86, where the tests run.
-    """
+    """Return why the LERC decoder cannot load here, or None when it loads."""
     try:
         import lerc
     except (ImportError, OSError) as err:

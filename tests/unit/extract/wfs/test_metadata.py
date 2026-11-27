@@ -1,8 +1,4 @@
-"""Tests for WFS metadata extraction.
-
-These tests verify the WFS metadata extraction which parses
-GetCapabilities response to extract service-level metadata.
-"""
+"""Tests for WFS metadata extraction."""
 
 from __future__ import annotations
 

@@ -1,18 +1,4 @@
-"""Single source of truth for Portolan's recognized-file-extension vocabulary.
-
-Historically the extension vocabulary was hand-maintained in four places that
-drifted apart (issue #558): ``formats.py`` (cloud-native / convertible /
-unsupported sets), ``constants.py`` (geospatial / tabular / sidecar tables),
-``scan_classify.py`` (the ten scan categories), and ``add.py`` (media-type
-and asset-role maps).
-
-This module is the one place that vocabulary lives now. Every frozenset/dict in
-those modules is *derived* from :data:`EXTENSION_REGISTRY` (see the derivation
-helpers below).
-
-It is deliberately a stdlib-only leaf that imports nothing from ``portolan_cli``,
-so a consumer that needs the vocabulary can vendor it whole.
-"""
+"""Single source of truth for Portolan's recognized-file-extension vocabulary."""
 
 from __future__ import annotations
 
@@ -32,12 +18,7 @@ Role = Literal["data", "visual", "thumbnail", "metadata", "documentation"]
 
 @dataclass(frozen=True)
 class ExtensionSpec:
-    """One row of the extension vocabulary.
-
-    Every field feeds at least one derivation below. Defaults describe the most
-    common case (an unremarkable, non-geospatial, unsupported-by-omission file),
-    so each row only spells out what makes it special.
-    """
+    """One row of the extension vocabulary."""
 
     ext: str
     """Lowercase, dot-prefixed extension. Compound (``.copc.laz``) and
@@ -72,9 +53,7 @@ class ExtensionSpec:
     unsupported_message: str | None = None
 
 
-# =============================================================================
-# The registry
-# =============================================================================
+# ---- The registry ----
 
 _NETCDF_MSG = "NetCDF is not yet supported. Support coming soon."
 _HDF5_MSG = "HDF5 is not yet supported. Support coming soon."
@@ -108,9 +87,8 @@ EXTENSION_REGISTRY: tuple[ExtensionSpec, ...] = (
         display_name="JSON",
         media_type="application/json",
         role="metadata",
-        # Content-inspected at runtime: GeoJSON -> convertible, STAC -> metadata,
-        # otherwise unknown. Handled by a dedicated branch, so it is NOT in the
-        # static convertible-vector set and carries no convert_target here.
+        # Content inspection sorts .json at runtime (GeoJSON, STAC, other), so it
+        # is not in the static convertible-vector set.
         scan_category=None,
     ),
     ExtensionSpec(
@@ -136,13 +114,8 @@ EXTENSION_REGISTRY: tuple[ExtensionSpec, ...] = (
     ),
     ExtensionSpec(
         ".gdb",
-        # FileGDB directory. Display falls back to the generic upper-cased stem
-        # in formats.py; no media type (a directory, not a file we type).
-        # A .gdb always routes as vector. Only GDAL's OpenFileGDB driver reads
-        # a GDB raster, and Portolan does not depend on GDAL, because system
-        # GDAL and conda-forge both break `uv tool install portolan`. A raster
-        # geodatabase therefore fails at conversion. Convert it to a COG with
-        # `gdal_translate -of COG` first.
+        # Always vector: only GDAL reads a GDB raster, and a GDAL dependency breaks
+        # `uv tool install portolan`. Convert a raster GDB with `gdal_translate -of COG`.
         convert_target="GeoParquet",
         routes_as="vector",
         is_dir=True,
@@ -191,7 +164,7 @@ EXTENSION_REGISTRY: tuple[ExtensionSpec, ...] = (
     ExtensionSpec(
         ".tsv",
         display_name="TSV",
-        # Mirrors .csv: content-inspected, dual vector/tabular (issue #558).
+        # Mirrors .csv: content-inspected, dual vector/tabular.
         convert_target="GeoParquet",
         routes_as="vector",
         scan_category="tabular_data",
@@ -235,9 +208,8 @@ EXTENSION_REGISTRY: tuple[ExtensionSpec, ...] = (
         is_dir=True,
     ),
     ExtensionSpec(
-        # COPC point cloud: compound extension, handled by an endswith() branch
-        # ahead of the plain-.laz unsupported check. A .copc.laz asset is typed
-        # via the .laz media type (a COPC file is a LAZ file).
+        # An endswith() branch matches this before the plain-.laz unsupported check.
+        # A COPC file is a LAZ file, so it takes the .laz media type.
         ".copc.laz",
         cloud_native="yes",
         is_compound=True,
@@ -319,15 +291,10 @@ EXTENSION_REGISTRY: tuple[ExtensionSpec, ...] = (
 )
 
 
-# =============================================================================
-# Non-extension vocabulary (single-sourced here too)
-# =============================================================================
+# ---- Non-extension vocabulary (single-sourced here too) ----
 
-# Sidecar patterns keyed by the PRIMARY file's extension. Matched by appending
-# each pattern to the primary's stem (so compound forms like ".shp.xml" and
-# ".aux.xml" resolve correctly). This is a different projection than the flat
-# scanner set derived from scan_category == "known_sidecar" above: it answers
-# "given this primary, what sidecars might accompany it".
+# Sidecar patterns keyed by the primary file's extension, appended to the primary's
+# stem so compound forms like ".shp.xml" resolve.
 SIDECAR_OF: dict[str, tuple[str, ...]] = {
     ".shp": (".dbf", ".shx", ".prj", ".cpg", ".sbn", ".sbx", ".qix", ".xml", ".shp.xml"),
     ".tif": (".tfw", ".xml", ".aux.xml", ".ovr"),
@@ -357,9 +324,7 @@ STYLE_FILENAMES: frozenset[str] = frozenset({"style.json"})
 THUMBNAIL_MAX_SIZE: int = 1024 * 1024
 
 
-# =============================================================================
-# Derivation helpers
-# =============================================================================
+# ---- Derivation helpers ----
 
 
 def extensions_where(**field_equals: object) -> frozenset[str]:
@@ -375,11 +340,7 @@ def extensions_where(**field_equals: object) -> frozenset[str]:
 
 
 def field_map(field: str) -> dict[str, str]:
-    """Map ``ext -> getattr(row, field)`` for rows where that field is not None.
-
-    Used to build ``FORMAT_DISPLAY_NAMES``, ``_MEDIA_TYPE_MAP``, ``_ROLE_MAP``,
-    and ``UNSUPPORTED_ERROR_MESSAGES``.
-    """
+    """Map ``ext -> getattr(row, field)`` for rows where that field is not None."""
     result: dict[str, str] = {}
     for spec in EXTENSION_REGISTRY:
         value = getattr(spec, field)
@@ -389,12 +350,7 @@ def field_map(field: str) -> dict[str, str]:
 
 
 def cloud_native_extensions() -> frozenset[str]:
-    """Statically cloud-native, single-suffix files (skip conversion).
-
-    Excludes ``inspect`` extensions (``.parquet``/``.tif``, resolved by content)
-    and the directory/compound cloud-native forms (``.zarr``/``.copc.laz``,
-    resolved by dedicated branches).
-    """
+    """Statically cloud-native, single-suffix files (skip conversion)."""
     return frozenset(
         spec.ext
         for spec in EXTENSION_REGISTRY

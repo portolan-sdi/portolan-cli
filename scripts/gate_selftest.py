@@ -1,33 +1,7 @@
 #!/usr/bin/env python3
-"""Prove that each quality gate fails on the fault it exists to catch (#1035).
+"""Prove that each quality gate fails on the fault it exists to catch.
 
-A gate that nobody has seen fail can be dead: the nightly benchmark job
-compared each run with itself. This script injects one known fault per gate and expects
-the gate to go red.
-
-For each fault the script:
-
-1. Copies ``HEAD`` to a temporary directory with ``git archive`` and applies
-   the fault. A fault that does not apply is an ERROR. Changed Python files
-   must compile; a syntax error is BROKEN and no gate runs.
-2. Copies ``HEAD`` again, applies the clean variant of the fault, and runs
-   each gate after compiling changed Python files. The gate must pass. A gate that fails on a clean tree proves
-   nothing, so the row is BROKEN.
-3. Runs each gate on the faulty copy. Each gate must fail. A gate that stays
-   green is MISSED.
-
-The gates run in the copy with the caller's virtual environment.
-``UV_PROJECT_ENVIRONMENT`` points ``uv run`` at it, ``UV_NO_SYNC`` keeps uv
-from installing the copy into it, and ``PYTHONPATH`` puts the copy of each
-package ahead of the editable install. A symlinked ``.venv`` would work on Linux, but Windows
-needs extra privileges to create one, and the tools would walk into it.
-
-Usage::
-
-    uv run python scripts/gate_selftest.py                        # every fault
-    uv run python scripts/gate_selftest.py --fault dead-function  # one fault
-
-The exit status is 1 when a row is MISSED, BROKEN, or ERROR.
+Each fault must leave its gates green on a clean copy of HEAD and red on a faulty copy.
 """
 
 from __future__ import annotations
@@ -64,8 +38,7 @@ class Gate:
 class Fault:
     """A known defect and the gates that must catch it.
 
-    ``apply(root, faulty)`` writes the fault into the copy at ``root`` when
-    ``faulty`` is true, and the clean variant otherwise.
+    ``apply(root, faulty)`` writes the fault, or the clean variant when ``faulty`` is false.
     """
 
     name: str
@@ -86,9 +59,7 @@ class FaultError(RuntimeError):
     """The fault could not be applied, so its gates were not tested."""
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
+# ---------- helpers ----------
 
 
 def gate_env(root: Path) -> dict[str, str]:
@@ -98,7 +69,7 @@ def gate_env(root: Path) -> dict[str, str]:
         UV_NO_SYNC="1",
         UV_PROJECT_ENVIRONMENT=sys.prefix,
         VIRTUAL_ENV=sys.prefix,
-        # portolan_core sits under packages/, so the copy needs its own entry (#1133).
+        # portolan_core sits under packages/, so the copy needs its own entry.
         PYTHONPATH=os.pathsep.join((str(root), str(root / "packages" / "portolan-core" / "src"))),
     )
     return env
@@ -166,9 +137,7 @@ def _apply_compiled(fault: Fault, root: Path, faulty: bool) -> None:
             compile(source, str(path), "exec")
 
 
-# ---------------------------------------------------------------------------
-# Faults
-# ---------------------------------------------------------------------------
+# ---------- faults ----------
 
 BBOX = "packages/portolan-core/src/portolan_core/bbox.py"
 
@@ -200,9 +169,8 @@ def _apply_stale_file_size(root: Path, faulty: bool) -> None:
     _setup(root, ("uv", "run", "portolan", "add", "demo/points.parquet"), catalog)
     if not faulty:
         return
-    # One file in a collection directory is a collection-level asset, so the
-    # stamp sits on collection.json. Tamper with the first stamped asset of
-    # any STAC object.
+    # A single file is a collection-level asset, so the stamp is on collection.json.
+    # Tamper with the first stamped asset of any STAC object.
     for stac_path in sorted(catalog.rglob("*.json")):
         stac = json.loads(stac_path.read_text(encoding="utf-8"))
         assets = stac.get("assets", {}) if isinstance(stac, dict) else {}
@@ -214,7 +182,7 @@ def _apply_stale_file_size(root: Path, faulty: bool) -> None:
     raise FaultError("no asset in the catalog carries file:size")
 
 
-# In portolan-core, so the fault proves that jscpd reads packages/ (#1133).
+# In portolan-core, so the fault proves that jscpd reads packages/.
 DUPLICATE_MODULE = "packages/portolan-core/src/portolan_core/_dup_selftest.py"
 # About 70 jscpd tokens, above the 50-token minTokens in .jscpd.json.
 _DUPLICATE_BODY = """
@@ -275,9 +243,16 @@ def _apply_unreachable_branch(root: Path, faulty: bool) -> None:
     )
 
 
-# ---------------------------------------------------------------------------
-# Perf faults: each adds work that the scale gates in tests/perf must catch
-# ---------------------------------------------------------------------------
+COMMENT_MODULE = "portolan_cli/_comment_selftest.py"
+
+
+def _apply_long_comment(root: Path, faulty: bool) -> None:
+    doc = '"""One.\n\nTwo.\nThree.\n"""' if faulty else '"""One."""'
+    note = "# used to be 2" if faulty else "# the count"
+    (root / COMMENT_MODULE).write_text(f"{doc}\n\nCOUNT = 1  {note}\n", encoding="utf-8")
+
+
+# ---------- perf faults: each adds work that tests/perf must catch ----------
 
 
 def _apply_versions_read_per_file(root: Path, faulty: bool) -> None:
@@ -353,9 +328,8 @@ def _apply_asset_map_per_item(root: Path, faulty: bool) -> None:
         )
 
 
-# Each fault below opens a file again with no count() call. The scale gates
-# cannot see an open that nothing counts, so tests/perf/test_open_sites.py
-# reads the source and fails on it.
+# Each fault below opens a file again with no count() call, which the scale gates
+# cannot see. tests/perf/test_open_sites.py reads the source and fails on it.
 
 
 def _apply_thumbnail_parquet_reopen(root: Path, faulty: bool) -> None:
@@ -389,7 +363,7 @@ def _apply_cog_write_reopen(root: Path, faulty: bool) -> None:
 
 
 def _apply_core_yaml_reopen(root: Path, faulty: bool) -> None:
-    # The open gate reads portolan_core too. The config parser moved there (#1133).
+    # The open gate reads portolan_core too.
     if faulty:
         _replace_once(
             root / "packages/portolan-core/src/portolan_core/config.py",
@@ -477,6 +451,11 @@ FAULTS = (
         (Gate(("uv", "run", "mypy", UNREACHABLE_MODULE, "--warn-unreachable")),),
     ),
     Fault(
+        "long-comment",
+        _apply_long_comment,
+        (Gate(("uv", "run", "python", "scripts/check_comments.py", COMMENT_MODULE)),),
+    ),
+    Fault(
         "asset-map-per-item",
         _apply_asset_map_per_item,
         (_perf_gate(f"{SCALE}[check-metadata]"),),
@@ -535,9 +514,7 @@ FAULTS = (
 FAULTS_BY_NAME = {fault.name: fault for fault in FAULTS}
 
 
-# ---------------------------------------------------------------------------
-# Runner
-# ---------------------------------------------------------------------------
+# ---------- runner ----------
 
 
 def run_fault(fault: Fault, repo: Path, workdir: Path) -> Result:

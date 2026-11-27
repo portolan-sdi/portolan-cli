@@ -47,11 +47,6 @@ def test_extract_carto_help_lists_flags() -> None:
 
 
 def test_extract_carto_help_describes_tabular_not_skipped() -> None:
-    """Non-spatial tables are extracted as plain Parquet, not skipped (regression).
-
-    The original help text claimed "non-spatial tables are skipped"; that became
-    false once tabular extraction landed. Guard the description against regressing.
-    """
     runner = CliRunner()
     result = runner.invoke(cli, ["extract", "carto", "--help"])
     assert result.exit_code == 0
@@ -122,7 +117,6 @@ def test_extract_carto_rejects_bad_bbox(monkeypatch: pytest.MonkeyPatch) -> None
 
 
 def test_extract_carto_id_threads_into_options(monkeypatch: pytest.MonkeyPatch) -> None:
-    """--id threads catalog_id into ExtractionOptions (issue #821)."""
     captured: dict[str, object] = {}
     monkeypatch.setattr(
         "portolan_cli.extract.carto.orchestrator.extract_carto_catalog",
@@ -138,7 +132,6 @@ def test_extract_carto_id_threads_into_options(monkeypatch: pytest.MonkeyPatch) 
 
 
 def test_extract_carto_rejects_bad_id_before_extraction(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A bad --id fails before the download starts, not after it (issue #821)."""
     calls: list[str] = []
 
     def _never_called(*args: object, **kwargs: object) -> None:

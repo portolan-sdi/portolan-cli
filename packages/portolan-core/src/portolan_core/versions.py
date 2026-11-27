@@ -1,35 +1,6 @@
-"""Versions module - manages versions.json for collection versioning.
+"""Read, write, and update ``versions.json``, the source of truth for versions and checksums.
 
-The versions.json file is the single source of truth for collection versioning,
-sync state, and integrity checksums.
-
-Structure:
-    {
-        "spec_version": "1.0.0",
-        "current_version": "2.1.0",
-        "versions": [
-            {
-                "version": "2.1.0",
-                "created": "2024-01-15T10:30:00Z",
-                "breaking": false,
-                "message": "Data update, no schema changes",
-                "schema": {
-                    "type": "geoparquet",
-                    "fingerprint": {
-                        "columns": [...]
-                    }
-                },
-                "assets": {
-                    "data.parquet": {
-                        "sha256": "abc123...",
-                        "size_bytes": 1048576,
-                        "href": "s3://bucket/dataset/data.parquet"
-                    }
-                },
-                "changes": ["data.parquet"]
-            }
-        ]
-    }
+The portolan-spec repo defines its structure.
 """
 
 from __future__ import annotations
@@ -52,7 +23,6 @@ if TYPE_CHECKING:
 _PRERELEASE_PARTS = 2
 _SEMVER_PARTS = 3
 
-# Spec version constant (MINOR #12)
 SPEC_VERSION = "1.0.0"
 
 
@@ -76,24 +46,13 @@ class Asset:
     Attributes:
         sha256: SHA-256 checksum of the file content.
         size_bytes: File size in bytes.
-        href: Path to the asset, relative to catalog root
-            (e.g., "collection_id/item_id/filename.parquet").
-            push.py and pull.py resolve this via ``catalog_root / href``.
-        source_path: Optional relative path to the original source file
-            (e.g., the GeoJSON that was converted to this GeoParquet).
-        source_mtime: Optional Unix timestamp of the source file when
-            conversion occurred. Used to detect when source has changed.
-        mtime: Optional Unix timestamp of the asset file itself.
-            Used for fast-path change detection.
-        feature_count: Optional feature/row count (pixel count for rasters)
-            captured when the asset was tracked. Lets a touched-but-identical
-            asset read FRESH instead of a spurious STALE (heuristics).
-        schema_fingerprint: Optional hash of the asset schema captured when the
-            asset was tracked. Used to detect breaking schema changes.
-        source_fingerprint: Optional hash of the input files of a generated
-            asset, captured when it was built. ``items.parquet`` stores the
-            href, size, and mtime of each item file here. The next run
-            rebuilds the file only when this hash or the file bytes differ.
+        href: Path relative to the catalog root, resolved as ``catalog_root / href``.
+        source_path: Optional relative path of the source file it was converted from.
+        source_mtime: Optional Unix mtime of the source at conversion, to detect a source change.
+        mtime: Optional Unix mtime of the asset file, for fast-path change detection.
+        feature_count: Optional feature, row, or pixel count, so a touched but identical asset is FRESH.
+        schema_fingerprint: Optional hash of the asset schema, to detect breaking schema changes.
+        source_fingerprint: Optional hash of a generated asset's inputs; it rebuilds when this differs.
     """
 
     sha256: str
@@ -132,13 +91,7 @@ class Version:
 
 @dataclass
 class VersionsFile:
-    """The complete versions.json file structure.
-
-    Attributes:
-        spec_version: Schema version for the versions.json format.
-        current_version: The current/latest version string, or None if no versions.
-        versions: List of Version entries, oldest first.
-    """
+    """The complete versions.json file: spec version, current version or None, versions oldest first."""
 
     spec_version: str
     current_version: str | None
@@ -146,18 +99,7 @@ class VersionsFile:
 
 
 def read_versions(path: Path) -> VersionsFile:
-    """Read and parse a versions.json file.
-
-    Args:
-        path: Path to the versions.json file.
-
-    Returns:
-        Parsed VersionsFile object.
-
-    Raises:
-        FileNotFoundError: If the file doesn't exist.
-        ValueError: If the JSON is invalid or doesn't match the schema.
-    """
+    """Read and parse a versions.json file; raise ``FileNotFoundError`` or ``ValueError``."""
     if not path.exists():
         raise FileNotFoundError(f"versions.json not found: {path}")
 
@@ -171,17 +113,7 @@ def read_versions(path: Path) -> VersionsFile:
 
 
 def _parse_versions_file(data: dict[str, Any]) -> VersionsFile:
-    """Parse a dictionary into a VersionsFile object.
-
-    Args:
-        data: Parsed JSON dictionary.
-
-    Returns:
-        VersionsFile object.
-
-    Raises:
-        ValueError: If required fields are missing or invalid.
-    """
+    """Parse a dictionary into a VersionsFile; raise ``ValueError`` on a missing or bad field."""
     try:
         spec_version = data["spec_version"]
         current_version = data["current_version"]
@@ -197,12 +129,9 @@ def _parse_versions_file(data: dict[str, Any]) -> VersionsFile:
                     sha256=asset_data["sha256"],
                     size_bytes=asset_data["size_bytes"],
                     href=asset_data["href"],
-                    # Optional source tracking fields with defaults
                     source_path=asset_data.get("source_path"),
                     source_mtime=asset_data.get("source_mtime"),
-                    # Optional asset mtime for fast-path
                     mtime=asset_data.get("mtime"),
-                    # Optional freshness heuristics
                     feature_count=asset_data.get("feature_count"),
                     schema_fingerprint=asset_data.get("schema_fingerprint"),
                     source_fingerprint=asset_data.get("source_fingerprint"),
@@ -210,7 +139,6 @@ def _parse_versions_file(data: dict[str, Any]) -> VersionsFile:
                 for name, asset_data in v["assets"].items()
             }
 
-            # Parse optional schema
             schema_data = v.get("schema")
             schema = None
             if schema_data is not None:
@@ -240,38 +168,17 @@ def _parse_versions_file(data: dict[str, Any]) -> VersionsFile:
 
 
 def write_versions(path: Path, versions_file: VersionsFile) -> None:
-    """Write a VersionsFile to disk as JSON atomically.
-
-    Uses atomic write pattern (write to temp file, then rename) to prevent
-    corruption from interrupted writes (CRITICAL #2 - TOCTOU race condition).
-
-    Creates parent directories if they don't exist.
-
-    Args:
-        path: Destination path for the versions.json file.
-        versions_file: The VersionsFile to serialize.
-    """
+    """Write a VersionsFile atomically, so an interrupted write cannot corrupt it."""
     write_json_atomic(path, _serialize_versions_file(versions_file))
 
 
 def _serialize_asset(asset: Asset) -> dict[str, Any]:
-    """Serialize an Asset to a JSON-compatible dictionary.
-
-    Only includes optional fields (source_path, source_mtime, mtime,
-    feature_count, schema_fingerprint, source_fingerprint) when not None.
-
-    Args:
-        asset: The Asset to serialize.
-
-    Returns:
-        Dictionary suitable for JSON serialization.
-    """
+    """Serialize an Asset to a JSON dictionary, leaving out optional fields that are None."""
     data: dict[str, Any] = {
         "sha256": asset.sha256,
         "size_bytes": asset.size_bytes,
         "href": asset.href,
     }
-    # Only include optional fields when present
     if asset.source_path is not None:
         data["source_path"] = asset.source_path
     if asset.source_mtime is not None:
@@ -288,16 +195,7 @@ def _serialize_asset(asset: Asset) -> dict[str, Any]:
 
 
 def _serialize_version(v: Version) -> dict[str, Any]:
-    """Serialize a Version to a JSON-compatible dictionary.
-
-    Only includes optional fields (schema, message) when they are not None.
-
-    Args:
-        v: The Version to serialize.
-
-    Returns:
-        Dictionary suitable for JSON serialization.
-    """
+    """Serialize a Version to a JSON dictionary, leaving out ``schema`` and ``message`` if None."""
     data: dict[str, Any] = {
         "version": v.version,
         "created": v.created.isoformat().replace("+00:00", "Z"),
@@ -305,7 +203,6 @@ def _serialize_version(v: Version) -> dict[str, Any]:
         "assets": {name: _serialize_asset(asset) for name, asset in v.assets.items()},
         "changes": v.changes,
     }
-    # Only include optional fields when present
     if v.schema is not None:
         data["schema"] = {
             "type": v.schema.type,
@@ -317,14 +214,7 @@ def _serialize_version(v: Version) -> dict[str, Any]:
 
 
 def _serialize_versions_file(versions_file: VersionsFile) -> dict[str, Any]:
-    """Serialize a VersionsFile to a JSON-compatible dictionary.
-
-    Args:
-        versions_file: The VersionsFile to serialize.
-
-    Returns:
-        Dictionary suitable for JSON serialization.
-    """
+    """Serialize a VersionsFile to a JSON-compatible dictionary."""
     return {
         "spec_version": versions_file.spec_version,
         "current_version": versions_file.current_version,
@@ -342,49 +232,22 @@ def add_version(
     message: str | None = None,
     removed: set[str] | None = None,
 ) -> VersionsFile:
-    """Add a new version to a VersionsFile.
+    """Return a new VersionsFile with a full snapshot: prior assets plus ``assets``, less ``removed``.
 
-    This function is immutable - it returns a new VersionsFile rather than
-    modifying the input. It does not count ``versions.published``. The code
-    that writes the result counts it, so a projection of a staged change in
-    ``RunState.versions`` counts nothing.
-
-    Each version is a complete SNAPSHOT of all assets at that point in time. New assets are merged with the previous version's assets,
-    and any assets in `removed` are excluded.
-
-    Args:
-        versions_file: The existing VersionsFile.
-        version: The new version string (e.g., "1.1.0").
-        assets: Mapping of filename to Asset to add or update in this version.
-        breaking: Whether this version has breaking changes.
-        schema: Optional schema fingerprint for breaking change detection.
-        message: Optional human-readable description of the change.
-        removed: Optional set of asset keys to remove from the snapshot.
-
-    Returns:
-        A new VersionsFile with the version added.
+    The writer of the result counts ``versions.published``, so a projection counts nothing.
     """
-    # Build complete snapshot: start with previous assets, apply changes
     if versions_file.versions:
-        # Copy previous version's assets as base
         merged_assets = dict(versions_file.versions[-1].assets)
-        # Update with new/modified assets
         merged_assets.update(assets)
-        # Remove any assets marked for removal
         if removed:
             for key in removed:
                 merged_assets.pop(key, None)
     else:
-        # First version: just use the provided assets
         merged_assets = dict(assets)
 
-    # Compute which files changed (new or different checksum)
     changes = _compute_changes(versions_file, assets)
 
-    # Early return if nothing changed (no new/modified assets and no removals)
-    # This prevents creating no-op versions when re-adding unchanged files
-    # BUT: allow versions when metadata indicates explicit request (message, breaking, schema)
-    # Only skip if truly a no-op: no message, not breaking, no schema change
+    # Skip a no-op version, unless a message, breaking flag, or schema asks for one.
     explicit_request = bool(message or breaking or schema)
     if not changes and not removed and versions_file.versions and not explicit_request:
         return versions_file
@@ -407,20 +270,9 @@ def add_version(
 
 
 def parse_version(version_str: str) -> tuple[int, int, int]:
-    """Parse a semantic version string into (major, minor, patch) tuple.
+    """Parse a semver string into ``(major, minor, patch)``, dropping pre-release and build tags.
 
-    Handles standard semver, pre-release versions (CRITICAL #3), and build metadata.
-    Returns (0, 0, 0) for invalid versions instead of raising.
-
-    Examples:
-        >>> parse_version("1.2.3")
-        (1, 2, 3)
-        >>> parse_version("1.0.0-beta")  # Pre-release stripped
-        (1, 0, 0)
-        >>> parse_version("1.0.0+build.123")  # Build metadata stripped
-        (1, 0, 0)
-        >>> parse_version("invalid")
-        (0, 0, 0)
+    ``"1.0.0-beta"`` and ``"1.0.0+build.123"`` give ``(1, 0, 0)``.
 
     Args:
         version_str: Semantic version string (e.g., "1.2.3", "1.0.0-beta").
@@ -431,121 +283,74 @@ def parse_version(version_str: str) -> tuple[int, int, int]:
     if not version_str:
         return (0, 0, 0)
 
-    # Strip pre-release (-beta, -alpha.1, etc.) and build metadata (+build.123)
-    # Per semver spec: version = major.minor.patch[-prerelease][+buildmetadata]
     base_version = version_str.split("-", maxsplit=1)[0].split("+", maxsplit=1)[0]
 
-    # Match major.minor.patch pattern
     match = re.match(r"^(\d+)\.(\d+)\.(\d+)$", base_version)
     if not match:
         return (0, 0, 0)
 
     try:
-        # Use int() which handles arbitrarily large numbers in Python (MAJOR #4)
         major = int(match.group(1))
         minor = int(match.group(2))
         patch = int(match.group(3))
         return (major, minor, patch)
     except (ValueError, OverflowError):
-        # Shouldn't happen with \d+ regex, but handle gracefully
         return (0, 0, 0)
 
 
 def _increment_version(version: str) -> str:
-    """Safely increment a semantic version string.
-
-    Handles standard semver (1.2.3) and pre-release versions (1.0.0-beta.1).
-
-    Args:
-        version: Current version string.
-
-    Returns:
-        Incremented version string.
-    """
+    """Increment a semver string; a pre-release such as ``1.0.0-beta.1`` keeps its tag."""
     if not version:
         return "0.0.1"
 
-    # Handle pre-release versions (e.g., 1.0.0-beta.1)
     if "-" in version:
         base, prerelease = version.split("-", 1)
-        # Try to increment the prerelease number
         prerelease_parts = prerelease.rsplit(".", 1)
         if len(prerelease_parts) == _PRERELEASE_PARTS and prerelease_parts[1].isdigit():
             prerelease_parts[1] = str(int(prerelease_parts[1]) + 1)
             return f"{base}-{'.'.join(prerelease_parts)}"
-        # No numeric suffix: 1.0.0-beta → 1.0.0-beta.1
-        # Preserve the prerelease tag by appending .1
+        # No numeric suffix: 1.0.0-beta becomes 1.0.0-beta.1.
         return f"{base}-{prerelease}.1"
 
-    # Standard semver: increment patch
     parts = version.split(".")
     if len(parts) >= _SEMVER_PARTS and parts[-1].isdigit():
         parts[-1] = str(int(parts[-1]) + 1)
         return ".".join(parts)
     if len(parts) < _SEMVER_PARTS:
-        # Pad to 3 parts if needed
         while len(parts) < _SEMVER_PARTS:
             parts.append("0")
         parts[-1] = "1"
         return ".".join(parts)
 
-    # Three-plus parts but the last segment is not purely numeric
-    # (e.g. "1.2.3rc1", "1.2.foo"). A plain join here would return the input
-    # unchanged - a silent no-op that breaks version bumps. Normalize through
-    # parse_version and bump the patch so the result always differs.
+    # A non-numeric last part ("1.2.3rc1") must still bump, so normalize it.
     major, minor, patch = parse_version(version)
     return f"{major}.{minor}.{patch + 1}"
 
 
 def next_version(versions_file: VersionsFile) -> str:
-    """The version string that the next snapshot of ``versions_file`` takes.
-
-    The first version is ``1.0.0``. Each later one bumps the patch through
-    :func:`_increment_version`, which keeps a pre-release tag.
-    """
+    """The next version of ``versions_file``: ``1.0.0`` first, then a patch bump."""
     if versions_file.current_version is None:
         return "1.0.0"
     return _increment_version(versions_file.current_version)
 
 
 def _compute_changes(versions_file: VersionsFile, new_assets: dict[str, Asset]) -> list[str]:
-    """Compute which files changed compared to the previous version.
-
-    A file is considered "changed" if:
-    - It's new (not in the previous version)
-    - Its SHA-256 checksum differs from the previous version
-
-    Args:
-        versions_file: The existing VersionsFile.
-        new_assets: The assets for the new version.
-
-    Returns:
-        List of filenames that changed.
-    """
+    """List the asset names that are new or whose SHA-256 differs from the previous version."""
     if not versions_file.versions:
-        # First version - all assets are "changes"
         return list(new_assets.keys())
 
     previous_assets = versions_file.versions[-1].assets
     changes = []
 
     for name, asset in new_assets.items():
-        if name not in previous_assets:
-            # New file
-            changes.append(name)
-        elif previous_assets[name].sha256 != asset.sha256:
-            # Modified file
+        if name not in previous_assets or previous_assets[name].sha256 != asset.sha256:
             changes.append(name)
 
     return changes
 
 
 def _asset_href(asset_path: Path, catalog_root: Path, collection_path: Path) -> str:
-    """The catalog-root-relative href recorded for a generated asset.
-
-    Both sides resolve: the thumbnail step passes a resolved item path, and a
-    catalog reached through a symlink has a root that is not resolved.
-    """
+    """The catalog-root-relative href of a generated asset; both sides resolve for symlinked roots."""
     asset_path = asset_path.resolve()
     try:
         rel_path = asset_path.relative_to(catalog_root.resolve())
@@ -556,12 +361,9 @@ def _asset_href(asset_path: Path, catalog_root: Path, collection_path: Path) -> 
 
 
 def versions_asset_key(asset_path: Path, collection_path: Path) -> str:
-    """The versions.json key of a file: its POSIX path below the collection.
+    """The versions.json key of a file: its POSIX path below the collection, else its name.
 
-    ``add`` keys a collection file by its name and an item file
-    ``<item dir>/<name>``. A key of the bare name gave an adopted item
-    thumbnail a second key at the collection root, where no file is (issue
-    #1053). A path outside the collection falls back to the file name.
+    A bare-name key would give an item file a second key at the collection root.
     """
     try:
         return asset_path.resolve().relative_to(collection_path.resolve()).as_posix()
@@ -575,12 +377,7 @@ def _is_tracked(
     catalog_root: Path,
     collection_path: Path,
 ) -> bool:
-    """True when the snapshot already records this exact file.
-
-    Compares the href, not the basename. Two item directories can each hold a
-    ``data.thumb.jpg``, and a basename match would treat the second as already
-    tracked and drop it from the snapshot.
-    """
+    """True when the snapshot records this exact file, matched by href and not by basename."""
     existing = tracked.get(versions_asset_key(asset_path, collection_path))
     if existing is None:
         return False
@@ -590,11 +387,7 @@ def _is_tracked(
 def generated_asset_record(
     asset_path: Path, catalog_root: Path, collection_path: Path, sha256: str
 ) -> tuple[str, Asset]:
-    """The versions.json key and record of a generated file with a known digest.
-
-    The key is the path below the collection, and the href is relative to the
-    catalog root. The size and mtime come from the file now.
-    """
+    """The versions.json key and record of a generated file, with its size and mtime from disk."""
     stat = asset_path.stat()
     return versions_asset_key(asset_path, collection_path), Asset(
         sha256=sha256,
@@ -609,20 +402,9 @@ def amend_version(
     assets: dict[str, Asset],
     removed: set[str] | None = None,
 ) -> VersionsFile:
-    """Fold asset changes into the latest version instead of adding one.
+    """Fold asset changes into the latest version; amend only a version this command wrote.
 
-    A caller amends only a version that the same command wrote, so the history
-    keeps one version per command. The input is not changed. When the changes
-    leave the latest snapshot as it is, the input object comes back, so a caller
-    tests ``result is versions_file`` to skip a write.
-
-    Args:
-        versions_file: A record with at least one version.
-        assets: Asset key to the record to add or replace.
-        removed: Asset keys to drop from the snapshot.
-
-    Returns:
-        The record with the latest version amended.
+    The input returns when the snapshot does not change, so ``result is versions_file`` skips a write.
     """
     latest = versions_file.versions[-1]
     merged = {**latest.assets, **assets}
@@ -648,46 +430,9 @@ def track_generated_assets(
     amend_latest: bool = False,
     state: RunState | None = None,
 ) -> None:
-    """Track generated side-step assets (PMTiles, thumbnail) in versions.json.
+    """Track generated side-step assets (PMTiles, thumbnail) in one versions.json version.
 
-    Computes SHA-256, size, mtime and path records in a *single* new version
-    snapshot. A PMTiles and its thumbnail come from the same side-step on the
-    same source asset, so they belong in one version, not two (Issue #519).
-    ``add_version`` carries forward the previous version's assets, so the result
-    is a complete snapshot with the assets added or updated.
-
-    Lives here rather than beside either caller because both the PMTiles
-    side-step (``viz.pmtiles``) and the collection-thumbnail orchestrator
-    (``collection_thumbnail``) must record derived assets the same way. An
-    untracked derived asset breaks ``push`` (Issues #519, #735).
-
-    Args:
-        collection_path: Path to the collection directory.
-        asset_paths: Paths of the generated files to track.
-        catalog_root: Path to the catalog root (hrefs are catalog-root-relative).
-        message: Human-readable description of the change.
-        only_if_missing: If True, only track assets whose filename is not already
-            present in the latest version snapshot, and create no version at all
-            if every asset is already tracked. Used by the skip path to backfill
-            artifacts generated before tracking existed, without bumping a
-            version on every unchanged ``add`` (Issue #519).
-        amend_latest: If True, merge into the latest version rather than create a
-            new one. Pass this only when the caller wrote that version during the
-            same command, which is the case for the side-steps ``add`` runs after
-            its own snapshot. One ``add`` then stays one version. A repair pass
-            like ``check --fix`` leaves it False, since amending a snapshot that
-            may already be published would rewrite history.
-        state: The run state. Its checksum memo hashes each asset once per run.
-            With a state on the file backend, the assets join the version
-            that the run stages for the collection, and
-            ``version_ops.commit_run`` writes it. ``add`` stages its own
-            version first, so the side steps of one ``add`` stay in that one
-            version. Without a state, or on a plugin backend, this writes
-            ``versions.json`` now. A plugin backend publishes in
-            ``finalize_items`` and cannot amend that version.
-
-    Raises:
-        FileNotFoundError: If any asset path doesn't exist.
+    Pass ``amend_latest`` only for a version this command wrote; a file-backend ``state`` stages them.
     """
     for asset_path in asset_paths:
         if not asset_path.exists():
@@ -696,7 +441,6 @@ def track_generated_assets(
     versions_path = collection_path / "versions.json"
 
     staged = state is not None and state.backend(collection_path) == "file"
-    # If no versions.json, create a minimal one
     if not versions_path.exists():
         versions_file = VersionsFile(
             spec_version="1.0.0",
@@ -713,13 +457,7 @@ def track_generated_assets(
     else:
         tracked = dict(versions_file.versions[-1].assets) if versions_file.versions else {}
 
-    # Backfill mode: skip assets already tracked, and create no version if none
-    # are missing (otherwise the message would force a no-op version bump).
-    #
-    # An asset is "already tracked" only when the recorded href points at the
-    # same file. Matching the basename alone made `item-a/data.thumb.jpg` and
-    # `item-b/data.thumb.jpg` indistinguishable, so the second one was silently
-    # dropped from the snapshot.
+    # Backfill: match the href, not the basename, since items share thumbnail names.
     paths_to_track = asset_paths
     if only_if_missing and tracked:
         paths_to_track = [
@@ -744,14 +482,10 @@ def track_generated_assets(
         return
 
     if amend_latest and versions_file.versions:
-        # Fold into the snapshot the caller just wrote, rather than bumping.
-        # One `add` is one version. A thumbnail is derived from assets in that
-        # same snapshot, so a second version would record no new user intent and
-        # would double every collection's history (Issue #519).
+        # One `add` is one version, so a derived asset folds into its snapshot.
         write_versions(versions_path, amend_version(versions_file, assets))
         return
 
-    # Determine next version
     if versions_file.current_version:
         major, minor, patch = parse_version(versions_file.current_version)
         new_version = f"{major}.{minor}.{patch + 1}"

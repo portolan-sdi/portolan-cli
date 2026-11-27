@@ -67,8 +67,8 @@ flowchart TD
 
 `portolan_cli/validation/` is an adapter, not a rule engine. `run_check` builds
 rashid's config, calls `rashid_core.validate`, and returns a `CheckOutcome` of plain
-data; rule ids are rashid's `PTL-*`, shown verbatim. Do not reintroduce
-Portolan-side conformance rules, the old `validation/rules.py` registry is gone.
+data; rule ids are rashid's `PTL-*`, shown verbatim. Do not add
+Portolan-side conformance rules.
 What stays on our side is the half rashid cannot see: source files on disk that
 are not yet catalog assets (`scan.check.check_directory`) and item freshness
 against the filesystem (`run_fix_workflow`).
@@ -87,9 +87,8 @@ calling `--fix` forever.
 `check --metadata` and `check --metadata --fix` MUST consume the **same**
 `scan_catalog_metadata(catalog_path)` (`metadata/scan.py`). It walks the STAC
 **manifest tree** (catalog -> collection.assets -> item dirs), not a filesystem
-extension glob. Do not reintroduce a parallel filesystem-walk scanner, that is
-exactly what produced the bug where `check` reported MISSING for files `--fix`
-never saw, and `--fix` then said "already fresh" forever (issues #345, #384).
+extension glob. Do not add a parallel filesystem-walk scanner: `check` then reports MISSING
+for files that `--fix` never sees.
 
 ## The five statuses, and which are auto-fixable
 
@@ -100,8 +99,8 @@ never saw, and `--fix` then said "already fresh" forever (issues #345, #384).
   **no STAC Item at all** and whose data file matches the dir name. `--fix`
   creates the item. Counts as an ERROR. A dir that already holds an Item is
   covered by it, whatever that file is named — `add --item-id` names the file
-  after the id, not the dir, and asking only for `{dirname}.json` made `--fix`
-  write a second item for one data file (#709).
+  after the id, not the dir. Asking only for `{dirname}.json` makes `--fix`
+  write a second item for one data file.
 - **STALE / BREAKING**: mtime changed and bbox/feature-count heuristics changed
   (STALE), or the schema fingerprint changed (BREAKING). `--fix` updates the item
   and versions tracking. BREAKING is an ERROR, STALE is part of the freshness
@@ -135,15 +134,13 @@ means new. mtime unchanged means FRESH (fast path). mtime changed then compare
 schema fingerprint (BREAKING) and bbox/feature-count heuristics (STALE), and if
 those are equal it is touched-but-unchanged, so FRESH. Without a stored
 fingerprint the mtime change proves nothing, so the stored `sha256` decides it
-and BREAKING is off the table — the same tiebreaker both halves use (#512, #709).
+and BREAKING is off the table — the same tiebreaker both halves use.
 
 **Resolve the versions.json entry with `find_versions_asset`, never by bare
 filename.** `add` keys a collection-level asset by its file name and an
 item-level asset by `{item_id}/{filename}` (`finalization.py`), and it writes
-`mtime` where `--fix` writes `source_mtime`. Reading only `{filename}` and only
-`source_mtime` meant no item-level asset ever found its baseline, so every one
-of them was permanently STALE and `--fix` rewrote every item on every run
-(#709). The same helper backs `get_stored_metadata` and
+`mtime` where `--fix` writes `source_mtime`. Read both keys and both fields, or every
+item-level asset is permanently STALE and `--fix` rewrites every item on every run. The same helper backs `get_stored_metadata` and
 `update_versions_tracking`, so the reader and the writer cannot drift apart.
 
 ## A pass that writes an item must leave it conformant
@@ -157,8 +154,8 @@ the mirror writer folds `items.parquet` into that version, and
 that `add` wrote, byte for byte. An item the freshness pass updated goes
 through `fixers.repair_written_items` afterwards: the `links` and `checksum`
 sweeps plus an `items.parquet` refresh for the collections it touched. Without
-them, `--fix` published items with no structural links and no checksums, and a
-stale mirror, so the finding count went **up** (#709). Any new pass that writes
+them, `--fix` publishes items with no structural links, no checksums, and a
+stale mirror, so the finding count goes **up**. Any new pass that writes
 an item JSON takes one of these two paths.
 
 `update_item_metadata` owns bbox, geometry and the raster `bands` array. It does
@@ -202,8 +199,14 @@ sources of successful conversions whose output exists, plus their sidecars.
 
 ## Where to investigate further
 
-- `metadata/scan.py` module docstring, for the layout the scanner assumes and
-  the MISSING/ORPHANED split.
+- `metadata/scan.py` walks the STAC manifests, not the file system. A file
+  under a collection that no manifest registers is ORPHANED. It assumes the
+  layout `portolan add` writes, so change both in one commit:
+  - A subdirectory is an item only when it holds a data file whose stem is the
+    directory name.
+  - A collection-level asset with no `versions.json` entry is not STALE.
+  - An item JSON next to its data file in the collection root (the flat
+    layout) is ORPHANED. `portolan add` migrates it.
 - `portolan_cli/validation/`, the adapter in front of rashid, and
   rashid itself for the rules. Rule ids are rashid's `PTL-*`, shown verbatim;
   each cites the `PORTO-*` spec requirements it enforces.

@@ -1,12 +1,4 @@
-"""Unit tests for --remove-legacy flag in check command.
-
-Tests the logic for removing legacy/source files after successful conversion
-to cloud-native formats. Per Issue #209:
-- Only delete after converted file exists and is valid
-- Only delete files converted in THIS run (not pre-existing)
-- Handle shapefile sidecars (.dbf, .shx, .prj, .cpg, etc.)
-- Handle FileGDB directories (.gdb)
-"""
+"""Unit tests for --remove-legacy flag in check command."""
 
 from __future__ import annotations
 
@@ -22,9 +14,7 @@ from portolan_cli.scan.check import (
     remove_legacy_files,
 )
 
-# =============================================================================
 # Fixtures
-# =============================================================================
 
 
 @pytest.fixture
@@ -117,9 +107,7 @@ def converted_parquet(tmp_path: Path) -> Path:
     return parquet
 
 
-# =============================================================================
 # Tests: get_legacy_files_to_remove
-# =============================================================================
 
 
 @pytest.mark.unit
@@ -268,9 +256,7 @@ class TestGetLegacyFilesToRemove:
         assert len(files_to_remove) == 1
 
 
-# =============================================================================
 # Tests: remove_legacy_files
-# =============================================================================
 
 
 @pytest.mark.unit
@@ -420,9 +406,7 @@ class TestRemoveLegacyFiles:
         assert len(errors) == 0
 
 
-# =============================================================================
 # Tests: check_directory with remove_legacy flag
-# =============================================================================
 
 
 @pytest.mark.unit
@@ -499,16 +483,9 @@ class TestCheckDirectoryRemoveLegacy:
         assert source in call_args
 
 
-# =============================================================================
 # Tests: Hypothesis-based property tests
-# =============================================================================
 
 
 @pytest.mark.unit
 class TestRemoveLegacyHypothesis:
     """Property-based tests for remove_legacy logic."""
-
-    # TODO: Add hypothesis tests for:
-    # - Arbitrary file extensions
-    # - Various sidecar combinations
-    # - Race conditions (file deleted between check and removal)

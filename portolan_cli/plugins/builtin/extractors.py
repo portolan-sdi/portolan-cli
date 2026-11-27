@@ -1,8 +1,4 @@
-"""The built-in ArcGIS, Carto, and WFS extractors.
-
-Each one wraps the catalog function in ``extract/<source>/orchestrator.py``
-and the Click command in ``extract/<source>/cli.py``. Both load on first use.
-"""
+"""The built-in ArcGIS, Carto, and WFS extractors."""
 
 from __future__ import annotations
 

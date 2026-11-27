@@ -1,17 +1,4 @@
-"""A Click group that adds commands from the ``portolan.commands`` group (#947).
-
-Command names come from entry point metadata. The group imports a command
-module only when the user runs that command. ``portolan --help`` and shell
-completion import no plugin. Help lists a plugin command with its distribution
-name, not its help text, because the help text lives in the module it would
-have to import. A command that portolan-cli itself declares shows its help text.
-
-A dotted name attaches to a built-in group: ``version.rollback`` becomes
-``portolan version rollback``. A plugin command never replaces a built-in
-command. Help warns about the collision.
-
-This module is part of the CLI layer.
-"""
+"""A Click group that adds commands from the ``portolan.commands`` group."""
 
 from __future__ import annotations
 
@@ -58,8 +45,6 @@ class PluginGroup(click.Group):
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
-        # Keyed by entry point. A command that PORTOLAN_PLUGINS disables after
-        # a reset_plugin_manager() is no longer found, so it does not run.
         self._loaded: dict[EntryPoint, click.Command | None] = {}
 
     def _plugin_entries(self, ctx: click.Context) -> dict[str, EntryPoint]:
@@ -100,18 +85,7 @@ class PluginGroup(click.Group):
         return self._loaded[ep]
 
     def shipped_commands(self, ctx: click.Context) -> dict[str, click.Command]:
-        """Return the commands portolan-cli ships in this group.
-
-        The result holds the built-in commands and the entry point commands
-        that portolan-cli declares. Commands from outside packages are left
-        out, so a generated reference does not depend on installed plugins.
-
-        Args:
-            ctx: Context of this group.
-
-        Returns:
-            Command name to command.
-        """
+        """Return the commands portolan-cli ships in this group."""
         shipped = dict(self.commands)
         for name, ep in self._plugin_entries(ctx).items():
             if name not in shipped and is_builtin(ep):
@@ -133,12 +107,7 @@ class PluginGroup(click.Group):
         return loaded
 
     def _rows(self, ctx: click.Context) -> list[tuple[str, str | click.Command]]:
-        """Return each visible command with its built-in or its plugin label.
-
-        A plugin row holds ``(plugin: <distribution>)`` in place of the help
-        text. The method imports no plugin. Click's own help and completion
-        call ``get_command`` for each name, which would import every plugin.
-        """
+        """Return each visible command with its built-in or its plugin label."""
         plugins = self._plugin_entries(ctx)
         rows: list[tuple[str, str | click.Command]] = []
         for name in self.list_commands(ctx):
@@ -209,14 +178,7 @@ class PluginGroup(click.Group):
 
 
 class ExtractGroup(PluginGroup):
-    """The ``portolan extract`` group. Its subcommands come from extractors.
-
-    The ``portolan_extractors`` hook supplies the extractors, the built-in
-    ones included. The group calls the hook on first use, so ``portolan
-    --help`` builds no plugin manager. An extractor command counts as a
-    built-in command of this group. Help and completion show the extractor
-    ``summary`` and do not call ``cli_command()``.
-    """
+    """The ``portolan extract`` group. Its subcommands come from extractors."""
 
     def shipped_commands(self, ctx: click.Context) -> dict[str, click.Command]:
         """Add the built-in extractor commands. The plugin manager does not load."""
@@ -229,9 +191,6 @@ class ExtractGroup(PluginGroup):
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
-        # Keyed by id(extractor). The value keeps the extractor alive, so its id
-        # stays unique. A pluggable extractor need not be hashable. None records
-        # a command that did not load, so help and the run warn about it once.
         self._extractor_commands: dict[int, tuple[object, click.Command | None]] = {}
 
     def _builtin_names(self, ctx: click.Context) -> list[str]:

@@ -1,12 +1,4 @@
-"""Integration tests for sync module.
-
-Tests for CLI command integration and real filesystem operations.
-These tests verify:
-- CLI command registration and invocation
-- Flag passing to underlying sync function
-- Error handling and user feedback
-- JSON output format
-"""
+"""Integration tests for sync module."""
 
 from __future__ import annotations
 
@@ -160,9 +152,7 @@ def _invoke_sync(
     )
 
 
-# =============================================================================
 # CLI Registration Tests
-# =============================================================================
 
 
 class TestSyncCLI:
@@ -219,9 +209,7 @@ class TestSyncCLI:
         assert "--catalog" in result.output
 
 
-# =============================================================================
 # Flag Passthrough Tests
-# =============================================================================
 
 
 class TestSyncFlagPassthrough:
@@ -275,10 +263,7 @@ class TestSyncFlagPassthrough:
 
     @pytest.mark.integration
     def test_sync_reads_aws_profile_from_env(self, managed_catalog: Path) -> None:
-        """Sync should read aws_profile from PORTOLAN_AWS_PROFILE when --profile not specified.
-
-        Note: aws_profile is a sensitive setting and cannot be set in config.yaml (Issue #356).
-        """
+        """aws_profile is sensitive, so config.yaml cannot set it."""
         import os
         from unittest.mock import patch as mock_patch
 
@@ -287,7 +272,7 @@ class TestSyncFlagPassthrough:
         with mock_patch("portolan_cli.sync.core.sync") as mock_sync:
             mock_sync.return_value = _success_result()
 
-            # Set profile via env var (Issue #356: sensitive settings)
+            # aws_profile is sensitive, so only the env var sets it.
             with mock_patch.dict(
                 os.environ,
                 {
@@ -312,9 +297,7 @@ class TestSyncFlagPassthrough:
             assert call_kwargs.get("profile") == "env-profile"
 
 
-# =============================================================================
 # Error Handling Tests
-# =============================================================================
 
 
 class TestSyncErrorHandling:
@@ -343,9 +326,7 @@ class TestSyncErrorHandling:
             assert result.exit_code == 1
 
 
-# =============================================================================
 # JSON Output Tests
-# =============================================================================
 
 
 class TestSyncJSONOutput:
@@ -395,9 +376,7 @@ class TestSyncJSONOutput:
             assert "Pull failed" in output["errors"][0]["message"]
 
 
-# =============================================================================
 # Combined Flag Tests
-# =============================================================================
 
 
 class TestSyncCombinedFlags:

@@ -1,11 +1,4 @@
-"""``portolan version rollback`` and ``portolan version prune`` (#947).
-
-Only the Iceberg backend implements rollback and prune. portolan-cli declares
-these commands as ``version.rollback`` and ``version.prune`` in the
-``portolan.commands`` entry point group, the same way an outside plugin adds a
-command. The module imports Click and ``portolan_cli.api`` only, and no
-pyiceberg.
-"""
+"""``portolan version rollback`` and ``portolan version prune``."""
 
 from __future__ import annotations
 

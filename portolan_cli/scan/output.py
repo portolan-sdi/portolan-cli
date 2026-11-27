@@ -1,19 +1,4 @@
-"""Scan output formatting and presentation.
-
-This module provides enhanced output formatting for the `portolan scan` command:
-
-1. Structure Validation Checklist - Pass/fail checks for catalog structure
-2. Fixability Labels - Categorize issues by how they can be fixed
-3. Collection Inference Output - Format suggested collections
-4. Skip Reason Categories - Better categorization of skipped files
-5. Next Steps Summary - Actionable guidance for users
-6. Tree View Output - Directory tree with file status markers
-
-Example:
-    >>> from portolan_cli.scan.output import format_scan_output
-    >>> output = format_scan_output(scan_result)
-    >>> print(output)
-"""
+"""Scan output formatting and presentation."""
 
 from __future__ import annotations
 
@@ -45,9 +30,7 @@ _MAX_COMMANDS_SHOWN = 5
 _MAX_FILES_SHOWN = 3
 
 
-# =============================================================================
 # Fixability Labels
-# =============================================================================
 
 
 class Fixability(Enum):
@@ -97,20 +80,11 @@ _FIXABILITY_MAP: dict[IssueType, Fixability] = {
 
 
 def get_fixability(issue_type: IssueType) -> Fixability:
-    """Get the fixability category for an issue type.
-
-    Args:
-        issue_type: The type of issue.
-
-    Returns:
-        The fixability category (AUTO_FIX, FIX_FLAG, or MANUAL).
-    """
+    """Get the fixability category for an issue type."""
     return _FIXABILITY_MAP.get(issue_type, Fixability.MANUAL)
 
 
-# =============================================================================
 # Structure Validation Checklist
-# =============================================================================
 
 
 @dataclass(frozen=True)
@@ -144,24 +118,7 @@ def _count_issues_by_type(result: ScanResult, issue_type: IssueType) -> int:
 
 
 def generate_structure_checklist(result: ScanResult) -> list[ChecklistItem]:
-    """Generate a structure validation checklist from scan result.
-
-    Checks:
-    - Root catalog.json exists (or will be generated)
-    - Root README.md exists
-    - Each collection dir has collection.json
-    - Each leaf dir has exactly 1 geo-asset
-    - Geo-asset names match dir/collection ID
-    - All IDs are valid slugs
-    - No geo-assets at root level
-    - No mixed flat/multi-item collections
-
-    Args:
-        result: The scan result to analyze.
-
-    Returns:
-        List of checklist items with pass/fail status.
-    """
+    """Generate a structure validation checklist from scan result."""
     catalog_exists = (result.root / "catalog.json").exists()
     readme_exists = (result.root / "README.md").exists()
     root_asset_count = sum(1 for f in result.ready if f.path.parent == result.root)
@@ -211,9 +168,7 @@ def generate_structure_checklist(result: ScanResult) -> list[ChecklistItem]:
     ]
 
 
-# =============================================================================
 # Skip Reason Categories
-# =============================================================================
 
 
 # Human-readable display names for file categories
@@ -232,28 +187,14 @@ _CATEGORY_DISPLAY_NAMES: dict[FileCategory, str] = {
 
 
 def get_category_display_name(category: FileCategory) -> str:
-    """Get human-readable display name for a file category.
-
-    Args:
-        category: The file category.
-
-    Returns:
-        Human-readable name for display.
-    """
+    """Get human-readable display name for a file category."""
     return _CATEGORY_DISPLAY_NAMES.get(category, category.value)
 
 
 def group_skipped_files(
     skipped: list[Path | SkippedFile],
 ) -> dict[FileCategory, list[SkippedFile]]:
-    """Group skipped files by their category.
-
-    Args:
-        skipped: List of skipped files (may include legacy Path objects).
-
-    Returns:
-        Dictionary mapping FileCategory to list of SkippedFile objects.
-    """
+    """Group skipped files by their category."""
     grouped: dict[FileCategory, list[SkippedFile]] = defaultdict(list)
 
     for item in skipped:
@@ -264,24 +205,14 @@ def group_skipped_files(
     return dict(grouped)
 
 
-# =============================================================================
 # Collection Inference Output
-# =============================================================================
 
 
 def format_collection_suggestion(
     suggestion: CollectionSuggestion,
     max_files: int = 5,
 ) -> str:
-    """Format a collection suggestion for display.
-
-    Args:
-        suggestion: The collection suggestion to format.
-        max_files: Maximum number of files to list before truncating.
-
-    Returns:
-        Formatted string for terminal output.
-    """
+    """Format a collection suggestion for display."""
     confidence_pct = int(suggestion.confidence * 100)
     file_count = len(suggestion.files)
 
@@ -300,9 +231,7 @@ def format_collection_suggestion(
     return "\n".join(lines)
 
 
-# =============================================================================
 # Next Steps Summary
-# =============================================================================
 
 
 def _count_by_fixability(result: ScanResult, fixability: Fixability) -> int:
@@ -316,14 +245,7 @@ def _pluralize(count: int, singular: str, plural: str) -> str:
 
 
 def generate_next_steps(result: ScanResult) -> list[str]:
-    """Generate actionable next steps based on scan result.
-
-    Args:
-        result: The scan result to analyze.
-
-    Returns:
-        List of next step strings, ready for display.
-    """
+    """Generate actionable next steps based on scan result."""
     if not result.ready:
         return [
             "No geo-assets found. Check if files have supported extensions "
@@ -358,9 +280,7 @@ def generate_next_steps(result: ScanResult) -> list[str]:
     return steps
 
 
-# =============================================================================
 # Tree View Output
-# =============================================================================
 
 
 @dataclass
@@ -376,15 +296,7 @@ class TreeNode:
 
 
 def build_tree_structure(result: ScanResult) -> dict[str, Any]:
-    """Build a nested dictionary representing the directory tree.
-
-    Args:
-        result: The scan result to build tree from.
-
-    Returns:
-        Nested dictionary where keys are names and values are either
-        dicts (directories) or tuples (files with metadata).
-    """
+    """Build a nested dictionary representing the directory tree."""
     tree: dict[str, Any] = {}
 
     def add_path(
@@ -440,15 +352,7 @@ def render_tree_view(
     result: ScanResult,
     show_missing: bool = False,
 ) -> str:
-    """Render a tree view of the scan result.
-
-    Args:
-        result: The scan result to render.
-        show_missing: If True, show expected but missing files.
-
-    Returns:
-        Formatted tree string with box-drawing characters.
-    """
+    """Render a tree view of the scan result."""
     lines: list[str] = []
     tree = build_tree_structure(result)
 
@@ -513,9 +417,7 @@ def _format_size(size_bytes: int | None) -> str:
     return f"{size_bytes / (1024 * 1024 * 1024):.1f} GB"
 
 
-# =============================================================================
 # Full Formatted Output
-# =============================================================================
 
 
 def _format_header(result: ScanResult) -> list[str]:
@@ -575,14 +477,7 @@ def _format_skipped(result: ScanResult) -> list[str]:
 
 
 def _get_severity_marker(severity: Severity) -> str:
-    """Get the marker symbol for a severity level.
-
-    Args:
-        severity: The severity level.
-
-    Returns:
-        Unicode marker: ✗ for error, ⚠ for warning, ℹ for info.
-    """
+    """Get the marker symbol for a severity level."""
     markers = {
         Severity.ERROR: "\u2717",  # ✗
         Severity.WARNING: "\u26a0",  # ⚠
@@ -592,14 +487,7 @@ def _get_severity_marker(severity: Severity) -> str:
 
 
 def _parse_issue_location(relative_path: str) -> tuple[str, str]:
-    """Parse an issue's relative path into (directory, filename).
-
-    Args:
-        relative_path: The relative path string from the issue.
-
-    Returns:
-        Tuple of (directory_path, filename) for tree grouping.
-    """
+    """Parse an issue's relative path into (directory, filename)."""
     rel_path = Path(relative_path) if relative_path else Path()
     rel_str = str(rel_path)
 
@@ -616,14 +504,7 @@ def _parse_issue_location(relative_path: str) -> tuple[str, str]:
 def _build_errors_tree(
     manual_issues: list[ScanIssue],
 ) -> dict[str, list[tuple[str, Severity, str]]]:
-    """Build a tree structure grouping issues by directory.
-
-    Args:
-        manual_issues: List of issues requiring manual resolution.
-
-    Returns:
-        Dict mapping directory paths to list of (filename, severity, message) tuples.
-    """
+    """Build a tree structure grouping issues by directory."""
     tree: dict[str, list[tuple[str, Severity, str]]] = defaultdict(list)
 
     for issue in manual_issues:
@@ -644,14 +525,7 @@ _MESSAGE_PATTERNS: list[tuple[str, str]] = [
 
 
 def _shorten_message(message: str) -> str:
-    """Shorten a message for inline tree display.
-
-    Args:
-        message: The full issue message.
-
-    Returns:
-        Shortened message suitable for inline display.
-    """
+    """Shorten a message for inline tree display."""
     # Handle special case: shapefile sidecars (extract the sidecar list)
     if message.startswith("Shapefile missing required sidecars:"):
         return f"missing {message.split(':')[1].strip()}"
@@ -675,14 +549,7 @@ def _shorten_message(message: str) -> str:
 
 
 def _render_errors_tree(tree: dict[str, list[tuple[str, Severity, str]]]) -> list[str]:
-    """Render the error tree as formatted lines.
-
-    Args:
-        tree: Dict mapping directory paths to list of (filename, severity, message).
-
-    Returns:
-        List of formatted output lines.
-    """
+    """Render the error tree as formatted lines."""
     lines: list[str] = []
 
     # Sort directories: root first, then alphabetically
@@ -712,16 +579,7 @@ def _render_errors_tree(tree: dict[str, list[tuple[str, Severity, str]]]) -> lis
 
 
 def _format_manual_only(result: ScanResult) -> str:
-    """Format output showing only issues requiring manual resolution.
-
-    Uses a tree structure grouped by directory for easier scanning.
-
-    Args:
-        result: The scan result to format.
-
-    Returns:
-        Formatted output showing only manual-resolution issues.
-    """
+    """Format output showing only issues requiring manual resolution."""
     # Filter to only MANUAL fixability issues
     manual_issues = [
         issue for issue in result.issues if get_fixability(issue.issue_type) == Fixability.MANUAL
@@ -745,17 +603,7 @@ def _format_manual_only(result: ScanResult) -> str:
 
 
 def _format_special_formats(result: ScanResult) -> list[str]:
-    """Format detected special formats (Hive partitions, etc.) for display.
-
-    For Hive partitions, uses detect_partitioning() from partitioning.py
-    to get rich metadata (scheme, strategy, file_count).
-
-    Args:
-        result: The scan result containing special_formats.
-
-    Returns:
-        List of formatted lines to display.
-    """
+    """Format detected special formats (Hive partitions, etc.) for display."""
     if not result.special_formats:
         return []
 
@@ -805,17 +653,7 @@ def format_scan_output(
     show_missing: bool = True,
     manual_only: bool = False,
 ) -> str:
-    """Format complete scan output for terminal display.
-
-    Args:
-        result: The scan result to format.
-        show_tree: If True, include tree view.
-        show_missing: If True, show expected but missing files in tree.
-        manual_only: If True, show only issues requiring manual resolution.
-
-    Returns:
-        Complete formatted output string.
-    """
+    """Format complete scan output for terminal display."""
     # Handle manual-only mode
     if manual_only:
         return _format_manual_only(result)
@@ -865,23 +703,11 @@ def format_scan_output(
     return "\n".join(lines)
 
 
-# =============================================================================
 # Phase 3: Enhanced Output for Nested Catalogs
-# =============================================================================
 
 
 def _get_collection_id(file: ScannedFile) -> str | None:
-    """Extract inferred_collection_id from ScannedFile.
-
-    Reads from the top-level field first (set by scan.py for nested catalogs),
-    falls back to metadata for backward compatibility.
-
-    Args:
-        file: The scanned file.
-
-    Returns:
-        Collection ID if present, None otherwise.
-    """
+    """Extract inferred_collection_id from ScannedFile."""
     # Primary: top-level field (nested catalog support)
     if file.inferred_collection_id:
         return file.inferred_collection_id
@@ -890,29 +716,12 @@ def _get_collection_id(file: ScannedFile) -> str | None:
 
 
 def _get_format_status(file: ScannedFile) -> str:
-    """Return the format status of a ScannedFile as a string.
-
-    Args:
-        file: The scanned file.
-
-    Returns:
-        The value of ``file.format_status``. The field is a required enum.
-    """
+    """Return the format status of a ScannedFile as a string."""
     return file.format_status.value
 
 
 def _get_format_display_name(file: ScannedFile) -> str:
-    """Extract format_display_name from ScannedFile.
-
-    Reads from the top-level field first (set by scan.py),
-    falls back to metadata, then derives from extension.
-
-    Args:
-        file: The scanned file.
-
-    Returns:
-        Human-readable format name.
-    """
+    """Extract format_display_name from ScannedFile."""
     # Primary: top-level field
     if file.format_display_name:
         return file.format_display_name
@@ -924,19 +733,7 @@ def _get_format_display_name(file: ScannedFile) -> str:
 
 
 def format_file_entry(file: ScannedFile) -> str:
-    """Format a single file entry with collection ID and format status.
-
-    Shows:
-    - Filename
-    - Format display name (e.g., "GeoParquet", "Parquet (no geometry)")
-    - Collection ID if present
-
-    Args:
-        file: The scanned file to format.
-
-    Returns:
-        Formatted string for display.
-    """
+    """Format a single file entry with collection ID and format status."""
     filename = file.path.name
     format_name = _get_format_display_name(file)
     collection_id = _get_collection_id(file)
@@ -956,15 +753,7 @@ def format_file_entry(file: ScannedFile) -> str:
 def group_files_by_collection(
     files: list[ScannedFile],
 ) -> dict[str, list[ScannedFile]]:
-    """Group scanned files by their inferred collection ID.
-
-    Args:
-        files: List of scanned files.
-
-    Returns:
-        Dictionary mapping collection IDs to lists of files.
-        Files without collection_id are grouped under "(uncategorized)".
-    """
+    """Group scanned files by their inferred collection ID."""
     grouped: dict[str, list[ScannedFile]] = defaultdict(list)
 
     for file in files:
@@ -975,22 +764,12 @@ def group_files_by_collection(
     return dict(grouped)
 
 
-# =============================================================================
 # Structure Pattern Detection
-# =============================================================================
 
 
 @dataclass(frozen=True)
 class StructurePattern:
-    """Detected structure pattern for a scan result.
-
-    Attributes:
-        pattern_type: One of: vector_collection, raster_items, partitioned,
-                      mixed, single_collection, flat
-        collections: List of inferred collection IDs.
-        is_nested: True if there are nested (multi-level) collection IDs.
-        suggested_commands: List of portolan commands to run.
-    """
+    """Detected structure pattern for a scan result."""
 
     pattern_type: str
     collections: list[str]
@@ -999,22 +778,7 @@ class StructurePattern:
 
 
 def detect_structure_pattern(result: ScanResult) -> StructurePattern:
-    """Detect the structure pattern from scan result.
-
-    Analyzes files to determine:
-    - vector_collection: All vectors at collection level
-    - raster_items: Rasters organized as items in collections
-    - single_collection: Only one collection detected
-    - partitioned: Hive-style partitioned data
-    - mixed: Both vector and raster, or unclear structure
-    - flat: Files at root level only
-
-    Args:
-        result: The scan result to analyze.
-
-    Returns:
-        StructurePattern with detected pattern and suggestions.
-    """
+    """Detect the structure pattern from scan result."""
     if not result.ready:
         return StructurePattern(
             pattern_type="empty",
@@ -1072,14 +836,7 @@ def detect_structure_pattern(result: ScanResult) -> StructurePattern:
 
 
 def generate_structure_recommendation(result: ScanResult) -> str:
-    """Generate actionable structure recommendations.
-
-    Args:
-        result: The scan result to analyze.
-
-    Returns:
-        Multi-line string with recommendations, or empty if none needed.
-    """
+    """Generate actionable structure recommendations."""
     pattern = detect_structure_pattern(result)
 
     if pattern.pattern_type == "empty":
@@ -1117,14 +874,7 @@ def generate_structure_recommendation(result: ScanResult) -> str:
 
 
 def generate_ascii_tree_recommendation(collections: list[str]) -> str:
-    """Generate ASCII tree showing recommended catalog structure.
-
-    Args:
-        collections: List of collection IDs (may include nested paths).
-
-    Returns:
-        ASCII tree representation.
-    """
+    """Generate ASCII tree showing recommended catalog structure."""
     if not collections:
         return ""
 
@@ -1161,45 +911,17 @@ def generate_ascii_tree_recommendation(collections: list[str]) -> str:
     return "\n".join(lines)
 
 
-# =============================================================================
 # Verbose Output Formatting
-# =============================================================================
 
 
 def format_issue_basic(issue: ScanIssue) -> str:
-    """Format an issue with minimal info (for non-verbose mode).
-
-    Shows:
-    - Path
-    - Issue type
-    - Brief message
-
-    Args:
-        issue: The scan issue to format.
-
-    Returns:
-        Single-line formatted string.
-    """
+    """Format an issue with minimal info (for non-verbose mode)."""
     marker = _get_severity_marker(issue.severity)
     return f"{marker} {issue.relative_path}: {issue.message}"
 
 
 def format_issue_verbose(issue: ScanIssue) -> str:
-    """Format an issue with full details (for --verbose mode).
-
-    Shows:
-    - Path
-    - Issue type
-    - Full message
-    - Suggestion/recommendation
-    - Spec reference if applicable
-
-    Args:
-        issue: The scan issue to format.
-
-    Returns:
-        Multi-line formatted string.
-    """
+    """Format an issue with full details (for --verbose mode)."""
     marker = _get_severity_marker(issue.severity)
     lines = [f"{marker} {issue.relative_path}"]
     lines.append(f"  Issue: {issue.message}")
@@ -1219,26 +941,11 @@ def format_issue_verbose(issue: ScanIssue) -> str:
     return "\n".join(lines)
 
 
-# =============================================================================
 # JSON Output Formatting (Phase 3 Enhancements)
-# =============================================================================
 
 
 def format_ready_file_json(file: ScannedFile) -> dict[str, Any]:
-    """Format a ready file for JSON output with enhanced fields.
-
-    Includes:
-    - All standard ScannedFile fields
-    - inferred_collection_id
-    - format_status
-    - format_display_name
-
-    Args:
-        file: The scanned file.
-
-    Returns:
-        JSON-serializable dictionary.
-    """
+    """Format a ready file for JSON output with enhanced fields."""
     return {
         "path": str(file.path),
         "relative_path": file.relative_path,
@@ -1254,14 +961,7 @@ def format_ready_file_json(file: ScannedFile) -> dict[str, Any]:
 
 
 def format_recommended_structure_json(result: ScanResult) -> dict[str, Any]:
-    """Format recommended structure for JSON output.
-
-    Args:
-        result: The scan result.
-
-    Returns:
-        JSON-serializable dictionary with pattern info and collections.
-    """
+    """Format recommended structure for JSON output."""
     pattern = detect_structure_pattern(result)
 
     return {
@@ -1273,20 +973,7 @@ def format_recommended_structure_json(result: ScanResult) -> dict[str, Any]:
 
 
 def format_fix_commands_json(result: ScanResult) -> list[dict[str, Any]]:
-    """Format fix commands for JSON output (agent consumption).
-
-    Returns structured commands like:
-    [
-        {"command": "add", "args": ["census"], "reason": "Collection not tracked"},
-        {"command": "convert", "args": ["data.tif"], "options": {...}, "reason": "..."}
-    ]
-
-    Args:
-        result: The scan result.
-
-    Returns:
-        List of structured command dictionaries.
-    """
+    """Format fix commands for JSON output (agent consumption)."""
     # Add commands for each detected collection
     pattern = detect_structure_pattern(result)
     commands: list[dict[str, Any]] = [
@@ -1299,9 +986,7 @@ def format_fix_commands_json(result: ScanResult) -> list[dict[str, Any]]:
         for collection_id in pattern.collections
     ]
 
-    # Add fix commands for issues that can be auto-fixed
-    # Deduplicate by DIRECTORY - one scan --fix per unique directory
-    # (scan --fix requires a directory, not a file path)
+    # One scan --fix per unique directory, because scan --fix takes a directory.
     fix_reasons: dict[str, list[str]] = {}  # directory -> list of reasons
 
     for issue in result.issues:
@@ -1330,9 +1015,7 @@ def format_fix_commands_json(result: ScanResult) -> list[dict[str, Any]]:
     return commands
 
 
-# =============================================================================
 # Enhanced Summary Format
-# =============================================================================
 
 
 def format_enhanced_summary(
@@ -1341,24 +1024,7 @@ def format_enhanced_summary(
     verbose: bool = False,
     show_tree: bool = False,
 ) -> str:
-    """Format enhanced scan summary with nested collection support.
-
-    Includes:
-    - Summary header with file counts
-    - Files grouped by collection ID
-    - Format status per file
-    - Structure recommendations (if applicable)
-    - Issues (verbose adds details)
-    - Next steps
-
-    Args:
-        result: The scan result to format.
-        verbose: If True, include extra details and spec references.
-        show_tree: If True, include tree view.
-
-    Returns:
-        Complete formatted output string.
-    """
+    """Format enhanced scan summary with nested collection support."""
     lines: list[str] = []
 
     # Header

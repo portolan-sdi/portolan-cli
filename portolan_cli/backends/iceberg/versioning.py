@@ -1,8 +1,4 @@
-"""Versioning helpers: semver logic and snapshot<->Version conversion.
-
-Converts between PyIceberg Snapshot summary properties and portolan-cli
-Version/Asset/SchemaInfo dataclasses.
-"""
+"""Versioning helpers: semver logic and snapshot<->Version conversion."""
 
 from __future__ import annotations
 
@@ -18,15 +14,7 @@ if TYPE_CHECKING:
 
 
 def compute_next_version(current: str | None, breaking: bool) -> str:
-    """Compute the next semantic version.
-
-    Args:
-        current: Current version string, or None for first version.
-        breaking: Whether this is a breaking change.
-
-    Returns:
-        Next version string.
-    """
+    """Compute the next semantic version."""
     if current is None:
         return "1.0.0"
     major, minor, _patch = parse_version(current)
@@ -86,11 +74,7 @@ def version_to_snapshot_properties(
 
 
 def snapshot_to_version(snapshot: Snapshot) -> Version:
-    """Convert an Iceberg Snapshot to a portolan Version.
-
-    Extracts portolake.* properties from the snapshot summary and
-    deserializes them into a Version dataclass.
-    """
+    """Convert an Iceberg Snapshot to a portolan Version."""
     if snapshot.summary is None:
         raise ValueError("Snapshot has no summary metadata")
     props = snapshot.summary.additional_properties
@@ -142,17 +126,7 @@ def snapshot_to_version(snapshot: Snapshot) -> Version:
 def build_assets(
     assets_input: dict[str, str], collection: str
 ) -> tuple[dict[str, Asset], list[str]]:
-    """Build Asset objects from {name: path} mapping.
-
-    Produces catalog-root-relative hrefs as ``{collection}/{name}``,
-    matching the convention used by JsonFileBackend.
-
-    For local files, computes SHA-256 checksum and file size.
-    For remote paths (non-existent locally), uses empty checksum and zero size.
-
-    Returns:
-        Tuple of (asset_dict, changes_list).
-    """
+    """Build Asset objects from {name: path} mapping."""
     asset_objects: dict[str, Asset] = {}
     changes: list[str] = []
     for name, path_str in assets_input.items():

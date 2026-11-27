@@ -1,10 +1,4 @@
-"""Tests for nested catalog inference.
-
-These tests verify that Portolan correctly:
-1. Infers nested collection IDs (e.g., climate/hittekaart, not just climate)
-2. Creates intermediate catalogs (catalog.json at theme directories)
-3. Creates leaf collections (collection.json at data directories)
-"""
+"""Tests for nested catalog inference."""
 
 from __future__ import annotations
 
@@ -80,11 +74,6 @@ class TestInferNestedCollectionId:
             infer_nested_collection_id(file_path, catalog_root)
 
     def test_filegdb_in_collection_infers_parent(self, tmp_path: Path) -> None:
-        """FileGDB in collection: ocha/my_data.gdb -> ocha (Issue #259).
-
-        FileGDB directories are data assets, not collections. The collection ID
-        should be the parent directory, not include the .gdb folder name.
-        """
         from portolan_cli.collection_id import infer_nested_collection_id
 
         catalog_root = tmp_path
@@ -98,11 +87,6 @@ class TestInferNestedCollectionId:
         assert result == "ocha"
 
     def test_filegdb_at_root_raises_error(self, tmp_path: Path) -> None:
-        """FileGDB at catalog root should raise ValueError (Issue #259).
-
-        Just like files at root, FileGDB directories at root level should
-        raise an error requiring them to be in a collection subdirectory.
-        """
         from portolan_cli.collection_id import infer_nested_collection_id
 
         catalog_root = tmp_path
@@ -115,7 +99,7 @@ class TestInferNestedCollectionId:
             infer_nested_collection_id(gdb_path, catalog_root)
 
     def test_filegdb_nested_two_levels(self, tmp_path: Path) -> None:
-        """FileGDB nested: theme/subtheme/data.gdb -> theme/subtheme (Issue #259)."""
+        """FileGDB nested: theme/subtheme/data.gdb -> theme/subtheme."""
         from portolan_cli.collection_id import infer_nested_collection_id
 
         catalog_root = tmp_path
@@ -127,11 +111,6 @@ class TestInferNestedCollectionId:
         assert result == "theme/subtheme"
 
     def test_filegdb_with_gdbtable_files(self, tmp_path: Path) -> None:
-        """FileGDB detected via .gdbtable files (alternate detection path).
-
-        is_filegdb() accepts either 'gdb' marker OR .gdbtable files.
-        This test covers the .gdbtable detection path.
-        """
         from portolan_cli.collection_id import infer_nested_collection_id
 
         catalog_root = tmp_path
@@ -145,15 +124,6 @@ class TestInferNestedCollectionId:
         assert result == "ocha"
 
     def test_empty_gdb_directory_uses_suffix_fallback(self, tmp_path: Path) -> None:
-        """Empty .gdb directory still infers parent via suffix fallback.
-
-        A directory named *.gdb without proper internal structure (no 'gdb'
-        marker, no .gdbtable files) should still be treated as a data asset
-        using the suffix fallback. This handles:
-        - Corrupted FileGDB
-        - Partial downloads
-        - Manually created .gdb folders
-        """
         from portolan_cli.collection_id import infer_nested_collection_id
         from portolan_cli.scan.detect import is_filegdb
 
@@ -170,11 +140,6 @@ class TestInferNestedCollectionId:
         assert result == "ocha"
 
     def test_empty_gdb_at_root_raises_error(self, tmp_path: Path) -> None:
-        """Empty .gdb directory at root should raise ValueError.
-
-        Even with suffix fallback, a .gdb directory at catalog root must
-        be in a collection subdirectory.
-        """
         from portolan_cli.collection_id import infer_nested_collection_id
 
         catalog_root = tmp_path
@@ -303,12 +268,6 @@ class TestCreateIntermediateCatalogs:
         assert links_by_rel["parent"]["href"] == "../catalog.json"
 
     def test_deep_intermediate_parent_stops_one_level_up(self, tmp_path: Path) -> None:
-        """Issue #711: root and parent diverge below the first level.
-
-        At depth 1 the containing object *is* the root catalog, so one href
-        served both rels and the conflation stayed invisible. At depth 2 the
-        container is ``env/catalog.json`` while the root is two levels up.
-        """
         import json
 
         from portolan_cli.catalog import create_intermediate_catalogs
@@ -328,11 +287,6 @@ class TestCreateIntermediateCatalogs:
         assert links_by_rel["parent"]["href"] == "../catalog.json"
 
     def test_intermediate_catalogs_carry_a_human_readable_title(self, tmp_path: Path) -> None:
-        """Issue #502 titles apply to intermediate catalogs too (rashid PTL-TTL-001).
-
-        Without a title on the target, ``ensure_link_titles`` also has nothing to
-        copy onto the parent's child link, so PTL-TTL-003 fires alongside it.
-        """
         import json
 
         from portolan_cli.catalog import create_intermediate_catalogs
@@ -402,14 +356,7 @@ def _collection_json(collection_id: str) -> str:
 
 
 class TestFlatAddLeavesNestedLinksAlone:
-    """Issue #711: adding a flat collection must not rewrite the nested tree.
-
-    Registering a flat collection used to load the root catalog with PySTAC and
-    call ``save(SELF_CONTAINED)``, which walks and re-serializes every
-    descendant. ``normalize_hrefs`` lays children out by ``id``, and an
-    intermediate catalog's id is its POSIX path, so ``env/air`` was relocated to
-    ``env/env/air/`` and its child href went with it.
-    """
+    """Adding a flat collection must not rewrite the nested tree."""
 
     def test_registering_a_flat_collection_preserves_intermediate_child_hrefs(
         self, tmp_path: Path

@@ -1,4 +1,4 @@
-"""The STAC enrichment hooks run in the `add` flow (#947)."""
+"""The STAC enrichment hooks run in the `add` flow."""
 
 from __future__ import annotations
 

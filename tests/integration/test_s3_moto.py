@@ -1,12 +1,5 @@
-"""Moto-based S3 integration tests.
-
-These tests use moto's server mode to create a real HTTP endpoint that works
-with obstore (Rust-based S3 client). This is necessary because obstore makes
-direct HTTP calls and doesn't integrate with boto3's patching mechanism.
-
-This addresses the unchecked test plan item:
-  [ ] Integration tests with real S3 bucket
-"""
+"""S3 integration tests against a moto server.
+obstore makes its own HTTP calls and skips boto3 patching, so it needs a real HTTP endpoint."""
 
 from __future__ import annotations
 
@@ -24,9 +17,7 @@ if TYPE_CHECKING:
 
     from tests.integration.conftest import Bucket, PutFaults
 
-# =============================================================================
 # Fixtures
-# =============================================================================
 
 
 @pytest.fixture
@@ -114,7 +105,7 @@ def catalog_with_data(tmp_path: Path, s3_bucket: tuple[str, str]) -> Path:
 
 @pytest.fixture
 def nested_catalog_with_data(tmp_path: Path, s3_bucket: tuple[str, str]) -> Path:
-    """A nested catalog with intermediate catalog.json files (Issue #547, #552)."""
+    """A nested catalog with intermediate catalog.json files."""
     bucket_name, _endpoint_url = s3_bucket
 
     catalog_dir = tmp_path / "catalog"
@@ -190,9 +181,7 @@ def nested_catalog_with_data(tmp_path: Path, s3_bucket: tuple[str, str]) -> Path
     return catalog_dir
 
 
-# =============================================================================
 # Push Integration Tests
-# =============================================================================
 
 
 class TestPushS3Integration:
@@ -241,7 +230,7 @@ class TestPushS3Integration:
         s3_bucket: tuple[str, str],
         catalog_with_data: Path,
     ) -> None:
-        """Issue #329: Push should only upload new/changed files."""
+        """Push uploads only new or changed files."""
         bucket_name, _endpoint_url = s3_bucket
 
         from portolan_cli.sync.push import push
@@ -312,12 +301,8 @@ class TestPushS3Integration:
         s3_bucket: tuple[str, str],
         catalog_with_data: Path,
     ) -> None:
-        """Issue #962: bytes A, then B, then A again. The store must hold A.
-
-        Every version writes the same object key. Before the fix, the third
-        push found A in remote version 1.0.0 and skipped the upload. The
-        store kept B while the remote current version recorded A.
-        """
+        """Bytes A, then B, then A again under one key. The store must hold A.
+        The third push must not skip the upload because remote version 1.0.0 recorded A."""
         bucket_name, endpoint_url = s3_bucket
 
         from portolan_cli.sync.push import push
@@ -388,12 +373,8 @@ class TestPushS3Integration:
         s3_bucket: tuple[str, str],
         catalog_with_data: Path,
     ) -> None:
-        """Issue #962: a force push with no new local version must upload A.
-
-        The remote holds 1.0.0 (A) and 1.0.1 (B), so the store holds B. Local
-        holds only 1.0.0 (A). `push --force` writes the local versions.json,
-        so the store must hold A after it.
-        """
+        """A force push with no new local version must upload A.
+        The remote holds 1.0.0 (A) and 1.0.1 (B). Local holds only 1.0.0 (A)."""
         bucket_name, endpoint_url = s3_bucket
 
         from portolan_cli.sync.push import push
@@ -462,14 +443,8 @@ class TestPushS3Integration:
         catalog_with_data: Path,
         fault_store: PutFaults,
     ) -> None:
-        """Issue #966: `push --verify` repairs an object that disagrees with the manifest.
-
-        The store holds other bytes of another size under the asset key. The
-        manifests list the same versions, and no local version is new. A plain
-        push skips the asset. `push --verify` must upload it and must not write
-        versions.json. The remote manifest carries a marker key that the local
-        one lacks, so a write of the local manifest would drop it.
-        """
+        """`push --verify` repairs an object that disagrees with the manifest, with no new version.
+        It must not write versions.json: the remote one carries a marker key that the local one lacks."""
         bucket_name, endpoint_url = s3_bucket
 
         from portolan_cli.sync.push import push
@@ -494,7 +469,7 @@ class TestPushS3Integration:
         versions_before = json.dumps(remote_manifest).encode()
         client.put_object(Bucket=bucket_name, Key=versions_key, Body=versions_before)
 
-        # Damage the store the way the #962 bug did. Other bytes, other size.
+        # Damage the store: other bytes, other size.
         client.put_object(Bucket=bucket_name, Key=data_key, Body=b"stale bytes")
 
         plain = push(catalog_with_data, "test-collection", destination)
@@ -580,12 +555,8 @@ class TestPushS3Integration:
         s3_bucket: tuple[str, str],
         nested_catalog_with_data: Path,
     ) -> None:
-        """Issue #547/#552: catalog-wide push lands intermediate catalog.json in the bucket.
-
-        The push->bucket round-trip is the guard against the silent-drop class:
-        a client walking child links from the root must find every intermediate
-        catalog.json, not just root catalog.json and leaf collection.json.
-        """
+        """A catalog-wide push lands every intermediate catalog.json in the bucket.
+        A client that walks child links from the root must find each one."""
         bucket_name, endpoint_url = s3_bucket
 
         from portolan_cli.sync.push import push_all_collections
@@ -624,14 +595,8 @@ class TestPushS3Integration:
         s3_bucket: tuple[str, str],
         nested_catalog_with_data: Path,
     ) -> None:
-        """Issue #547/#552: the SINGLE-collection push path also lands intermediates.
-
-        Distinct code path from the catalog-wide test above: single-collection
-        push discovers intermediates via ``_discover_stac_files(include_catalog=True)``,
-        not the central ``_push_all_upload_root_files`` phase. Both must upload the
-        ancestor catalog.json, or a targeted ``push <collection>`` still leaves the
-        remote child-link chain broken.
-        """
+        """A single-collection push also lands the intermediate catalog.json files.
+        This path finds them through ``_discover_stac_files``, not ``_push_all_upload_root_files``."""
         bucket_name, endpoint_url = s3_bucket
 
         from portolan_cli.sync.push import push
@@ -666,15 +631,8 @@ class TestPushS3Integration:
         s3_bucket: tuple[str, str],
         nested_catalog_with_data: Path,
     ) -> None:
-        """Issue #496: --force re-uploads regenerated metadata with NO version delta.
-
-        Full round-trip against the bucket, reading actual bytes back:
-        1. push -> remote collection.json holds the original description;
-        2. regenerate collection.json in place (no version bump, versions.json
-           unchanged), push WITHOUT force -> "Nothing to push", remote unchanged
-           (the gate still guards against churn);
-        3. push WITH force -> remote collection.json now holds the new bytes.
-        """
+        """--force re-uploads regenerated collection.json with no version delta.
+        Without --force the push says "Nothing to push" and the remote stays unchanged."""
         bucket_name, endpoint_url = s3_bucket
 
         from portolan_cli.sync.push import push
@@ -738,9 +696,7 @@ class TestPushS3Integration:
         assert "REGENERATED DESCRIPTION" in remote_collection_json()
 
 
-# =============================================================================
 # Pull Integration Tests
-# =============================================================================
 
 
 class TestPullS3Integration:
@@ -793,9 +749,7 @@ class TestPullS3Integration:
         assert (collection_dir / "versions.json").exists()
 
 
-# =============================================================================
-# Restore Integration Tests (#325)
-# =============================================================================
+# Restore integration tests
 
 
 class TestRestoreS3Integration:
@@ -808,7 +762,7 @@ class TestRestoreS3Integration:
         s3_bucket: tuple[str, str],
         catalog_with_data: Path,
     ) -> None:
-        """Issue #325: --restore should re-download missing local files."""
+        """--restore re-downloads missing local files."""
         bucket_name, _endpoint_url = s3_bucket
 
         from portolan_cli.sync.pull import pull

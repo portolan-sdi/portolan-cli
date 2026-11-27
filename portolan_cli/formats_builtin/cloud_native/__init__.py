@@ -1,8 +1,4 @@
-"""PMTiles and FlatGeobuf: cloud-native vectors that Portolan tracks as they are (#947).
-
-Both formats keep their file. Neither adds item or collection fields beyond
-what its metadata reader returns.
-"""
+"""PMTiles and FlatGeobuf: cloud-native vectors that Portolan tracks as they are."""
 
 from __future__ import annotations
 

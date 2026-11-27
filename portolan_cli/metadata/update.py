@@ -1,12 +1,4 @@
-"""Metadata update functions for STAC items, collections, and versions.
-
-This module provides functions to update existing metadata when files change:
-- update_item_metadata(): Re-extract metadata and update existing STAC item
-- prepare_missing_item(): Prepare a new STAC item for a file without metadata
-- update_versions_tracking(): Update source_mtime in versions.json
-
-Part of Phase 2c: Update Functions (check-metadata-handling feature).
-"""
+"""Metadata update functions for STAC items, collections, and versions."""
 
 from __future__ import annotations
 
@@ -43,41 +35,7 @@ _GENERATED_BAND_NAME = re.compile(r"^band_\d+$")
 def update_item_metadata(
     item_path: Path, file_path: Path, *, state: ConfigSource | None = None
 ) -> ItemModel:
-    """Re-extract metadata from file and update existing STAC item.
-
-    Refreshes only the fields this metadata pass owns, the item's bbox,
-    geometry, datetime, the data asset's href, and, for a raster, the data
-    asset's ``bands`` array. Everything else on disk is preserved. That
-    deliberately includes the item's ``stac_extensions``, every non-``data``
-    asset such as the ``thumbnail`` that ``portolan add`` registers for COGs
-    (#657), a non-raster asset's ``bands`` (#659), and the data asset's media
-    type, which the refresh backfills only when it is missing.
-
-    A raster's ``bands`` array is the exception, because it describes the shape
-    of the file and formats.md makes the file authoritative for band statistics.
-    Re-shape a 4-band COG into a 1-band COG and a preserved array documents
-    bands that no longer exist (#737), on a command whose job is freshness. So
-    the refresh re-reads the array from the bytes with the extractors
-    ``portolan add`` uses. A failed or empty extraction keeps what is on disk,
-    because a refresh that cannot read the file must not destroy the record
-    (#659).
-
-    The update edits the raw item JSON in place rather than round-tripping
-    through :class:`ItemModel`. The model only carries href/type/roles/title for
-    assets and drops ``stac_extensions`` entirely, so serializing through it
-    would silently destroy those fields (#659).
-
-    Args:
-        item_path: Path to existing item JSON file.
-        file_path: Path to the data file (GeoParquet or COG).
-        state: The run state, which parses the config once per command.
-
-    Returns:
-        Updated ItemModel (a lossy view, the on-disk JSON is the full record).
-
-    Raises:
-        FileNotFoundError: If item_path or file_path doesn't exist.
-    """
+    """Re-extract metadata from file and update existing STAC item."""
     # ``item`` imports the ``metadata`` package, which imports this module.
     from portolan_cli.item import _extract_geometry_from_file, _get_media_type
 
@@ -96,12 +54,7 @@ def update_item_metadata(
     item_data["bbox"] = bbox
     item_data["geometry"] = geometry
 
-    # `datetime` is the acquisition time of the observation, not the mtime of
-    # the file. The refresh cannot read it off the bytes, so it keeps whatever
-    # the item already carries. `add` writes `null` when the caller passes no
-    # `--datetime`, and stamping the time of the run over that null published a
-    # fabricated acquisition date (#709). An item with no `datetime` key at all
-    # gets the same `null` `add` would have written.
+    # `datetime` is the acquisition time, not the file mtime; keep the item's value, or null.
     properties = item_data.setdefault("properties", {})
     properties.setdefault("datetime", None)
 
@@ -110,23 +63,16 @@ def update_item_metadata(
     assets: dict[str, Any] = item_data.setdefault("assets", {})
     data_key = _find_data_asset_key(assets)
     data_asset = assets.setdefault(data_key, {})
-    # Keep the href's existing spelling when it already names this file. `add`
-    # writes `./data.tif`, and rewriting that to `data.tif` changed the item on
-    # every run without changing where it points (#709).
+    # Keep the href spelling when it already names this file.
     if not _href_names(data_asset.get("href"), file_path):
         data_asset["href"] = file_path.name
-    # Keep the media type `add` registered. `add` derives it from the extension
-    # registry, which gives a COG the `profile=cloud-optimized` suffix that
-    # PORTO-CORE-026 makes a MUST; the local extension map here does not, so
-    # overwriting would downgrade a valid COG asset to plain GeoTIFF. Only
-    # backfill when the field is absent or blank.
+    # Keep the registered media type; the local map lacks the COG profile suffix (PORTO-CORE-026).
     if not data_asset.get("type"):
         data_asset["type"] = _get_media_type(file_path)
     data_asset.setdefault("roles", ["data"])
     _refresh_raster_bands(data_asset, file_path, state)
 
-    # Write the full record back to disk. Atomic, so a kill mid-write cannot
-    # leave a truncated item.json where a valid one used to be (issue #687).
+    # Atomic write, so a kill mid-write cannot leave a truncated item.json.
     write_json_atomic(item_path, item_data)
 
     return ItemModel.from_dict(item_data)
@@ -135,19 +81,7 @@ def update_item_metadata(
 def _refresh_raster_bands(
     data_asset: dict[str, Any], file_path: Path, state: ConfigSource | None
 ) -> None:
-    """Re-extract a raster data asset's ``bands`` array in place (#737).
-
-    A non-raster asset is untouched, so a GeoParquet asset's array still survives
-    the refresh verbatim (#659). So does a raster's array when the extraction
-    fails or reads no bands, because a refresh that cannot see the file has
-    nothing better to write than what is already recorded.
-
-    When the band count is unchanged the fresh values are merged over the
-    existing band, keeping the descriptive fields extraction cannot derive. When
-    the count changes the file has been re-shaped, so a label written for one of
-    four bands cannot be assumed to describe the one band that is left, and the
-    fresh array replaces the old one outright.
-    """
+    """Refresh raster band metadata on the asset."""
     if file_path.suffix.lower() not in RASTER_EXTENSIONS:
         return
 
@@ -170,29 +104,8 @@ def _refresh_raster_bands(
 
 
 def _extract_raster_bands(file_path: Path, state: ConfigSource | None) -> list[dict[str, Any]]:
-    """The ``bands`` array ``portolan add`` would write for this raster.
-
-    Orchestrates the extractors the add path uses, ``extract_cog_metadata`` for
-    the per-band shape and ``preparation``'s statistics helpers for the
-    ``statistics`` sub-object, so a refreshed array and a freshly added one are
-    built by the same code and carry the same STAC field names. Returns an empty
-    list when the raster cannot be read, which the caller treats as "keep what is
-    on disk".
-
-    Reads with ``GDAL_PAM_ENABLED=NO`` so a ``.aux.xml`` sidecar cannot answer
-    for the file. formats.md is explicit that statistics MUST be embedded in the
-    file and that a PAM sidecar does not satisfy that, and GDAL never invalidates
-    a sidecar when the raster underneath is replaced. `add` leaves one next to
-    every raster it computes statistics for, so a refresh that trusted it would
-    copy the old raster's numbers onto the new bands. It is also how rashid reads
-    a COG for PTL-DAT-009.
-    """
-    # Imported inside the function on purpose. `preparation` imports the
-    # `metadata` package this module belongs to, so a module-level import would
-    # close an import cycle. rasterio and the COG extractor load here and not
-    # at the top, because `portolan check` imports this module through
-    # `validation.fixers` and must not pay for rasterio before it reads a
-    # raster (#994).
+    """The ``bands`` array ``portolan add`` would write for this raster."""
+    # Imported here: `preparation` imports this package (cycle), and `portolan check` must not load rasterio early.
     import rasterio
 
     from portolan_cli.metadata.cog import extract_cog_metadata
@@ -215,9 +128,7 @@ def _extract_raster_bands(file_path: Path, state: ConfigSource | None) -> list[d
             band_stats, parquet_stats = _extract_statistics_best_effort(
                 file_path, RASTER, catalog_root, collection_path=collection_dir, state=state
             )
-            # `_extract_statistics_best_effort` already applied the
-            # `statistics.enabled` gate, returning nothing when the setting is
-            # off, so the flag here is always True.
+            # The statistics.enabled gate already ran, so the flag is always True.
             _add_statistics_to_properties(
                 stac_properties, RASTER, band_stats, parquet_stats, stats_enabled=True
             )
@@ -229,13 +140,7 @@ def _extract_raster_bands(file_path: Path, state: ConfigSource | None) -> list[d
 
 
 def _statistics_scope(file_path: Path) -> tuple[Path | None, Path | None]:
-    """The (catalog root, collection dir) a statistics setting resolves against.
-
-    The refresh is handed one file, so the scope `add` receives as arguments has
-    to be recovered from the path. The catalog root comes from the usual sentinel
-    walk, the collection from the nearest ancestor holding a ``collection.json``.
-    Either may be None, and `get_setting` then falls back a level.
-    """
+    """The (catalog root, collection dir) a statistics setting resolves against."""
     from portolan_cli.catalog import find_catalog_root
 
     catalog_root = find_catalog_root(file_path.parent)
@@ -251,17 +156,7 @@ def _statistics_scope(file_path: Path) -> tuple[Path | None, Path | None]:
 
 
 def _merge_band(fresh: dict[str, Any], existing: dict[str, Any]) -> dict[str, Any]:
-    """Fresh band values over the recorded ones, keeping what pixels cannot say.
-
-    The split follows what is derivable. ``data_type``, ``nodata`` and
-    ``statistics`` come from the file, which formats.md makes the authority for
-    them. A ``name`` or ``description`` a human wrote is descriptive, not
-    derivable, so it survives. A name is kept unless it is the generated
-    ``band_N`` placeholder, and any other recorded key the extractor does not
-    produce carries over. That also means a value extraction failed to read,
-    including a ``nodata`` that came from ``metadata.yaml`` defaults the refresh
-    never sees, is preserved rather than dropped.
-    """
+    """Fresh band values over the recorded ones, keeping what pixels cannot say."""
     merged = {**existing, **fresh}
 
     name = existing.get("name")
@@ -276,17 +171,8 @@ def _tracked_asset_key(
     file_path: Path,
     collection_dir: Path,
 ) -> str | None:
-    """The versions.json key that tracks ``file_path``, or None.
-
-    Mirrors :func:`~portolan_cli.metadata.detection.find_versions_asset` so the
-    reader and the writer agree on which entry belongs to a file. The
-    collection-relative key is what ``add`` writes, the bare file name covers an
-    older versions.json, and the ``href`` sweep covers a nested layout. A
-    collection-level file with the same name owns the bare key, so an item-level
-    asset skips the bare name and never binds to a foreign baseline (issue #709).
-    """
-    # `detection` imports the COG extractor, which loads rasterio. `portolan
-    # check` imports this module through `validation.fixers` (#994).
+    """The versions.json key that tracks ``file_path``, or None."""
+    # Imported here: `detection` loads rasterio, which `portolan check` must not load early.
     from portolan_cli.metadata.detection import versions_asset_lookup_keys
 
     relative = versions_asset_key(file_path, collection_dir)
@@ -300,11 +186,7 @@ def _tracked_asset_key(
 
 
 def _href_names(href: Any, file_path: Path) -> bool:
-    """Whether ``href`` already points at ``file_path``, whatever its spelling.
-
-    ``./data.tif`` and ``data.tif`` name the same file. Only a scheme-qualified
-    or absolute href names something else.
-    """
+    """Whether ``href`` already points at ``file_path``, whatever its spelling."""
     if not isinstance(href, str) or not href:
         return False
     resolved = (file_path.parent / href).resolve()
@@ -312,12 +194,7 @@ def _href_names(href: Any, file_path: Path) -> bool:
 
 
 def _find_data_asset_key(assets: dict[str, Any]) -> str:
-    """Return the key of the item's data asset, defaulting to ``"data"``.
-
-    Prefers an asset whose ``roles`` include ``"data"``, then a literal
-    ``"data"`` key, so the href/type refresh lands on the real data asset
-    without disturbing sibling assets (thumbnail, metadata, ...).
-    """
+    """Return the key of the item's data asset, defaulting to ``"data"``."""
     for key, asset in assets.items():
         roles = asset.get("roles") if isinstance(asset, dict) else None
         if isinstance(roles, list) and "data" in roles:
@@ -328,27 +205,7 @@ def _find_data_asset_key(assets: dict[str, Any]) -> str:
 def prepare_missing_item(
     file_path: Path, collection_path: Path, *, state: RunState | None = None
 ) -> tuple[Path, PreparedItem]:
-    """Prepare a new STAC item for a file without metadata, as ``add`` does.
-
-    The item comes from ``preparation.prepare_item``, the code ``add`` uses. The
-    caller passes every prepared item of the run to ``finalize_items`` once, so
-    a recreated item is byte-identical to the one ``add`` wrote: the same id,
-    assets, hrefs, links, link titles, and version snapshot (issue #1046). A
-    file directly in the collection directory keeps its stem as the item id, so
-    ``check --fix`` still writes ``{item_dir}/{stem}.json`` for it.
-
-    Args:
-        file_path: Path to the data file (GeoParquet or COG).
-        collection_path: Path to the parent collection directory.
-        state: The caller's run state, shared by every missing item.
-
-    Returns:
-        The catalog root and the prepared item, ready for ``finalize_items``.
-
-    Raises:
-        FileNotFoundError: If file_path doesn't exist, collection.json is not
-            found, or ``add`` writes no item for the file.
-    """
+    """Prepare a new STAC item for a file without metadata, as ``add`` does."""
     from portolan_cli.catalog import find_catalog_root
     from portolan_cli.preparation import prepare_item
 
@@ -377,21 +234,7 @@ def prepare_missing_item(
 def update_versions_tracking(
     file_path: Path, versions_path: Path, *, state: RunState | None = None
 ) -> None:
-    """Refresh the file's checksum, size, and mtimes together in versions.json.
-
-    Reads versions.json, finds the asset entry for the file,
-    refreshes its content record to match the current file,
-    and writes the updated versions.json.
-
-    Args:
-        file_path: Path to the data file.
-        versions_path: Path to the versions.json file.
-        state: The run state, which shares the checksum with other readers.
-
-    Raises:
-        FileNotFoundError: If file_path or versions_path doesn't exist.
-        KeyError: If asset not found in versions.json.
-    """
+    """Refresh the file's checksum, size, and mtimes together in versions.json."""
     # Validate file exists
     if not file_path.exists():
         raise FileNotFoundError(f"Data file not found: {file_path}")
@@ -409,10 +252,7 @@ def update_versions_tracking(
 
     current_version = versions_file.versions[-1]
 
-    # Find the asset. `add` keys an item-level asset `{item_id}/{filename}`, so
-    # the bare file name misses it, raises KeyError, and leaves the baseline
-    # unwritten. `_fix_single_file` discarded that error, so the item stayed
-    # STALE run after run (#709).
+    # `add` keys an item-level asset `{item_id}/{filename}`, not the bare file name.
     collection_dir = versions_path.parent
     asset_name = _tracked_asset_key(current_version.assets, file_path, collection_dir)
     if asset_name is None:
@@ -426,11 +266,7 @@ def update_versions_tracking(
     current_stat = file_path.stat()
     current_mtime = current_stat.st_mtime
 
-    # Refresh both mtime fields to the current file so the entry stays
-    # internally consistent — carrying the current `source_mtime` next to a
-    # stale `mtime` would leave the two fields describing different on-disk
-    # states. Preserve the freshness heuristics (feature_count,
-    # schema_fingerprint) so refreshing mtime does not wipe them (#512).
+    # Refresh both mtime fields together and keep feature_count and schema_fingerprint.
     old_asset = current_version.assets[asset_name]
     updated_asset = replace(
         old_asset,

@@ -1,21 +1,4 @@
-"""Iceberg backend: lakehouse-grade versioning for Portolan catalogs.
-
-This subpackage provides enterprise-tier versioning for geospatial catalogs using
-Apache Iceberg for vector/tabular data (GeoParquet format).
-
-It integrates with portolan-cli as a built-in plugin (#947), providing:
-- ACID transactions for concurrent writes
-- Version rollback and snapshot pruning
-- Automated schema evolution detection
-
-Install with: pip install portolan-cli[iceberg]
-
-``hooks`` registers the backend and ``cli`` holds ``version rollback`` and
-``version prune``. Both load without pyiceberg, so the package root imports
-nothing heavy. ``IcebergBackend`` loads on first access and needs the extra.
-
-Future: Icechunk support for array/raster data (COG, NetCDF, Zarr) is planned.
-"""
+"""Iceberg backend: lakehouse-grade versioning for Portolan catalogs."""
 
 from __future__ import annotations
 
