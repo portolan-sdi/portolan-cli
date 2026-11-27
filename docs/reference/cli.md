@@ -712,7 +712,7 @@ Examples:
     portolan extract carto URL --tables "vacant_*"
 
     # Incremental refresh via a WHERE clause
-    portolan extract carto URL --tables my_table --where "updated_at > '2026-01-01'"
+    portolan extract carto URL --tables my_table --where "cartodb_id > 5000"
 
     # Dry run to see available tables
     portolan extract carto URL --dry-run

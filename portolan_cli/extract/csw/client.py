@@ -1,12 +1,4 @@
-"""CSW metadata client.
-
-This module provides functions for fetching ISO 19139 metadata from
-various sources (CSW GetRecordById, static XML files, etc.) and
-parsing them into ISOMetadata objects.
-
-The main entry point is fetch_metadata_for_layer() which handles
-the metadataUrls list from OWSLib layer objects.
-"""
+"""CSW metadata client."""
 
 from __future__ import annotations
 
@@ -28,15 +20,7 @@ def fetch_metadata_record(
     url: str,
     timeout: float = DEFAULT_TIMEOUT,
 ) -> ISOMetadata | None:
-    """Fetch and parse ISO 19139 metadata from a URL.
-
-    Args:
-        url: URL to fetch (CSW GetRecordById or static XML).
-        timeout: Request timeout in seconds.
-
-    Returns:
-        Parsed ISOMetadata, or None if fetch/parse fails.
-    """
+    """Fetch and parse ISO 19139 metadata from a URL."""
     from portolan_cli.extract.csw.iso_parser import ISOParseError, parse_iso19139
 
     try:
@@ -55,14 +39,7 @@ def fetch_metadata_record(
 
 
 def detect_metadata_url_type(url: str) -> str:
-    """Detect the type of metadata URL.
-
-    Args:
-        url: Metadata URL to analyze.
-
-    Returns:
-        One of: "csw", "xml", "html", "geonetwork_api", "unknown"
-    """
+    """Detect the type of metadata URL."""
     url_lower = url.lower()
 
     # CSW GetRecordById
@@ -85,14 +62,7 @@ def detect_metadata_url_type(url: str) -> str:
 
 
 def is_metadata_url_supported(url: str) -> bool:
-    """Check if a metadata URL type is supported for fetching.
-
-    Args:
-        url: Metadata URL to check.
-
-    Returns:
-        True if we can fetch and parse this URL type.
-    """
+    """Check if a metadata URL type is supported for fetching."""
     url_type = detect_metadata_url_type(url)
     return url_type in ("csw", "xml")
 
@@ -101,18 +71,7 @@ def fetch_metadata_for_layer(
     metadata_urls: list[dict[str, Any]] | None,
     timeout: float = DEFAULT_TIMEOUT,
 ) -> ISOMetadata | None:
-    """Fetch metadata from a layer's metadataUrls list.
-
-    Tries each supported URL in order until one succeeds.
-
-    Args:
-        metadata_urls: List of metadata URL dicts from OWSLib layer.
-            Each dict should have a "url" key.
-        timeout: Request timeout in seconds.
-
-    Returns:
-        Parsed ISOMetadata from first successful fetch, or None.
-    """
+    """Fetch metadata from a layer's metadataUrls list."""
     if not metadata_urls:
         return None
 

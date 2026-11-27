@@ -1,16 +1,4 @@
-"""Check command logic for validating and fixing geospatial files.
-
-This module provides the check command functionality:
-- Identifying files that need conversion to cloud-native formats
-- Converting files with --fix flag
-- Dry-run mode for previewing changes
-- Removing legacy files after successful conversion (--remove-legacy)
-
-This module contains the logic; CLI commands are thin wrappers.
-
-See Also:
-    - GitHub Issue #209: Add --remove-legacy flag to check --fix
-"""
+"""Check command logic for validating and fixing geospatial files."""
 
 from __future__ import annotations
 
@@ -50,15 +38,7 @@ CHECK_EXTENSIONS: frozenset[str] = GEOSPATIAL_EXTENSIONS | frozenset({PARQUET_EX
 
 @dataclass
 class FileStatus:
-    """Status of a single file for check command.
-
-    Attributes:
-        path: Absolute path to the file.
-        relative_path: Path relative to the check root.
-        status: Cloud-native status (CLOUD_NATIVE, CONVERTIBLE, UNSUPPORTED).
-        display_name: Human-readable format name.
-        target_format: Target format if convertible, else None.
-    """
+    """Status of a single file for check command."""
 
     path: Path
     relative_path: str
@@ -69,15 +49,7 @@ class FileStatus:
 
 @dataclass
 class LegacyRemovalReport:
-    """Report from removing legacy files after conversion.
-
-    Attributes:
-        removed: List of paths that were successfully removed.
-        errors: Dict mapping paths to error messages for failed removals.
-
-    See Also:
-        GitHub Issue #209: Add --remove-legacy flag to check --fix
-    """
+    """Report from removing legacy files after conversion."""
 
     removed: list[Path] = field(default_factory=list)
     errors: dict[Path, str] = field(default_factory=dict)
@@ -106,14 +78,7 @@ class LegacyRemovalReport:
 
 @dataclass
 class CheckReport:
-    """Report from checking a directory for cloud-native status.
-
-    Attributes:
-        root: Directory that was checked.
-        files: List of FileStatus for each file found.
-        conversion_report: Results from --fix conversion (None if not run).
-        legacy_removal_report: Results from --remove-legacy (None if not run).
-    """
+    """Report from checking a directory for cloud-native status."""
 
     root: Path
     files: list[FileStatus]
@@ -168,31 +133,11 @@ class CheckReport:
         return result
 
 
-# =============================================================================
-# Legacy File Removal Functions (Issue #209)
-# =============================================================================
+# Legacy File Removal Functions
 
 
 def get_legacy_files_to_remove(report: ConversionReport) -> list[Path]:
-    """Identify legacy source files that can be safely removed after conversion.
-
-    Only returns source files from successful conversions where the output
-    file exists. This ensures we never delete source files unless the
-    conversion actually produced a valid output.
-
-    Args:
-        report: ConversionReport from a completed conversion run.
-
-    Returns:
-        List of source file paths that can be safely removed.
-
-    Note:
-        This function does NOT return sidecar files - those are handled by
-        remove_legacy_files() which uses get_sidecars() for each source.
-
-    See Also:
-        GitHub Issue #209: Add --remove-legacy flag to check --fix
-    """
+    """Identify legacy source files that can be safely removed after conversion."""
     files_to_remove: list[Path] = []
 
     for result in report.results:
@@ -211,16 +156,7 @@ def get_legacy_files_to_remove(report: ConversionReport) -> list[Path]:
 
 
 def get_sidecars_for_file(path: Path) -> list[Path]:
-    """Get sidecar files for a given primary file.
-
-    Uses SIDECAR_PATTERNS to find associated files (e.g., .dbf/.shx for shapefiles).
-
-    Args:
-        path: Path to the primary file.
-
-    Returns:
-        List of existing sidecar file paths.
-    """
+    """Get sidecar files for a given primary file."""
     suffix_lower = path.suffix.lower()
     patterns = SIDECAR_PATTERNS.get(suffix_lower, [])
 
@@ -237,28 +173,7 @@ def get_sidecars_for_file(path: Path) -> list[Path]:
 
 
 def remove_legacy_files(files: list[Path]) -> tuple[list[Path], dict[Path, str]]:
-    """Remove legacy source files and their sidecars.
-
-    Handles:
-    - Single files (GeoJSON, etc.)
-    - Shapefiles with sidecars (.dbf, .shx, .prj, .cpg, etc.)
-    - FileGDB directories (.gdb)
-
-    Args:
-        files: List of primary file paths to remove.
-
-    Returns:
-        Tuple of:
-        - List of successfully removed primary files
-        - Dict mapping failed paths to error messages
-
-    Note:
-        This function is idempotent - missing files are silently skipped.
-        Sidecar removal failures are logged but don't prevent primary removal.
-
-    See Also:
-        GitHub Issue #209: Add --remove-legacy flag to check --fix
-    """
+    """Remove legacy source files and their sidecars."""
     removed: list[Path] = []
     errors: dict[Path, str] = {}
 
@@ -316,48 +231,7 @@ def check_directory(
     catalog_path: Path | None = None,
     state: RunState | None = None,
 ) -> CheckReport:
-    """Check a directory for cloud-native status and optionally fix.
-
-    Scans the directory for geospatial files and reports their cloud-native
-    status. With --fix, converts CONVERTIBLE files to cloud-native formats.
-
-    Respects conversion config from .portolan/config.yaml if catalog_path is
-    provided. This allows:
-    - Force-converting cloud-native formats (e.g., FlatGeobuf -> GeoParquet)
-    - Preserving convertible formats (e.g., keeping Shapefiles as-is)
-    - Path-based overrides (e.g., preserving everything in archive/)
-
-    Args:
-        path: Directory to check.
-        fix: If True, convert convertible files to cloud-native formats.
-        dry_run: If True, preview what would be converted without changes.
-        remove_legacy: If True, delete source files after successful conversion.
-            Requires fix=True. Handles sidecars (.dbf, .shx, etc.) and
-            FileGDB directories (.gdb). Only removes files converted in THIS run.
-        force: If True, also re-optimize every already-cloud-native RASTER (valid
-            COG) by re-applying current COG settings. Requires fix=True.
-        reoptimize: Cloud-native files to rewrite with the current settings,
-            whatever ``force`` says. ``check --fix`` passes the files a finding names.
-        workers: Parallel worker processes for conversion. None/1 runs serially;
-            >1 uses a process pool. Threaded to convert_directory.
-        on_progress: Optional callback for conversion progress (--fix mode).
-        catalog_path: Optional catalog root for loading conversion config.
-            If provided, loads conversion overrides from .portolan/config.yaml.
-        state: The run state, which parses the config once per command.
-
-    Returns:
-        CheckReport with file statuses, conversion results, and removal results.
-
-    Raises:
-        FileNotFoundError: If the directory does not exist.
-        NotADirectoryError: If the path is not a directory.
-        ValueError: If remove_legacy=True but fix=False.
-
-    See Also:
-        - GitHub Issue #75: FlatGeobuf cloud-native status
-        - GitHub Issue #103: Config for non-cloud-native file handling
-        - GitHub Issue #209: Add --remove-legacy flag to check --fix
-    """
+    """Check a directory for cloud-native status and optionally fix."""
     # Validate parameter combinations
     if remove_legacy and not fix:
         raise ValueError("remove_legacy requires fix=True")
@@ -534,17 +408,10 @@ def _build_preview_results(
 
 
 def _scan_for_files(path: Path) -> list[Path]:
-    """Scan directory for geospatial files.
-
-    Args:
-        path: Directory to scan.
-
-    Returns:
-        List of paths to geospatial files, sorted.
-    """
+    """Scan directory for geospatial files."""
     from portolan_cli.plugins.formats import plugin_extensions
 
-    # A plugin format handler adds its extensions (#947).
+    # A plugin format handler adds its extensions.
     extensions = CHECK_EXTENSIONS | plugin_extensions()
     files: list[Path] = []
     for item in path.rglob("*"):
@@ -561,11 +428,7 @@ def _scan_for_files(path: Path) -> list[Path]:
 
 
 def _get_relative_path(file_path: Path, root: Path) -> str:
-    """Get path relative to root as forward-slash string.
-
-    Returns paths with forward slashes regardless of OS for STAC compatibility.
-    STAC uses URL-style paths which always use forward slashes.
-    """
+    """Get path relative to root as forward-slash string."""
     try:
         return file_path.relative_to(root).as_posix()
     except ValueError:
@@ -576,13 +439,7 @@ def _get_relative_path(file_path: Path, root: Path) -> str:
 
 
 def resolve_catalog_root_for_check(path: Path) -> Path | None:
-    """Walk up from ``path`` to find the directory containing ``catalog.json``.
-
-    The metadata scanner only needs ``catalog.json`` to function, so this
-    deliberately does not require the ``.portolan/config.yaml`` sentinel that
-    ``find_catalog_root`` insists on. Returns None if no ``catalog.json`` is
-    found within the search depth.
-    """
+    """Walk up from ``path`` to find the directory containing ``catalog.json``."""
     from portolan_core.constants import MAX_CATALOG_SEARCH_DEPTH
 
     candidate = path.resolve() if path.exists() else path
@@ -597,16 +454,7 @@ def resolve_catalog_root_for_check(path: Path) -> Path | None:
 
 @dataclass
 class FixWorkflowOutcome:
-    """Result of running the ``check --fix`` workflow.
-
-    Attributes:
-        metadata_fix_report: Metadata fix results (None when metadata not in scope
-            or skipped because no catalog root was found in mixed mode).
-        format_fix_report: Geo-asset conversion results (None when not in scope).
-        has_failures: True if any metadata fix failed.
-        fatal_error: Non-catalog message when a metadata-only fix found no
-            ``catalog.json``; the caller surfaces it and exits non-zero.
-    """
+    """Result of running the ``check --fix`` workflow."""
 
     metadata_fix_report: FixReport | None = None
     format_fix_report: Any = None
@@ -627,28 +475,7 @@ def run_fix_workflow(
     on_progress: Callable[[ConversionResult], None] | None = None,
     state: RunState | None = None,
 ) -> FixWorkflowOutcome:
-    """Run the metadata and/or geo-asset fix workflow and return the reports.
-
-    This owns the fix orchestration: resolving the catalog root,
-    scanning metadata, applying fixes plus the title/tabular/PMTiles repairs, and
-    converting geo-assets. It performs no output rendering or process exit — the
-    caller renders the returned :class:`FixWorkflowOutcome` and decides exit codes.
-
-    Args:
-        path: Directory to check/fix.
-        run_metadata: Whether to fix metadata issues.
-        run_geo_assets: Whether to fix geo-asset format issues.
-        dry_run: Preview changes without applying them.
-        remove_legacy: Remove source files after successful conversion.
-        force: Re-optimize already-valid COGs (raster-scoped, issue #530).
-        reoptimize: Cloud-native files to rewrite. See :func:`check_directory`.
-        workers: Parallel worker processes for conversion.
-        on_progress: Optional per-conversion progress callback.
-        state: The run state of the command. The fix stages its versions in it.
-
-    Returns:
-        A :class:`FixWorkflowOutcome` with the fix reports and status flags.
-    """
+    """Run the metadata and/or geo-asset fix workflow and return the reports."""
     outcome = FixWorkflowOutcome()
 
     # Fix metadata if in scope
@@ -656,18 +483,12 @@ def run_fix_workflow(
         from portolan_cli.metadata import fix_metadata
         from portolan_cli.metadata.scan import scan_catalog_metadata
 
-        # Resolve to the catalog root before scanning. Without this the scanner
-        # returns an empty report whenever `path` points at a subdirectory below
-        # the root, causing --fix to silently no-op. The scanner's only
-        # structural requirement is catalog.json, so walk parents looking for it
-        # (tests and existing catalogs may not have a .portolan sentinel, so
-        # find_catalog_root is too strict here).
+        # Walk up to catalog.json, so a subdirectory path does not make --fix a no-op.
+        # find_catalog_root is too strict: a catalog may have no .portolan sentinel.
         catalog_root = resolve_catalog_root_for_check(path)
         if catalog_root is None:
-            # Metadata-only mode: user explicitly asked, fail loudly so the
-            # silent-no-op trap is closed. Mixed mode (--fix without flags):
-            # stay backwards-compatible — skip metadata so the geo-assets pass
-            # can still operate on the directory.
+            # Metadata-only mode fails loudly. Mixed mode skips metadata so the
+            # geo-assets pass can still run on the directory.
             if not run_geo_assets:
                 outcome.fatal_error = (
                     f"fatal: not a portolan catalog (or any parent of {path}): "
@@ -675,15 +496,8 @@ def run_fix_workflow(
                 )
                 return outcome
         else:
-            # Item freshness, plus the removed-field sweep. The title, schema-URI,
-            # README, AGENTS.md and PMTiles-link repairs that used to run here now
-            # belong to the fixer registry (portolan_cli.validation.fixers), which
-            # `check --fix` dispatches from the rashid findings that actually name
-            # each defect. Running them here as well would repeat every repair.
-            #
-            # These two stay because no rule reports them: a rule fires on a spec
-            # requirement an object fails, and neither a stale item nor a field the
-            # spec does not define is something a requirement can name (issue #654).
+            # No rule reports these two, so the registry never runs them: item
+            # freshness and the sweep of fields the spec does not define.
             from portolan_cli.metadata.fix import strip_removed_fields
 
             metadata_check_report = scan_catalog_metadata(catalog_root, state=state)

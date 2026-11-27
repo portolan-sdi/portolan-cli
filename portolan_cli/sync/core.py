@@ -1,16 +1,4 @@
-"""Sync module - orchestrates catalog synchronization with remote storage.
-
-The sync command sequences: Pull -> Init -> Scan -> Check -> Push.
-All primitives already exist - this module is orchestration glue.
-
-Workflow:
-1. Pull: Fetch remote state, detect conflicts
-2. Init: Initialize catalog if needed (idempotent for already-managed catalogs)
-3. Scan: Discover files in catalog
-4. Check: Validate cloud-native status, optionally convert with --fix
-5. Push: Upload changes to remote storage
-
-"""
+"""Sync module - orchestrates catalog synchronization with remote storage."""
 
 from __future__ import annotations
 
@@ -35,26 +23,12 @@ if TYPE_CHECKING:
 
     from portolan_cli.extract.common.progress import MessageCallback
 
-# =============================================================================
 # Data Classes
-# =============================================================================
 
 
 @dataclass
 class SyncResult:
-    """Result of a sync operation.
-
-    Aggregates results from all sync steps: pull, init, scan, check, push.
-
-    Attributes:
-        success: True if sync completed without errors.
-        pull_result: Result from the pull step, or None if not executed.
-        init_performed: True if init was called (False if already managed).
-        scan_result: Result from the scan step, or None if not executed.
-        check_result: Result from the check step, or None if not executed.
-        push_result: Result from the push step, or None if not executed.
-        errors: List of error messages from any step.
-    """
+    """Result of a sync operation."""
 
     success: bool
     pull_result: PullResult | None
@@ -84,9 +58,7 @@ class SyncResult:
         return data
 
 
-# =============================================================================
 # Sync Step Helpers
-# =============================================================================
 
 
 def _step_pull(
@@ -151,7 +123,7 @@ def _step_init(
         report("info", "Initializing catalog...")
         try:
             # No license here: sync wraps a directory whose collections already
-            # exist, and it never writes a collection.json of its own (issue #686).
+            # exist, and it never writes a collection.json of its own.
             init_catalog(catalog_root, license_id=None)
             report("success", "Initialized catalog")
             return True, None
@@ -278,9 +250,8 @@ def _step_push(  # noqa: PLR0917 - each push option is an argument
                 f"{push_result.files_uploaded} file(s)",
             )
         elif not dry_run and push_result.files_uploaded == 0:
-            # Only show "Nothing to push" in non-dry-run mode
-            # In dry-run mode, push() already printed the appropriate message
-            # A metadata-only sync already reported its file count (#816).
+            # In dry-run mode, push() already printed its message. A metadata-only
+            # sync already reported its file count.
             report("info", "Nothing to push - local and remote are in sync")
 
         return push_result, None
@@ -291,9 +262,7 @@ def _step_push(  # noqa: PLR0917 - each push option is an argument
         return None, f"Push failed: {e}"
 
 
-# =============================================================================
 # Main Sync Function
-# =============================================================================
 
 
 def sync(
@@ -309,32 +278,7 @@ def sync(
     report: Report = silent,
     show_progress: bool = False,
 ) -> SyncResult:
-    """Sync local catalog with remote storage.
-
-    Orchestrates the full sync workflow:
-    1. Pull: Fetch remote state, detect conflicts
-    2. Init: Initialize catalog if needed (skipped if already managed)
-    3. Scan: Discover files in catalog
-    4. Check: Validate cloud-native status (with --fix: convert non-cloud-native)
-    5. Push: Upload changes to remote storage
-
-    Args:
-        catalog_root: Path to catalog root directory.
-        collection: Collection identifier to sync.
-        destination: Object store URL (e.g., s3://bucket/prefix).
-        force: If True, overwrite conflicts (passes to pull and push).
-        dry_run: If True, show what would happen without making changes.
-        fix: If True, convert non-cloud-native formats during check.
-        profile: AWS profile name (for S3 destinations).
-        region: AWS region (for S3 destinations). Overrides profile/env config.
-        report: Receives each progress line of the five steps.
-        show_progress: If True, the pull and push steps draw a progress bar on a
-            terminal. The library draws the bar only when the caller asks.
-            Moving the renderer to the CLI is a follow-up.
-
-    Returns:
-        SyncResult with aggregated results from all steps.
-    """
+    """Sync local catalog with remote storage."""
     # Validate catalog root exists
     if not catalog_root.exists():
         error_msg = f"Catalog root not found: {catalog_root}"

@@ -1,10 +1,4 @@
-"""The ``portolan extract arcgis`` command, part of the CLI layer.
-
-The command parses the options, resolves the token, and asks its questions.
-``orchestrator.run_extract_arcgis`` then lists services, harvests FeatureServer
-and MapServer layers, or harvests ImageServer rasters. This module prints the
-result.
-"""
+"""The ``portolan extract arcgis`` command, part of the CLI layer."""
 
 from __future__ import annotations
 
@@ -200,9 +194,7 @@ def _handle_imageserver_extraction(
             ),
         )
     except Exception as e:
-        # The license resolves before any download, so the failure costs one
-        # command re-run. The user needs the flags that fix it, which the
-        # FeatureServer path also prints (pull request #871 review).
+        # The license resolves before any download. Print the flags that fix it.
         error(f"ImageServer extraction failed: {redact_credentials(str(e))}")
         if isinstance(e, MissingLicenseError) and not json_output:
             info(CLI_LICENSE_REMEDIATION)
@@ -232,13 +224,7 @@ def _resolve_arcgis_token(
     auto: bool,
     use_json: bool,
 ) -> str | None:
-    """Resolve an ArcGIS token from flags, env, or username/password.
-
-    Precedence: explicit token > ARCGIS_TOKEN > username/password (minted).
-    The password is never required on argv (it leaks via shell history and
-    process listings): it comes from ARCGIS_PASSWORD, or an interactive prompt.
-    Outputs an error envelope and raises SystemExit on auth failure.
-    """
+    """Resolve an ArcGIS token from flags, env, or username/password."""
     from portolan_cli.extract.arcgis.auth import ArcGISCredentials, resolve_token
 
     resolved_token = token or os.environ.get("ARCGIS_TOKEN")
@@ -574,8 +560,8 @@ def extract_arcgis_cmd(
     # Handle ImageServer URLs (raster extraction)
     if parsed.url_type == ArcGISURLType.IMAGE_SERVER:
         if resolved_token is not None:
-            # Raster extraction does not thread the token yet (issue #311); reject
-            # rather than silently running unauthenticated against a secured service.
+            # Raster extraction does not pass the token yet. Reject rather than
+            # run unauthenticated against a secured service.
             cli_helpers.output_extract_error(
                 use_json,
                 "ArcGISAuthError",

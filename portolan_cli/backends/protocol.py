@@ -1,29 +1,4 @@
-"""VersioningBackend protocol for pluggable version storage.
-
-This module defines the VersioningBackend Protocol. A backend can come from
-portolan-cli itself ("file", "iceberg") or from a plugin package.
-
-Thread Safety:
-    The MVP assumes single-writer access. Backends do NOT provide thread-safety
-    guarantees. For concurrent multi-user access, use the IcebergBackend from
-    the [iceberg] extra, which provides ACID transactions.
-
-Example usage for plugin authors (#947):
-    # In example/pyproject.toml:
-    [project.entry-points."portolan"]
-    example = "portolan_example.hooks"
-
-    # In portolan_example/hooks.py:
-    from portolan_cli.hookspecs import hookimpl
-
-    @hookimpl
-    def portolan_backends():
-        from portolan_example.backend import ExampleBackend
-
-        return {"example": ExampleBackend}
-
-    # ExampleBackend(catalog_root=...) implements every protocol method.
-"""
+"""VersioningBackend protocol for pluggable version storage."""
 
 from __future__ import annotations
 
@@ -80,15 +55,7 @@ class PostAddItemContext(TypedDict):
 
 
 class PostAddContext(TypedDict):
-    """Context passed to :meth:`VersioningBackend.on_post_add`.
-
-    After add() completes local processing, portolan-cli calls the active
-    backend's ``on_post_add`` with this context.
-
-    Note:
-        The ``collection`` field is typed as Any to avoid a hard dependency on pystac.
-        At runtime, this will be a pystac.Collection instance.
-    """
+    """Context passed to :meth:`VersioningBackend.on_post_add`."""
 
     catalog_root: Path
     collection_id: str
@@ -102,11 +69,7 @@ class PostAddContext(TypedDict):
 
 
 class PullOutcome(Protocol):
-    """What a backend pull reports. ``portolan_cli.api.PullResult`` has this shape.
-
-    The protocol names the fields, not the class, so this module imports
-    nothing from the sync layer.
-    """
+    """What a backend pull reports. ``portolan_cli.api.PullResult`` has this shape."""
 
     success: bool
     files_downloaded: int
@@ -118,27 +81,7 @@ class PullOutcome(Protocol):
 
 @runtime_checkable
 class VersioningBackend(Protocol):
-    """Protocol for version storage and management backends.
-
-    This protocol defines the interface that all versioning backends must implement.
-    The MVP uses JsonFileBackend (versions.json), while enterprise deployments can
-    use IcebergBackend via the portolake plugin for ACID transactions.
-
-    All methods take a `collection` parameter identifying which collection
-    to operate on. The collection path is relative to the catalog root.
-
-    Thread Safety:
-        This protocol assumes single-writer access. Implementations are NOT required
-        to be thread-safe. Use drift checking to detect concurrent modifications.
-        For true concurrent access, use a backend with distributed locking (e.g.,
-        IcebergBackend via portolake).
-
-    Lifecycle hooks:
-        ``on_post_add``, ``pull``, ``supports_push`` and ``push_blocked_message``
-        are protocol methods, so mypy checks every call against them (#977).
-        ``JsonFileBackend`` shows the neutral behavior: no post-add work, no
-        backend pull, and push allowed.
-    """
+    """Protocol for version storage and management backends."""
 
     def get_current_version(self, collection: str) -> Version:
         """Get the current (latest) version of a collection.
@@ -194,9 +137,6 @@ class VersioningBackend(Protocol):
     def rollback(self, collection: str, target_version: str) -> Version:
         """Rollback to a previous version.
 
-        This creates a NEW version with the contents of the target version,
-        preserving full history. It does not delete intermediate versions.
-
         Args:
             collection: Collection identifier/path.
             target_version: Semantic version string to roll back to.
@@ -225,10 +165,6 @@ class VersioningBackend(Protocol):
     def check_drift(self, collection: str) -> DriftReport:
         """Check for drift between local and remote state.
 
-        Detects if another process has modified the remote versions.json
-        without going through this backend. Used to catch accidental
-        concurrent access in the MVP single-writer model.
-
         Args:
             collection: Collection identifier/path.
 
@@ -239,9 +175,6 @@ class VersioningBackend(Protocol):
 
     def on_post_add(self, context: PostAddContext) -> None:
         """Run backend work after ``add`` published a version of a collection.
-
-        A failure is logged and does not fail the add, because the version is
-        already published.
 
         Args:
             context: The collection and the items the add wrote.
@@ -257,9 +190,6 @@ class VersioningBackend(Protocol):
         dry_run: bool = False,
     ) -> PullOutcome | None:
         """Pull one collection through the backend.
-
-        ``portolan pull`` without ``--collection`` calls this once per
-        collection of the catalog.
 
         Args:
             remote_url: The remote catalog URL.

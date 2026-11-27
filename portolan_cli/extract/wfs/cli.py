@@ -1,8 +1,4 @@
-"""The ``portolan extract wfs`` command, part of the CLI layer.
-
-The command parses the options, and ``orchestrator.extract_wfs_catalog``
-harvests the layers of an OGC Web Feature Service.
-"""
+"""The ``portolan extract wfs`` command, part of the CLI layer."""
 
 from __future__ import annotations
 

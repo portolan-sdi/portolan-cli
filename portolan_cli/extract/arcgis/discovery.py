@@ -1,24 +1,4 @@
-"""ArcGIS service and layer discovery.
-
-This module fetches service and layer information from ArcGIS REST API
-endpoints. It's the first step in the extraction flow, providing the
-list of available layers that can then be filtered and extracted.
-
-The discovery client uses httpx for HTTP requests, while actual data
-extraction is delegated to geoparquet-io (gpio).
-
-Every request goes through one ``ArcGISClient``. It carries the token
-(issue #855) and the retry policy (issue #811), so discovery and extraction
-use the same options. A transient failure is retried with ``retry_with_backoff``. A
-permanent failure, such as HTTP 404 or ``499 Token Required``, fails at once.
-``extract/common/retry.py`` holds the one rule for both kinds.
-
-Typical usage:
-    client = ArcGISClient(timeout=60.0, token=token, retries=3)
-    service_info = discover_layers("https://services.arcgis.com/.../FeatureServer", client)
-    for layer in service_info.layers:
-        print(f"Layer {layer.id}: {layer.name}")
-"""
+"""ArcGIS service and layer discovery."""
 
 from __future__ import annotations
 
@@ -48,12 +28,7 @@ class ArcGISTransientError(ArcGISDiscoveryError):
 
 
 class _EmptyListingError(ArcGISTransientError):
-    """A service answer that lists no layers and no tables.
-
-    ArcGIS Online sometimes answers a healthy service with ``"layers": []``.
-    The live suite saw it for 21 of 40 requests in a row to one service. The
-    client asks again, and keeps the last answer when every answer is empty.
-    """
+    """A service answer that lists no layers and no tables."""
 
     def __init__(self, url: str, data: dict[str, Any]) -> None:
         super().__init__(f"{url} lists no layers and no tables")
@@ -65,13 +40,7 @@ NO_QUERY_SKIP_REASON = "skipped: no Query capability (tiles-only)"
 
 @dataclass(frozen=True)
 class LayerInfo:
-    """Information about a single layer in an ArcGIS service.
-
-    Attributes:
-        id: Numeric layer ID (used in API calls)
-        name: Human-readable layer name
-        layer_type: Type string (e.g., "Feature Layer", "Table")
-    """
+    """Information about a single layer in an ArcGIS service."""
 
     id: int
     name: str
@@ -80,25 +49,13 @@ class LayerInfo:
 
 @dataclass(frozen=True)
 class ServiceInfo:
-    """Information about an ArcGIS service.
-
-    Attributes:
-        name: Service name (used in URL construction)
-        service_type: Type string (e.g., "FeatureServer", "MapServer")
-    """
+    """Information about an ArcGIS service."""
 
     name: str
     service_type: str
 
     def get_url(self, base_url: str) -> str:
-        """Generate the full service URL from a base services URL.
-
-        Args:
-            base_url: The services root URL (e.g., ".../rest/services")
-
-        Returns:
-            Full service URL (e.g., ".../rest/services/Census_2020/FeatureServer")
-        """
+        """Generate the full service URL from a base services URL."""
         # Remove trailing slash if present
         base = base_url.rstrip("/")
         return f"{base}/{self.name}/{self.service_type}"
@@ -106,11 +63,7 @@ class ServiceInfo:
 
 @dataclass
 class ServiceDiscoveryResult:
-    """Result of discovering layers from a service.
-
-    Contains both the list of layers and service-level metadata
-    that can be used for catalog generation.
-    """
+    """Result of discovering layers from a service."""
 
     layers: list[LayerInfo]
     service_description: str | None = None
@@ -133,15 +86,7 @@ def ensure_json_format(url: str) -> str:
 
 @dataclass(frozen=True)
 class ArcGISClient:
-    """The one HTTP client for ArcGIS discovery.
-
-    Attributes:
-        timeout: Request timeout in seconds.
-        token: ArcGIS token, sent as ``token=<token>`` on every request.
-        retries: Attempts per request. Only a transient failure is retried.
-        retry_delay: Seconds before the first retry. Later retries double it.
-        transport: An httpx transport. Tests pass a mock transport here.
-    """
+    """The one HTTP client for ArcGIS discovery."""
 
     timeout: float = 60.0
     # repr=False: a client repr reaches tracebacks and logs.
@@ -151,17 +96,7 @@ class ArcGISClient:
     transport: httpx.BaseTransport | None = None
 
     def get_json(self, url: str, *, listing: bool = False) -> dict[str, Any]:
-        """Fetch ``url`` as JSON, with ``f=json`` and the token, and retry transient failures.
-
-        Args:
-            url: The REST URL.
-            listing: The URL is a service. An answer with no layers and no
-                tables is asked again, and the last answer is returned.
-
-        Raises:
-            ArcGISDiscoveryError: On a permanent failure, or on a transient
-                failure that every attempt hit.
-        """
+        """Fetch ``url`` as JSON, with ``f=json`` and the token, and retry transient failures."""
         from portolan_cli.extract.common.retry import RetryConfig, retry_with_backoff
 
         outcome = retry_with_backoff(
@@ -225,30 +160,14 @@ class ArcGISClient:
 
 
 def _supports_query(capabilities: Any) -> bool:
-    """Return False only when the service advertises capabilities without Query.
-
-    A missing or empty capabilities value is treated as supported, because older
-    servers do not report it.
-    """
+    """Return False only when the service advertises capabilities without Query."""
     if not isinstance(capabilities, str) or not capabilities.strip():
         return True
     return "query" in {c.strip().lower() for c in capabilities.split(",")}
 
 
 def discover_layers(url: str, client: ArcGISClient | None = None) -> ServiceDiscoveryResult:
-    """Discover layers, tables, and metadata from an ArcGIS FeatureServer or MapServer.
-
-    Args:
-        url: FeatureServer or MapServer URL.
-        client: The client with the token and the retry policy.
-
-    Returns:
-        The layers, the tables, and the service-level metadata. The caller
-        decides whether to extract the tables (issue #812).
-
-    Raises:
-        ArcGISDiscoveryError: If the request fails or response is invalid
-    """
+    """Discover layers, tables, and metadata from an ArcGIS FeatureServer or MapServer."""
     data = (client or ArcGISClient()).get_json(url, listing=True)
 
     def infos(key: str, default_type: str) -> list[LayerInfo]:
@@ -308,24 +227,7 @@ def discover_services(
     service_types: Sequence[str] | None = None,
     return_folders: bool = False,
 ) -> list[ServiceInfo] | tuple[list[ServiceInfo], list[str]]:
-    """Discover services from an ArcGIS REST services root.
-
-    Fetches the list of available services from a services root URL.
-    Optionally filters by service type and returns folder information.
-
-    Args:
-        url: Services root URL (e.g., ".../rest/services")
-        client: The client with the token and the retry policy.
-        service_types: If provided, only return services of these types
-            (e.g., ["FeatureServer", "MapServer"])
-        return_folders: If True, also return list of folder names
-
-    Returns:
-        List of ServiceInfo objects (or tuple with folders if return_folders=True)
-
-    Raises:
-        ArcGISDiscoveryError: If the request fails or response is invalid
-    """
+    """Discover services from an ArcGIS REST services root."""
     data = (client or ArcGISClient()).get_json(url)
 
     services = _build_service_list(data, service_types)
@@ -339,13 +241,7 @@ def discover_services(
 
 @dataclass(frozen=True)
 class FolderTraversal:
-    """Record of a recursive services-root traversal.
-
-    Attributes:
-        visited: Folder names successfully fetched.
-        skipped: (folder_name, reason) pairs for folders that errored.
-        service_count: Total services discovered (root plus all folders).
-    """
+    """Record of a recursive services-root traversal."""
 
     visited: list[str]
     skipped: list[tuple[str, str]]
@@ -372,19 +268,7 @@ def discover_services_recursive(
     service_types: Sequence[str] | None = None,
     max_depth: int = 2,
 ) -> tuple[list[ServiceInfo], FolderTraversal]:
-    """Discover services from a services root, recursing into folders.
-
-    ArcGIS returns service names already qualified by folder (e.g.
-    "NationalDatasets/Property"), so ServiceInfo.get_url(root) stays correct.
-    Folders that error (secured, non-200, embedded error) are recorded and
-    skipped, never raised. max_depth guards against pathological nesting;
-    standard ArcGIS folders are single-level. Defaults to 2 because standard
-    ArcGIS servers nest folders at most one level; the extra level guards against
-    non-standard but valid configurations.
-
-    Returns:
-        (services, traversal) where traversal records visited/skipped folders.
-    """
+    """Discover services from a services root, recursing into folders."""
     client = client or ArcGISClient()
     root_base = url.split("?", maxsplit=1)[0].rstrip("/")
     root_data = client.get_json(root_base)
@@ -419,21 +303,6 @@ def fetch_layer_details(
     layer_id: int,
     client: ArcGISClient | None = None,
 ) -> dict[str, Any]:
-    """Fetch detailed information for a specific layer.
-
-    Gets full layer metadata including fields, extent, and geometry type.
-    This is used to extract field aliases and other layer-specific metadata.
-
-    Args:
-        service_url: FeatureServer or MapServer URL
-        layer_id: Numeric layer ID
-        client: The client with the token and the retry policy.
-
-    Returns:
-        Raw layer info dictionary from ArcGIS API
-
-    Raises:
-        ArcGISDiscoveryError: If the request fails or response is invalid
-    """
+    """Fetch detailed information for a specific layer."""
     layer_url = f"{service_url.rstrip('/')}/{layer_id}"
     return (client or ArcGISClient()).get_json(layer_url)

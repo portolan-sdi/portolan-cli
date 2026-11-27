@@ -1,20 +1,4 @@
-"""Special format detection for portolan scan.
-
-This module detects special format structures:
-- FileGDB directories (.gdb) and archives (.gdb.zip)
-- Hive-partitioned collections (key=value/ directories)
-- Existing STAC catalogs (catalog.json, collection.json)
-- Dual-format data (same basename, different formats)
-
-Functions:
-    is_filegdb: Check if a path is a FileGDB directory.
-    is_filegdb_archive: Check if a path is a zipped FileGDB.
-    detect_filegdb: Detect FileGDB and return SpecialFormat.
-    is_hive_partition_dir: Check if directory name matches Hive pattern.
-    detect_hive_partitions: Detect Hive-partitioned collections.
-    detect_stac_catalogs: Detect existing STAC catalogs.
-    detect_dual_formats: Detect files with same basename, different formats.
-"""
+"""Special format detection for portolan scan."""
 
 from __future__ import annotations
 
@@ -78,24 +62,11 @@ class DualFormatPair:
         }
 
 
-# =============================================================================
 # FileGDB Detection
-# =============================================================================
 
 
 def is_filegdb(path: Path) -> bool:
-    """Check if a path is a FileGDB directory.
-
-    FileGDB is detected by:
-    1. Directory ending with .gdb
-    2. Contains internal .gdbtable files OR 'gdb' marker file
-
-    Args:
-        path: Path to check.
-
-    Returns:
-        True if path is a FileGDB directory.
-    """
+    """Check if a path is a FileGDB directory."""
     # Must be a directory
     if not path.is_dir():
         return False
@@ -121,14 +92,7 @@ def is_filegdb(path: Path) -> bool:
 
 
 def is_filegdb_archive(path: Path) -> bool:
-    """Check if a path is a zipped FileGDB archive.
-
-    Args:
-        path: Path to check.
-
-    Returns:
-        True if path ends with .gdb.zip.
-    """
+    """Check if a path is a zipped FileGDB archive."""
     # Must be a file, not directory
     if not path.is_file():
         return False
@@ -139,11 +103,7 @@ def is_filegdb_archive(path: Path) -> bool:
 
 
 def _get_relative_path(path: Path, root: Path) -> str:
-    """Get path relative to root as forward-slash string.
-
-    Returns paths with forward slashes regardless of OS for STAC compatibility.
-    STAC uses URL-style paths which always use forward slashes.
-    """
+    """Get path relative to root as forward-slash string."""
     try:
         return path.relative_to(root).as_posix()
     except ValueError:
@@ -151,21 +111,7 @@ def _get_relative_path(path: Path, root: Path) -> str:
 
 
 def detect_filegdb(path: Path, root: Path) -> SpecialFormat | None:
-    """Detect FileGDB and return SpecialFormat.
-
-    .. deprecated::
-        This function is deprecated since FileGDB directories are now added
-        directly to the ready list in scan.py using _gather_filegdb_metadata().
-        Kept for backwards compatibility with existing code that may use
-        special_formats for FileGDB detection.
-
-    Args:
-        path: Path to check.
-        root: Root directory for relative path calculation.
-
-    Returns:
-        SpecialFormat if FileGDB detected, None otherwise.
-    """
+    """Detect FileGDB and return SpecialFormat."""
     # Check for .gdb.zip archive first
     if is_filegdb_archive(path):
         return SpecialFormat(
@@ -207,20 +153,11 @@ def detect_filegdb(path: Path, root: Path) -> SpecialFormat | None:
     )
 
 
-# =============================================================================
 # Hive Partition Detection
-# =============================================================================
 
 
 def is_hive_partition_dir(name: str) -> tuple[str, str] | None:
-    """Check if directory name is a Hive partition.
-
-    Args:
-        name: Directory name to check.
-
-    Returns:
-        (key, value) tuple if matches Hive pattern, None otherwise.
-    """
+    """Check if directory name is a Hive partition."""
     match = HIVE_PARTITION_PATTERN.match(name)
     if match:
         key, value = match.groups()
@@ -231,17 +168,7 @@ def is_hive_partition_dir(name: str) -> tuple[str, str] | None:
 
 
 def detect_hive_partitions(root: Path) -> list[SpecialFormat]:
-    """Detect Hive-partitioned collections under root.
-
-    A Hive-partitioned collection is detected when there are directories
-    following the key=value pattern at any level.
-
-    Args:
-        root: Root directory to scan.
-
-    Returns:
-        List of SpecialFormat objects for each partitioned collection.
-    """
+    """Detect Hive-partitioned collections under root."""
     results: list[SpecialFormat] = []
     partition_roots: set[Path] = set()
 
@@ -277,24 +204,11 @@ def detect_hive_partitions(root: Path) -> list[SpecialFormat]:
     return results
 
 
-# =============================================================================
 # STAC Catalog Detection
-# =============================================================================
 
 
 def detect_stac_catalogs(root: Path) -> list[SpecialFormat]:
-    """Detect existing STAC catalogs and collections.
-
-    Looks for:
-    - catalog.json files (STAC catalog)
-    - collection.json files (STAC collection)
-
-    Args:
-        root: Root directory to scan.
-
-    Returns:
-        List of SpecialFormat objects for detected catalogs/collections.
-    """
+    """Detect existing STAC catalogs and collections."""
     results: list[SpecialFormat] = []
 
     for dirpath, _dirnames, filenames in os.walk(root):
@@ -325,23 +239,11 @@ def detect_stac_catalogs(root: Path) -> list[SpecialFormat]:
     return results
 
 
-# =============================================================================
 # Dual Format Detection
-# =============================================================================
 
 
 def detect_dual_formats(files: list[ScannedFile]) -> list[DualFormatPair]:
-    """Detect pairs of files representing the same data in different formats.
-
-    Only pairs within the same format type (vector/vector or raster/raster)
-    are flagged. Cross-type pairs (raster/vector) are intentional.
-
-    Args:
-        files: List of scanned geo-asset files.
-
-    Returns:
-        List of DualFormatPair objects.
-    """
+    """Detect pairs of files representing the same data in different formats."""
     # Group files by (directory, stem, format_type)
     groups: dict[tuple[Path, str, str], list[ScannedFile]] = defaultdict(list)
 

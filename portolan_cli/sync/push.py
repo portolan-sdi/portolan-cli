@@ -1,24 +1,4 @@
-"""Push module - sync local catalog changes to cloud object storage.
-
-This module provides the push functionality for Portolan catalogs:
-- Read local versions.json
-- Fetch remote versions.json (with etag for optimistic locking)
-- Diff: find local-only, remote-only, and common versions
-- Detect conflicts (remote-only versions indicate divergence)
-- Upload changed assets (manifest-last: assets first, then versions.json)
-- Use etag-based optimistic locking for atomic updates
-
-Design Principles:
-- Manifest-last atomicity: Upload assets first, then versions.json last
-- Optimistic locking: Use etag to detect concurrent modifications
-- Explicit conflict handling: Fail on conflicts unless --force
-
-Output:
-- Push prints nothing (#1005). Each function that sends a message takes a
-  ``report`` callback (``portolan_cli.sync.report``). Without one, the
-  messages go to the log. ``run_push`` is the entry point of the ``push``
-  command, and it returns a result with ``to_dict()``.
-"""
+"""Push module - sync local catalog changes to cloud object storage."""
 
 from __future__ import annotations
 
@@ -83,45 +63,23 @@ __all__ = [
 
 
 def get_default_workers() -> int:
-    """Get default number of workers for parallel operations.
-
-    This is a backward-compatible wrapper around get_default_concurrency().
-    New code should use get_default_concurrency() from async_utils instead.
-
-    Returns:
-        Default number of workers (same as concurrency default).
-    """
+    """Get default number of workers for parallel operations."""
     return get_default_concurrency()
 
 
-# =============================================================================
 # Exceptions
-# =============================================================================
 
 
 class PushConflictError(Exception):
-    """Raised when push detects conflict with remote state.
-
-    This occurs when:
-    - Remote has versions not present locally (remote diverged)
-    - Remote versions.json changed during push (etag mismatch)
-    """
+    """Raised when push detects conflict with remote state."""
 
 
-# =============================================================================
 # Data Classes
-# =============================================================================
 
 
 @dataclass
 class VerifyReport:
-    """Counts from ``push --verify`` (Issue #966).
-
-    Attributes:
-        checked: Number of skipped assets that got a HEAD request.
-        mismatched: Number of those objects that were missing or had another
-            size, whether or not their repair completed.
-    """
+    """Counts from ``push --verify``."""
 
     checked: int = 0
     mismatched: int = 0
@@ -141,26 +99,7 @@ def verify_data(verify: VerifyReport | None) -> dict[str, Any]:
 
 @dataclass
 class PushResult:
-    """Result of a push operation.
-
-    Attributes:
-        success: True if push completed without errors or conflicts.
-        files_uploaded: Number of asset files uploaded.
-        versions_pushed: Number of new versions pushed (from versions.json).
-        conflicts: List of conflict descriptions.
-        errors: List of error messages (fatal errors that caused push to fail).
-        metadata_errors: List of metadata upload errors (non-fatal, push continues).
-            These indicate partial sync - metadata files failed but assets succeeded.
-        dry_run: True if this was a dry-run operation (no network calls made).
-        would_push_versions: In dry-run mode, max versions that would be pushed
-            (upper bound; actual count depends on remote state).
-        would_push_files: In dry-run mode, max asset files that would be uploaded
-            (upper bound; actual count depends on remote state).
-        metrics: Upload performance metrics (bytes, duration, speed).
-        verify: Counts from ``--verify``. None when push did not verify.
-        landed: True when the remote versions.json names this push. A push
-            that leaves a backup behind fails but has landed.
-    """
+    """Result of a push operation."""
 
     success: bool
     files_uploaded: int
@@ -181,12 +120,7 @@ class PushResult:
         return len(self.metadata_errors) > 0
 
     def to_dict(self) -> dict[str, Any]:
-        """Return the JSON data of ``portolan push --collection``.
-
-        A failed push reports its errors in the envelope ``errors``, so its
-        data holds only the ``--verify`` counts. The counts stay on the
-        attributes of the result.
-        """
+        """Return the JSON data of ``portolan push --collection``."""
         if not self.success:
             return verify_data(self.verify)
         return {
@@ -200,13 +134,7 @@ class PushResult:
 
 @dataclass
 class PushVersionDiff:
-    """Result of diffing local vs remote versions for push operations.
-
-    Attributes:
-        local_only: Versions that exist only locally (to be pushed).
-        remote_only: Versions that exist only remotely (conflict!).
-        common: Versions that exist in both local and remote.
-    """
+    """Result of diffing local vs remote versions for push operations."""
 
     local_only: list[str]
     remote_only: list[str]
@@ -224,16 +152,7 @@ VersionDiff = PushVersionDiff
 
 @dataclass
 class UploadMetrics:
-    """Tracks upload performance metrics for summary display.
-
-    Thread-safe accumulator for upload statistics.
-
-    Attributes:
-        total_bytes: Sum of all uploaded file sizes.
-        total_duration: Sum of individual task durations (for per-file stats only).
-        file_count: Number of files uploaded.
-        elapsed_seconds: Wall-clock time for the batch (used for average_speed).
-    """
+    """Tracks upload performance metrics for summary display."""
 
     total_bytes: int = 0
     total_duration: float = 0.0
@@ -242,20 +161,12 @@ class UploadMetrics:
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     def record_elapsed(self, elapsed: float) -> None:
-        """Record wall-clock elapsed time directly (thread-safe).
-
-        Args:
-            elapsed: Elapsed wall-clock time in seconds.
-        """
+        """Record wall-clock elapsed time directly (thread-safe)."""
         with self._lock:
             self.elapsed_seconds += elapsed
 
     def record(self, size_bytes: int, duration_seconds: float) -> None:
-        """Record metrics for a single upload (thread-safe).
-
-        Note: duration_seconds is per-file timing, not used for average_speed
-        when elapsed_seconds is available (parallel uploads overlap).
-        """
+        """Record metrics for a single upload (thread-safe)."""
         with self._lock:
             self.total_bytes += size_bytes
             self.total_duration += duration_seconds
@@ -263,11 +174,7 @@ class UploadMetrics:
 
     @property
     def average_speed(self) -> float:
-        """Average upload speed in bytes per second.
-
-        Uses wall-clock elapsed_seconds when available (correct for parallel uploads),
-        falls back to total_duration only if elapsed_seconds is not set.
-        """
+        """Average upload speed in bytes per second."""
         # Prefer wall-clock time for accurate speed calculation
         if self.elapsed_seconds > 0:
             return self.total_bytes / self.elapsed_seconds
@@ -277,7 +184,7 @@ class UploadMetrics:
         return self.total_bytes / self.total_duration
 
     def to_attrs(self) -> dict[str, float | int]:
-        """Return the metrics as span attributes for ``push.assets`` (issue #991)."""
+        """Return the metrics as span attributes for ``push.assets``."""
         with self._lock:
             return {
                 "files": self.file_count,
@@ -288,10 +195,7 @@ class UploadMetrics:
             }
 
     def merge(self, other: UploadMetrics) -> None:
-        """Merge metrics from another instance (thread-safe).
-
-        Used to aggregate metrics across multiple collections.
-        """
+        """Merge metrics from another instance (thread-safe)."""
         with self._lock:
             self.elapsed_seconds += other.elapsed_seconds
             self.total_bytes += other.total_bytes
@@ -299,20 +203,11 @@ class UploadMetrics:
             self.file_count += other.file_count
 
 
-# =============================================================================
 # Formatting Utilities
-# =============================================================================
 
 
 def format_file_size(size_bytes: int) -> str:
-    """Format file size in human-readable form.
-
-    Args:
-        size_bytes: Size in bytes.
-
-    Returns:
-        Human-readable size string (e.g., "54.2 MB").
-    """
+    """Format file size in human-readable form."""
     if size_bytes < _KIB:
         return f"{size_bytes} B"
     if size_bytes < 1024 * 1024:
@@ -323,16 +218,7 @@ def format_file_size(size_bytes: int) -> str:
 
 
 def format_speed(bytes_per_second: float) -> str:
-    """Format upload speed in human-readable form.
-
-    Uses binary units (KiB, MiB, GiB) which are standard for network transfer rates.
-
-    Args:
-        bytes_per_second: Speed in bytes per second.
-
-    Returns:
-        Human-readable speed string (e.g., "10.5 MiB/s").
-    """
+    """Format upload speed in human-readable form."""
     if bytes_per_second < _KIB:
         return f"{int(bytes_per_second)} B/s"
     if bytes_per_second < 1024 * 1024:
@@ -342,9 +228,7 @@ def format_speed(bytes_per_second: float) -> str:
     return f"{bytes_per_second / (1024 * 1024 * 1024):.1f} GiB/s"
 
 
-# =============================================================================
-# Glob Asset Transformation (Issue #351)
-# =============================================================================
+# Glob Asset Transformation
 
 
 def _transform_collection_glob_assets(
@@ -352,26 +236,7 @@ def _transform_collection_glob_assets(
     destination: str,
     collection_path: str,
 ) -> bytes:
-    """Transform collection.json to populate the glob field for partitioned assets.
-
-    Per Issue #351: Partitioned GeoParquet collections expose a glob pattern in
-    collection-level assets. On push, we populate ``partition:glob`` with the
-    full remote URL.
-
-    The transition that emitted ``portolan:glob`` alongside it is over (issue
-    #654): the STAC Partition Extension's field is the only one written, and a
-    legacy copy found on an asset is dropped as the collection is pushed.
-
-    Args:
-        content: Original collection.json bytes.
-        destination: The push destination URL with its scheme and bucket, such as
-            "s3://bucket/catalog". The key prefix that setup_store returns has
-            lost both, so a glob built from it lists nothing (#761).
-        collection_path: Relative path to collection (e.g., "buildings").
-
-    Returns:
-        Transformed collection.json bytes with the glob field populated.
-    """
+    """Transform collection.json to populate the glob field for partitioned assets."""
     try:
         data = json.loads(content)
     except json.JSONDecodeError:
@@ -384,9 +249,7 @@ def _transform_collection_glob_assets(
         href = asset_data.get("href", "")
         # Check if this is a glob pattern (contains *)
         if "*" in href:
-            # Build full remote glob URL
-            # href is relative to collection.json (e.g., "./kdtree_cell=*/*.parquet")
-            # We need to convert to absolute remote URL
+            # href is relative to collection.json, such as "./kdtree_cell=*/*.parquet".
             glob_pattern = href.lstrip("./")
             # Build URL preserving protocol separator
             base = destination.rstrip("/")
@@ -405,27 +268,11 @@ def _transform_collection_glob_assets(
     return content
 
 
-# =============================================================================
 # Version Diffing
-# =============================================================================
 
 
 def diff_version_lists(local_versions: list[str], remote_versions: list[str]) -> PushVersionDiff:
-    """Compute diff between local and remote version string lists.
-
-    This is a simple set-based diff for push operations, comparing version
-    strings to determine what needs to be pushed.
-
-    Note: pull.py has a separate diff_versions() that works with VersionsFile
-    objects and computes files to download.
-
-    Args:
-        local_versions: List of version strings from local versions.json.
-        remote_versions: List of version strings from remote versions.json.
-
-    Returns:
-        PushVersionDiff with local_only, remote_only, and common versions.
-    """
+    """Compute diff between local and remote version string lists."""
     local_set = set(local_versions)
     remote_set = set(remote_versions)
 
@@ -441,25 +288,11 @@ def diff_version_lists(local_versions: list[str], remote_versions: list[str]) ->
     )
 
 
-# =============================================================================
 # Local Versions Reading
-# =============================================================================
 
 
 def _read_local_versions(catalog_root: Path, collection: str) -> dict[str, Any]:
-    """Read local versions.json for a collection.
-
-    Args:
-        catalog_root: Path to catalog root directory.
-        collection: Collection identifier.
-
-    Returns:
-        Parsed versions.json data as dictionary.
-
-    Raises:
-        FileNotFoundError: If versions.json doesn't exist.
-        ValueError: If versions.json is invalid JSON.
-    """
+    """Read local versions.json for a collection."""
     # versions.json at collection root
     versions_path = catalog_root / collection / "versions.json"
 
@@ -474,9 +307,7 @@ def _read_local_versions(catalog_root: Path, collection: str) -> dict[str, Any]:
         raise ValueError(f"Invalid JSON in versions.json: {e}") from e
 
 
-# =============================================================================
 # Remote Versions Fetching
-# =============================================================================
 
 
 def _parse_remote_versions(content_bytes: bytes, meta: Any) -> tuple[dict[str, Any], str | None]:
@@ -500,23 +331,11 @@ def _is_not_found(e: Exception) -> bool:
     )
 
 
-# =============================================================================
 # Asset Upload
-# =============================================================================
 
 
 def _current_snapshot(versions_data: dict[str, Any] | None) -> dict[str, Any] | None:
-    """Return the current version entry of a versions.json document.
-
-    The entry that ``current_version`` names is the current snapshot. When that
-    field is missing or names no entry, the last entry in ``versions`` is used.
-
-    Args:
-        versions_data: Local or remote versions.json data, or None.
-
-    Returns:
-        The current version entry, or None when there is no data or no version.
-    """
+    """Return the current version entry of a versions.json document."""
     if versions_data is None:
         return None
 
@@ -529,18 +348,7 @@ def _current_snapshot(versions_data: dict[str, Any] | None) -> dict[str, Any] | 
 
 
 def _snapshot_entries(snapshot: dict[str, Any] | None) -> dict[str, dict[str, Any]]:
-    """Map each href in a version snapshot to its asset entry.
-
-    This is the one per-href view of a snapshot. A malformed snapshot can
-    record two entries for the same href. The last entry then wins.
-
-    Args:
-        snapshot: One versions.json entry, or None.
-
-    Returns:
-        A dict from href to asset entry. The dict is empty when ``snapshot``
-        is None.
-    """
+    """Map each href in a version snapshot to its asset entry."""
     if snapshot is None:
         return {}
 
@@ -551,24 +359,12 @@ def _snapshot_entries(snapshot: dict[str, Any] | None) -> dict[str, dict[str, An
 
 
 def _snapshot_hashes(snapshot: dict[str, Any] | None) -> dict[str, str | None]:
-    """Map each href in a version snapshot to its sha256.
-
-    Args:
-        snapshot: One versions.json entry, or None.
-
-    Returns:
-        A dict from href to sha256. A malformed asset without a sha256 maps
-        to None. The dict is empty when ``snapshot`` is None.
-    """
+    """Map each href in a version snapshot to its sha256."""
     return {href: entry.get("sha256") for href, entry in _snapshot_entries(snapshot).items()}
 
 
 def _matches_remote(local_sha256: str | None, remote_sha256: str | None) -> bool:
-    """Return True when the remote current snapshot records the local bytes.
-
-    Push skips the upload of an asset only when this is True. A missing local
-    sha256 cannot prove a match.
-    """
+    """Return True when the remote current snapshot records the local bytes."""
     return bool(local_sha256) and remote_sha256 == local_sha256
 
 
@@ -576,19 +372,7 @@ def _skipped_entries(
     versions_data: dict[str, Any],
     remote_versions_data: dict[str, Any] | None,
 ) -> dict[str, dict[str, Any]]:
-    """Return the local current entries that the snapshot diff skips.
-
-    This is the one skip rule. ``_get_assets_to_upload`` skips exactly these
-    hrefs, and ``push --verify`` sends a HEAD for exactly these hrefs. Both
-    read the per-href view of ``_snapshot_entries``, so they cannot drift.
-
-    Args:
-        versions_data: Local versions.json data.
-        remote_versions_data: Remote versions.json data, or None.
-
-    Returns:
-        A dict from href to local asset entry, in local snapshot order.
-    """
+    """Return the local current entries that the snapshot diff skips."""
     remote_assets = _snapshot_hashes(_current_snapshot(remote_versions_data))
     return {
         href: entry
@@ -601,19 +385,7 @@ def _skipped_asset_sizes(
     versions_data: dict[str, Any],
     remote_versions_data: dict[str, Any] | None,
 ) -> dict[str, int | None]:
-    """Map each href that the snapshot diff skips to its recorded size.
-
-    The size comes from ``size_bytes`` in the local current snapshot. That
-    snapshot describes the bytes that the store must hold after the push.
-
-    Args:
-        versions_data: Local versions.json data.
-        remote_versions_data: Remote versions.json data, or None.
-
-    Returns:
-        A dict from href to size in bytes. The size is None when the snapshot
-        records no integer ``size_bytes``.
-    """
+    """Map each href that the snapshot diff skips to its recorded size."""
     sizes: dict[str, int | None] = {}
     for href, entry in _skipped_entries(versions_data, remote_versions_data).items():
         size = entry.get("size_bytes")
@@ -630,36 +402,7 @@ async def _verify_skipped_assets_async(
     concurrency: int,
     report: Report | None = None,
 ) -> tuple[dict[str, str | None], VerifyReport]:
-    """Find the skipped assets whose remote object disagrees with the manifest.
-
-    The snapshot diff skips an asset from versions.json alone. A store can
-    still hold other bytes at that key, for example after Issue #962. This
-    function sends one HEAD for each skipped asset (Issue #966). An object
-    disagrees when it is missing, or when its size differs from the
-    ``size_bytes`` of the local current snapshot.
-
-    A size check cannot see two different files of the same size. When the
-    snapshot records no size, only a missing object is found.
-
-    The HEAD requests run through ``AsyncIOExecutor`` with a fixed limit of
-    ``concurrency``. The work is one dict lookup per asset.
-
-    Args:
-        store: Object store instance.
-        prefix: Prefix in object storage.
-        versions_data: Local versions.json data.
-        remote_versions_data: Remote versions.json data, or None.
-        concurrency: Maximum number of HEAD requests at the same time.
-        report: Receives each line of the run, with its level.
-
-    Returns:
-        The flagged hrefs mapped to their HEAD ETags, and the report counts.
-        A missing object maps to None, for a create-only repair.
-
-    Raises:
-        PushVerifyError: If a HEAD fails for a reason other than a missing
-            object.
-    """
+    """Find the skipped assets whose remote object disagrees with the manifest."""
     sizes = _skipped_asset_sizes(versions_data, remote_versions_data)
     if not sizes:
         return {}, VerifyReport()
@@ -703,33 +446,12 @@ async def _verify_skipped_assets_async(
 def _resolve_local_asset(
     catalog_root: Path, href: str, version_str: str | None, *, report: Report | None = None
 ) -> Path | None:
-    """Return the local file of an asset to upload, or None to skip it.
-
-    A recorded asset that is absent from disk raises. One exception applies.
-    An optional derivative only warns, and the caller skips it (Issue #735).
-
-    Args:
-        catalog_root: Path to catalog root.
-        href: Catalog-root-relative asset href.
-        version_str: Version that records the asset, for the messages.
-        report: Receives each line of the run, with its level.
-
-    Returns:
-        The resolved absolute path, or None for an absent optional derivative.
-
-    Raises:
-        FileNotFoundError: If a ``data`` or ``source`` asset file is absent.
-    """
+    """Return the local file of an asset to upload, or None to skip it."""
     asset_path = catalog_root / href
     if asset_path.exists():
         return asset_path.resolve()
-    # The spec calls four roles optional derivatives, namely `visual`,
-    # `thumbnail`, `style` and `collection-mirror`. See portolan-spec
-    # specs/portolan/core.md, sections Assets and Single-File Collections.
-    # Portolan rebuilds each one from data the catalog still holds. An absent
-    # one must not fail a sound push (Issue #735). Conformance gaps belong to
-    # `portolan check`. Roles `data` and `source` stay a hard error, because
-    # nothing can reconstruct them.
+    # The spec calls visual, thumbnail, style and collection-mirror optional derivatives.
+    # An absent one must not fail a push. data and source stay a hard error.
     if is_optional_derivative(catalog_root, href):
         tell(report, "warn", f"Optional asset not found, skipped: {href} (version {version_str})")
         return None
@@ -744,49 +466,12 @@ def _get_assets_to_upload(
     reupload: frozenset[str] = frozenset(),
     report: Report | None = None,
 ) -> list[Path]:
-    """Get list of asset files that need to be uploaded.
-
-    Compares the local current snapshot with the remote current snapshot by
-    href and sha256. Only assets that are new or changed are included. This
-    prevents re-uploading unchanged assets when adding a single file to a
-    large catalog (Issue #329).
-
-    Both sides use the current snapshot only (Issue #962). Asset hrefs carry no
-    version segment, so every version writes the same object key. Only the
-    remote current snapshot tells what each key holds now. After the push, the
-    remote current version is the local current version, and the disk holds
-    the bytes that the local current snapshot records. An older local version
-    cannot have its own bytes uploaded, because they share the same key.
-
-    A recorded asset that is absent from disk raises. One exception applies. An
-    optional derivative only warns, and this function skips it (Issue #735). The
-    asset role in the STAC metadata decides which is which. See
-    ``derived_assets.is_optional_derivative``.
-
-    Args:
-        catalog_root: Path to catalog root.
-        versions_data: Local versions.json data.
-        remote_versions_data: Remote versions.json data for sha256 comparison.
-            If None, every asset of the local current snapshot is uploaded
-            (first push).
-        reupload: Hrefs to upload although the snapshots match. These are
-            the objects that ``push --verify`` found missing or with another
-            size (Issue #966).
-        report: Receives each line of the run, with its level.
-
-    Returns:
-        List of absolute paths to asset files that need to be uploaded.
-
-    Raises:
-        FileNotFoundError: If a referenced ``data`` or ``source`` asset file
-            doesn't exist.
-    """
+    """Get list of asset files that need to be uploaded."""
     local_current = _current_snapshot(versions_data)
     version_str = local_current.get("version") if local_current else None
     has_remote = bool(_snapshot_entries(_current_snapshot(remote_versions_data)))
-    # Skip the upload only if the remote current snapshot records the same
-    # sha256 for the same href. A renamed file (same sha256, new href) still
-    # uploads. ``push --verify`` checks the same set (Issue #966).
+    # Skip only when the remote current snapshot has the same sha256 at the same href.
+    # A renamed file still uploads. ``push --verify`` checks the same set.
     skipped = _skipped_entries(versions_data, remote_versions_data)
 
     assets_to_upload: list[Path] = []
@@ -800,7 +485,7 @@ def _get_assets_to_upload(
         if asset_path is not None:
             assets_to_upload.append(asset_path)
 
-    # Log diffing results for user feedback (Issue #329)
+    # Log diffing results for user feedback
     new_count = len(assets_to_upload)
     if skipped_count > 0 or (has_remote and new_count > 0):
         tell(
@@ -819,28 +504,7 @@ def _get_reupload_assets(
     *,
     report: Report | None = None,
 ) -> list[Path]:
-    """Return the local files of the hrefs that ``push --verify`` flagged.
-
-    Only these assets upload in a repair without a new version (Issue #966).
-    Each flagged href has the same sha256 in the local and the remote current
-    snapshots. Check every selected local file against that hash before any
-    upload. An unversioned edit fails the repair before any write. An absent
-    optional derivative warns and is skipped, as in ``_get_assets_to_upload``.
-
-    Args:
-        catalog_root: Path to catalog root.
-        versions_data: Local versions.json data.
-        reupload: Hrefs that ``push --verify`` found wrong in the store.
-        report: Receives each line of the run, with its level.
-
-    Returns:
-        List of absolute paths to upload, in local snapshot order.
-
-    Raises:
-        FileNotFoundError: If a flagged ``data`` or ``source`` asset file is
-            absent.
-        PushVerifyError: If a local file no longer matches its recorded checksum.
-    """
+    """Return the local files of the hrefs that ``push --verify`` flagged."""
     local_current = _current_snapshot(versions_data)
     version_str = local_current.get("version") if local_current else None
     paths: list[Path] = []
@@ -855,19 +519,7 @@ def _get_reupload_assets(
 
 
 def _repaired_count(prefix: str, reupload: frozenset[str], uploaded_keys: list[str]) -> int:
-    """Count the flagged hrefs that push uploaded.
-
-    A flagged optional derivative that is absent from disk does not upload.
-    So it does not count as repaired.
-
-    Args:
-        prefix: Prefix in object storage.
-        reupload: Hrefs that ``push --verify`` found wrong in the store.
-        uploaded_keys: Object keys that the asset upload wrote.
-
-    Returns:
-        Number of flagged hrefs whose object key push wrote.
-    """
+    """Count the flagged hrefs that push uploaded."""
     written = set(uploaded_keys)
     return sum(1 for href in reupload if f"{prefix}/{href}".lstrip("/") in written)
 
@@ -879,9 +531,8 @@ def _with_metrics(msg: str, metrics: UploadMetrics) -> str:
     return msg
 
 
-# One push or push --all sends each of these notices once (#972). push --all
-# sets a fresh set, and the collection tasks inherit it. A standalone push has
-# no set and sends the notice the one time it occurs.
+# One push or push --all sends each of these notices once. push --all sets a
+# fresh set, and the collection tasks inherit it.
 _run_notices: contextvars.ContextVar[set[str] | None] = contextvars.ContextVar(
     "push_run_notices", default=None
 )
@@ -915,17 +566,7 @@ async def _existing_keys(
     *,
     report: Report | None = None,
 ) -> dict[str, int | None]:
-    """Return the size of each key that exists in the store before the upload.
-
-    Rollback deletes only the keys that are absent here (#965). A key that
-    exists can hold live data of the remote current version, so a failed push
-    must not delete it. One LIST of ``list_prefix`` answers for the keys below
-    it. A HEAD answers for each other key. A key that neither request can
-    answer for counts as existing, with the size None, so rollback keeps it.
-    That happens to a credential without s3:ListBucket: S3 refuses the LIST
-    and answers 403, not 404, for a HEAD of a missing key. The push then warns
-    once for the run (#972).
-    """
+    """Return the size of each key that exists in the store before the upload."""
     below = f"{list_prefix}/"
     existing: dict[str, int | None] = {}
     try:
@@ -965,24 +606,7 @@ async def _back_up(
     *,
     report: Report | None = None,
 ) -> dict[str, str]:
-    """Copy each key that the push will overwrite to a backup key.
-
-    Asset hrefs carry no version segment, so a push overwrites the objects of
-    the remote current version. After a failed push, each such key must hold
-    the bytes that the remote versions.json describes again (#965). PR #968 by
-    Youssef Harby designed this backup. Each push uses its own token. A key
-    that the copy cannot read keeps the new bytes after a failed push.
-
-    Args:
-        store: Object store instance.
-        sizes: The size of each key to back up, from ``_existing_keys``.
-        prefix: Prefix in object storage. The backups go below it.
-        concurrency: Maximum concurrent copies.
-        report: Receives each line of the run, with its level.
-
-    Returns:
-        The backup key of each key that the copy reached.
-    """
+    """Copy each key that the push will overwrite to a backup key."""
     base = f"{prefix}/.portolan/push-backup/{uuid.uuid4().hex}".lstrip("/")
     semaphore = asyncio.Semaphore(concurrency)
     stopped = False
@@ -1008,11 +632,8 @@ async def _back_up(
     try:
         copies = await asyncio.gather(*tasks)
     except BaseException:
-        # A cancellation or an interrupt here runs before the rollback of the
-        # push. Each push uses its own backup directory, so a copy that stays
-        # behind is never reclaimed. A copy in flight lands on the server even
-        # when the client stops waiting, so every started copy runs to its end,
-        # no queued copy starts, and then every planned backup key is deleted.
+        # A started copy lands even when the client stops waiting, and nothing
+        # reclaims it. Let started copies finish, start no more, then delete every backup key.
         stopped = True
         await asyncio.gather(*tasks, return_exceptions=True)
         for key in keys:
@@ -1036,15 +657,7 @@ async def _drop_backups(
     restore_over: dict[str, str | None] | None = None,
     report: Report | None = None,
 ) -> list[str]:
-    """Delete each backup key, and return a message for each key that failed.
-
-    ``restore_over`` maps each key to restore to the ETag of the write of this
-    push. With it, a backup first goes back over its key if the key still
-    holds that ETag. Another key keeps its bytes: this push did not write it,
-    or another writer wrote it after this push (#971). ``sizes`` holds the
-    size of each backed-up key, for the copy above ``upload.COPY_SOURCE_LIMIT``.
-    A key that the restore cannot reach keeps its backup, so its old bytes stay.
-    """
+    """Delete each backup key, and return a message for each key that failed."""
     if restore_over is not None and backups:
         tell(report, "warn", f"Restoring {len(backups)} overwritten key(s) from the backups...")
     problems: list[str] = []
@@ -1072,16 +685,7 @@ async def _keys_to_restore(
     local_data: dict[str, Any],
     written: dict[str, str | None],
 ) -> dict[str, str | None]:
-    """Return the keys that a push restores after it lost the versions.json race.
-
-    The winning remote manifest names a sha256 for each of its Assets. This
-    push wrote the bytes that the local current snapshot names. A key that
-    the winning manifest names is restored only when the two sha256 values
-    differ. Another key, such as collection.json, is restored only when the
-    winning snapshot is not the local snapshot. A second run of the same push
-    that wins the race writes the same bytes, and a restore breaks its
-    manifest.
-    """
+    """Return the keys that a push restores after it lost the versions.json race."""
     try:
         remote, _ = await _fetch_remote_versions_async(store, prefix, collection)
     except Exception:
@@ -1095,20 +699,7 @@ async def _keys_to_restore(
 def _cleanup_uploaded_assets(
     store: ObjectStore, uploaded_keys: list[str], *, report: Report | None = None
 ) -> list[str]:
-    """Delete the keys that a failed push created, and report each key that stays.
-
-    The caller passes only keys that did not exist before the push (#965).
-    The PushConflictError path calls nothing, because another writer can own
-    a key that this push created (#971).
-
-    Args:
-        store: Object store instance.
-        uploaded_keys: Object keys to delete.
-        report: Receives each line of the run, with its level.
-
-    Returns:
-        A message for each key that the delete did not reach.
-    """
+    """Delete the keys that a failed push created, and report each key that stays."""
     if uploaded_keys:
         tell(report, "warn", f"Rolling back {len(uploaded_keys)} uploaded asset(s)...")
     problems: list[str] = []
@@ -1122,9 +713,7 @@ def _cleanup_uploaded_assets(
     return problems
 
 
-# =============================================================================
-# STAC Metadata File Discovery and Upload (Issue #252)
-# =============================================================================
+# STAC Metadata File Discovery and Upload
 
 
 def _discover_stac_files(
@@ -1134,32 +723,7 @@ def _discover_stac_files(
     include_catalog: bool = False,
     report: Report | None = None,
 ) -> dict[str, list[Path]]:
-    """Discover STAC metadata files that should be uploaded for a collection.
-
-    Finds collection.json and all item STAC files within the collection's
-    directory structure. Optionally includes catalog.json and README.md files.
-
-    Note: Portolan creates item files as {item_id}.json (not item.json).
-    The item_id matches the item directory name by convention.
-
-    Args:
-        catalog_root: Path to catalog root.
-        collection: Collection identifier.
-        include_catalog: If True, include catalog.json and root README.md in discovery.
-            Default False because catalog.json is a shared resource that
-            should be uploaded once after all collections, not per-collection.
-        report: Receives each line of the run, with its level.
-
-    Returns:
-        Dict with keys 'catalog', 'collection', 'items', 'readmes' mapping to lists of paths.
-        - 'catalog': [catalog_root/catalog.json] if include_catalog and exists
-        - 'collection': [collection/collection.json] if exists
-        - 'items': [collection/item1/item1.json, ...] for each item found
-        - 'readmes': [README.md files at catalog and collection level]
-
-    Raises:
-        FileNotFoundError: If collection.json doesn't exist (required for push).
-    """
+    """Discover STAC metadata files that should be uploaded for a collection."""
     stac_files: dict[str, list[Path]] = {
         "catalog": [],
         "collection": [],
@@ -1176,9 +740,8 @@ def _discover_stac_files(
         root_readme = catalog_root / "README.md"
         if root_readme.exists():
             stac_files["readmes"].append(root_readme)
-        # Intermediate catalog files for nested collections (Issue #547, #552, #905).
-        # Only relevant for standalone single-collection push (include_catalog=True);
-        # catalog-wide push handles these centrally after all collections succeed.
+        # Intermediate catalog files only for a standalone push (include_catalog=True).
+        # A catalog-wide push uploads them once after all collections succeed.
         for inter_file in _discover_intermediate_catalog_files(
             catalog_root, [collection], report=report
         ):
@@ -1199,9 +762,7 @@ def _discover_stac_files(
     if collection_readme.exists():
         stac_files["readmes"].append(collection_readme)
 
-    # 3. All item STAC files within the collection
-    # Portolan naming convention: items are in subdirectories named {item_id}
-    # and the STAC file is {item_id}.json (not item.json)
+    # 3. All item STAC files: {item_id}/{item_id}.json, not item.json.
     visited_paths: set[Path] = set()
 
     for item_dir in collection_dir.iterdir():
@@ -1230,31 +791,11 @@ def _discover_stac_files(
     return stac_files
 
 
-# =============================================================================
-# Metadata File Discovery (Issue #426)
-# =============================================================================
+# Metadata File Discovery
 
 
 def _matches_exclude_pattern(path: Path, pattern: str, base_dir: Path) -> bool:
-    """Check if a path matches an exclusion pattern.
-
-    Supports:
-    - Directory patterns ending with / (e.g., ".portolan/", "__pycache__/")
-      These match if ANY path component equals the directory name.
-    - Glob patterns with * (e.g., "*.py", ".env.*")
-    - Exact filename matches (e.g., ".env", ".DS_Store")
-
-    Note: fnmatch is imported at module level for performance since this
-    function is called O(files × patterns) times during discovery.
-
-    Args:
-        path: Absolute path to check.
-        pattern: Exclusion pattern.
-        base_dir: Base directory for relative path matching.
-
-    Returns:
-        True if the path matches the pattern and should be excluded.
-    """
+    """Check if a path matches an exclusion pattern."""
     # Get relative path for pattern matching
     try:
         rel_path = path.relative_to(base_dir)
@@ -1264,9 +805,7 @@ def _matches_exclude_pattern(path: Path, pattern: str, base_dir: Path) -> bool:
     rel_str = str(rel_path)
     name = path.name
 
-    # Directory pattern (ends with / or /*)
-    # Unified handling: ".portolan/" and ".portolan/*" both mean
-    # "exclude anything under a directory named .portolan"
+    # ".portolan/" and ".portolan/*" both exclude anything under a directory named .portolan.
     if pattern.endswith(("/", "/*")):
         dir_name = pattern.rstrip("/").rstrip("*").rstrip("/")
         # Check if any path component matches the directory name
@@ -1285,14 +824,7 @@ def _matches_exclude_pattern(path: Path, pattern: str, base_dir: Path) -> bool:
 
 
 def _get_exclude_patterns(catalog_root: Path | None = None) -> list[str]:
-    """Get exclusion patterns from config or defaults.
-
-    Args:
-        catalog_root: Catalog root for loading config. If None, uses defaults.
-
-    Returns:
-        List of exclusion patterns.
-    """
+    """Get exclusion patterns from config or defaults."""
     from portolan_core.config import DEFAULT_SETTINGS, get_setting
 
     if catalog_root is None:
@@ -1304,14 +836,10 @@ def _get_exclude_patterns(catalog_root: Path | None = None) -> list[str]:
     return list(patterns)
 
 
-# Security-critical patterns that MUST always be excluded.
-# These are never overridden by user config - they are merged with user patterns.
-# Prevents accidental upload of secrets, git history, or internal state.
-# A file at or above this size uploads as a multipart transfer with chunk
-# concurrency. A smaller file uses put_async, which avoids the multipart
-# overhead.
+# A file at or above this size uploads as a multipart transfer with chunk concurrency.
 MULTIPART_THRESHOLD = 5 * 1024 * 1024
 
+# Security: always excluded and merged with user patterns. No config can override them.
 _SECURITY_EXCLUDE_PATTERNS: frozenset[str] = frozenset(
     [
         ".env",  # Environment files with secrets
@@ -1326,19 +854,7 @@ def _get_effective_exclude_patterns(
     catalog_root: Path | None = None,
     additional_patterns: list[str] | None = None,
 ) -> list[str]:
-    """Get effective exclusion patterns, always including security-critical ones.
-
-    This function ensures security patterns (.env, .git/, .portolan/) are ALWAYS
-    included, even when custom patterns are provided. This prevents accidental
-    upload of secrets or internal state.
-
-    Args:
-        catalog_root: Catalog root for loading config. If None, uses defaults.
-        additional_patterns: Extra patterns to add (merged with defaults, not replacing).
-
-    Returns:
-        List of exclusion patterns including security-critical ones.
-    """
+    """Get effective exclusion patterns, always including security-critical ones."""
     # Start with security-critical patterns (always included)
     patterns: set[str] = set(_SECURITY_EXCLUDE_PATTERNS)
 
@@ -1354,16 +870,7 @@ def _get_effective_exclude_patterns(
 
 
 def _load_versioned_asset_paths(catalog_root: Path, collection: str) -> set[str]:
-    """Load versioned asset relative paths from versions.json.
-
-    Args:
-        catalog_root: Path to catalog root.
-        collection: Collection identifier.
-
-    Returns:
-        Set of relative paths (as POSIX strings) for all versioned assets.
-        Returns empty set if versions.json doesn't exist or is invalid.
-    """
+    """Load versioned asset relative paths from versions.json."""
     versions_file = catalog_root / collection / "versions.json"
     if not versions_file.exists():
         return set()
@@ -1405,14 +912,7 @@ _HANDLED_SEPARATELY = frozenset(
 
 @dataclass(frozen=True)
 class _ExcludeContext:
-    """What _should_exclude_from_push needs to judge one file.
-
-    Attributes:
-        exclude_patterns: Effective exclusion patterns, security ones included.
-        versioned_asset_paths: Asset paths versions.json already names.
-        item_level: False at a catalog level, which holds no items.
-        collection: Collection identifier, or None for a root-only discovery.
-    """
+    """What _should_exclude_from_push needs to judge one file."""
 
     exclude_patterns: list[str]
     versioned_asset_paths: set[str]
@@ -1421,19 +921,7 @@ class _ExcludeContext:
 
 
 def _is_versioned_asset(path: Path, base_dir: Path, ctx: _ExcludeContext) -> bool:
-    """Report whether versions.json already names this file as an asset.
-
-    versions.json may store a catalog-relative path, a collection-relative path,
-    or a bare filename. The function accepts all three spellings.
-
-    Args:
-        path: Absolute path to the file.
-        base_dir: Directory the relative path is measured from.
-        ctx: Exclusion context.
-
-    Returns:
-        True when the file is a versioned asset.
-    """
+    """Report whether versions.json already names this file as an asset."""
     if not ctx.versioned_asset_paths:
         return False
     try:
@@ -1448,31 +936,14 @@ def _is_versioned_asset(path: Path, base_dir: Path, ctx: _ExcludeContext) -> boo
 
 
 def _is_stac_item_file(path: Path, ctx: _ExcludeContext) -> bool:
-    """Report whether _discover_stac_files already found this file.
-
-    Args:
-        path: Absolute path to the file.
-        ctx: Exclusion context.
-
-    Returns:
-        True when the file is a STAC item JSON.
-    """
+    """Report whether _discover_stac_files already found this file."""
     # A STAC item lives at collection/item_dir/item_dir.json, so the JSON
     # filename matches its parent directory name.
     return ctx.item_level and path.suffix == ".json" and path.parent.name == path.stem
 
 
 def _should_exclude_from_push(path: Path, base_dir: Path, ctx: _ExcludeContext) -> bool:
-    """Report whether the catalog-file discovery must skip this file.
-
-    Args:
-        path: Absolute path to the file.
-        base_dir: Directory the relative path is measured from.
-        ctx: Exclusion context.
-
-    Returns:
-        True when another phase uploads the file, or a pattern excludes it.
-    """
+    """Report whether the catalog-file discovery must skip this file."""
     if path.name in _HANDLED_SEPARATELY:
         return True
     if _is_versioned_asset(path, base_dir, ctx):
@@ -1487,18 +958,7 @@ def _should_exclude_from_push(path: Path, base_dir: Path, ctx: _ExcludeContext) 
 def _discover_collection_dir_files(
     catalog_root: Path, collection: str, ctx: _ExcludeContext
 ) -> list[Path]:
-    """Walk one collection directory for files to sync.
-
-    The walk skips a symlink, because its target may sit outside the catalog.
-
-    Args:
-        catalog_root: Path to the catalog root.
-        collection: Collection identifier.
-        ctx: Exclusion context.
-
-    Returns:
-        List of absolute file paths.
-    """
+    """Walk one collection directory for files to sync."""
     collection_dir = catalog_root / collection
     if not collection_dir.exists():
         return []
@@ -1512,20 +972,7 @@ def _discover_collection_dir_files(
 
 
 def _discover_root_dir_files(catalog_root: Path, ctx: _ExcludeContext) -> list[Path]:
-    """Collect the root-level files to sync, and the logo in _assets/.
-
-    A root directory is a collection, which its own walk handles. The one
-    exception is _assets/. It holds the catalog logo the rel="icon" link points
-    at (PORTO-CORE-077). Skipping every root directory left that image behind,
-    so the published link resolved to nothing.
-
-    Args:
-        catalog_root: Path to the catalog root.
-        ctx: Exclusion context.
-
-    Returns:
-        List of absolute file paths.
-    """
+    """Collect the root-level files to sync, and the logo in _assets/."""
     discovered = [
         item
         for item in catalog_root.iterdir()
@@ -1555,33 +1002,7 @@ def _discover_catalog_files(
     additional_exclude_patterns: list[str] | None = None,
     report: Report | None = None,
 ) -> list[Path]:
-    """Discover the catalog files that should be synced to remote (Issue #426).
-
-    A file uploads only when a STAC document names it (``published_files``),
-    the same rule that clone applies. A stray file stays local, and the push
-    names it once in a warning. The walk also skips:
-    - Files matching exclusion patterns (ALWAYS includes security patterns)
-    - Versioned assets (loaded from versions.json, handled by asset upload)
-    - versions.json (uploaded last for atomicity)
-    - Files already discovered by _discover_stac_files (collection.json, item/*.json)
-    - Symlinks (security: could point outside catalog)
-
-    Security: The security-critical patterns (.env, .git/, .portolan/) are ALWAYS
-    applied, even when additional_exclude_patterns is provided. This prevents
-    accidental upload of secrets.
-
-    Args:
-        catalog_root: Path to catalog root.
-        collection: Collection identifier. If None and include_catalog_root=True,
-            only discovers root-level files.
-        include_catalog_root: If True, include root-level files (not in collection).
-        additional_exclude_patterns: Extra patterns to add (merged with defaults,
-            never replaces security patterns).
-        report: Receives each line of the run, with its level.
-
-    Returns:
-        List of absolute paths to files that should be synced.
-    """
+    """Discover the catalog files that should be synced to remote."""
     versioned_asset_paths: set[str] = set()
     if collection is not None:
         # _upload_assets_async already handles every asset versions.json names.
@@ -1620,18 +1041,7 @@ def _named_only(
 
 
 def _stat_files_safely(files: list[Path], errors: list[str]) -> tuple[dict[Path, int], list[Path]]:
-    """Stat files safely, recording errors for files that can't be stat'd.
-
-    This handles the case where files are deleted between discovery and upload.
-    Returns both the file sizes dict and the list of successfully stat'd files.
-
-    Args:
-        files: List of file paths to stat.
-        errors: List to append error messages to.
-
-    Returns:
-        Tuple of (file_sizes dict, list of files that were successfully stat'd).
-    """
+    """Stat files safely, recording errors for files that can't be stat'd."""
     file_sizes: dict[Path, int] = {}
     for f in files:
         try:
@@ -1651,22 +1061,7 @@ def _handle_push_dry_run(
     verify: bool = False,
     report: Report | None = None,
 ) -> PushResult:
-    """Handle push dry-run mode: show what would be pushed without network I/O.
-
-    This is extracted from push() to keep cyclomatic complexity manageable.
-
-    Args:
-        catalog_root: Resolved catalog root path.
-        collection: Collection identifier.
-        local_data: Parsed versions.json data.
-        local_versions: List of version strings from local data.
-        verify: If True, warn that the store check did not run. A HEAD is a
-            network request, so a dry run never sends one.
-        report: Receives each line of the run, with its level.
-
-    Returns:
-        PushResult with dry_run=True and simulated counts.
-    """
+    """Handle push dry-run mode: show what would be pushed without network I/O."""
     # Try to get assets, but don't fail if some are missing (dry-run should be forgiving)
     try:
         assets = _get_assets_to_upload(catalog_root, local_data, report=report)
@@ -1689,7 +1084,7 @@ def _handle_push_dry_run(
     for rel_path in asset_paths:
         tell(report, "detail", f" {rel_path}")
 
-    # Show metadata files that would be synced (Issue #426)
+    # Show metadata files that would be synced
     metadata_files = _discover_catalog_files(
         catalog_root,
         collection,
@@ -1702,7 +1097,7 @@ def _handle_push_dry_run(
             rel_path = f.relative_to(catalog_root)
             tell(report, "detail", f" {rel_path}")
 
-    # Show intermediate catalog files for nested collections (Issue #547, #552, #905)
+    # Show intermediate catalog files for nested collections
     intermediate_files = _discover_intermediate_catalog_files(
         catalog_root, [collection], report=report
     )
@@ -1733,9 +1128,7 @@ def _handle_push_dry_run(
     )
 
 
-# =============================================================================
 # Main Push Function
-# =============================================================================
 
 
 def push(
@@ -1753,34 +1146,7 @@ def push(
     report: Report | None = None,
     show_progress: bool = False,
 ) -> PushResult:
-    """Push local catalog changes to cloud object storage (sync wrapper).
-
-    This is a thin wrapper around `push_async()` for backward compatibility.
-    All logic is in the async implementation.
-
-    Args:
-        catalog_root: Path to the local catalog root.
-        collection: Collection identifier to push.
-        destination: Object store URL (e.g., s3://bucket/prefix).
-        force: If True, overwrite remote even if diverged.
-        dry_run: If True, show what would be uploaded without uploading.
-        profile: AWS profile name (for S3 only).
-        region: AWS region (for S3 only). Overrides profile/env config.
-        workers: Number of parallel upload workers (maps to concurrency).
-        verify: If True, check each skipped asset against the store. A HEAD
-            that fails raises PushVerifyError. See ``push_async``.
-        show_progress: Passed to ``push_async``.
-        verbose: Passed to ``push_async``.
-        report: Passed to ``push_async``.
-
-    Returns:
-        PushResult with upload statistics.
-
-    Raises:
-        FileNotFoundError: If catalog or versions.json doesn't exist.
-        ValueError: If destination URL is invalid.
-        PushConflictError: If remote diverged and force=False.
-    """
+    """Push local catalog changes to cloud object storage (sync wrapper)."""
     # Map workers to concurrency (same concept, different naming)
     concurrency = workers if workers is not None else None
 
@@ -1802,9 +1168,7 @@ def push(
     )
 
 
-# =============================================================================
 # Async Push Implementation
-# =============================================================================
 
 
 async def _fetch_remote_versions_async(
@@ -1812,18 +1176,7 @@ async def _fetch_remote_versions_async(
     prefix: str,
     collection: str,
 ) -> tuple[dict[str, Any] | None, str | None]:
-    """Async version of _fetch_remote_versions.
-
-    Uses obstore's async API for non-blocking I/O.
-
-    Args:
-        store: Object store instance.
-        prefix: Prefix within the bucket.
-        collection: Collection identifier.
-
-    Returns:
-        Tuple of (versions_data, etag). Both are None if file doesn't exist.
-    """
+    """Async version of _fetch_remote_versions."""
     key = f"{prefix}/{collection}/versions.json".lstrip("/")
 
     try:
@@ -1853,36 +1206,7 @@ async def _upload_assets_async(  # noqa: PLR0915 - each transport option is thre
     verbose: bool = False,
     report: Report | None = None,
 ) -> tuple[int, list[str], list[str], UploadMetrics]:
-    """Upload asset files to object storage with async concurrent uploads.
-
-    Uses AsyncIOExecutor for bounded concurrency with circuit breaker.
-
-    A file at or above MULTIPART_THRESHOLD goes through the sync put_object in
-    a worker thread, with chunk_concurrency parts in flight. A smaller file goes
-    through put_object_async. The function shuts the thread pool down before
-    it returns (#1008). For conditional modes, obstore uses a single PUT even
-    for a large file; the repair cannot fall back to an unconditional write.
-
-    Args:
-        store: Object store instance.
-        catalog_root: Path to catalog root (for relative path calculation).
-        prefix: Prefix in object storage.
-        assets: List of asset file paths to upload.
-        concurrency: Maximum concurrent file uploads (default 50).
-        chunk_concurrency: Maximum concurrent chunks per file (default 4).
-            Only applies to files >5MB using multipart upload.
-        show_progress: If True, draw a progress bar on a terminal.
-        adaptive: If True, raise concurrency from a slow start while the store
-            keeps up (issue #344). False holds ``concurrency`` fixed.
-        written: A dict that receives the ETag of each put, by key.
-        conditions: Object keys mapped to the ETags captured by verify. None
-            overwrites normally; a None entry creates only if the key is absent.
-        verbose: If True, print per-file upload details.
-        report: Receives each line of the run, with its level.
-
-    Returns:
-        Tuple of (files_uploaded, errors, uploaded_keys, metrics).
-    """
+    """Upload asset files to object storage with async concurrent uploads."""
     metrics = UploadMetrics()
     written = {} if written is None else written
 
@@ -1925,8 +1249,7 @@ async def _upload_assets_async(  # noqa: PLR0915 - each transport option is thre
         size_bytes = file_sizes[asset_path]
 
         if size_bytes >= MULTIPART_THRESHOLD:
-            # Large file: use sync put() with multipart in thread pool
-            # This respects chunk_concurrency for per-file parallelism
+            # Large file: sync multipart put() in a thread, to respect chunk_concurrency.
             # trace.submit hands the open span to the worker thread.
             return await asyncio.wrap_future(
                 submit(
@@ -1982,7 +1305,7 @@ async def _upload_assets_async(  # noqa: PLR0915 - each transport option is thre
                         f"Uploaded ({completed}/{total_count}): {rel_path} ({format_file_size(size_bytes)}, {format_speed(speed)})",
                     )
 
-        # Create adaptive concurrency manager for slow-start (Issue #344)
+        # Create adaptive concurrency manager for slow-start
         adaptive_manager = None
         if adaptive:
             from portolan_cli.async_utils import AdaptiveConcurrencyManager
@@ -2031,30 +1354,7 @@ async def _upload_stac_files_async(  # noqa: PLR0915 - each transport option is 
     verbose: bool = False,
     report: Report | None = None,
 ) -> tuple[int, list[str], list[str]]:
-    """Upload STAC metadata files asynchronously.
-
-    Upload order (manifest-last pattern for atomicity):
-    1. Item STAC files (parallel)
-    2. collection.json (sequential, after items)
-    3. catalog.json (last)
-
-    Args:
-        store: Object store instance.
-        catalog_root: Path to catalog root.
-        prefix: Prefix in object storage.
-        stac_files: Dict of STAC files from _discover_stac_files().
-        destination: The push destination URL, for the partition:glob (#761).
-        concurrency: Maximum concurrent uploads.
-        show_progress: If True, draw a progress bar on a terminal.
-        written: A dict that receives the ETag of each put, by key.
-        root_etags: The ETag of each root document that the push read before
-            its first upload. None writes the root documents without a condition.
-        verbose: If True, print per-file upload details.
-        report: Receives each line of the run, with its level.
-
-    Returns:
-        Tuple of (files_uploaded, errors, uploaded_keys).
-    """
+    """Upload STAC metadata files asynchronously."""
     written = {} if written is None else written
     errors: list[str] = []
     uploaded_keys: list[str] = []
@@ -2093,7 +1393,7 @@ async def _upload_stac_files_async(  # noqa: PLR0915 - each transport option is 
 
                 content = file_path.read_bytes()
 
-                # Transform collection.json to populate partition:glob (Issue #351)
+                # Transform collection.json to populate partition:glob
                 if file_path.name == "collection.json":
                     # Extract collection path (e.g., "buildings" from "buildings/collection.json")
                     collection_path = rel_path.parent.as_posix()
@@ -2165,19 +1465,7 @@ async def _upload_versions_json_async(
     *,
     force: bool = False,
 ) -> None:
-    """Upload versions.json with optimistic locking (async version).
-
-    Args:
-        store: Object store instance.
-        prefix: Prefix in object storage.
-        collection: Collection identifier.
-        versions_data: The versions.json data to upload.
-        etag: Expected etag for conditional put (None for first push).
-        force: If True, use overwrite mode instead of conditional put.
-
-    Raises:
-        PushConflictError: If the remote versions.json changed during the push.
-    """
+    """Upload versions.json with optimistic locking (async version)."""
     key = f"{prefix}/{collection}/versions.json".lstrip("/")
     # Use compact JSON for remote STAC files (saves bandwidth)
     content = json.dumps(versions_data, separators=(",", ":")).encode("utf-8")
@@ -2185,12 +1473,7 @@ async def _upload_versions_json_async(
 
 
 def _manifest_mode(etag: str | None, *, force: bool) -> PutMode | None:
-    """Return the put mode for a versions.json write.
-
-    A first push writes only if no other writer created the key. A later push
-    writes only if the key still holds the ETag that the push read. Force
-    overwrites.
-    """
+    """Return the put mode for a versions.json write."""
     if force:
         return None
     return {"e_tag": etag} if etag else "create"
@@ -2199,11 +1482,7 @@ def _manifest_mode(etag: str | None, *, force: bool) -> PutMode | None:
 async def _put_manifest(
     store: ObjectStore, key: str, content: bytes, etag: str | None, *, force: bool
 ) -> None:
-    """Write a versions.json under its ETag condition.
-
-    Raises:
-        PushConflictError: If another writer changed or created the key.
-    """
+    """Write a versions.json under its ETag condition."""
     try:
         await put_object_async(store, key, content, mode=_manifest_mode(etag, force=force))
     except (PreconditionError, AlreadyExistsError) as e:
@@ -2211,7 +1490,7 @@ async def _put_manifest(
 
 
 # The documents at the catalog root that a push of any collection rewrites.
-# Two writers of different collections race on them (#971).
+# Two writers of different collections race on them.
 _ROOT_DOCUMENTS = ("catalog.json", "README.md", "AGENTS.md", "versions.json")
 # The number of root catalog.json writes before the push gives up.
 _ROOT_CATALOG_ATTEMPTS = 3
@@ -2220,13 +1499,7 @@ _ROOT_CATALOG_ATTEMPTS = 3
 async def _root_etags(
     store: ObjectStore, prefix: str, keys: list[str], *, report: Report | None = None
 ) -> dict[str, str | None]:
-    """Read the ETag of each root document in ``keys``, before the first upload.
-
-    A key that does not exist maps to None. Its write then takes the "create"
-    mode. A key that the credential cannot read is left out, and its write
-    takes no condition. The root versions.json is the exception: push --all
-    stops before its first upload.
-    """
+    """Read the ETag of each root document in ``keys``, before the first upload."""
     root = {f"{prefix}/{name}".lstrip("/") for name in _ROOT_DOCUMENTS}
     wanted = sorted(root.intersection(keys))
     read = await asyncio.gather(
@@ -2247,11 +1520,7 @@ async def _root_etags(
 
 
 def _merge_child_links(local: bytes, remote: bytes) -> bytes:
-    """Add each child link of the remote catalog.json that the local one lacks.
-
-    Returns:
-        ``local`` unchanged when it holds every remote child link.
-    """
+    """Add each child link of the remote catalog.json that the local one lacks."""
     document = json.loads(local)
     links: list[dict[str, Any]] = document.setdefault("links", [])
     hrefs = {
@@ -2275,22 +1544,7 @@ async def _put_file(
     *,
     report: Report | None = None,
 ) -> PutResult | None:
-    """Write one catalog file. A root document takes an ETag condition.
-
-    README.md and AGENTS.md take the ETag that the push read before its first
-    upload. On a mismatch the remote bytes stay. The root catalog.json keeps
-    the child links of every writer. Each write reads the remote copy, adds
-    its child links to the local ones, and writes under the ETag of that
-    read. A local catalog that lacks the collection of another writer then
-    keeps its link. A mismatch repeats the read and the write.
-
-    Returns:
-        The put result. None when the key holds bytes of another writer, so a
-        rollback must not touch the key.
-
-    Raises:
-        PushConflictError: If the root catalog.json write loses every attempt.
-    """
+    """Write one catalog file. A root document takes an ETag condition."""
     if root_etags is None or key not in root_etags:
         return await put_object_async(store, key, content)
     if posixpath.basename(key) != "catalog.json":
@@ -2333,30 +1587,7 @@ async def _upload_metadata_files_async(
     verbose: bool = False,
     report: Report | None = None,
 ) -> tuple[int, list[str]]:
-    """Upload metadata files (style.json, thumbnails, etc.) to remote (Issue #426).
-
-    This uploads ALL catalog files that aren't versioned assets or STAC metadata.
-    Happens after assets and STAC files, before versions.json (manifest-last).
-
-    Security: Uses _get_effective_exclude_patterns which always includes
-    security-critical patterns (.env, .git/, .portolan/).
-
-    Args:
-        store: Object store instance.
-        catalog_root: Path to catalog root.
-        prefix: Prefix in object storage.
-        files: The files to upload, from ``_discover_catalog_files``.
-        written: A dict that receives the ETag of each put, by key.
-        root_etags: The ETag of each root document that the push read before
-            its first upload. None writes the root documents without a condition.
-        concurrency: Maximum concurrent uploads.
-        verbose: If True, print per-file upload details.
-        report: Receives each line of the run, with its level.
-
-    Returns:
-        Tuple of (files_uploaded, errors). Errors are returned, not swallowed,
-        so callers can decide how to handle partial failures.
-    """
+    """Upload metadata files (style.json, thumbnails, etc.) to remote."""
     if not files:
         return 0, []
 
@@ -2415,45 +1646,13 @@ async def _execute_push_uploads_async(  # noqa: PLR0913, PLR0914, PLR0915 - each
     verbose: bool = False,
     report: Report | None = None,
 ) -> PushResult:
-    """Execute the upload phase of push_async.
-
-    Handles assets, STAC files, versions.json, and READMEs in order.
-    This is extracted from push_async to reduce cyclomatic complexity.
-
-    Args:
-        store: Object store instance the upload writes to.
-        catalog_root: Path to the catalog root directory.
-        prefix: Prefix in object storage.
-        collection: Collection identifier this push covers.
-        local_data: Local versions.json content.
-        diff: Asset differences between the local and the remote manifest.
-        etag: ETag of the remote versions.json, for the conditional write.
-        destination: The push destination URL, for the partition:glob of
-            collection.json (#761).
-        concurrency: Maximum concurrent file uploads.
-        chunk_concurrency: Maximum concurrent chunks per file upload.
-            For files >5MB, this limits per-file multipart parallelism.
-        show_progress: If True, draw a progress bar on a terminal.
-        force: If True, write the manifest without the ETag precondition.
-        include_catalog: If True, upload catalog.json and root README.md.
-        remote_data: Remote versions.json for sha256 diffing (Issue #329).
-        adaptive: If True, raise concurrency from a slow start while the store
-            keeps up (issue #344). False holds ``concurrency`` fixed.
-        reupload: Hrefs that ``--verify`` found wrong in the store. These
-            assets upload although the snapshots match (Issue #966).
-        verbose: If True, print per-file upload details.
-        report: Receives each line of the run, with its level.
-
-    Returns:
-        PushResult with success or failure status and metrics.
-    """
-    # Get assets to upload (only new/changed, per Issue #329)
+    """Execute the upload phase of push_async."""
+    # Get assets to upload (only new/changed)
     assets = _get_assets_to_upload(
         catalog_root, local_data, remote_versions_data=remote_data, reupload=reupload, report=report
     )
-    # include_catalog controls whether catalog.json and root README.md are included.
-    # - True for standalone push() so remote is a complete clonable catalog
-    # - False when called from push_all_collections() (uploads once at end)
+    # include_catalog is True for a standalone push, so the remote is a complete
+    # clonable catalog. push_all_collections uploads the root files once at the end.
     try:
         stac_files = _discover_stac_files(
             catalog_root, collection, include_catalog=include_catalog, report=report
@@ -2463,8 +1662,7 @@ async def _execute_push_uploads_async(  # noqa: PLR0913, PLR0914, PLR0915 - each
         return PushResult(success=False, files_uploaded=0, versions_pushed=0, errors=[str(e)])
 
     # The plan names every key before the first write. Rollback deletes the keys
-    # that were absent and restores the ones that existed (#965). The metadata
-    # files (styles, thumbnails) upload before versions.json, so they are in it.
+    # that were absent and restores the ones that existed.
     stac_paths = [*stac_files.get("items", []), *stac_files.get("collection", [])]
     stac_paths += stac_files.get("catalog", [])
     metadata_files = _discover_catalog_files(
@@ -2501,9 +1699,7 @@ async def _execute_push_uploads_async(  # noqa: PLR0913, PLR0914, PLR0915 - each
 
     try:
         with span("push.assets", collection=collection) as stage:
-            # Upload assets first (async, manifest-last pattern)
-            # chunk_concurrency now properly limits per-file multipart parallelism
-            # for files >5MB (Issue #344)
+            # Upload assets first (manifest-last: versions.json goes last)
             files_uploaded, upload_errors, _, metrics = await _upload_assets_async(
                 store,
                 catalog_root,
@@ -2544,8 +1740,8 @@ async def _execute_push_uploads_async(  # noqa: PLR0913, PLR0914, PLR0915 - each
                 tell(report, "error", "STAC metadata upload failed, aborting push")
                 return await failed(stac_errors)
 
-        # Upload metadata files (style.json, thumbnails, etc.) - Issue #426
-        # This happens after STAC files, before versions.json (manifest-last)
+        # Upload metadata files (style.json, thumbnails) after STAC files and
+        # before versions.json (manifest-last).
         with span("push.metadata", collection=collection):
             metadata_uploaded, metadata_errors = await _upload_metadata_files_async(
                 store,
@@ -2572,10 +1768,8 @@ async def _execute_push_uploads_async(  # noqa: PLR0913, PLR0914, PLR0915 - each
                     store, prefix, collection, local_data, etag, force=force
                 )
             except PushConflictError:
-                # Another writer won the race. Rollback deletes no key, because
-                # that writer can own a key that this push created (#971). A key
-                # that still holds the bytes of this push gets its backup back,
-                # unless the winning manifest names those bytes.
+                # Another writer won the race. Delete no key, because that writer can own one.
+                # Restore a backup only where the winning manifest does not name our bytes.
                 restore = await _keys_to_restore(store, prefix, collection, local_data, written)
                 await _drop_backups(store, backups, sizes, restore_over=restore, report=report)
                 raise
@@ -2598,7 +1792,7 @@ async def _execute_push_uploads_async(  # noqa: PLR0913, PLR0914, PLR0915 - each
     elif repaired:
         msg = f"Repaired {repaired} asset(s) (no new versions)"
     else:
-        # Force re-push with no version delta refreshes metadata only (Issue #496)
+        # Force re-push with no version delta refreshes metadata only
         msg = "Refreshed metadata (no new versions)"
     tell(report, "success", _with_metrics(msg, metrics))
 
@@ -2647,22 +1841,7 @@ async def _sync_collection_metadata_only(
     verbose: bool = False,
     report: Report | None = None,
 ) -> PushResult:
-    """Sync a collection's non-versioned metadata when no version changed (#816).
-
-    An edited ``AGENTS.md`` changes no data asset, so it bumps no version. The
-    version diff is empty and the normal upload path does not run. The catalog
-    root re-syncs its non-versioned metadata on every push, so a collection gets
-    the same treatment here. This function uploads the non-versioned metadata
-    files that ``_discover_catalog_files`` finds, such as ``AGENTS.md``. Without
-    it an edited agent guide never reaches the bucket.
-
-    A standalone push (``include_catalog_root``) also uploads the files of the
-    intermediate catalogs above a nested collection, such as their AGENTS.md
-    (Issue #905). A catalog-wide push leaves them to
-    ``_push_all_upload_root_files``, which uploads them once for all collections.
-
-    A push with no new version and no metadata change uploads nothing.
-    """
+    """Sync a collection's non-versioned metadata when no version changed."""
     files = _discover_catalog_files(
         catalog_root, collection, include_catalog_root=include_catalog_root, report=report
     )
@@ -2711,26 +1890,7 @@ async def _repair_flagged_assets_async(  # noqa: PLR0913 - each transport option
     verbose: bool = False,
     report: Report | None = None,
 ) -> PushResult:
-    """Repair the flagged objects when no version is new and there is no force.
-
-    ``push --verify`` flagged each href in ``reupload`` (Issue #966). Each one
-    has the same sha256 in the local and the remote current snapshots. Check
-    the local bytes before any upload. Each write uses its verification HEAD
-    ETag, or create-only mode for a missing object, so a later writer wins.
-    Upload exactly those files. Then it syncs the non-versioned metadata, the
-    same as a plain push with no new version.
-
-    It does not write versions.json. The local manifest can differ from the
-    remote manifest with the same version list, for example in
-    ``current_version``. A plain push publishes none of that difference, so a
-    repair must not publish it either. Other assets that differ do not upload.
-
-    A failed upload reports failure and deletes nothing. A flagged key held
-    wrong bytes or no object before, so a rollback has nothing to restore.
-
-    Returns:
-        PushResult with the repair and metadata upload counts.
-    """
+    """Repair the flagged objects when no version is new and there is no force."""
     assets = _get_reupload_assets(catalog_root, local_data, reupload, report=report)
     files_uploaded, upload_errors, uploaded_keys, metrics = await _upload_assets_async(
         store,
@@ -2796,48 +1956,7 @@ async def push_async(  # noqa: PLR0913 - each transport option is threaded throu
     verbose: bool = False,
     report: Report | None = None,
 ) -> PushResult:
-    """Push local catalog changes to cloud object storage (async version).
-
-    This is the async implementation of push() that uses native asyncio
-    for concurrent uploads instead of ThreadPoolExecutor.
-
-    Args:
-        catalog_root: Path to the local catalog root.
-        collection: Collection identifier to push.
-        destination: Object store URL (e.g., s3://bucket/prefix).
-        force: If True, overwrite remote even if diverged.
-        dry_run: If True, show what would be uploaded without uploading.
-        profile: AWS profile name (for S3 only).
-        region: AWS region (for S3 only).
-        concurrency: Maximum concurrent file uploads (default: 8).
-        chunk_concurrency: Maximum concurrent chunks per file (default: 4).
-            Total connections = concurrency × chunk_concurrency.
-        adaptive: If True, use slow-start ramp-up for network-safe uploads (default: True).
-        show_progress: If True, draw a progress bar on a terminal.
-        include_catalog: If True, upload catalog.json and root README.md.
-            Set to False when called from push_all_collections (uploads them once at end).
-        verify: If True, send a HEAD for each asset that the snapshot diff
-            skips (Issue #966). Push uploads an asset whose object is missing.
-            Push also uploads an asset whose object size differs from
-            ``size_bytes`` in the local current snapshot. The check runs also
-            when no version is new, so it can repair a damaged store. Without
-            a new version and without ``force``, push uploads only the flagged
-            assets and does not write versions.json. With a new version or
-            ``force``, the flagged assets join the normal upload set. A size
-            check cannot find a wrong object of the same size.
-        verbose: If True, print per-file upload details.
-        report: Receives each line of the run, with its level.
-
-    Returns:
-        PushResult with upload statistics.
-
-    Raises:
-        FileNotFoundError: If catalog or versions.json doesn't exist.
-        ValueError: If destination URL is invalid.
-        PushConflictError: If remote diverged and force=False.
-        PushVerifyError: If ``verify`` is True and a HEAD fails for a reason
-            other than a missing object.
-    """
+    """Push local catalog changes to cloud object storage (async version)."""
     from portolan_cli.async_utils import get_default_chunk_concurrency
 
     concurrency = concurrency or get_default_concurrency()
@@ -2886,7 +2005,7 @@ async def push_async(  # noqa: PLR0913 - each transport option is threaded throu
             "Pull changes first or use --force to overwrite."
         )
 
-    # With --verify, check each skipped asset against the store (Issue #966).
+    # With --verify, check each skipped asset against the store.
     # Without the flag, push sends no request for a skipped asset.
     verified_etags: dict[str, str | None] = {}
     verify_report: VerifyReport | None = None
@@ -2897,19 +2016,12 @@ async def push_async(  # noqa: PLR0913 - each transport option is threaded throu
 
     reupload = frozenset(verified_etags)
 
-    # No new versions to push.
-    # With --force, proceed even when the version list is unchanged so that
-    # regenerated metadata (collection.json, catalog.json, styles) is re-uploaded
-    # (Issue #496). Unchanged data assets are still skipped by the sha256 diff in
-    # _get_assets_to_upload, so this refreshes metadata without a full re-push.
-    # That diff compares the local and remote current snapshots. So a force push
-    # also uploads an asset whose bytes differ from the remote current snapshot
-    # (Issue #962).
+    # With --force and no new version, re-upload regenerated metadata. The sha256 diff
+    # still skips each asset whose bytes match the remote current snapshot.
     if not force and not diff.local_only:
         if reupload:
-            # A mismatch that --verify finds, with no new version and no
-            # force. Push uploads the flagged assets only and does not write
-            # versions.json. So the remote manifest stays as is (Issue #966).
+            # --verify found a mismatch, with no new version and no force. Upload
+            # the flagged assets only, and leave the remote versions.json as is.
             result = await _repair_flagged_assets_async(
                 store,
                 catalog_root,
@@ -2940,11 +2052,9 @@ async def push_async(  # noqa: PLR0913 - each transport option is threaded throu
         result.verify = verify_report
         return result
 
-    # With a new version or --force, the hrefs that --verify flagged join the
-    # normal upload set. That path writes the local versions.json last, with
-    # the ETag precondition (Issue #966).
+    # With a new version or --force, flagged hrefs join the normal upload set.
 
-    # Execute uploads (with remote data for sha256 diffing, Issue #329)
+    # Execute uploads (with remote data for sha256 diffing)
     result = await _execute_push_uploads_async(
         store,
         catalog_root,
@@ -2969,34 +2079,12 @@ async def push_async(  # noqa: PLR0913 - each transport option is threaded throu
     return result
 
 
-# =============================================================================
-# Catalog-Wide Push (Issue #224)
-# =============================================================================
+# Catalog-Wide Push
 
 
 @dataclass
 class PushAllResult:
-    """Result of pushing all collections in a catalog.
-
-    Attributes:
-        success: True if all collections pushed without errors.
-        total_collections: Total number of collections found.
-        successful_collections: Number of collections successfully pushed.
-        failed_collections: Number of collections that failed to push.
-        total_files_uploaded: Aggregate count of files uploaded across all collections.
-        total_versions_pushed: Aggregate count of versions pushed across all collections.
-        dry_run: True if this was a dry-run operation (no network calls made).
-        total_would_push_files: In dry-run mode, max asset files that would be uploaded
-            (upper bound; actual count depends on remote state).
-        total_would_push_versions: In dry-run mode, max versions that would be pushed
-            (upper bound; actual count depends on remote state).
-        collection_errors: Dict mapping collection name to error messages.
-        collection_exceptions: Original exceptions for failures that raised,
-            preserving their class and structured code for CLI reporting.
-        verify: Sum of the ``--verify`` counts of all collections that
-            returned a result. A collection that raised adds no counts. None
-            when push did not verify.
-    """
+    """Result of pushing all collections in a catalog."""
 
     success: bool
     total_collections: int
@@ -3028,23 +2116,7 @@ class PushAllResult:
 
 
 def discover_collections(catalog_root: Path, *, report: Report | None = None) -> list[str]:
-    """Recursively discover all collections by finding directories with versions.json.
-
-    Collections can exist at any
-    depth within the catalog structure. This function recursively searches for
-    versions.json files and returns the relative paths to their parent directories.
-
-    Args:
-        catalog_root: Path to the catalog root directory.
-        report: Receives each line of the run, with its level.
-
-    Returns:
-        Sorted list of collection paths relative to catalog_root (POSIX format).
-        Examples: ["collection", "sub-catalog/collection", "a/b/c/collection"]
-
-    Raises:
-        ValueError: If catalog_root is not a valid catalog directory.
-    """
+    """Recursively discover all collections by finding directories with versions.json."""
     if not catalog_root.exists():
         raise ValueError(f"Catalog root does not exist: {catalog_root}")
 
@@ -3119,10 +2191,8 @@ def _push_all_process_result(
         stats["failed"] += 1
         stats["errors"][coll] = [err_msg]
     elif result and result.success:
-        # A dry-run does no remote check, so the terminal line reports the local
-        # upper-bound estimate. The estimate goes to the would-push stats, not the
-        # uploaded stats. The uploaded stats stay at 0 to keep the JSON envelope
-        # side-effect-honest and consistent with the single-collection path.
+        # A dry run reports the local upper-bound estimate as would-push stats.
+        # The uploaded stats stay at 0, as in the single-collection path.
         if result.dry_run:
             v = result.would_push_versions
             f = result.would_push_files
@@ -3171,31 +2241,7 @@ def _push_all_process_result(
 def _discover_intermediate_catalog_files(
     catalog_root: Path, collections: list[str], *, report: Report | None = None
 ) -> list[Path]:
-    """Discover the files of each intermediate catalog for nested collections.
-
-    A nested collection ``a/b/c`` has a ``catalog.json`` at each
-    intermediate level (``a/``, ``a/b/``) created by ``create_intermediate_catalogs``
-    during ``add``. These are neither leaf ``collection.json`` files nor the root
-    ``catalog.json``, so every other push discovery path misses them (Issue #547,
-    #552). This walks each collection's ancestor sub-catalog ids (shared
-    ``intermediate_catalog_ids`` helper), deduped across sibling collections and
-    sorted for deterministic output.
-
-    An intermediate level follows the rule of the root level. Every file in the
-    directory is published, except the files the push exclusions skip. A fixed
-    name list missed the scaffolded AGENTS.md, which the catalog's rel="agents"
-    link names (Issue #905, #935). Subdirectories are child catalogs or
-    collections, and their own walks handle them.
-
-    Args:
-        catalog_root: Path to the catalog root directory.
-        collections: Leaf collection ids (from ``discover_collections``).
-        report: Receives each line of the run, with its level.
-
-    Returns:
-        Existing intermediate file paths. In each directory, ``catalog.json``
-        comes first, then ``README.md``, then the other files by name.
-    """
+    """Discover the files of each intermediate catalog for nested collections."""
     seen: set[str] = set()
     for collection in collections:
         seen.update(intermediate_catalog_ids(collection))
@@ -3233,25 +2279,15 @@ def _discover_intermediate_catalog_files(
 def _root_upload_skip_reason(
     catalog_root: Path, catalog_json: Path, stats: dict[str, Any]
 ) -> str | None:
-    """Return why the root-file upload must not run, or None to run it.
-
-    Args:
-        catalog_root: Path to the catalog root directory.
-        catalog_json: Path to the root catalog.json.
-        stats: Running push counters.
-
-    Returns:
-        A message for the user, or None when the upload may proceed.
-    """
+    """Return why the root-file upload must not run, or None to run it."""
     # A landed collection is live remotely, so the root must link it.
     if stats["failed"] > stats["landed"]:
         return "Skipping root file upload because some collections failed"
     if stats["successful"] + stats["landed"] == 0:
         return "Skipping root file upload because no collections were pushed"
     if not catalog_json.exists():
-        # A missing root catalog.json means the remote root is already broken.
-        # The intermediate catalog.json files are reachable only by walking child
-        # links from this root, so they are skipped too (Issue #547, #552).
+        # Without the root catalog.json, no child link reaches the intermediate
+        # catalogs, so they are skipped too.
         return f"catalog.json not found at {catalog_root} - remote catalog may be incomplete"
     return None
 
@@ -3263,14 +2299,7 @@ def _report_root_upload_dry_run(
     *,
     report: Report | None = None,
 ) -> None:
-    """Print the root files a real run would upload.
-
-    Args:
-        catalog_root: Path to the catalog root directory.
-        root_metadata: Root metadata files the run would sync.
-        intermediate_files: Intermediate catalog files the run would upload.
-        report: Receives each line of the run, with its level.
-    """
+    """Print the root files a real run would upload."""
     if (catalog_root / "README.md").exists():
         tell(report, "info", "[DRY RUN] Would upload README.md")
     if root_metadata:
@@ -3302,27 +2331,7 @@ async def _upload_root_files(
     force: bool = False,
     report: Report | None = None,
 ) -> None:
-    """Upload the root files in manifest-last order.
-
-    versions.json goes last, so a reader never sees a manifest that names a file
-    the store does not hold yet. Each root document is written under the ETag
-    that push --all read before the first collection (#971).
-
-    Args:
-        store: Object store instance.
-        prefix: Prefix in object storage.
-        catalog_root: Path to the catalog root directory.
-        root_metadata: Root metadata files to sync (Issue #426).
-        intermediate_files: Intermediate catalog files (Issue #547, #552).
-        stats: Running push counters. The function adds the file count to it.
-        root_etags: The ETag of each root document, from ``_root_etags``.
-            None writes them without a condition, and versions.json only if absent.
-        force: If True, overwrite the root versions.json without a condition.
-        report: Receives each line of the run, with its level.
-
-    Raises:
-        PushConflictError: If another writer changed the root versions.json.
-    """
+    """Upload the root files in manifest-last order."""
     root_etags = root_etags or {}
 
     async def put(path: Path) -> None:
@@ -3397,33 +2406,7 @@ async def _push_all_upload_root_files(
     force: bool = False,
     report: Report | None = None,
 ) -> bool:
-    """Upload root-level files after all collections (Issue #357, #426, #547, #552).
-
-    Uploads from catalog root (in order):
-    1. README.md (documentation, optional)
-    2. Root metadata files (style.json, thumbnails, etc.) - Issue #426
-    3. catalog.json (STAC catalog metadata, required)
-    4. Intermediate catalog files (catalog.json, README.md, AGENTS.md, ...) - Issue #547, #552, #905
-    5. versions.json (manifest, required - uploaded LAST per manifest-last atomicity)
-
-    These are uploaded AFTER all collections succeed.
-
-    Args:
-        catalog_root: Path to the catalog root directory.
-        destination: Object storage URL the files go to.
-        profile: Named credential profile. None uses the default credentials.
-        region: Object store region. None lets the store resolve it.
-        dry_run: If True, report the uploads and write nothing.
-        stats: Running push counters. The function reads the per-collection
-            outcome from it and adds the root-file counts to it.
-        collections: Leaf collection ids (from ``discover_collections``), used to
-            discover intermediate catalogs. None/empty means no intermediates.
-        root_etags: The ETag of each root document before the push.
-        force: If True, overwrite the root versions.json without a condition.
-        report: Receives each line of the run, with its level.
-
-    Returns True if uploads succeeded or were skipped, False if any failed.
-    """
+    """Upload root-level files after all collections."""
     catalog_json = catalog_root / "catalog.json"
 
     skip_reason = _root_upload_skip_reason(catalog_root, catalog_json, stats)
@@ -3431,11 +2414,11 @@ async def _push_all_upload_root_files(
         tell(report, "warn", skip_reason)
         return True
 
-    # Discover root metadata files (Issue #426)
+    # Discover root metadata files
     root_metadata = _discover_catalog_files(catalog_root, include_catalog_root=True, report=report)
 
-    # Discover intermediate catalog files for nested collections (Issue #905)
-    # (Issue #547, #552). Uploaded after root catalog.json, before versions.json.
+    # Discover intermediate catalog files for nested collections. They upload
+    # after the root catalog.json, before versions.json.
     intermediate_files = _discover_intermediate_catalog_files(
         catalog_root, collections or [], report=report
     )
@@ -3481,35 +2464,7 @@ async def push_all_collections_async(  # noqa: PLR0913, PLR0914, PLR0915 - each 
     verbose: bool = False,
     report: Report | None = None,
 ) -> PushAllResult:
-    """Push all collections in a catalog to cloud storage asynchronously.
-
-    Primary async implementation. Uses asyncio.gather() for concurrent
-    collection pushes within a single event loop.
-
-    Args:
-        catalog_root: Path to the catalog root directory.
-        destination: Object store URL (e.g., s3://bucket/prefix).
-        force: If True, overwrite remote even if diverged.
-        dry_run: If True, show what would be uploaded without uploading.
-        profile: AWS profile name (for S3 only).
-        region: AWS region (for S3 only). Overrides profile/env config.
-        concurrency: Maximum concurrent collection pushes. None = auto-detect.
-        file_concurrency: Maximum concurrent file uploads within each collection.
-            None = use push_async default. (Maps to --concurrency CLI flag.)
-        chunk_concurrency: Maximum concurrent chunks per file upload.
-            None = use default (4). Total connections = file_concurrency × chunk_concurrency.
-        adaptive: If True, use slow-start ramp-up for network-safe uploads (default: True).
-        verbose: If True, show per-file upload details.
-        verify: If True, each collection checks its skipped assets against
-            the store. See ``push_async``.
-        report: Receives each line of the run, with its level.
-
-    Returns:
-        PushAllResult with aggregate statistics and per-collection errors.
-
-    Raises:
-        ValueError: If catalog_root is not a valid catalog.
-    """
+    """Push all collections in a catalog to cloud storage asynchronously."""
     from portolan_cli.version_ops import check_backend_supports_push
 
     blocked = check_backend_supports_push(catalog_root)
@@ -3535,7 +2490,7 @@ async def push_all_collections_async(  # noqa: PLR0913, PLR0914, PLR0915 - each 
     _run_notices.set(set())
 
     # The root document writes are conditional on the ETags read here, before
-    # any collection writes (#971).
+    # any collection writes.
     root_etags = None
     if not dry_run and (catalog_root / "catalog.json").exists():
         try:
@@ -3685,52 +2640,19 @@ def push_all_collections(  # noqa: PLR0913 - each transport option is threaded t
     verbose: bool = False,
     report: Report | None = None,
 ) -> PushAllResult:
-    """Push all collections in a catalog to cloud storage (sync wrapper).
-
-    This is a thin wrapper around `push_all_collections_async()` for
-    backward compatibility. All logic is in the async implementation.
-
-    Args:
-        catalog_root: Path to the catalog root directory.
-        destination: Object store URL (e.g., s3://bucket/prefix).
-        force: If True, overwrite remote even if diverged.
-        dry_run: If True, show what would be uploaded without uploading.
-        profile: AWS profile name (for S3 only).
-        region: AWS region (for S3 only). Overrides profile/env config.
-        workers: Number of parallel workers. None = auto-detect, 1 = sequential.
-            (Maps to 'concurrency' in async implementation.)
-        file_concurrency: Passed to ``push_all_collections_async``.
-        chunk_concurrency: Passed to ``push_all_collections_async``.
-        adaptive: Passed to ``push_all_collections_async``.
-        verbose: Passed to ``push_all_collections_async``.
-        max_connections: Maximum total concurrent connections. If set, adjusts
-            file_concurrency and chunk_concurrency to stay within limit.
-        verify: Passed to ``push_all_collections_async``.
-        report: Passed to ``push_all_collections_async``.
-
-    Returns:
-        PushAllResult with aggregate statistics and per-collection errors.
-
-    Raises:
-        ValueError: If catalog_root is not a valid catalog.
-    """
+    """Push all collections in a catalog to cloud storage (sync wrapper)."""
     from portolan_cli.async_utils import (
         adjust_concurrency_for_max_connections,
         get_default_chunk_concurrency,
         get_default_concurrency,
     )
 
-    # Apply max_connections limit if specified
-    # CRITICAL (Issue #344): Divide max_connections by worker count to get
-    # per-collection budget. Otherwise workers=4 with max_connections=32
-    # would actually run 4 × 32 = 128 connections.
+    # Divide max_connections by the worker count, or 4 workers with 32 each open 128.
     effective_file_conc = file_concurrency or get_default_concurrency()
     effective_chunk_conc = chunk_concurrency or get_default_chunk_concurrency()
 
     if max_connections is not None:
-        # Compute effective worker count for budget calculation
-        # workers=None means auto-detect, which uses min(total_collections, default_concurrency)
-        # We use default_concurrency (8) as a conservative estimate when workers is None
+        # workers=None auto-detects, so estimate with the default concurrency.
         effective_workers = workers if workers is not None else get_default_concurrency()
         effective_workers = max(1, effective_workers)  # Ensure at least 1
 
@@ -3763,11 +2685,7 @@ def push_all_collections(  # noqa: PLR0913 - each transport option is threaded t
 def effective_push_concurrency(
     concurrency: int, chunk_concurrency: int, max_connections: int | None
 ) -> tuple[int, int]:
-    """Apply the ``max_connections`` cap to the push concurrency (#344).
-
-    Returns:
-        The effective file concurrency and chunk concurrency.
-    """
+    """Apply the ``max_connections`` cap to the push concurrency."""
     from portolan_cli.async_utils import adjust_concurrency_for_max_connections
 
     if max_connections is None:
@@ -3796,49 +2714,11 @@ def run_push(  # noqa: PLR0913 - each transport option is threaded through each 
     # renderer to the CLI is a follow-up.
     show_progress: bool = False,
 ) -> PushResult | PushAllResult:
-    """Run ``portolan push``: push one collection, or every collection.
-
-    The options match the command. ``profile`` and ``region`` are the
-    resolved settings, not the raw flags.
-
-    Args:
-        catalog_root: Path to the catalog root.
-        destination: Object store URL (e.g., s3://bucket/prefix).
-        collection: Collection to push. None pushes every collection.
-        force: If True, overwrite the remote even if it diverged.
-        dry_run: If True, list what a push would upload, with no network I/O.
-        profile: AWS profile name (for S3 only).
-        region: AWS region (for S3 only).
-        workers: Parallel collection pushes. Only a catalog-wide push uses it.
-        concurrency: Maximum concurrent file uploads within each collection.
-        chunk_concurrency: Maximum concurrent chunks per file upload.
-        max_connections: Cap on the total concurrent connections.
-        adaptive: If True, ramp the concurrency up from a slow start.
-        verify: If True, check each skipped asset against the store.
-        verbose: If True, report each uploaded file in place of the bar.
-        show_progress: If True, draw a progress bar on a terminal.
-        report: Receives each line of the run, with its level. Without it,
-            the lines go to the log.
-
-    Returns:
-        A PushResult for one collection, or a PushAllResult for every
-        collection. A failed push returns ``success=False``.
-
-    Raises:
-        NotImplementedError: If the backend of a target collection does not
-            support a file-based push. A dry run does not check this.
-        FileNotFoundError: If the catalog or the versions.json is absent.
-        ValueError: If the destination URL is invalid.
-        PushConflictError: If the remote diverged and ``force`` is False.
-        PushVerifyError: If a ``verify`` HEAD fails.
-    """
+    """Run ``portolan push``: push one collection, or every collection."""
     from portolan_cli.version_ops import check_backend_supports_push
 
-    # A collection with another backend has no file manifest to publish, or a
-    # stale one. Refuse before either push path writes. Only a built backend
-    # answers, and an Iceberg backend opens its catalog when it is built. A
-    # dry run does no I/O and writes nothing, so it skips the check. The
-    # command checks the backend itself first, for a dry run too.
+    # Another backend has no file manifest to publish, so refuse before any write.
+    # A dry run writes nothing, so it skips the check.
     if not dry_run:
         blocked = check_backend_supports_push(catalog_root, collection)
         if blocked is not None:

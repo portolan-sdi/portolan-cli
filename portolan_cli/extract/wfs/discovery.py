@@ -1,12 +1,4 @@
-"""WFS layer discovery.
-
-This module wraps geoparquet-io's WFS discovery functionality and normalizes
-the terminology to match Portolan conventions (typename → layer/name).
-
-Key functions:
-- list_layers: Quick listing of available layers (typenames)
-- discover_layers: Full discovery with service metadata
-"""
+"""WFS layer discovery."""
 
 from __future__ import annotations
 
@@ -26,21 +18,7 @@ class WFSDiscoveryError(Exception):
 
 @dataclass
 class LayerInfo:
-    """Information about a WFS layer (feature type).
-
-    Normalizes WFS terminology: "typename" is exposed as "name" for
-    consistency with Portolan's layer-centric terminology.
-
-    Attributes:
-        name: Layer name (alias for typename, used in UI/filtering).
-        typename: Original WFS typename (may include namespace prefix).
-        title: Human-readable title from GetCapabilities.
-        abstract: Layer description from GetCapabilities.
-        keywords: Layer-specific keywords from GetCapabilities.
-        metadata_urls: List of metadata URL dicts (e.g., CSW GetRecordById).
-        bbox: Bounding box in WGS84 (xmin, ymin, xmax, ymax).
-        id: Numeric ID for filtering compatibility (auto-assigned).
-    """
+    """Information about a WFS layer (feature type)."""
 
     name: str
     typename: str
@@ -54,18 +32,7 @@ class LayerInfo:
 
 @dataclass
 class WFSDiscoveryResult:
-    """Result of WFS service discovery.
-
-    Attributes:
-        service_url: The WFS service URL that was queried.
-        layers: List of discovered layers.
-        service_title: Service title from GetCapabilities.
-        service_abstract: Service description from GetCapabilities.
-        provider: Provider name from GetCapabilities.
-        keywords: Keywords from GetCapabilities.
-        access_constraints: Access constraints or license info.
-        fees: Fee information (typically "none" for public services).
-    """
+    """Result of WFS service discovery."""
 
     service_url: str
     layers: list[LayerInfo] = field(default_factory=list)
@@ -112,21 +79,7 @@ def list_layers(
     service_url: str,
     version: str = "1.1.0",
 ) -> list[LayerInfo]:
-    """List available layers in a WFS service.
-
-    Quick discovery that returns layer names and basic metadata.
-    For full service metadata, use discover_layers().
-
-    Args:
-        service_url: WFS service endpoint URL.
-        version: WFS version (1.0.0, 1.1.0, or 2.0.0).
-
-    Returns:
-        List of LayerInfo objects.
-
-    Raises:
-        WFSDiscoveryError: If connection or parsing fails.
-    """
+    """List available layers in a WFS service."""
     raw_layers = gpio_list_layers(service_url, version)
 
     layers = []
@@ -206,22 +159,7 @@ def discover_layers(
     service_url: str,
     version: str = "1.1.0",
 ) -> WFSDiscoveryResult:
-    """Discover layers and service metadata from a WFS endpoint.
-
-    Full discovery that retrieves service-level metadata in addition
-    to layer information. Uses geoparquet-io's get_wfs_capabilities
-    to parse GetCapabilities response.
-
-    Args:
-        service_url: WFS service endpoint URL.
-        version: WFS version (1.0.0, 1.1.0, or 2.0.0).
-
-    Returns:
-        WFSDiscoveryResult with layers and service metadata.
-
-    Raises:
-        WFSDiscoveryError: If connection or parsing fails.
-    """
+    """Discover layers and service metadata from a WFS endpoint."""
     try:
         from geoparquet_io.core.wfs import WFSError, get_wfs_capabilities
     except ImportError as e:
@@ -248,5 +186,5 @@ def discover_layers(
             fees=svc["fees"],
         )
     except (WFSError, *_NETWORK_ERRORS) as e:
-        # geoparquet-io and requests quote the service URL with its key (#981).
+        # geoparquet-io and requests quote the service URL with its key.
         raise WFSDiscoveryError(redact_credentials(f"Failed to discover WFS layers: {e}")) from e

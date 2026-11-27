@@ -1,16 +1,4 @@
-"""Extraction report models for ImageServer raster extraction.
-
-This module defines dataclasses for tracking ImageServer extraction progress:
-- TileResult: Status of individual tile extraction
-- ImageServerExtractionSummary: Aggregate statistics for the extraction
-- ImageServerMetadataExtracted: Harvested metadata from ImageServer
-- ImageServerExtractionReport: Complete extraction report
-
-Report files are stored at `.portolan/extraction-report.json`.
-
-This parallels the FeatureServer report.py to maintain consistent structure
-and enable resume capabilities across both extraction types.
-"""
+"""Extraction report models for ImageServer raster extraction."""
 
 from __future__ import annotations
 
@@ -30,19 +18,7 @@ if TYPE_CHECKING:
 
 @dataclass
 class TileResult:
-    """Result of extracting a single tile from ImageServer.
-
-    Attributes:
-        tile_id: Tile identifier (e.g., "0_0" for grid position).
-        status: Extraction status ("success", "failed", "skipped", "empty").
-            "empty" marks a tile that holds no valid pixel, which a sparse
-            tile cache produces outside the data footprint (issue #870).
-        size_bytes: Output file size in bytes (None if failed).
-        duration_seconds: Extraction duration (None if failed).
-        output_path: Relative path to output COG file (None if failed).
-        error: Error message if status is "failed" (None otherwise).
-        attempts: Number of extraction attempts (including retries).
-    """
+    """Result of extracting a single tile from ImageServer."""
 
     tile_id: str
     status: str
@@ -87,17 +63,7 @@ class TileResult:
 
 @dataclass
 class ImageServerExtractionSummary:
-    """Aggregate statistics for an ImageServer extraction.
-
-    Attributes:
-        total_tiles: Total number of tiles computed for extraction.
-        succeeded: Number of successfully extracted tiles.
-        failed: Number of failed tile extractions.
-        skipped: Number of skipped tiles (e.g., from resume).
-        empty: Number of tiles that hold no valid pixel, so they wrote no COG.
-        total_size_bytes: Total output size in bytes.
-        total_duration_seconds: Total extraction time.
-    """
+    """Aggregate statistics for an ImageServer extraction."""
 
     total_tiles: int
     succeeded: int
@@ -135,30 +101,7 @@ class ImageServerExtractionSummary:
 
 @dataclass
 class ImageServerMetadataExtracted:
-    """Metadata harvested from ImageServer service.
-
-    Captures what was found in the service metadata. Null values indicate
-    the field was checked but not present in the source.
-
-    Attributes:
-        source_url: The ImageServer URL that was extracted.
-        service_name: Name of the ImageServer service.
-        description: Service description from metadata.
-        copyright_text: Copyright/attribution text (maps to attribution).
-        pixel_type: Pixel type (e.g., "U8", "F32").
-        band_count: Number of bands in the raster.
-        spatial_reference_wkid: EPSG code for the spatial reference.
-        pixel_size_x: Pixel size in X direction (native units).
-        pixel_size_y: Pixel size in Y direction (native units).
-        extent_bbox: Full extent as [minx, miny, maxx, maxy].
-
-        # FeatureServer-parity fields (for metadata.yaml population):
-        service_description: Extended service description (maps to processing_notes).
-        author: Author from documentInfo (maps to a producer provider).
-        keywords: Keywords from documentInfo (list of strings).
-        license_info: License text from licenseInfo field.
-        access_information: Access restrictions from accessInformation (maps to known_issues).
-    """
+    """Metadata harvested from ImageServer service."""
 
     source_url: str
     service_name: str
@@ -232,15 +175,7 @@ class ImageServerMetadataExtracted:
         metadata: ImageServerMetadata,
         source_url: str,
     ) -> ImageServerMetadataExtracted:
-        """Create from ImageServerMetadata discovery result.
-
-        Args:
-            metadata: Parsed ImageServer metadata from discovery.
-            source_url: URL of the source ImageServer.
-
-        Returns:
-            ImageServerMetadataExtracted with populated fields.
-        """
+        """Create from ImageServerMetadata discovery result."""
         extent = metadata.full_extent
         extent_bbox = [
             extent["xmin"],
@@ -273,15 +208,7 @@ class ImageServerMetadataExtracted:
         )
 
     def to_extracted(self) -> ExtractedMetadata:
-        """Convert to common ExtractedMetadata for seeding.
-
-        Maps ImageServer-specific fields to the common ExtractedMetadata
-        format used by seed_metadata_yaml(). Includes raster technical
-        specs (pixel_type, band_count, pixel_size) in processing_notes.
-
-        Returns:
-            ExtractedMetadata with fields populated from this instance.
-        """
+        """Convert to common ExtractedMetadata for seeding."""
         from portolan_cli.metadata_extraction import ExtractedMetadata
         from portolan_core.licensing import license_url_from_text
 
@@ -318,20 +245,7 @@ class ImageServerMetadataExtracted:
 
 @dataclass
 class ImageServerExtractionReport:
-    """Complete extraction report for an ImageServer service.
-
-    This is the top-level report written to `.portolan/extraction-report.json`.
-
-    Attributes:
-        extraction_type: Always "imageserver" to distinguish from FeatureServer.
-        extraction_date: ISO 8601 timestamp of extraction.
-        source_url: The ImageServer URL that was extracted.
-        portolan_version: Version of Portolan CLI used.
-        riocogeo_version: Version of rio-cogeo used.
-        metadata_extracted: Harvested service metadata.
-        tiles: Results for each tile extraction attempt.
-        summary: Aggregate statistics.
-    """
+    """Complete extraction report for an ImageServer service."""
 
     extraction_type: str  # Always "imageserver"
     extraction_date: str
@@ -376,17 +290,7 @@ def build_imageserver_report(
     tile_results: list[TileResult],
     total_duration: float,
 ) -> ImageServerExtractionReport:
-    """Build a complete ImageServerExtractionReport.
-
-    Args:
-        url: ImageServer URL.
-        metadata: Service metadata from discovery.
-        tile_results: Results for each tile.
-        total_duration: Total extraction time in seconds.
-
-    Returns:
-        Complete extraction report.
-    """
+    """Build a complete ImageServerExtractionReport."""
     # The report goes to a file and into reprs, so it never holds a credential.
     url = redact_credentials(url)
     # Get versions
@@ -436,11 +340,6 @@ def build_imageserver_report(
 
 
 def save_imageserver_report(report: ImageServerExtractionReport, path: Path) -> None:
-    """Save ImageServer extraction report to JSON file.
-
-    Args:
-        report: The extraction report to save.
-        path: Path to write the JSON file.
-    """
+    """Save ImageServer extraction report to JSON file."""
     path.parent.mkdir(parents=True, exist_ok=True)
     write_json_atomic(path, report.to_dict())

@@ -1,8 +1,4 @@
-"""Models for CSW/ISO 19139 metadata.
-
-This module defines dataclasses for representing metadata extracted from
-ISO 19139 XML records, typically fetched via CSW (Catalog Service for Web).
-"""
+"""Models for CSW/ISO 19139 metadata."""
 
 from __future__ import annotations
 
@@ -40,30 +36,7 @@ LICENSE_URL_TO_SPDX: dict[str, str] = {
 
 @dataclass
 class ISOMetadata:
-    """Metadata extracted from an ISO 19139 record.
-
-    Represents the key fields from ISO 19115/19139 metadata that are useful
-    for seeding Portolan metadata.yaml files.
-
-    Attributes:
-        file_identifier: Unique identifier for the metadata record.
-        title: Dataset title.
-        abstract: Dataset description/abstract.
-        keywords: List of keywords from all thesauri.
-        contact_organization: Primary contact organization name.
-        contact_email: Primary contact email address.
-        license_url: URL to license (e.g., Creative Commons).
-        license_text: Human-readable license text.
-        access_constraints: Access constraint description.
-        lineage: Data lineage/provenance statement.
-        thumbnail_url: URL to preview image.
-        scale_denominator: Representative scale (e.g., 10000 for 1:10000).
-        topic_category: ISO topic category code.
-        maintenance_frequency: Update frequency code.
-        date_created: Creation date (YYYY-MM-DD).
-        date_revised: Last revision date.
-        date_published: Publication date.
-    """
+    """Metadata extracted from an ISO 19139 record."""
 
     file_identifier: str
     title: str
@@ -84,11 +57,7 @@ class ISOMetadata:
     date_published: str | None = None
 
     def get_license_spdx(self) -> str | None:
-        """Extract SPDX license identifier from license URL.
-
-        Returns:
-            SPDX identifier (e.g., "CC-BY-4.0") or None if unrecognized.
-        """
+        """Extract SPDX license identifier from license URL."""
         if not self.license_url:
             return None
 
@@ -102,14 +71,7 @@ class ISOMetadata:
         return None
 
     def has_useful_metadata(self) -> bool:
-        """Check if this metadata has substantial content beyond identifier/title.
-
-        Requires at least one "strong" field (abstract, license, contact, lineage)
-        OR sufficient keywords (3+) to be considered useful.
-
-        Returns:
-            True if metadata contains useful fields beyond the basics.
-        """
+        """Check if this metadata has substantial content beyond identifier/title."""
         strong_fields = [
             self.abstract,
             self.license_url,
@@ -124,14 +86,7 @@ class ISOMetadata:
         return has_strong or has_sufficient_keywords
 
     def to_extracted_metadata(self, source_url: str) -> ExtractedMetadata:
-        """Convert to ExtractedMetadata for use with metadata seeding.
-
-        Args:
-            source_url: The original source URL (WFS, etc.) for provenance.
-
-        Returns:
-            ExtractedMetadata compatible with seed_metadata_yaml.
-        """
+        """Convert to ExtractedMetadata for use with metadata seeding."""
         from portolan_cli.metadata_extraction import ExtractedMetadata
         from portolan_core.licensing import license_url_from_text
 

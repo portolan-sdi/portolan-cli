@@ -1,23 +1,4 @@
-"""File-based versioning backend using versions.json.
-
-This is the MVP implementation of VersioningBackend that stores version history
-in a JSON file. It assumes single-writer access.
-
-For multi-user concurrent access, use an enterprise plugin backend.
-
-Implementation Status (MINOR #9, #10):
-    - get_current_version: Implemented
-    - list_versions: Implemented
-    - publish: Implemented (with schema and message support)
-    - check_drift: Stub (deferred to sync implementation)
-    - rollback: Deferred to enterprise plugin backends
-    - prune: Deferred to enterprise plugin backends
-
-Deferred Features:
-    rollback and prune are intentionally not implemented in the MVP file backend.
-    These operations require careful handling of remote state and are better suited
-    for enterprise plugin backends with transactional guarantees.
-"""
+"""File-based versioning backend using versions.json."""
 
 from __future__ import annotations
 
@@ -45,61 +26,18 @@ if TYPE_CHECKING:
 
 
 class JsonFileBackend:
-    """MVP versioning backend using versions.json.
-
-    This backend uses the versions.json file as the single source of truth
-    for version history, sync state, and integrity checksums.
-
-    Limitations:
-        - Single-writer access only (no concurrent safety)
-        - No distributed locking
-        - Conflict detection via drift checking, not prevention
-        - rollback and prune are deferred to enterprise plugin backends
-
-    For enterprise deployments requiring concurrent access, ACID transactions,
-    or distributed locking, use an enterprise plugin backend.
-    """
+    """MVP versioning backend using versions.json."""
 
     def __init__(self, catalog_root: Path | None = None) -> None:
-        """Initialize the backend.
-
-        Args:
-            catalog_root: Root directory of the catalog. If None, uses current directory.
-        """
+        """Initialize the backend."""
         self._catalog_root = catalog_root or Path.cwd()
 
     def _versions_path(self, collection: str) -> Path:
-        """Get the path to versions.json for a collection.
-
-        Args:
-            collection: Collection identifier/path.
-
-        Returns:
-            Path to the collection's versions.json file.
-
-        Raises:
-            ValueError: If collection name is empty or escapes the catalog root.
-        """
+        """Get the path to versions.json for a collection."""
         if not collection or not collection.strip():
             raise ValueError("Collection name cannot be empty")
-        # Nested collection ids are first-class: `add` creates collections under
-        # subcatalogs (`infer_nested_collection_id`, ADR-0032), and the spec allows
-        # a slash-separated id such as `climate/hittekaart`. Collapsing that to its
-        # last segment via `Path(collection).name` wrote every nested collection's
-        # versions.json to `{catalog_root}/hittekaart/`. The collection's own file
-        # went stale, which is the phantom entry in issue #723.
-        #
-        # Keep the traversal guard (MAJOR #8) by validating the id lexically rather
-        # than discarding its parts. Validation stays lexical (no `resolve()`) so the
-        # returned path keeps the caller's catalog root verbatim, which matters where
-        # the root is itself a symlink (macOS `/tmp`).
-        # Judge the id under both path flavors, never just the host's. `pathlib`
-        # splits by platform, and each flavor is blind to the other's escapes.
-        # On Windows `/etc/passwd` is rooted but not absolute, because absolute
-        # there needs a drive, so the guard passed it. On POSIX every backslash
-        # form (`C:\Windows`, `\\server\share`, `climate\..\..\etc`) is a single
-        # filename, so the guard passed those instead. A collection id is a
-        # slash-separated spec string, not a host path, so it must satisfy both.
+        # Validate the nested id lexically, not with resolve(), so a symlinked root stays verbatim.
+        # Check both POSIX and Windows flavors, because each flavor misses the other's escapes.
         candidate = Path(collection)
         flavors = (PurePosixPath(collection), PureWindowsPath(collection))
         if not candidate.parts or any(
@@ -110,33 +48,14 @@ class JsonFileBackend:
         return self._catalog_root.joinpath(*candidate.parts) / "versions.json"
 
     def get_current_version(self, collection: str) -> Version:
-        """Get the current (latest) version of a collection.
-
-        Args:
-            collection: Collection identifier/path.
-
-        Returns:
-            The current Version object.
-
-        Raises:
-            FileNotFoundError: If the collection has no versions.json.
-            ValueError: If collection name is empty or versions.json is invalid.
-        """
+        """Get the current (latest) version of a collection."""
         versions_file = read_versions(self._versions_path(collection))
         if not versions_file.versions:
             raise FileNotFoundError(f"No versions found for collection: {collection}")
         return versions_file.versions[-1]
 
     def list_versions(self, collection: str) -> list[Version]:
-        """List all versions of a collection, oldest first.
-
-        Args:
-            collection: Collection identifier/path.
-
-        Returns:
-            List of Version objects, ordered oldest to newest.
-            Returns empty list if versions.json doesn't exist.
-        """
+        """List all versions of a collection, oldest first."""
         try:
             versions_file = read_versions(self._versions_path(collection))
             return versions_file.versions
@@ -153,24 +72,7 @@ class JsonFileBackend:
         removed: set[str] | None = None,
         version: str | None = None,
     ) -> Version:
-        """Publish a new version of a collection.
-
-        Stores schema fingerprint and message as.
-        Uses atomic write to prevent corruption (CRITICAL #2).
-
-        Args:
-            collection: Collection identifier/path.
-            assets: Mapping of asset names to asset paths/URIs.
-            schema: Schema fingerprint for change detection (CRITICAL #1).
-            breaking: Whether this is a breaking change.
-            message: Human-readable description of the change (MAJOR #6).
-            removed: Asset names that this version drops. None means no asset
-                is removed.
-            version: Explicit version string. If None, auto-compute next version.
-
-        Returns:
-            The newly created Version object.
-        """
+        """Publish a new version of a collection."""
         from portolan_core.checksums import compute_checksum
         from portolan_core.run_state import stat_matches
         from portolan_core.versions import SPEC_VERSION
@@ -190,9 +92,7 @@ class JsonFileBackend:
         # Use explicit version if provided, otherwise auto-compute
         next_version = version or self._compute_next_version(versions_file, breaking)
 
-        # Build asset objects with checksums. A file whose size and mtime match
-        # its record in the latest version keeps the recorded checksum, so an
-        # unchanged asset is not hashed again (issue #995).
+        # An asset whose size and mtime match the latest record keeps its checksum, unhashed.
         previous = versions_file.versions[-1].assets if versions_file.versions else {}
         asset_objects: dict[str, Asset] = {}
         for name, path_str in assets.items():
@@ -222,7 +122,7 @@ class JsonFileBackend:
                 mtime=mtime,
             )
 
-        # Convert protocol SchemaFingerprint to internal SchemaInfo (CRITICAL #1)
+        # Convert protocol SchemaFingerprint to internal SchemaInfo
         schema_info = SchemaInfo(
             type=schema.get("hash", "unknown"),  # Use hash as type identifier
             fingerprint={
@@ -231,7 +131,7 @@ class JsonFileBackend:
             },
         )
 
-        # Add version with schema and message (CRITICAL #1, MAJOR #6)
+        # Add version with schema and message
         updated = add_version(
             versions_file,
             version=next_version,
@@ -242,21 +142,13 @@ class JsonFileBackend:
             removed=removed,
         )
 
-        # Atomic write (CRITICAL #2)
+        # Atomic write: temp file, then rename
         write_versions(versions_path, updated)
 
         return updated.versions[-1]
 
     def _compute_next_version(self, versions_file: VersionsFile, breaking: bool) -> str:
-        """Compute the next semantic version.
-
-        Args:
-            versions_file: Current versions file.
-            breaking: Whether this is a breaking change.
-
-        Returns:
-            Next version string (e.g., "1.1.0" or "2.0.0").
-        """
+        """Compute the next semantic version."""
         if not versions_file.versions:
             return "1.0.0"
 
@@ -268,57 +160,15 @@ class JsonFileBackend:
         return f"{major}.{minor + 1}.0"
 
     def rollback(self, collection: str, target_version: str) -> Version:
-        """Rollback to a previous version.
-
-        Note: This feature is deferred to enterprise plugin backends.
-        The MVP file backend does not implement rollback because it requires
-        careful handling of remote state and transactional guarantees.
-
-        Args:
-            collection: Collection identifier/path.
-            target_version: Semantic version string to roll back to.
-
-        Returns:
-            The newly created Version object (representing the rollback).
-
-        Raises:
-            NotImplementedError: Rollback is deferred to enterprise plugin backends.
-        """
+        """Rollback to a previous version."""
         raise NotImplementedError("Rollback is deferred to enterprise plugin backends. ")
 
     def prune(self, collection: str, keep: int, dry_run: bool) -> list[Version]:
-        """Remove old versions, keeping the N most recent.
-
-        Note: This feature is deferred to enterprise plugin backends.
-        The MVP file backend does not implement prune because it requires
-        careful handling of remote state and transactional guarantees.
-
-        Args:
-            collection: Collection identifier/path.
-            keep: Number of recent versions to keep.
-            dry_run: If True, don't actually delete, just report what would be deleted.
-
-        Returns:
-            List of Version objects that were (or would be) deleted.
-
-        Raises:
-            NotImplementedError: Prune is deferred to enterprise plugin backends.
-        """
+        """Remove old versions, keeping the N most recent."""
         raise NotImplementedError("Prune is deferred to enterprise plugin backends. ")
 
     def check_drift(self, collection: str) -> DriftReport:
-        """Check for drift between local and remote state.
-
-        Note: Full drift detection requires comparing against remote storage,
-        which is part of the sync implementation. This method currently provides
-        a stub that reports no drift.
-
-        Args:
-            collection: Collection identifier/path.
-
-        Returns:
-            DriftReport with drift status and details.
-        """
+        """Check for drift between local and remote state."""
         try:
             versions_file = read_versions(self._versions_path(collection))
             current = versions_file.current_version

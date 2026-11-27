@@ -1,16 +1,4 @@
-"""ArcGIS REST URL parser.
-
-Parses ArcGIS REST URLs to determine:
-- URL type (FeatureServer, MapServer, ImageServer, services root, or services folder)
-- Service name (for default output directory naming)
-- Layer ID (if a specific layer is targeted)
-
-URL shapes and how each routes:
-- `*/FeatureServer` or `*/MapServer` -> single service extraction (vector)
-- `*/ImageServer` -> single service extraction (raster)
-- `*/rest/services` -> multi-service discovery and extraction
-- `*/rest/services/<folder>` -> folder-scoped multi-service discovery
-"""
+"""ArcGIS REST URL parser."""
 
 from __future__ import annotations
 
@@ -52,15 +40,7 @@ class InvalidArcGISURLError(PortolanError):
 
 @dataclass(frozen=True)
 class ParsedArcGISURL:
-    """Result of parsing an ArcGIS REST URL.
-
-    Attributes:
-        url_type: Type of endpoint (FeatureServer, MapServer, ImageServer, services root, or services folder)
-        base_url: URL without layer ID or query parameters; for SERVICES_FOLDER this is the true services root
-        service_name: Extracted service name (None for services root or folder)
-        layer_id: Layer ID if specified in URL (None otherwise)
-        folder: Folder name for SERVICES_FOLDER URLs (None for all other types)
-    """
+    """Result of parsing an ArcGIS REST URL."""
 
     url_type: ArcGISURLType
     base_url: str
@@ -78,12 +58,7 @@ class ParsedArcGISURL:
 
     @property
     def service_endpoint_name(self) -> str | None:
-        """Last segment of service name (for directory naming).
-
-        For "Demographics/Census2020", returns "Census2020".
-        For "Census", returns "Census".
-        For services root, returns None.
-        """
+        """Last segment of service name (for directory naming)."""
         if self.service_name is None:
             return None
         # Return last segment of the path
@@ -117,32 +92,7 @@ _SERVICES_FOLDER_PATTERN = re.compile(
 
 
 def parse_arcgis_url(url: str) -> ParsedArcGISURL:
-    """Parse an ArcGIS REST URL to determine type and extract metadata.
-
-    Args:
-        url: ArcGIS REST URL (FeatureServer, MapServer, ImageServer, services root, or services folder)
-
-    Returns:
-        ParsedArcGISURL with type, base URL, service name, optional layer ID, and optional folder
-
-    Raises:
-        InvalidArcGISURLError: If URL is not a recognized ArcGIS REST endpoint
-
-    Examples:
-        >>> result = parse_arcgis_url("https://example.com/rest/services/Census/FeatureServer")
-        >>> result.url_type
-        <ArcGISURLType.FEATURE_SERVER: 'FeatureServer'>
-        >>> result.service_name
-        'Census'
-
-        >>> result = parse_arcgis_url("https://example.com/rest/services/Imagery/ImageServer")
-        >>> result.url_type
-        <ArcGISURLType.IMAGE_SERVER: 'ImageServer'>
-
-        >>> result = parse_arcgis_url("https://example.com/rest/services")
-        >>> result.url_type
-        <ArcGISURLType.SERVICES_ROOT: 'services'>
-    """
+    """Parse an ArcGIS REST URL to determine type and extract metadata."""
     if not url:
         raise InvalidArcGISURLError(url, "URL cannot be empty")
 

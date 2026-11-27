@@ -1,13 +1,4 @@
-"""The progress callback that the sync library takes in place of printing.
-
-pull, sync, clone, push, and the transfer modules pass each line a user sees
-to a ``Report`` callable with its level. The CLI prints the line through
-``portolan_cli.output``. A library caller that passes no callback gets no
-output, so its stdout stays clean.
-
-A function that takes ``report: Report | None`` sends its lines through
-``tell``. Without a callback, ``tell`` writes the line to the log.
-"""
+"""The progress callback that the sync library takes in place of printing."""
 
 from __future__ import annotations
 

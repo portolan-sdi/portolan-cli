@@ -1,17 +1,4 @@
-"""Style format converters for extraction.
-
-This package provides converters from source style formats (SLD, ESRI REST)
-to Mapbox GL JSON. The architecture is designed for extensibility:
-
-- base.py: Shared Mapbox GL building blocks (DRY)
-- sld.py: OGC SLD XML → Mapbox GL
-- esri.py: ESRI REST renderer JSON → Mapbox GL
-
-To add a new source format (e.g., QGIS QML):
-1. Create converters/qml.py
-2. Use base.py helpers for Mapbox GL generation
-3. Only write parsing logic for the new format
-"""
+"""Style format converters for extraction."""
 
 from __future__ import annotations
 

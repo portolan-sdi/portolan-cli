@@ -1,10 +1,4 @@
-"""ArcGIS authentication, minimal token pass-through.
-
-Supports a pre-generated token or username/password minted via the ArcGIS
-generateToken endpoint. The token is appended to discovery requests and passed
-to gpio.extract_arcgis. This is a contained subset; the full unified auth design
-lives in issue #311.
-"""
+"""ArcGIS authentication, minimal token pass-through."""
 
 from __future__ import annotations
 
@@ -34,12 +28,7 @@ class ArcGISCredentials:
 
 
 def _server_root(base_url: str) -> str:
-    """Return the ArcGIS server root (everything before /rest/), case-insensitively.
-
-    base_url is e.g. https://host/server/rest/services[/folder]. ArcGIS treats the
-    /rest/ segment case-insensitively, and url_parser accepts /REST/ too, so match
-    it the same way here. Falls back to the full URL when /rest/ is absent.
-    """
+    """Return the ArcGIS server root (everything before /rest/), case-insensitively."""
     idx = base_url.lower().find("/rest/")
     root = base_url if idx < 0 else base_url[:idx]
     return root.rstrip("/")
@@ -48,7 +37,7 @@ def _server_root(base_url: str) -> str:
 def _token_services_url(base_url: str, timeout: float) -> str:
     """Discover the generateToken endpoint from <server>/rest/info."""
     info_url = _server_root(base_url) + "/rest/info"
-    # Each message names the server without the credential of its URL (#981).
+    # Each message names the server without the credential of its URL.
     root = redact_credentials(info_url)
     try:
         with httpx.Client(timeout=timeout) as client:
@@ -85,11 +74,7 @@ def resolve_token(
     base_url: str,
     timeout: float = 60.0,
 ) -> str | None:
-    """Resolve a usable token from credentials.
-
-    Returns the explicit token, mints one from username/password, or None when
-    no credentials are present. Raises ArcGISAuthError when minting fails.
-    """
+    """Resolve a usable token from credentials."""
     if creds.token:
         return creds.token
     if not (creds.username and creds.password):
@@ -102,7 +87,7 @@ def resolve_token(
         "password": creds.password,
         "client": "referer",
         "referer": referer,
-        "expiration": "60",  # TODO(#311): make configurable, long runs can exceed 60 min
+        "expiration": "60",  # TODO: make configurable, long runs can exceed 60 min
         "f": "json",
     }
 

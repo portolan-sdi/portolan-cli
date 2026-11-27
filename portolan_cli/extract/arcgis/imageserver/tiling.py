@@ -1,31 +1,4 @@
-"""Tile grid calculation for ImageServer extraction.
-
-This module computes a grid of tiles covering a service extent. Each tile
-represents a portion of the raster that will be requested independently,
-enabling efficient parallel downloads and handling of large data.
-
-Tile grid math:
-- Tile width (map units) = tile_size * pixel_size_x
-- Number of columns = ceil((xmax - xmin) / tile_width)
-- Edge tiles may be smaller than tile_size when the extent doesn't
-  align perfectly with tile boundaries
-
-Typical usage:
-    from portolan_cli.extract.arcgis.imageserver.tiling import (
-        compute_tile_grid,
-        tile_count,
-    )
-
-    extent = {"xmin": 0, "ymin": 0, "xmax": 100000, "ymax": 50000}
-
-    # Get total count for progress display
-    total = tile_count(extent, pixel_size_x=10, pixel_size_y=10)
-    print(f"Downloading {total} tiles...")
-
-    # Iterate tiles (memory-efficient generator)
-    for tile in compute_tile_grid(extent, pixel_size_x=10, pixel_size_y=10):
-        download_tile(tile.bbox, tile.width_px, tile.height_px)
-"""
+"""Tile grid calculation for ImageServer extraction."""
 
 from __future__ import annotations
 
@@ -39,20 +12,7 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class TileSpec:
-    """Specification for a single tile in the grid.
-
-    Attributes:
-        x: Tile column index (0-indexed, from left)
-        y: Tile row index (0-indexed, from top)
-        bbox: Bounding box in map units (minx, miny, maxx, maxy)
-        width_px: Tile width in pixels
-        height_px: Tile height in pixels
-
-    Note:
-        Edge tiles (right and bottom edges) may have smaller pixel
-        dimensions than interior tiles when the extent doesn't align
-        perfectly with tile boundaries.
-    """
+    """Specification for a single tile in the grid."""
 
     x: int
     y: int
@@ -61,11 +21,7 @@ class TileSpec:
     height_px: int
 
     def get_id(self) -> str:
-        """Generate tile ID string for STAC Item.
-
-        Returns:
-            Tile ID in format 'tile_{x}_{y}'
-        """
+        """Generate tile ID string for STAC Item."""
         return f"tile_{self.x}_{self.y}"
 
 
@@ -75,17 +31,7 @@ def _compute_grid_dimensions(
     pixel_size_y: float,
     tile_size: int,
 ) -> tuple[int, int, float, float]:
-    """Compute grid dimensions and tile sizes in map units.
-
-    Args:
-        extent: Bounding box with xmin, ymin, xmax, ymax keys
-        pixel_size_x: Pixel size in X direction (map units)
-        pixel_size_y: Pixel size in Y direction (map units)
-        tile_size: Tile size in pixels
-
-    Returns:
-        Tuple of (num_cols, num_rows, tile_width_map, tile_height_map)
-    """
+    """Compute grid dimensions and tile sizes in map units."""
     extent_width = extent["xmax"] - extent["xmin"]
     extent_height = extent["ymax"] - extent["ymin"]
 
@@ -110,23 +56,7 @@ def tile_count(
     pixel_size_y: float,
     tile_size: int = 4096,
 ) -> int:
-    """Return total number of tiles covering the extent.
-
-    This is useful for progress display before iterating tiles.
-
-    Args:
-        extent: Bounding box with xmin, ymin, xmax, ymax keys
-        pixel_size_x: Pixel size in X direction (map units per pixel)
-        pixel_size_y: Pixel size in Y direction (map units per pixel)
-        tile_size: Tile size in pixels (default: 4096)
-
-    Returns:
-        Total number of tiles (columns * rows)
-
-    Example:
-        total = tile_count(extent, pixel_size_x=10, pixel_size_y=10)
-        progress_bar = tqdm(total=total)
-    """
+    """Return total number of tiles covering the extent."""
     num_cols, num_rows, _, _ = _compute_grid_dimensions(
         extent, pixel_size_x, pixel_size_y, tile_size
     )
@@ -139,30 +69,7 @@ def compute_tile_grid(
     pixel_size_y: float,
     tile_size: int = 4096,
 ) -> Iterator[TileSpec]:
-    """Generate tile specs covering the full extent.
-
-    Tiles are yielded in row-major order (top-to-bottom, left-to-right).
-    Edge tiles are clipped to the extent boundary and may have smaller
-    pixel dimensions than interior tiles.
-
-    This is a generator function for memory efficiency - tiles are not
-    pre-computed, allowing efficient handling of large extents with
-    many tiles.
-
-    Args:
-        extent: Bounding box with xmin, ymin, xmax, ymax keys
-        pixel_size_x: Pixel size in X direction (map units per pixel)
-        pixel_size_y: Pixel size in Y direction (map units per pixel)
-        tile_size: Tile size in pixels (default: 4096)
-
-    Yields:
-        TileSpec objects for each tile in the grid
-
-    Example:
-        for tile in compute_tile_grid(extent, pixel_size_x=10, pixel_size_y=10):
-            print(f"Tile ({tile.x}, {tile.y}): {tile.bbox}")
-            print(f"  Size: {tile.width_px}x{tile.height_px} pixels")
-    """
+    """Generate tile specs covering the full extent."""
     num_cols, num_rows, tile_width_map, tile_height_map = _compute_grid_dimensions(
         extent, pixel_size_x, pixel_size_y, tile_size
     )

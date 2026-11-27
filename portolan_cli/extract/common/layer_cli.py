@@ -1,10 +1,4 @@
-"""The ``portolan extract <name>`` command for a LayerSource (#947).
-
-``extractor_from(source).cli_command()`` builds the command here. It has the
-options that every layer-based extractor shares, and it reports through the
-same helpers as the built-in extract commands. This module is part of the
-CLI layer.
-"""
+"""The ``portolan extract <name>`` command for a LayerSource."""
 
 from __future__ import annotations
 
@@ -22,14 +16,7 @@ if TYPE_CHECKING:
 
 
 def build_command(layer_source: LayerSource) -> click.Command:
-    """Build the Click command that runs ``layer_source``.
-
-    Args:
-        layer_source: The source to extract.
-
-    Returns:
-        A command named after the source.
-    """
+    """Build the Click command that runs ``layer_source``."""
     name = layer_source.name
     command_name = f"extract-{name}"
 

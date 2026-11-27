@@ -1,24 +1,4 @@
-"""OGC SLD XML to Mapbox GL converter.
-
-Converts SLD (Styled Layer Descriptor) XML documents to Mapbox GL style JSON.
-
-Supported symbolizers:
-- PolygonSymbolizer: Fill and stroke for polygons
-- PointSymbolizer: Circle markers for points
-- LineSymbolizer: Line styling for linestrings
-- TextSymbolizer: Symbol layers for text labels
-
-Partially supported (warn and continue):
-- TTF glyphs in PointSymbolizer: Falls back to circle
-- Unknown fonts in TextSymbolizer: Falls back to Noto Sans Regular
-
-OGC Filter support:
-- PropertyIsEqualTo: Extracts field/value for categorical styling
-
-Usage:
-    sld_xml = fetch_wms_getstyles(url, layer)
-    style = convert_sld(sld_xml, source_layer="my-layer")
-"""
+"""OGC SLD XML to Mapbox GL converter."""
 
 from __future__ import annotations
 
@@ -73,15 +53,7 @@ def _findall_with_ns(element: Element, path: str) -> list[Element]:
 
 
 def _find_symbolizer(element: Element, symbolizer_type: str) -> Element | None:
-    """Find symbolizer with SLD or SE namespace fallback.
-
-    Args:
-        element: Parent element to search within.
-        symbolizer_type: One of "Polygon", "Point", "Line".
-
-    Returns:
-        Found symbolizer element or None.
-    """
+    """Find symbolizer with SLD or SE namespace fallback."""
     # Try SLD namespace first
     result = _find_with_ns(element, f".//sld:{symbolizer_type}Symbolizer")
     if result is not None:
@@ -91,15 +63,7 @@ def _find_symbolizer(element: Element, symbolizer_type: str) -> Element | None:
 
 
 def _findall_symbolizers(element: Element, symbolizer_type: str) -> list[Element]:
-    """Find all symbolizers with SLD or SE namespace fallback.
-
-    Args:
-        element: Parent element to search within.
-        symbolizer_type: One of "Polygon", "Point", "Line".
-
-    Returns:
-        List of found symbolizer elements.
-    """
+    """Find all symbolizers with SLD or SE namespace fallback."""
     # Try SLD namespace first
     results = _findall_with_ns(element, f".//sld:{symbolizer_type}Symbolizer")
     if results:
@@ -109,19 +73,7 @@ def _findall_symbolizers(element: Element, symbolizer_type: str) -> list[Element
 
 
 def _find_sld_or_se(element: Element, local_name: str) -> Element | None:
-    """Find element with SLD namespace, falling back to SE namespace.
-
-    Args:
-        element: Parent element to search within.
-        local_name: Element local name (e.g., "Radius", "Fill").
-
-    Returns:
-        Found element or None.
-
-    Note:
-        Uses explicit `is not None` checks because Element objects with no
-        children are falsy in Python, making `elem or fallback` unreliable.
-    """
+    """Find element with SLD namespace, falling back to SE namespace."""
     result = _find_with_ns(element, f"sld:{local_name}")
     if result is not None:
         return result
@@ -145,19 +97,7 @@ def _get_css_parameter(element: Element, name: str) -> str | None:
 
 
 def parse_filter_to_value(filter_xml: str | Element) -> tuple[str, Any]:
-    """Extract field name and value from OGC Filter.
-
-    Currently supports PropertyIsEqualTo for categorical classification.
-
-    Args:
-        filter_xml: Filter XML string or Element.
-
-    Returns:
-        Tuple of (field_name, value).
-
-    Raises:
-        SLDConverterError: If filter cannot be parsed.
-    """
+    """Extract field name and value from OGC Filter."""
     if isinstance(filter_xml, str):
         # Parse as fragment - need to handle namespace
         try:
@@ -196,14 +136,7 @@ def parse_filter_to_value(filter_xml: str | Element) -> tuple[str, Any]:
 
 
 def parse_polygon_symbolizer(symbolizer_xml: str | Element) -> dict[str, Any]:
-    """Extract fill and stroke properties from PolygonSymbolizer.
-
-    Args:
-        symbolizer_xml: PolygonSymbolizer XML string or Element.
-
-    Returns:
-        Dict with fill_color, fill_opacity, stroke_color, stroke_width.
-    """
+    """Extract fill and stroke properties from PolygonSymbolizer."""
     if isinstance(symbolizer_xml, str):
         try:
             root = ET.fromstring(symbolizer_xml)
@@ -251,14 +184,7 @@ def parse_polygon_symbolizer(symbolizer_xml: str | Element) -> dict[str, Any]:
 
 
 def parse_point_symbolizer(symbolizer_xml: str | Element) -> dict[str, Any]:
-    """Extract point marker properties from PointSymbolizer.
-
-    Args:
-        symbolizer_xml: PointSymbolizer XML string or Element.
-
-    Returns:
-        Dict with type, fill_color, size, and optional warning.
-    """
+    """Extract point marker properties from PointSymbolizer."""
     if isinstance(symbolizer_xml, str):
         try:
             root = ET.fromstring(symbolizer_xml)
@@ -309,14 +235,7 @@ def parse_point_symbolizer(symbolizer_xml: str | Element) -> dict[str, Any]:
 
 
 def parse_line_symbolizer(symbolizer_xml: str | Element) -> dict[str, Any]:
-    """Extract line properties from LineSymbolizer.
-
-    Args:
-        symbolizer_xml: LineSymbolizer XML string or Element.
-
-    Returns:
-        Dict with line_color, line_width, line_opacity.
-    """
+    """Extract line properties from LineSymbolizer."""
     if isinstance(symbolizer_xml, str):
         try:
             root = ET.fromstring(symbolizer_xml)
@@ -353,18 +272,7 @@ def parse_line_symbolizer(symbolizer_xml: str | Element) -> dict[str, Any]:
 
 
 def _sld_anchor_to_mapbox(anchor_x: float, anchor_y: float) -> str:
-    """Convert SLD anchor point coordinates to Mapbox GL text-anchor.
-
-    SLD anchor: (0, 0) = top-left, (1, 1) = bottom-right, (0.5, 0.5) = center
-    Mapbox anchor: named positions like "center", "left", "bottom-right"
-
-    Args:
-        anchor_x: Horizontal anchor 0.0 (left) to 1.0 (right).
-        anchor_y: Vertical anchor 0.0 (top) to 1.0 (bottom).
-
-    Returns:
-        Mapbox GL text-anchor value.
-    """
+    """Convert SLD anchor point coordinates to Mapbox GL text-anchor."""
     # Map to horizontal position
     if anchor_x < _ANCHOR_LOW:
         h = "left"
@@ -486,15 +394,7 @@ def _parse_text_anchor(root: Element) -> str:
 
 
 def parse_text_symbolizer(symbolizer_xml: str | Element) -> dict[str, Any]:
-    """Extract text label properties from TextSymbolizer.
-
-    Args:
-        symbolizer_xml: TextSymbolizer XML string or Element.
-
-    Returns:
-        Dict with text_field, text_color, text_size, text_font,
-        text_halo_color, text_halo_width, text_anchor.
-    """
+    """Extract text label properties from TextSymbolizer."""
     if isinstance(symbolizer_xml, str):
         try:
             root = ET.fromstring(symbolizer_xml)
@@ -575,12 +475,7 @@ def _build_categorical_fill(
     source_layer: str,
     warnings: list[str],
 ) -> list[dict[str, Any]]:
-    """Build categorical fill layer with per-rule property support.
-
-    Builds match expressions for fill color, opacity, stroke color, and stroke width
-    when values vary across rules. Uses uniform values when all rules share the same
-    value to keep the style simpler.
-    """
+    """Build categorical fill layer with per-rule property support."""
     color_expr = make_match_expression(field, color_cases, default="#cccccc")
 
     # Opacity: use expression if values vary, else uniform
@@ -630,9 +525,7 @@ def _build_categorical_fill(
         stroke_color_value,
     )
 
-    # Add stroke-width if we have one (not a standard fill property, use line layer)
-    # Note: fill-outline only supports color, not width. For stroke width, we'd need
-    # a separate line layer. Log this limitation.
+    # fill-outline takes no width, so a stroke width needs a separate line layer.
     if stroke_width_value is not None:
         warnings.append(
             "Mapbox fill layers only support outline color, not width; "
@@ -698,11 +591,7 @@ def _build_categorical_line(
 
 @dataclass
 class _CategoricalCases:
-    """The per-value style cases that filtered SLD rules produce.
-
-    Each list holds (filter value, style value) pairs. Which lists carry data
-    depends on the geometry type.
-    """
+    """The per-value style cases that filtered SLD rules produce."""
 
     field: str | None = None
     text_symbolizer: Element | None = None
@@ -720,14 +609,7 @@ def _collect_rule_cases(
     cases: _CategoricalCases,
     warnings: list[str],
 ) -> None:
-    """Read one SLD rule into the collected cases.
-
-    Args:
-        rule: SLD Rule element.
-        geom_type: One of "polygon", "point", or "line".
-        cases: Collected cases. The function appends to it.
-        warnings: Warning list. The function appends to it.
-    """
+    """Read one SLD rule into the collected cases."""
     # A TextSymbolizer may sit on a filtered rule or an unfiltered one.
     rule_text_sym = _find_symbolizer(rule, "Text")
     if rule_text_sym is not None:
@@ -774,19 +656,7 @@ def _build_categorical_geom_layers(
     source_layer: str,
     warnings: list[str],
 ) -> tuple[list[dict[str, Any]], str]:
-    """Build the geometry layers for one geometry type.
-
-    Args:
-        cases: Collected cases.
-        field_name: Name of the attribute the rules filter on.
-        geom_type: One of "polygon", "point", or "line".
-        source_layer: Vector source layer name.
-        warnings: Warning list. The function appends to it.
-
-    Returns:
-        Tuple of (layers, geometry layer id). The id is "" for an unknown
-        geometry type.
-    """
+    """Build the geometry layers for one geometry type."""
     if geom_type == "polygon":
         return (
             _build_categorical_fill(
@@ -955,21 +825,7 @@ def convert_sld(
     *,
     return_warnings: bool = False,
 ) -> dict[str, Any] | tuple[dict[str, Any], list[str]]:
-    """Convert SLD XML to Mapbox GL style.
-
-    Main entry point for SLD → Mapbox GL conversion.
-
-    Args:
-        sld_xml: Complete SLD XML document as string.
-        source_layer: Name for the source-layer in output.
-        return_warnings: If True, return (style, warnings) tuple.
-
-    Returns:
-        Mapbox GL style dict, or (style, warnings) tuple if return_warnings=True.
-
-    Raises:
-        SLDConverterError: If SLD cannot be parsed or has no rules.
-    """
+    """Convert SLD XML to Mapbox GL style."""
     warnings: list[str] = []
 
     try:

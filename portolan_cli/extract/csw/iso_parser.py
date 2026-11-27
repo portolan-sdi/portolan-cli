@@ -1,11 +1,4 @@
-"""ISO 19139 XML parser.
-
-This module parses ISO 19139 metadata XML (typically from CSW GetRecordById)
-and extracts key fields into an ISOMetadata dataclass.
-
-Handles both CSW-wrapped responses (GetRecordByIdResponse) and direct
-MD_Metadata root elements.
-"""
+"""ISO 19139 XML parser."""
 
 from __future__ import annotations
 
@@ -35,17 +28,7 @@ class ISOParseError(Exception):
 
 
 def parse_iso19139(xml_content: str) -> ISOMetadata:
-    """Parse ISO 19139 XML and extract metadata fields.
-
-    Args:
-        xml_content: ISO 19139 XML string (CSW response or direct MD_Metadata).
-
-    Returns:
-        ISOMetadata with extracted fields.
-
-    Raises:
-        ISOParseError: If XML parsing fails or required fields are missing.
-    """
+    """Parse ISO 19139 XML and extract metadata fields."""
     try:
         root = ET.fromstring(xml_content)
     except ET.ParseError as e:

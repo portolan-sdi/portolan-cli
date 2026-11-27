@@ -1,10 +1,4 @@
-"""Carto metadata extraction.
-
-The Carto SQL API exposes little service-level metadata (unlike WFS
-GetCapabilities or ArcGIS service docs). We capture what we can — the source
-URL and the account name as attribution — and leave the rest for the human
-enrichment layer (metadata.yaml TODO markers).
-"""
+"""Carto metadata extraction."""
 
 from __future__ import annotations
 
@@ -17,12 +11,7 @@ if TYPE_CHECKING:
 
 @dataclass
 class CartoMetadata:
-    """Metadata extracted from a Carto account.
-
-    Attributes:
-        source_url: The Carto SQL API endpoint.
-        account_name: Account subdomain (used as best-effort attribution).
-    """
+    """Metadata extracted from a Carto account."""
 
     source_url: str
     account_name: str | None = None
