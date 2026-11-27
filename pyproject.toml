@@ -227,9 +227,8 @@ exclude_lines = [
 [tool.ruff]
 line-length = 100
 target-version = "py311"
-# .claude/ holds tooling that portolan-ops syncs into every repo. This repo does
-# not own those files, and a sync run overwrites any fix made here. Raise a rule
-# change in portolan-ops instead.
+# portolan-ops syncs .claude/hooks/ and .claude/output-styles/ into every repo,
+# and a sync run overwrites any fix made here. The rules dir holds only Markdown.
 extend-exclude = [".claude"]
 
 [tool.ruff.lint]
