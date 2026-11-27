@@ -1,21 +1,4 @@
-"""Conformance checks for plugin authors (#947).
-
-``isinstance`` on a ``runtime_checkable`` protocol checks member names only.
-These checks call the members and validate what they return. Run them in the
-plugin's own test suite::
-
-    from portolan_cli.testing import check_backend
-
-
-    def test_backend_conforms(tmp_path):
-        check_backend(ExampleBackend, tmp_path)
-
-``check_extractor`` checks an extractor the same way. Pass a source and an
-output directory to run ``extract()`` too.
-
-A failed check raises ``ConformanceError`` with one line per problem. This
-module follows semantic versioning, as ``portolan_cli.api`` does.
-"""
+"""Conformance checks for plugin authors."""
 
 from __future__ import annotations
 
@@ -41,9 +24,6 @@ class ConformanceError(AssertionError):
 
 def check_format_handler(handler: Any, sample: Path, output_dir: Path) -> None:
     """Check a format handler against ``FormatHandler`` with a sample file.
-
-    The check reads the handler attributes, converts ``sample`` into
-    ``output_dir``, and reads the metadata of the result.
 
     Args:
         handler: What ``portolan_formats`` returns.
@@ -168,10 +148,6 @@ def _check_handler_attributes(handler: Any) -> list[str]:
 def check_backend(factory: Callable[..., Any], catalog_root: Path) -> None:
     """Check a versioning backend factory against ``VersioningBackend``.
 
-    The check creates the backend in ``catalog_root``, publishes two versions
-    of one collection, and reads them back. ``rollback`` and ``prune`` may
-    raise ``NotImplementedError``, as the built-in ``file`` backend does.
-
     Args:
         factory: What ``portolan_backends`` returns for the backend name.
         catalog_root: An empty directory the backend may write to.
@@ -276,10 +252,6 @@ def check_extractor(
     **options: Any,
 ) -> None:
     """Check an extractor against ``Extractor``.
-
-    The check reads ``name`` and ``summary`` and builds the Click command.
-    With ``source`` and ``output_dir``, it also runs ``extract()`` and checks
-    the report.
 
     Args:
         extractor: What ``portolan_extractors`` returns.

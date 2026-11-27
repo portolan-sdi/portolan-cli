@@ -15,14 +15,7 @@ _KIB = 1024
 
 
 def format_size(size_bytes: int) -> str:
-    """Format a file size in human-readable format.
-
-    Args:
-        size_bytes: Size in bytes.
-
-    Returns:
-        Human-readable size string (e.g., "4.2MB", "100B").
-    """
+    """Format a file size in human-readable format."""
     if size_bytes < _KIB:
         return f"{size_bytes}B"
     if size_bytes < 1024 * 1024:
@@ -33,53 +26,12 @@ def format_size(size_bytes: int) -> str:
 
 
 def href_root(path: Path) -> str:
-    """The root string to hand pystac's ``normalize_hrefs``.
-
-    ``normalize_hrefs`` tells a file from a directory by looking for a dot in
-    the final path component, so a directory named ``tmp.XXXXXX`` reads as a
-    file and the catalog lands in its parent (issue #401). A trailing slash is
-    what settles it.
-
-    The slash alone is not enough. pystac absolutizes a relative root against
-    the working directory and drops the trailing slash on the way, which put the
-    heuristic back in play for ``init``'s ``"."`` default (issue #731).
-    Resolving first keeps the slash meaningful.
-
-    This is the single writer for that string. Every ``normalize_hrefs`` call
-    takes its root from here, and ``tests/unit/test_href_root.py`` fails if one
-    builds it by hand instead.
-
-    Args:
-        path: Directory the catalog or collection is written to.
-
-    Returns:
-        The absolute directory path with exactly one trailing slash.
-    """
+    """The root string to hand pystac's ``normalize_hrefs``."""
     return f"{path.resolve()}/"
 
 
 def relative_href(from_dir: PurePath, to_file: PurePath) -> str:
-    r"""The POSIX href from a directory to a STAC file.
-
-    A STAC href is a relative URL reference, so its separator is ``/`` on every
-    platform. ``os.path.relpath`` returns the *native* one, and on Windows that
-    shipped ``..\\catalog.json`` — not a Windows spelling of a parent link but a
-    filename containing backslashes, which resolves nowhere (rashid
-    ``PTL-LNK-006``). Normalizing both sides to POSIX first keeps the
-    computation itself platform-independent.
-
-    Both link ends flow through here so that ``root`` and ``parent`` are derived
-    separately rather than sharing one href. Reusing the root href for ``parent``
-    is what made a nested collection point past its own intermediate catalog
-    (issue #711).
-
-    Args:
-        from_dir: Directory the link will live in.
-        to_file: File the link points at.
-
-    Returns:
-        A relative POSIX href, e.g. ``../catalog.json``.
-    """
+    r"""The POSIX href from a directory to a STAC file."""
     return posixpath.relpath(
         PurePath(to_file).as_posix(),
         PurePath(from_dir).as_posix(),
@@ -87,36 +39,16 @@ def relative_href(from_dir: PurePath, to_file: PurePath) -> str:
 
 
 def get_dict(data: dict[str, Any], key: str) -> dict[str, Any]:
-    """Safely get a dict value, returning empty dict if not a dict.
-
-    Args:
-        data: Dictionary to read from.
-        key: Key to look up.
-
-    Returns:
-        The value if it's a dict, otherwise an empty dict.
-    """
+    """Safely get a dict value, returning empty dict if not a dict."""
     value = data.get(key, {})
     return value if isinstance(value, dict) else {}
 
 
 def get_list(data: dict[str, Any], key: str) -> list[Any]:
-    """Safely get a list value, returning empty list if not a list.
-
-    Args:
-        data: Dictionary to read from.
-        key: Key to look up.
-
-    Returns:
-        The value if it's a list, otherwise an empty list.
-    """
+    """Safely get a list value, returning empty list if not a list."""
     value = data.get(key, [])
     return value if isinstance(value, list) else []
 
-
-# =============================================================================
-# URL credentials (#981). Extract and the log handlers share one sanitizer.
-# =============================================================================
 
 #: Query parameter names (lower case) that carry a credential.
 CREDENTIAL_QUERY_PARAMS = frozenset(
@@ -153,9 +85,6 @@ _CREDENTIAL_VALUE = re.compile(
     + r")=)[^&\s<>\"'`]+",
     re.IGNORECASE,
 )
-# A URL inside a text, such as an error message that quotes a request. The
-# second form is a path with a query and no host. A requests error quotes the
-# request in that form: "Max retries exceeded with url: /wfs?api_key=...".
 _URL_IN_TEXT = re.compile(
     r"[A-Za-z][A-Za-z0-9+.-]*://[^\s<>\"'`]+|(?<![^\s(:=])/[^\s<>\"'`?]*\?[^\s<>\"'`]+"
 )
@@ -166,20 +95,7 @@ _USERINFO = re.compile(r"(://)[^/@\s]*@")
 
 
 def redact_credentials(text: str) -> str:
-    """Return ``text`` with no credential in any URL that it quotes.
-
-    Each URL loses its userinfo and every credential query parameter. The
-    host and the path stay, so the message still names the service. A local
-    path stays too, because a message is not a published value. A credential
-    parameter that no URL holds, as in a URL with no scheme, keeps its name
-    and loses its value.
-
-    Args:
-        text: A message, a log line, or a URL.
-
-    Returns:
-        The text with each URL sanitized.
-    """
+    """Return ``text`` with no credential in any URL that it quotes."""
     text = _URL_IN_TEXT.sub(lambda match: _sanitize_url(match.group()), text)
     return _CREDENTIAL_VALUE.sub(r"\1***", text)
 
@@ -194,9 +110,6 @@ def _sanitize_url(text: str) -> str:
         parsed = urlparse(url)
         changed = parsed.username is not None or parsed.password is not None
     except ValueError:
-        # urlparse rejects a malformed host, such as "[bad". The message must
-        # still go out, so drop the userinfo here. The caller masks the
-        # credential parameter values.
         return _USERINFO.sub(r"\1", text)
     if changed:
         parsed = parsed._replace(netloc=parsed.netloc.rsplit("@", 1)[1])

@@ -1,16 +1,4 @@
-"""Per-item preparation and conversion routing for the add pipeline.
-
-Extracted from ``add.py`` (issue #623). This module owns the parallelizable,
-GDAL-bound phase of ``add``: format-specific conversion to cloud-native outputs
-(GeoParquet / COG / plain Parquet), metadata + statistics extraction, asset
-scanning, and STAC item construction. It writes item.json but performs no
-versions.json or collection-link updates — those are batched in
-``add.finalize_items`` to keep versioning O(n) (see Issue #281).
-
-the CLI stays a thin wrapper; ``add.py`` orchestrates on top of the
-routines here. This module deliberately imports nothing from ``add`` so the
-dependency edge is one-directional (add -> preparation).
-"""
+"""Per-item preparation and conversion routing for the add pipeline."""
 
 from __future__ import annotations
 
@@ -127,10 +115,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-# Files to ignore when scanning item directories for assets.
-# These are STAC/Portolan structural files, not user data.
-# AGENTS.md is referenced via a rel="agents" link, not tracked as an asset
-# ("AGENTS.md is a link, not an asset").
+# Structural STAC/Portolan files, not user data. AGENTS.md is a rel="agents" link, not an asset.
 IGNORED_FILES: frozenset[str] = frozenset(
     {
         "catalog.json",
@@ -146,12 +131,8 @@ IGNORED_FILES: frozenset[str] = frozenset(
 _MEDIA_TYPE_MAP: dict[str, str] = _reg.field_map("media_type")
 
 
-# Asset keys reserved for well-known roles. _resolve_assets prefers these
-# keys over filename-derived stems so STAC consumers can find assets by role
-# without inspecting file paths. Order matters for collision priority: an
-# asset with role "thumbnail" prefers key "thumbnail"; if it's already taken
-# (e.g. by a user-named thumbnail.png), the second asset falls back to its
-# stem.
+# Asset keys reserved for well-known roles, preferred over filename stems. Order sets
+# collision priority: a taken key falls back to the stem.
 _ROLE_KEYS: dict[str, str] = {
     "thumbnail": "thumbnail",
     "metadata": "metadata",
@@ -159,64 +140,22 @@ _ROLE_KEYS: dict[str, str] = {
 }
 
 
-# Extension-to-role mapping for asset files (data / thumbnail / metadata /
-# documentation). Derived from the extension registry. Unknown
-# extensions fall back to "data" in _get_asset_role().
+# Extension-to-role mapping from the extension registry; unknown extensions are "data".
 _ROLE_MAP: dict[str, str] = _reg.field_map("role")
 
 
 def _get_media_type(path: Path) -> str:
-    """Determine MIME type from file extension.
-
-    Args:
-        path: Path to the file.
-
-    Returns:
-        MIME type string. Defaults to "application/octet-stream" for
-        unknown extensions.
-    """
+    """Determine MIME type from file extension."""
     return _MEDIA_TYPE_MAP.get(path.suffix.lower(), "application/octet-stream")
 
 
 def _get_asset_role(path: Path) -> str:
-    """Determine STAC asset role from file extension.
-
-    Args:
-        path: Path to the file.
-
-    Returns:
-        Role string: "data", "visual", "thumbnail", "metadata", or
-        "documentation". Defaults to "data" for unknown extensions.
-        :func:`_resolve_assets` then gives each scanned file its final role.
-    """
+    """Determine STAC asset role from file extension."""
     return _ROLE_MAP.get(path.suffix.lower(), "data")
 
 
 def _is_never_an_asset(file_path: Path) -> bool:
-    """Report whether a directory entry can never be a tracked asset.
-
-    Four entries qualify, and none of them depend on the item being scanned:
-
-    - A hidden file. Editors and tools leave them beside the data.
-    - A symlink. This check must precede any ``is_dir()`` branching, because
-      ``is_dir()`` follows symlinks, so a symlinked ``.gdb`` directory would
-      otherwise be checksummed as a container asset and escape the intended
-      item boundary.
-    - A GDAL ``.aux.xml`` statistics sidecar. GDAL writes it after the first
-      scan, when it computes band statistics, so a later ``add --force``
-      registered it and the rebuild differed. The spec does not count it as
-      the embedded statistics (PORTO-FMT-026), so it is a cache, not an asset.
-    - The scratch file of an in-place GeoParquet rewrite. The hidden test
-      already covers the name the current writer uses. A killed run of an
-      earlier version can leave a visible one, and tracking that as an asset
-      makes every later ``add`` read a truncated file (issue #805).
-
-    Args:
-        file_path: Directory entry to test.
-
-    Returns:
-        True when the scan must skip the entry.
-    """
+    """Report whether a directory entry can never be a tracked asset."""
     if file_path.name.startswith("."):
         return True
     if file_path.is_symlink():
@@ -238,12 +177,7 @@ class _ScannedFile:
 
 
 def ignored_by(file_path: Path, patterns: list[str]) -> str | None:
-    """Return the first ``ignored_files`` pattern the file name matches, or None.
-
-    ``add`` applies it to the files it prepares, and the asset scan applies it
-    to their companions, so an ignored file never enters the catalog by
-    sitting beside an accepted one.
-    """
+    """Return the first ``ignored_files`` pattern the file name matches, or None."""
     return next((p for p in patterns if fnmatch.fnmatch(file_path.name, p)), None)
 
 
@@ -259,51 +193,11 @@ def _scan_item_assets(
     ignored_patterns: list[str] | None = None,
     state: RunState | None = None,
 ) -> tuple[dict[str, pystac.Asset], dict[str, tuple[Path, str, int]], list[str]]:
-    """Scan an item directory for all trackable assets.
-
-    Per issue #133, ALL files in item directories are tracked as assets.
-    FileGDB directories (.gdb) are treated as single container assets (Issue #174).
-    Skips: non-FileGDB directories, symlinks, hidden files, STAC structural files.
-    :func:`_resolve_assets` gives each file its key and role.
-
-    Args:
-        item_dir: Path to the item directory (where files are).
-        item_id: Item identifier (for skipping item.json).
-        primary_file: Path to the primary data file.
-        collection_dir: Path to the collection directory.
-        collection_id: The collection id, for the collision error.
-        exclude_names: Base filenames of OTHER items being added in the same
-            batch (their sources and converted outputs). For a collection-level
-            asset (``item_dir == collection_dir``) the flat collection directory
-            also holds every sibling asset, so without this the scan re-checksums
-            all siblings on every file, O(n^2) (issue #465). Files here that do
-            not share the primary's stem are skipped. Each is tracked by its own
-            ``prepare_item``. Loose companions (not in this set) are kept.
-            Ignored for item-level (subdirectory) scans.
-        collection_level: The assets go into collection.json. Hrefs are then
-            ``./<name>`` and keys follow the stem groups. For an item, the
-            primary is keyed ``data`` and hrefs are ``<name>``, relative to the
-            item JSON in ``item_dir``.
-        ignored_patterns: The ``ignored_files`` patterns of the catalog. A
-            companion that matches one is not an asset (#1044).
-        state: The run state, so each file is hashed once per run.
-
-    Returns:
-        Tuple of (stac_assets, asset_files, asset_paths):
-        - stac_assets: Dict mapping asset key to pystac.Asset
-        - asset_files: Dict mapping filename to (path, checksum, size) tuples
-        - asset_paths: List of absolute path strings
-
-    Raises:
-        AssetKeyCollisionError: Two files claim one asset key.
-    """
+    """Scan an item directory for all trackable assets."""
     in_collection_dir = item_dir.resolve() == collection_dir.resolve()
-    # Issue #465: only prune cross-item siblings for collection-level (flat)
-    # scans. Resolve once, not per file: a flat collection holds n files.
+    # Prune cross-item siblings only for collection-level (flat) scans. Resolve once, not per file.
     is_flat = bool(exclude_names) and in_collection_dir
-    # _create_and_save_item writes the item JSON into item_dir, whatever the
-    # item id, so an item's hrefs are bare names. A "../" prefix assumed a JSON
-    # in {collection_dir}/{item_id}/ and broke --item-id (issue #840).
+    # _create_and_save_item writes the item JSON into item_dir, so an item's hrefs are bare names.
     href_prefix = "./" if collection_level else ""
 
     scanned: list[_ScannedFile] = []
@@ -311,9 +205,8 @@ def _scan_item_assets(
     for file_path in sorted(item_dir.iterdir()):
         if _is_never_an_asset(file_path):
             continue
-        # Issue #465: skip siblings that belong to OTHER items in this batch.
-        # Keep the primary and its own same-stem source/sidecars; keep loose
-        # companions (not in exclude_names) so tracking is preserved.
+        # Skip siblings that belong to OTHER items in this batch; keep the primary, its same-stem
+        # sidecars, and loose companions.
         if (
             is_flat
             and primary_file.stem not in (file_path.stem, _distinct_stem(file_path))
@@ -326,11 +219,8 @@ def _scan_item_assets(
         # accepted its source, so a pattern never drops it here.
         if file_path != primary_file and ignored_by(file_path, ignored_patterns or []):
             continue
-        # The collection README is a rel="describedby" link that `readme`
-        # rewrites, never an asset. The first add runs before the README exists,
-        # so a scan that registered it made add --force differ (issue #1041).
-        # The item mirror has one writer, register_mirror_asset. The scan gave
-        # it the data role, so the PMTiles side-step drew tiles of it.
+        # The collection README is a rel="describedby" link, never an asset. The item mirror has
+        # one writer, register_mirror_asset.
         if in_collection_dir and file_path.name in (README_FILENAME, PARQUET_FILENAME):
             continue
         measured = _measure(file_path, state)
@@ -345,10 +235,8 @@ def _scan_item_assets(
             href=f"{href_prefix}{scanned_file.path.name}",
             media_type=scanned_file.media_type,
             roles=[role],
-            # Titles are human-enrichable (Issue #446). They come from
-            # metadata.yaml or survive from existing metadata via the merge.
-            # file_fields_from, not file_fields: a FileGDB asset is a directory,
-            # already measured by compute_dir_checksum/compute_dir_size.
+            # Titles come from metadata.yaml or survive from existing metadata via the merge.
+            # file_fields_from, not file_fields: a FileGDB asset is a directory, measured by compute_dir_*.
             extra_fields=file_fields_from(scanned_file.checksum, scanned_file.size),
         )
     asset_files = {f.path.name: (f.path, f.checksum, f.size) for f in scanned}
@@ -361,11 +249,7 @@ def _distinct_stem(source: Path) -> str:
 
 
 def _in_batch(name: str, batch_names: frozenset[str]) -> bool:
-    """Report whether ``name`` is a batch source, its output, or its distinct output.
-
-    The distinct output of ``b1.csv`` is ``b1-csv.<suffix>``. The test reads
-    the name only, so it costs no ``stat`` per sibling (issue #465).
-    """
+    """Report whether ``name`` is a batch source, its output, or its distinct output."""
     if name in batch_names:
         return True
     stem = name.rpartition(".")[0]
@@ -376,7 +260,7 @@ def _in_batch(name: str, batch_names: frozenset[str]) -> bool:
 def _measure(file_path: Path, state: RunState | None = None) -> _ScannedFile | None:
     """Checksum and type one directory entry, or None when it is no asset."""
     if file_path.is_dir():
-        # FileGDB directories are single container assets (Issue #174).
+        # FileGDB directories are single container assets.
         if not is_filegdb(file_path):
             return None
         return _ScannedFile(
@@ -413,44 +297,7 @@ def _stem_rank(scanned_file: _ScannedFile, *, read_footer: bool) -> int:
 def _resolve_assets(
     scanned: list[_ScannedFile], primary_file: Path, *, collection_id: str, collection_level: bool
 ) -> dict[str, tuple[_ScannedFile, str]]:
-    """Give every scanned file one asset key and one role.
-
-    Content files (every role but thumbnail, metadata and documentation) are
-    grouped by stem. In each group:
-
-    - A PMTiles never owns the stem. portolan-spec formats.md "PMTiles" makes
-      it the visualization derivative of the GeoParquet. It gets the
-      ``visual`` role and the key the PMTiles writer uses (Issue #929).
-    - Of the other files, the file of the lowest rank owns the stem and gets
-      the ``data`` role: GeoParquet, then other cloud-native data (COG,
-      FlatGeobuf), then Parquet without GeoParquet metadata, then everything
-      else. The primary wins a tie, then ``<stem>.parquet``, then the first
-      name. An item keys its primary ``data`` and always lets it own its group.
-    - When the owner is cloud-native, a file that is not is the file the owner
-      was converted from, such as a GeoJSON or a shapefile and its sidecars. It
-      gets the ``source`` role (Issue #960).
-    - Any other file keeps its role and takes its filename as key.
-
-    A file with a well-known role takes the role name as key, then its stem,
-    then its filename. A file whose key is taken takes its filename. When a
-    file has the filename of a key that is taken, two files claim one key.
-    The resolver then raises, because a dict holds one of them and
-    versions.json tracks both. The answer reads the files, never the listing order or,
-    for a collection, the choice of primary, because every item of a flat
-    collection scans the same files (Issue #933).
-
-    Args:
-        scanned: The files of the directory, sorted by name.
-        primary_file: The file this scan registers.
-        collection_id: The collection id, for the collision error.
-        collection_level: Key the owner by its stem, not ``data``.
-
-    Returns:
-        ``(file, role)`` by asset key.
-
-    Raises:
-        AssetKeyCollisionError: Two files claim one asset key.
-    """
+    """Give every scanned file one asset key and one role."""
     groups: dict[str, list[_ScannedFile]] = {}
     role_files: list[_ScannedFile] = []
     stems = {scanned_file.path.stem for scanned_file in scanned}
@@ -509,28 +356,7 @@ def _resolve_assets(
 
 @dataclass
 class PreparedItem:
-    """Result of prepare_item() — metadata extracted, ready for finalization.
-
-    This dataclass holds all the information needed to finalize an item
-    (write versions.json, update collection links) without any I/O happening
-    during the prepare phase.
-
-    The prepare/finalize separation enables O(n) versioning instead of O(n²)
-    by batching all version writes at the end. See Issue #281.
-
-    Attributes:
-        item_id: STAC item identifier (for item-level) or asset key (for collection-level).
-        collection_id: Collection identifier (may include '/' for nested).
-        format_type: Vector or raster format.
-        bbox: Bounding box [min_x, min_y, max_x, max_y] in WGS84.
-        asset_files: Dict mapping filename to (path, checksum, size) tuples.
-        item_json_path: Path to item.json (None for collection-level vector assets).
-        is_collection_level_asset: If True, asset is at collection level.
-        stac_item: The PySTAC Item object (None for collection-level vector assets).
-        stac_assets: Assets to add to collection.json (for collection-level assets).
-        metadata: Extracted metadata (GeoParquet or COG) for table extension (Issue #304).
-        partition_metadata: Partition extension fields from get_partition_metadata() (Issue #232).
-    """
+    """Result of prepare_item() — metadata extracted, ready for finalization."""
 
     item_id: str
     collection_id: str
@@ -543,30 +369,17 @@ class PreparedItem:
     stac_assets: dict[str, pystac.Asset] | None = None  # For collection-level addition
     metadata: AllMetadata | None = None
     partition_metadata: dict[str, object] | None = None
-    format_name: str | None = None  # The format handler that converted the file (#947)
+    format_name: str | None = None
     # True when this run wrote the output and no file was there before. Only
     # such a file is safe to remove when a later step fails.
     created_output: bool = False
-    # The versions.json source_path of each output, by output path: the key of
-    # the source it was converted from, or its own key for a file added as it
-    # is. convert.claim_output reads the field to tell a 0.8.0 output, which
-    # has none, from a file of the operator.
+    # Versions.json source_path of each output, by output path: its source key, or its own key
+    # if added as is. convert.claim_output reads it to tell a 0.8.0 output (no field) from an operator file.
     source_paths: dict[Path, str] = field(default_factory=dict)
 
 
 def _pre_validate_geometry(path: Path) -> None:
-    """Pre-validate that a file has valid geometry BEFORE any filesystem operations.
-
-    Issue #163: Failed add operations should be atomic. This function checks for
-    geometry/features before any conversion or copying happens, preventing partial
-    artifacts from being created.
-
-    Args:
-        path: Path to the source file.
-
-    Raises:
-        ValueError: If the file has no valid geometry/features.
-    """
+    """Pre-validate that a file has valid geometry BEFORE any filesystem operations."""
     ext = path.suffix.lower()
 
     # Parquet: check GeoParquet metadata
@@ -614,18 +427,7 @@ def _pre_validate_geometry(path: Path) -> None:
 
 
 def _cleanup_orphaned_output(output_path: Path, source_path: Path) -> None:
-    """Remove a conversion output that gets no STAC record, and its GDAL sidecar.
-
-    The only sidecar a conversion here writes is GDAL's ``.aux.xml``, such as
-    ``scene.tif.aux.xml``. Any other file that starts with the output name
-    belongs to the user or to a parallel add, such as
-    ``points.parquet.notes.txt`` or ``points.parquet.other.parquet``, so it
-    stays (#928).
-
-    Args:
-        output_path: Path to the converted output file.
-        source_path: Original source file path (won't be deleted if same).
-    """
+    """Remove a conversion output that gets no STAC record, and its GDAL sidecar."""
     if not output_path.exists() or output_path == source_path:
         return
 
@@ -633,7 +435,7 @@ def _cleanup_orphaned_output(output_path: Path, source_path: Path) -> None:
     try:
         output_path.unlink()
         logger.debug("Cleaned up orphaned conversion output: %s", output_path)
-        # Issue #432: never delete the source file.
+        # Never delete the source file.
         if sidecar.resolve() != source_path.resolve():
             sidecar.unlink(missing_ok=True)
     except OSError as cleanup_err:
@@ -646,30 +448,7 @@ def _derive_item_id_and_asset_level(
     collection_dir: Path,
     item_id: str | None,
 ) -> tuple[str, bool]:
-    """Derive item ID and detect if asset is collection-level.
-
-    Args:
-        path: Path to the asset file.
-        collection_dir: Collection directory path.
-        item_id: Optional explicit item ID.
-
-    Returns:
-        Tuple of (item_id, is_collection_level_asset).
-
-    Raises:
-        ValueError: If derived or provided item_id is invalid.
-
-    Note:
-        For nested collections (e.g., collection_id="a/b"), a file at
-        catalog_root/a/file.parquet will NOT be detected as collection-level
-        for collection "a/b" (since path.parent != catalog_root/a/b).
-        This is intentional - the file would belong to parent collection "a".
-
-    Note:
-        Per Issue #443: Files in Hive partition directories (key=value) are
-        handled specially to avoid duplicate item IDs. The item ID comes from
-        the partition values, and the format type does not change the result.
-    """
+    """Derive item ID and detect if asset is collection-level."""
     from portolan_cli.scan.detect import is_hive_partition_dir
 
     # If item_id is explicitly provided, treat as item-level (not collection-level)
@@ -683,8 +462,7 @@ def _derive_item_id_and_asset_level(
     # Auto-detect: collection-level if file is directly in collection directory
     is_collection_level_asset = path.parent.resolve() == collection_dir.resolve()
 
-    # Check for Hive partition directories in path relative to collection
-    # Per Issue #443: Handle Hive partitions consistently with collection_id filtering
+    # Hive partition directories in the path relative to the collection.
     try:
         relative_parts = list(path.parent.resolve().relative_to(collection_dir.resolve()).parts)
     except ValueError:
@@ -702,12 +480,8 @@ def _derive_item_id_and_asset_level(
 
     # If path contains Hive partitions, apply special handling
     if hive_partitions:
-        # Issue #443: For multi-level Hive partitions (e.g., year=2023/month=01/),
-        # using path.parent.name would give "month=01" for ALL year branches,
-        # causing duplicate item IDs. Instead, use the full relative path as item_id.
-        #
-        # For single-level partitions (e.g., kdtree_cell=XXX/), path.parent.name
-        # is unique, so no special handling needed - fall through to normal logic.
+        # A multi-level Hive path (year=2023/month=01/) needs the full relative path as item_id,
+        # because path.parent.name repeats across branches.
         if len(hive_partitions) > 1 or non_hive_parts:
             # Multi-level partitions or mixed structure: use full relative path
             # e.g., year=2023/month=01/data.parquet -> item_id = "year=2023_month=01"
@@ -717,11 +491,8 @@ def _derive_item_id_and_asset_level(
             # Use parent directory name as item_id (existing behavior)
             item_id = path.parent.name
     elif is_collection_level_asset:
-        # Generate item ID from PARENT DIRECTORY name (Issue #163)
-        # Item boundaries are directories, not filenames.
-        # Example: collection/item_dir/file.parquet -> item_id = "item_dir"
-        # For collection-level assets, use file stem to avoid duplicate directory name
-        # Use file stem for collection-level assets to avoid collection/collection/ nesting
+        # Item boundaries are directories: item_id is the parent directory name.
+        # Collection-level assets use the file stem, to avoid collection/collection/ nesting.
         item_id = path.stem
     else:
         # Use parent directory name for item-level organization
@@ -735,14 +506,7 @@ def _derive_item_id_and_asset_level(
 
 
 def _validate_collection_id(collection_id: str) -> None:
-    """Validate collection ID for security and STAC compliance.
-
-    Args:
-        collection_id: The collection ID to validate.
-
-    Raises:
-        ValueError: If the collection ID is invalid.
-    """
+    """Validate collection ID for security and STAC compliance."""
     # First check: reject unsafe collection IDs (security check)
     # Forward slashes allowed for nested catalogs
     if (
@@ -778,21 +542,9 @@ AllMetadata = VectorMetadata | COGMetadata
 def wgs84_bbox(metadata: AllMetadata, data_path: Path | None = None) -> list[float]:
     """Return the WGS84 bbox of a metadata object, for a STAC Item or Collection.
 
-    PMTiles bbox is already in WGS84 (4326). Other formats may need
-    CRS transformation.
-
-    For GeoParquet in a projected CRS the extent is *measured* from the
-    geometry when ``data_path`` is given. Reprojecting the stored bbox instead
-    answers a different question — it gives the WGS84 envelope of a rectangle,
-    which for a projected CRS is strictly larger than the envelope of the data
-    inside it, so the declared extent overstates the data and `check` rejects it
-    (PTL-DAT-005). Measurement falls back to the reprojected bbox whenever it
-    cannot be made.
-
     Args:
         metadata: Metadata object with bbox attribute.
-        data_path: Converted data file, when available, to measure the extent
-            from instead of reprojecting the stored bbox.
+        data_path: Converted data file, when available, to measure the extent from instead of reprojecting the stored bbox.
 
     Returns:
         Bounding box as [min_x, min_y, max_x, max_y] in WGS84.
@@ -801,10 +553,8 @@ def wgs84_bbox(metadata: AllMetadata, data_path: Path | None = None) -> list[flo
         # PMTiles store bounds in WGS84 (4326), no transformation needed
         return list(metadata.bbox)  # type: ignore[arg-type]
 
-    # Other formats may need CRS transformation. The CRS is an EPSG/WKT string
-    # or a PROJJSON dict: GeoParquet stores a CRS with no authority code as
-    # PROJJSON, which is what an ESRI .prj such as POSGAR 1994 produces. pyproj
-    # reads both, so pass the value through rather than reject it (Issue #810).
+    # The CRS is an EPSG/WKT string or a PROJJSON dict (GeoParquet stores a CRS with no
+    # authority code as PROJJSON). pyproj reads both, so pass it through.
     crs_raw = getattr(metadata, "crs", None)
     source_crs = crs_raw if isinstance(crs_raw, (str, dict)) else None
 
@@ -838,37 +588,7 @@ def _convert_and_extract_metadata(
     reconvert: bool = False,
     state: RunState | None = None,
 ) -> tuple[Path, AllMetadata]:
-    """Convert with the format handler and read the metadata (#947).
-
-    The same rule applies to every handler, built-in or plugin:
-
-    - ``--force`` without ``--reconvert`` keeps an output that exists
-      (issue #386). The handler converts it again only when it reads that
-      format itself, which brings an existing GeoParquet up to the profile
-      (issue #805).
-    - ``--reconvert`` on a source that is its own output rewrites it with the
-      handler's ``reconvert``, when it has one.
-    - Otherwise the handler converts the source into ``target``.
-
-    ``target`` comes from :func:`convert.claim_output`, so no branch writes over
-    a file that the source did not make.
-
-    Args:
-        path: Source file path.
-        item_dir: Item directory for output.
-        handler: The format handler that claims the file.
-        target: The output path from :func:`convert.claim_output`. None claims it here.
-        catalog_root: Catalog root, for reading conversion settings.
-        force: If True, bypass change detection (Issue #386).
-        reconvert: If True, re-convert from source (requires force=True).
-        state: The run state. The handler takes no state, so the conversion
-            settings reach it through ``settings_override``. The state also
-            gives one hash and one ``versions.json`` read per run.
-
-    Returns:
-        Tuple of (output_path, metadata). A plugin's FormatMetadata provides
-        the bbox, crs, and to_stac_properties that the add path reads.
-    """
+    """Convert with the format handler and read the metadata."""
     if target is None:
         target = claim_output(path, handler.output_path(path, item_dir), state=state)
     in_place = target.resolve() == path.resolve()
@@ -912,18 +632,7 @@ def _extract_statistics_best_effort(
     collection_path: Path | None = None,
     state: ConfigSource | None = None,
 ) -> tuple[list[Any], dict[str, Any]]:
-    """Extract statistics with best-effort error handling.
-
-    Args:
-        output_path: Path to the converted file.
-        format_type: Format type (RASTER or VECTOR).
-        catalog_root: Catalog root for config lookup.
-        collection_path: Collection directory for hierarchical config.
-        state: The run state, which parses the config once per run.
-
-    Returns:
-        Tuple of (band_stats, parquet_stats). Empty if disabled or failed.
-    """
+    """Extract statistics with best-effort error handling."""
     band_stats: list[Any] = []
     parquet_stats: dict[str, Any] = {}
     stats_enabled = _setting("statistics.enabled", catalog_root, collection_path, state)
@@ -960,15 +669,7 @@ def _add_statistics_to_properties(
     parquet_stats: dict[str, Any],
     stats_enabled: bool,
 ) -> None:
-    """Add statistics to STAC properties in-place.
-
-    Args:
-        stac_properties: Properties dict to modify.
-        format_type: Format type (RASTER or VECTOR).
-        band_stats: Band statistics (for rasters).
-        parquet_stats: Parquet column statistics (for vectors).
-        stats_enabled: Whether stats are enabled.
-    """
+    """Add statistics to STAC properties in-place."""
     if not stats_enabled:
         return
 
@@ -995,23 +696,7 @@ def _create_and_save_item(
     metadata: AllMetadata,
     item_dir: Path,
 ) -> tuple[pystac.Item, Path]:
-    """Create a STAC item, let the format handler describe it, and save it.
-
-    Helper to reduce complexity in prepare_item().
-
-    Args:
-        item_id: STAC item identifier.
-        bbox: Bounding box [min_x, min_y, max_x, max_y].
-        item_datetime: Acquisition/creation datetime.
-        stac_properties: Properties to include in the item.
-        stac_assets: Assets to attach to the item.
-        describe: Calls the format handler's ``describe_item`` (#947).
-        metadata: Extracted metadata for the projection extension.
-        item_dir: Directory where item.json will be saved.
-
-    Returns:
-        Tuple of (item, item_json_path).
-    """
+    """Create a STAC item, let the format handler describe it, and save it."""
     item = create_item(
         item_id=item_id,
         bbox=bbox,
@@ -1021,8 +706,7 @@ def _create_and_save_item(
     )
     add_projection_extension(item, metadata)
     describe(item)
-    # The item carries file:* on its assets and may carry table:* statistics,
-    # so it declares those extensions itself (issue #1037).
+    # The item carries file:* on its assets and may carry table:* statistics, so it declares those extensions.
     document = item.to_dict(include_self_link=False, transform_hrefs=False)
     if declare_extensions_in_use(document):
         item.stac_extensions = document["stac_extensions"]
@@ -1040,20 +724,7 @@ def _apply_nodata_defaults_to_bands(
     defaults: dict[str, Any],
     source_path: Path,
 ) -> None:
-    """Apply nodata defaults from metadata.yaml to STAC band properties.
-
-    Only applies defaults to bands that don't already have nodata values.
-    Modifies stac_properties["bands"] in-place.
-
-    Args:
-        stac_properties: Properties dict to modify.
-        metadata: COGMetadata with extraction results.
-        defaults: The 'defaults' section from metadata.yaml.
-        source_path: Path to source file (for error messages).
-
-    Raises:
-        NodataMismatchError: If per-band nodata list doesn't match band count.
-    """
+    """Apply nodata defaults from metadata.yaml to STAC band properties."""
     bands = stac_properties.get("bands", [])
     if not bands:
         return
@@ -1102,7 +773,7 @@ def describe_raster_item(
 ) -> None:
     """Add the raster fields to a new item: render, band statistics, nodata, extension.
 
-    The built-in COG handler calls this from ``describe_item`` (#947).
+    The built-in COG handler calls this from ``describe_item``.
 
     Args:
         item: The new item.
@@ -1110,7 +781,7 @@ def describe_raster_item(
         metadata: What ``extract_cog_metadata`` returned.
         context: Where the file sits.
     """
-    # Enrich COG assets with render extension properties (Issue #13)
+    # Enrich COG assets with render extension properties.
     enrich_cog_assets(item.assets, context.catalog_root, state=context.state)
     band_stats, _ = _extract_statistics_best_effort(
         output,
@@ -1131,7 +802,7 @@ def describe_vector_item(
 ) -> None:
     """Add the vector fields to a new item: column statistics and the vector extension.
 
-    The built-in GeoParquet handler calls this from ``describe_item`` (#947).
+    The built-in GeoParquet handler calls this from ``describe_item``.
 
     Args:
         item: The new item.
@@ -1160,17 +831,7 @@ def _item_bbox(
     created_output: bool,
     collection_level: bool,
 ) -> list[float]:
-    """Return the WGS84 bbox of an item, or remove a new output and raise.
-
-    The add stops here before any STAC write, so a file this run converted
-    goes too.
-
-    Raises:
-        NoGeometryError: The file has no bbox.
-        CRSTransformError: The bbox cannot be transformed to WGS84.
-        CRSMismatchError: The bbox does not match the declared CRS.
-        InvalidBboxError: The transformed bbox is not valid WGS84.
-    """
+    """Return the WGS84 bbox of an item, or remove a new output and raise."""
     try:
         if not metadata.bbox:
             raise NoGeometryError(
@@ -1178,7 +839,7 @@ def _item_bbox(
                 reason="The source file may have no valid geometry.",
             )
         bbox = wgs84_bbox(metadata, output_path)
-        # Collection extents filter invalid asset bboxes when they aggregate (#516).
+        # Collection extents filter invalid asset bboxes when they aggregate.
         return bbox if collection_level else _require_wgs84(bbox)
     except (NoGeometryError, CRSTransformError, CRSMismatchError, InvalidBboxError):
         if created_output:
@@ -1200,44 +861,7 @@ def prepare_item(  # noqa: PLR0914 - the whole per-file pipeline in one sequence
     exclude_sibling_names: frozenset[str] = frozenset(),
     state: RunState | None = None,
 ) -> PreparedItem:
-    """Prepare files for addition (convert, extract metadata, create STAC item).
-
-    This function does the GDAL-bound work (conversion, metadata extraction) but
-    does NOT write to versions.json or update collection.json links. This enables
-    O(n) versioning instead of O(n²) by batching writes in finalize_items().
-
-    Per Issue #281: This is the parallelizable phase of the add workflow.
-    Per Issue #386: force/reconvert control conversion skip behavior.
-
-    Args:
-        path: Path to the source file.
-        catalog_root: Root directory of the catalog.
-        collection_id: Collection to add the data to.
-        title: Optional display title for the item.
-        description: Optional description.
-        item_id: Optional item ID (defaults to parent directory name).
-        item_datetime: Optional acquisition/creation datetime.
-        force: If True, bypass change detection (Issue #386).
-        reconvert: If True, re-convert from source (requires force=True).
-        exclude_sibling_names: Base filenames of other batch items (sources +
-            converted outputs) to prune from a collection-level asset scan
-            (issue #465). Forwarded to _scan_item_assets; see its docstring.
-        state: The run state, which parses the config once per run and hashes
-            each file once. None reads each shared file here.
-
-    Returns:
-        PreparedItem with all metadata needed for finalization.
-
-    Raises:
-        ValueError: If the format is unsupported or collection_id is invalid.
-        FileNotFoundError: If the source file doesn't exist.
-        NoGeometryError: If the file has no valid geometry.
-        CRSTransformError: The bbox cannot be transformed to WGS84.
-        CRSMismatchError: The bbox does not match the declared CRS.
-        InvalidBboxError: The transformed bbox is not valid WGS84.
-        OutputExistsError: Both output names hold a file that the source did
-            not write.
-    """
+    """Prepare files for addition (convert, extract metadata, create STAC item)."""
     # Step 1: Validate inputs
     _validate_collection_id(collection_id)
 
@@ -1246,9 +870,7 @@ def prepare_item(  # noqa: PLR0914 - the whole per-file pipeline in one sequence
         raise ValueError(f"Unsupported format: {path.suffix}")
     format_type = handler.family
 
-    # Every footer read of this item goes through the run memo (in_run). A
-    # caller with no state gets one for this item, so the source is hashed
-    # once (provenance and scan).
+    # Every footer read of this item goes through the run memo, so the source is hashed once.
     if state is None:
         state = RunState.open(catalog_root)
     with in_run(state):
@@ -1339,8 +961,7 @@ def prepare_item(  # noqa: PLR0914 - the whole per-file pipeline in one sequence
             output_path.unlink(missing_ok=True)
         raise
 
-    # Step 6: Build STAC properties. The handler adds its format fields when it
-    # describes the item (#947).
+    # Step 6: build STAC properties; the handler adds its format fields when it describes the item.
     stac_properties = metadata.to_stac_properties()
     if title:
         stac_properties["title"] = title
@@ -1353,9 +974,7 @@ def prepare_item(  # noqa: PLR0914 - the whole per-file pipeline in one sequence
     if effective_datetime is None and defaults:
         effective_datetime = apply_temporal_defaults(defaults)
 
-    # Step 7: Create STAC item or collection-level assets
-    # Collection-level vector assets: no item.json, assets go directly in collection.json
-    # Item-level assets (rasters, partitioned vectors): create item.json as usual
+    # Step 7: collection-level vector assets go straight into collection.json; others get an item.json.
     if collection_level:
         # Collection-level vector asset: no item.json
         return PreparedItem(
@@ -1414,55 +1033,14 @@ def prepare_item(  # noqa: PLR0914 - the whole per-file pipeline in one sequence
 
 
 def is_rewrite_temp(path: Path) -> bool:
-    """Report whether a path is the scratch file of an in-place rewrite.
-
-    :func:`_rewrite_parquet_in_place` writes a hidden sibling and swaps it in.
-    A killed run skips the cleanup, so ``add`` must recognize a leftover and
-    refuse to ingest it as a source (issue #805).
-
-    Args:
-        path: Candidate file path.
-
-    Returns:
-        True when the file name carries the rewrite marker.
-    """
+    """Report whether a path is the scratch file of an in-place rewrite."""
     return REWRITE_TEMP_INFIX in path.name
 
 
 def _needs_spatial_rewrite(
     source: Path | pq.ParquetFile, settings: VectorSettings, *, reconvert: bool = False
 ) -> bool:
-    """Decide whether an existing Parquet file must be rewritten on ``add``.
-
-    ``add`` used to copy every ``.parquet`` source through untouched, which
-    produced a catalog that failed Portolan's own ``check``: the file carried
-    no bbox covering column, so it failed PTL-DAT-007 and left PTL-DAT-006
-    unevaluated (issue #805).
-
-    Three cases keep the copy:
-
-    - The file is tabular Parquet, with no ``geo`` metadata. ``add_bbox()``
-      needs a geometry column.
-    - ``add_bbox`` is off. The footer is the only thing this function can read
-      cheaply, so with the bbox column disabled there is nothing it can detect
-      and no outcome a rewrite would change. Rewriting anyway would repeat on
-      every ``add`` and report a reason the rewrite cannot fix.
-    - The file already declares a bbox covering column. Rewriting a large
-      conformant file would cost time and change nothing.
-
-    The footer says nothing about row order, so a file with the column but
-    unordered rows still fails PTL-DAT-006. ``check --fix`` rewrites a file
-    that check reports, and ``add --force --reconvert`` rewrites the file
-    whatever its footer says.
-
-    Args:
-        source: Source Parquet file, or the file open for its footer.
-        settings: Vector conversion settings.
-        reconvert: True when the operator asked to re-convert from source.
-
-    Returns:
-        True when the file must go through geoparquet-io again.
-    """
+    """Decide whether an existing Parquet file must be rewritten on ``add``."""
     layout = read_spatial_layout(source)
     if not layout.is_geoparquet:
         return False
@@ -1483,31 +1061,16 @@ def convert_vector(
     settings: VectorSettings | None = None,
     partition_dir: Path | None = None,
 ) -> Path:
-    """Convert a vector file to GeoParquet. ``add`` and ``check --fix`` both use this (#947).
-
-    Applies the catalog's ``conversion.vector`` settings, which sort rows and
-    add a bbox covering column by default (issue #805). A ``.parquet`` source
-    is copied unless :func:`_needs_spatial_rewrite` says it must be rewritten.
-
-    ``add`` writes one file. A configured spatial index becomes a column of
-    that file, whatever ``partition`` says. ``check --fix`` passes
-    ``partition_dir`` instead, and the table is written as Hive partitions by
-    that index. Each source gets its own ``partition_dir``, because two
-    sources in one directory share cells, and geoparquet-io does not write over
-    a cell that exists.
+    """Convert a vector file to GeoParquet.
 
     Args:
         source: Source vector file.
         dest_dir: Destination directory.
-        catalog_root: Catalog root, for reading ``conversion.vector`` settings.
-            None uses the built-in defaults.
-        reconvert: True when the operator asked to re-convert from source, which
-            rewrites a Parquet file whatever its footer already declares.
+        catalog_root: Catalog root, for reading ``conversion.vector`` settings. None uses the built-in defaults.
+        reconvert: True when the operator asked to re-convert from source, which rewrites a Parquet file whatever its footer already declares.
         strict: Raise when a Parquet rewrite fails, and do not keep the file with a warning.
         settings: Explicit vector settings. None reads them from the catalog.
-        partition_dir: Directory for Hive partitions by the configured spatial
-            index. It applies only to a non-Parquet source, when the settings
-            set ``partition`` and a spatial index.
+        partition_dir: Directory for Hive partitions by the configured spatial index. It applies only to a non-Parquet source, when the settings set ``partition`` and a spatial index.
 
     Returns:
         Path to the output GeoParquet file, or ``partition_dir`` when the
@@ -1531,9 +1094,8 @@ def convert_vector(
     # Check if already GeoParquet
     if source.suffix.lower() == ".parquet":
         same_file = source.resolve() == output_path.resolve()
-        # One footer read answers both questions (issue #995). The file closes
-        # before the rewrite swaps a sibling over it, because an open handle
-        # blocks that replace on Windows.
+        # One footer read answers both questions. The file closes before the rewrite swaps a sibling
+        # over it, because an open handle blocks the replace on Windows.
         footer = open_footer(source)
         try:
             needs = footer is not None and _needs_spatial_rewrite(
@@ -1552,26 +1114,19 @@ def convert_vector(
         reason = "re-convert requested" if reconvert else "it carries no bbox covering column"
         _announce_rewrite(source, reason)
         if same_file:
-            # A single-file collection keeps its data where the operator put it,
-            # so there is no separate destination to write to. Write a sibling
-            # and swap it in, because geoparquet-io cannot write the file it
-            # reads.
+            # A single-file collection keeps its data in place: write a sibling and swap it in,
+            # because geoparquet-io cannot write the file it reads.
             _rewrite_or_keep(source, settings, before, strict=strict)
         else:
-            # Copy first, then rewrite the copy. Converting straight into
-            # `output_path` would skip `_assert_rewrite_kept_everything`, so a
-            # `.parquet` source would silently lose its CRS on this path while
-            # the same file kept it on the path above.
+            # Copy first, then rewrite the copy. Converting straight into `output_path` would skip
+            # `_assert_rewrite_kept_everything`, so a `.parquet` source could lose its CRS.
             shutil.copy2(source, output_path)
             invalidate(output_path)
             _rewrite_or_keep(output_path, settings, before, strict=strict)
         return output_path
 
-    # A non-Parquet source. Convert with the geoparquet-io fluent API, wrapped
-    # in the shared retry so a transient DuckDB "Query interrupted" does not
-    # fail a bulk add (Issue #339 nightly test_add_1000_files_* flake); this is
-    # the code path add and check --fix use. A partitioned write adds the index
-    # column at the size it partitions by, so the converter leaves it out.
+    # A non-Parquet source: convert with the geoparquet-io fluent API inside the shared retry,
+    # so a transient DuckDB "Query interrupted" does not fail a bulk add.
     if not (settings.partition and settings.spatial_index != "none"):
         partition_dir = None
     resolved = settings
@@ -1590,27 +1145,15 @@ def convert_vector(
     return output_path if partition_dir is None else partition_dir
 
 
-# Above this size, the rewrite is slow enough that the operator should know why
-# `add` appears to stall, and should know it needs the free space. The rewrite
-# still runs: `add` produces conforming output without asking (issue #805).
+# Above this size the rewrite is slow enough that the operator should know why `add`
+# stalls and that it needs free space. The rewrite still runs.
 LARGE_REWRITE_WARN_BYTES = 1024 * 1024 * 1024
 
 
 def _announce_rewrite(source: Path, reason: str) -> None:
-    """Tell the operator a rewrite starts, and how much work it is.
-
-    The rewrite is a full geoparquet-io read, sort, and write, not the copy
-    this path used to do. It needs room for a second copy of the file while it
-    runs. A large file gets an explicit warning, because the read and the sort
-    take long enough to look like a hang.
-
-    Args:
-        source: The file about to be rewritten.
-        reason: Why the rewrite runs, in the operator's terms.
-    """
-    # A rewrite changes the operator's file, so the notice is user-facing and
-    # shows by default. The CLI prints it through the output writer, which sends
-    # it to stderr in JSON mode (#1005). Do not demote it to logging.info.
+    """Tell the operator a rewrite starts, and how much work it is."""
+    # The notice is user-facing and goes through the output writer (stderr in JSON mode).
+    # Do not demote it to logging.info.
     from portolan_cli.utils import format_size
 
     size_bytes = source.stat().st_size
@@ -1628,22 +1171,7 @@ def _announce_rewrite(source: Path, reason: str) -> None:
 def _rewrite_or_keep(
     source: Path, settings: VectorSettings, before: RewriteFidelity | None, *, strict: bool = False
 ) -> None:
-    """Rewrite a GeoParquet in place, or keep it and say why the rewrite failed.
-
-    ``add`` used to copy a ``.parquet`` source through untouched, so a file
-    geoparquet-io cannot read or cannot write faithfully still reached the
-    catalog. The rewrite must not turn that into a failed ``add``, and it must
-    not replace the operator's data with worse data (issue #805).
-
-    A file kept this way is still non-conformant, and ``check`` reports it. The
-    operator sees the reason on the spot rather than a stack trace.
-
-    Args:
-        source: GeoParquet file to rewrite.
-        settings: Vector conversion settings to apply.
-        before: The fidelity fields of the bytes in ``source``, read before.
-        strict: Raise the failure, and keep the file with no warning.
-    """
+    """Rewrite a GeoParquet in place, or keep it and say why the rewrite failed."""
     try:
         _rewrite_parquet_in_place(source, settings, before)
     except RewriteFidelityError as err:
@@ -1660,31 +1188,7 @@ def _rewrite_or_keep(
 def _rewrite_parquet_in_place(
     source: Path, settings: VectorSettings, before: RewriteFidelity | None
 ) -> None:
-    """Rewrite a GeoParquet file with the vector settings applied.
-
-    Writes a sibling temporary file and swaps it in with :meth:`Path.replace`,
-    which is atomic within one filesystem. The source keeps its bytes if the
-    write raises, so a failed rewrite cannot destroy the operator's data.
-
-    The temporary file is a hidden sibling and carries
-    :data:`REWRITE_TEMP_INFIX` in its name. ``add`` collects the source
-    directory before it converts anything, and a hard kill skips the cleanup
-    below, so a leftover file would otherwise be collected as a source on the
-    next run. :func:`is_rewrite_temp` lets ``add`` skip it.
-
-    geoparquet-io 1.7.0 writes a fresh ``geo`` key and keeps every other footer
-    key a publisher set, such as a provenance key (gpio#1280). It drops
-    ``pandas`` on purpose, because that key describes the columns of the input
-    (gpio#1268). So the rewrite writes the file once.
-    :func:`_assert_rewrite_kept_everything` refuses a rewrite that drops a
-    publisher key.
-
-    Args:
-        source: GeoParquet file to rewrite.
-        settings: Vector conversion settings to apply.
-        before: The fidelity fields of the bytes in ``source``. The caller
-            reads them in the same footer read as the spatial layout.
-    """
+    """Rewrite a GeoParquet file with the vector settings applied."""
     import geoparquet_io as gpio
 
     temp_path = source.with_name(f".{source.stem}{REWRITE_TEMP_INFIX}.parquet")
@@ -1698,9 +1202,8 @@ def _rewrite_parquet_in_place(
         # file. Its next incarnation may reuse the same stat key.
         invalidate(temp_path)
         run_with_transient_convert_retry(_run, source_name=source.name)
-        # One footer read gives the gate and the item metadata. The footer
-        # closes before the replace, because an open handle blocks it on
-        # Windows.
+        # One footer read gives the gate and the item metadata. The footer closes before the
+        # replace, because an open handle blocks it on Windows.
         footer = open_footer(temp_path)
         try:
             rewritten = footer if footer is not None else temp_path
@@ -1719,19 +1222,7 @@ def _rewrite_parquet_in_place(
 
 
 def _same_crs(before: Any, after: Any) -> bool:
-    """Report whether two GeoParquet ``crs`` values mean the same thing.
-
-    The values are PROJJSON, and two encodings of one CRS can differ in text,
-    so pyproj decides equivalence. A value pyproj cannot parse falls back to
-    equality, which keeps an unreadable pair from passing as a match.
-
-    Args:
-        before: The source file's ``crs`` value.
-        after: The rewritten file's ``crs`` value.
-
-    Returns:
-        True when both describe the same CRS.
-    """
+    """Report whether two GeoParquet ``crs`` values mean the same thing."""
     if before == after:
         return True
     try:
@@ -1741,22 +1232,7 @@ def _same_crs(before: Any, after: Any) -> bool:
 
 
 def _means_wgs84(crs: Any) -> bool:
-    """Report whether a GeoParquet ``crs`` value means WGS84.
-
-    GeoParquet reads an absent ``crs`` as OGC:CRS84, which is WGS84 with
-    longitude and latitude in that axis order. A writer that omits the key for
-    WGS84 data therefore loses no meaning, and geoparquet-io omits it.
-
-    Without this test the fidelity gate refuses every rewrite of a WGS84 file.
-    That is the common case, so the file never gains its bbox covering column,
-    and a partitioned add rewrites each partition on its own instead (#805).
-
-    Args:
-        crs: The source file's ``crs`` value, as PROJJSON or a string.
-
-    Returns:
-        True when the value describes WGS84 or CRS84.
-    """
+    """Report whether a GeoParquet ``crs`` value means WGS84."""
     try:
         return _is_wgs84(CRS.from_user_input(crs))
     except Exception:  # an unparsable CRS is not provably WGS84
@@ -1766,32 +1242,7 @@ def _means_wgs84(crs: Any) -> bool:
 def _assert_rewrite_kept_everything(
     source: Path, rewritten: Path | pq.ParquetFile, before: RewriteFidelity | None
 ) -> None:
-    """Refuse a rewrite that would replace good data with worse data.
-
-    The rewrite overwrites the operator's own file, so it has to prove it lost
-    nothing before the swap. A GeoParquet that comes back declaring no CRS
-    reads as OGC:CRS84 per the specification, so projected coordinates would be
-    mislabeled as longitude and latitude.
-
-    geoparquet-io 1.4.0 fixed the write that dropped the CRS (gpio#625), so
-    this gate is silent on the normal path. Keep it. It guards a destructive
-    operation against any cause, and it is not a workaround for one dependency
-    bug.
-
-    This is a gate, not a repair. Portolan does not put the CRS back. It keeps
-    the operator's file and says why, and ``check`` still reports the missing
-    covering column.
-
-    Args:
-        source: The file the rewrite would replace.
-        rewritten: The candidate replacement, or its open footer.
-        before: The source's fidelity fields, read before the rewrite ran.
-
-    Raises:
-        RewriteFidelityError: When the rewrite loses rows, columns, schema
-            metadata keys, the CRS, a publisher field of a geometry column,
-            or the field metadata of a column.
-    """
+    """Refuse a rewrite that would replace good data with worse data."""
     if before is None:
         return
     after = read_rewrite_fidelity(rewritten)
@@ -1815,8 +1266,7 @@ def _assert_rewrite_kept_everything(
     if before.crs is not None and after.crs is None and not _means_wgs84(before.crs):
         raise RewriteFidelityError(source.name, "the CRS it declared")
 
-    # A written CRS that differs from the source is corruption, not a drop, and
-    # relabels every coordinate in the file. Compare the meaning rather than the
+    # A written CRS that differs from the source is corruption. Compare the meaning, not the
     # PROJJSON text, because an equivalent CRS can serialize two ways.
     if before.crs is not None and after.crs is not None and not _same_crs(before.crs, after.crs):
         raise RewriteFidelityError(source.name, "its CRS, which the rewrite changed")
@@ -1827,11 +1277,7 @@ def _assert_rewrite_kept_everything(
 
 
 def _lost_geo_fields(before: RewriteFidelity, after: RewriteFidelity) -> str | None:
-    """Name a publisher field of a geometry column that the rewrite lost, or None.
-
-    A ``crs`` key with a null value names an undefined CRS. A missing key
-    means OGC:CRS84. So the presence of the key counts, not only its value.
-    """
+    """Name a publisher field of a geometry column that the rewrite lost, or None."""
     for name, fields in (before.geo_columns or {}).items():
         kept = (after.geo_columns or {}).get(name)
         if kept is None:
@@ -1866,26 +1312,7 @@ def _lost_field_metadata(before: RewriteFidelity, after: RewriteFidelity) -> str
 
 
 def convert_tabular(source: Path, dest_dir: Path, *, state: RunState | None = None) -> Path:
-    """Convert tabular file to Parquet using geoparquet-io (Issue #432).
-
-    Routes CSV/TSV/XLSX through gpio.convert().write() — the same pipeline
-    as geo files but with geometry_column=None. This ensures consistent
-    compression and row-group sizing across all Parquet outputs.
-
-    For plain Parquet files, copies them directly (no re-conversion needed).
-
-    Args:
-        source: Source tabular file (CSV, TSV, XLSX, or plain Parquet).
-        dest_dir: Destination directory.
-        state: The run state, for one hash per file and run.
-
-    Returns:
-        Path to the output Parquet file.
-
-    Raises:
-        OutputExistsError: Both output names hold a file that ``source`` did
-            not write (see :func:`convert.claim_output`).
-    """
+    """Convert tabular file to Parquet using geoparquet-io."""
     import geoparquet_io as gpio
 
     default_path = dest_dir / f"{source.stem}.parquet"
@@ -1898,13 +1325,8 @@ def convert_tabular(source: Path, dest_dir: Path, *, state: RunState | None = No
         shutil.copy2(source, output_path)
         return output_path
 
-    # Convert CSV/TSV/XLSX using geoparquet-io
-    # gpio.convert() auto-detects format and handles non-geo files correctly
-    # (logs "Reading as plain table" and returns Table with geometry_column=None)
-    # Write with standard Parquet settings (compression, row groups); gpio v1.2.0+
-    # handles geometry_column=None correctly in all write strategies. Wrapped in
-    # the shared retry so a transient DuckDB "Query interrupted" does not fail a
-    # bulk add on the tabular path (Issue #339).
+    # gpio.convert() reads plain tables with geometry_column=None (gpio v1.2.0+ writes them
+    # correctly). The shared retry covers a transient DuckDB "Query interrupted".
     def _run() -> None:
         table = gpio.convert(str(source))
         with_provenance(table, source).write(str(output_path))
@@ -1925,19 +1347,7 @@ def convert_raster(
     *,
     reoptimize: bool = False,
 ) -> Path:
-    """Convert a raster to a COG. ``add`` and ``check --fix`` both use this (#947).
-
-    A source that is already a COG is kept, unless ``reoptimize`` asks to
-    rewrite it with the current settings (issue #530). A lossless COG with no
-    embedded band statistics gets them once in the output
-    (:func:`_embed_statistics`). Otherwise
-    ``convert.write_cog`` writes the COG with the catalog's ``conversion.cog``
-    settings: DEFLATE, 512x512 tiles, and a predictor and overview resampling
-    derived from the source dtype by default (issue #690).
-
-    A COG source opens once. That read gives the statistics check, the item
-    metadata, and the band statistics. The run memo keeps the last two for the
-    output (``convert.remember_cog``).
+    """Convert a raster to a COG. ``add`` and ``check --fix`` both use this.
 
     Args:
         source: Source raster file.
@@ -1995,31 +1405,7 @@ _COG_PREDICTOR_NAMES = {"1": "NO", "2": "STANDARD", "3": "FLOATING_POINT"}
 
 
 def _embed_statistics(src: Any, source: Path, output: Path) -> Path | None:
-    """Write a lossless COG again beside ``output``, so that it carries its band statistics.
-
-    PTL-DAT-009 and PTL-DAT-010 read the statistics from the COG itself with
-    PAM off (issue #748). A tag update in place breaks the COG layout, so the
-    COG is written again, once. The next add finds the statistics and keeps the
-    file. The GDAL COG driver copies the file (``convert.copy_to_cog``). It
-    keeps the codec, the predictor, the block size, the overviews, the mask,
-    and every pixel. A codec outside ``_LOSSLESS_COG_CODECS`` becomes DEFLATE.
-
-    rio-cogeo is not used here. Its warp reads a pixel at the nodata value of
-    one band as valid when another band holds data there, and it writes
-    nodata + 1 into that band.
-
-    ``convert.place_cog`` moves the scratch file over ``output`` only when it
-    holds the statistics. A ``source`` in another directory stays as it is. On
-    any failure the operator's file stays, with a warning.
-
-    Args:
-        src: The COG, open for reading with PAM off.
-        source: The path of the COG.
-        output: The COG to write. It can be ``source``.
-
-    Returns:
-        The scratch COG, or None when the copy failed.
-    """
+    """Write a lossless COG again beside ``output``, so that it carries its band statistics."""
     from portolan_cli.convert import COG_PROVENANCE_TAG, copy_to_cog, provenance_record
 
     structure = src.tags(ns="IMAGE_STRUCTURE")

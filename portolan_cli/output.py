@@ -1,39 +1,4 @@
-"""Standardized terminal output utilities.
-
-All user-facing CLI messages should use these functions for consistent
-formatting across the application.
-
-Basic Usage:
-    from portolan_cli.output import success, info, warn, error, detail
-
-    success("Wrote output.parquet (1.2 MB)")
-    info("Reading data.shp (4,231 features)")
-    warn("Missing thumbnail (recommended)")
-    error("No geometry column (required)")
-    detail("Processing chunk 3/10...")
-
-Dry-Run Mode:
-    Add dry_run=True to prefix messages with [DRY RUN], indicating what
-    *would* happen without actually performing the operation:
-
-    success("Would write output.parquet", dry_run=True)
-    # Output: ✓ [DRY RUN] Would write output.parquet
-
-    Use dry-run mode for commands that modify state (add, sync,
-    prune, repair) to preview operations before execution.
-
-Writers:
-    A writer turns a styled message into terminal output. The default writer
-    imports no Click, so a library caller can use this module without the CLI
-    shell (#947). ``cli.py`` installs a writer that uses ``click.echo``, which
-    keeps the CLI behavior of CliRunner color handling and Windows consoles.
-
-JSON Mode:
-    In JSON mode stdout holds the JSON envelope and nothing else (#1005).
-    Library code calls these functions without knowing the output mode, so
-    the CLI wraps a JSON run in ``stdout_to_stderr()``. Inside it, a message
-    that would go to stdout goes to stderr instead.
-"""
+"""Standardized terminal output utilities."""
 
 from __future__ import annotations
 
@@ -138,11 +103,7 @@ def get_writer() -> Writer:
 
 @contextmanager
 def stdout_to_stderr() -> Generator[None, None, None]:
-    """Send the stdout-bound messages to stderr until the block ends.
-
-    The switch is process-wide, so messages from worker threads follow it too.
-    A message with an explicit ``file`` keeps that stream.
-    """
+    """Send the stdout-bound messages to stderr until the block ends."""
     previous = _state.stdout_to_stderr
     _state.stdout_to_stderr = True
     try:
@@ -159,15 +120,7 @@ def _output(
     nl: bool = True,
     dry_run: bool = False,
 ) -> None:
-    """Internal helper for styled output.
-
-    Args:
-        message: The message to display.
-        style: The style name (success, error, info, warn, detail).
-        file: File to write to.
-        nl: Whether to print a newline after the message.
-        dry_run: If True, prefix message with [DRY RUN].
-    """
+    """Internal helper for styled output."""
     # Add dry-run prefix if enabled
     if dry_run:
         message = f"[DRY RUN] {message}"
@@ -301,10 +254,7 @@ def detail(
 
     Example:
         >>> detail("Processing chunk 3/10...")
-          Processing chunk 3/10...
-
         >>> detail("Would process chunk", dry_run=True)
-          [DRY RUN] Would process chunk
     """
     _output(message, "detail", file=file, nl=nl, dry_run=dry_run)
 
@@ -317,25 +267,7 @@ def progress(
     context: str | None = None,
     file: TextIO | None = None,
 ) -> None:
-    """Print a progress message showing file N of M.
-
-    Use this for long-running batch operations (conversion, add, etc.)
-    to show users that work is happening.
-
-    Args:
-        filename: The file being processed (Path or string).
-        current: Current file number (1-indexed).
-        total: Total number of files to process.
-        context: Optional context string (e.g., "Converting to GeoParquet").
-        file: File to write to (default: stdout).
-
-    Example:
-        >>> progress("census.shp", current=3, total=10)
-        → Processing file 3 of 10: census.shp
-
-        >>> progress("data.tif", current=1, total=5, context="Converting to COG")
-        → Converting to COG (1 of 5): data.tif
-    """
+    """Print a progress message showing file N of M."""
     # Extract just the filename, not the full path
     name = filename.name if isinstance(filename, Path) else Path(filename).name
 

@@ -1,14 +1,4 @@
-"""Format detection for routing to appropriate conversion library.
-
-This module provides minimal format detection to route inputs to either
-geoparquet-io (vector) or rio-cogeo (raster). Actual
-validation and conversion are delegated to these upstream libraries.
-
-Additionally, it provides cloud-native status classification (see issue #10):
-- CLOUD_NATIVE: Already cloud-optimized (GeoParquet, COG, FlatGeobuf, etc.)
-- CONVERTIBLE: Can be converted (Shapefile, GeoJSON, GeoPackage, etc.)
-- UNSUPPORTED: Not yet supported (NetCDF, HDF5, non-COPC LAS/LAZ)
-"""
+"""Format detection for routing to appropriate conversion library."""
 
 from __future__ import annotations
 
@@ -23,9 +13,7 @@ from typing import TYPE_CHECKING, Any, Protocol, TypeVar
 
 from portolan_core import extension_registry as _reg
 
-# The extension-only detection lives in a leaf module that loads no third-party
-# package. The read modules import it directly (issue #944). This module
-# re-exports it, so `portolan_cli.formats.detect_format` keeps working.
+# The leaf module loads no third-party package; re-exported so `formats.detect_format` works.
 from portolan_core.format_families import (
     FORMAT_DISPLAY_NAMES as FORMAT_DISPLAY_NAMES,
 )
@@ -62,12 +50,7 @@ _T = TypeVar("_T")
 
 
 class RunMemo(Protocol):
-    """The memo and checksum methods of ``run_state.RunState``.
-
-    This module does not import ``run_state``. The ``viz`` modules import
-    this module, and ``run_state`` reaches ``sync``, which ``viz`` must not
-    reach.
-    """
+    """The memo and checksum methods of ``run_state.RunState``."""
 
     def memo(self, kind: str, path: Path, loader: Callable[[Path], _T]) -> _T:
         """Load a value derived from one file once per run."""
@@ -114,39 +97,21 @@ def current_run() -> RunMemo | None:
 
 
 def invalidate(path: Path) -> None:
-    """Drop the current run's cached reads after writing ``path``.
-
-    A filesystem can reuse a stat key, so writers cannot rely on stat changes
-    alone to invalidate a footer or checksum.
-    """
+    """Drop the current run's cached reads after writing ``path``."""
     state = _RUN.get()
     if state is not None:
         state.invalidate(path)
 
 
 def remember(kind: str, path: Path, value: Any) -> None:
-    """Put a value read from ``path`` in the memo of the current run, if one runs.
-
-    A writer that read its output before it moved the output into place gives
-    the value here. The next ``state.memo(kind, path, ...)`` returns it while
-    the file stays as it is.
-    """
+    """Put a value read from ``path`` in the memo of the current run, if one runs."""
     state = _RUN.get()
     if state is not None:
         state.remember(kind, path, value)
 
 
 def parquet_footer(path: Path) -> pq.ParquetFile:
-    """Read the footer of a Parquet file, once per run.
-
-    The file closes before this returns. The closed file still answers
-    ``metadata`` and ``schema_arrow``, which is all a footer reader needs.
-    Inside :func:`in_run`, the run memo keeps the footer while the file
-    stays as it is, so each footer reader of one file shares one read.
-
-    Raises:
-        Exception: The error of pyarrow for a file that is not Parquet.
-    """
+    """Read the footer of a Parquet file, once per run."""
     state = _RUN.get()
     if state is not None and path.is_file():
         return state.memo("parquet.footer", path, _read_footer)
@@ -162,19 +127,8 @@ def _read_footer(path: Path) -> pq.ParquetFile:
     return footer
 
 
-# =============================================================================
-# Cloud-Native Status Classification (Issue #10)
-# =============================================================================
-
-
 class CloudNativeStatus(Enum):
-    """Classification of file format for cloud-native data handling.
-
-    Used to determine how to handle a file during add():
-    - CLOUD_NATIVE: Accept silently, no conversion needed
-    - CONVERTIBLE: Warn then convert to cloud-native format
-    - UNSUPPORTED: Reject with helpful error message
-    """
+    """Classification of file format for cloud-native data handling."""
 
     CLOUD_NATIVE = "cloud_native"
     CONVERTIBLE = "convertible"
@@ -183,16 +137,7 @@ class CloudNativeStatus(Enum):
 
 @dataclass(frozen=True)
 class FormatInfo:
-    """Information about a detected file format.
-
-    Provides metadata needed for user-facing messages during add.
-
-    Attributes:
-        status: Cloud-native classification status.
-        display_name: Human-readable format name (e.g., "SHP", "GeoJSON").
-        target_format: Target cloud-native format if convertible (e.g., "GeoParquet").
-        error_message: Error message if unsupported.
-    """
+    """Information about a detected file format."""
 
     status: CloudNativeStatus
     display_name: str
@@ -200,17 +145,10 @@ class FormatInfo:
     error_message: str | None
 
 
-# =============================================================================
-# Cloud-Native Format Constants
-# =============================================================================
-
 # The extension vocabulary below is DERIVED from portolan_core.extension_registry
 # (the single source). Edit rows there, not these frozensets.
 
-# Cloud-native formats that pass through without conversion. Statically
-# cloud-native single-suffix files only: .parquet/.tif are content-inspected
-# ("inspect"), and .zarr/.copc.laz are cloud-native but handled by the
-# directory / compound-extension branches in get_cloud_native_status().
+# Statically cloud-native single-suffix files; .parquet/.tif are inspected, .zarr/.copc.laz have own branches.
 CLOUD_NATIVE_EXTENSIONS: frozenset[str] = _reg.cloud_native_extensions()
 
 # Convertible vector formats (.gdb is a FileGDB directory, handled specially).
@@ -226,20 +164,8 @@ UNSUPPORTED_EXTENSIONS: frozenset[str] = _reg.unsupported_extensions()
 UNSUPPORTED_ERROR_MESSAGES: dict[str, str] = _reg.field_map("unsupported_message")
 
 
-# =============================================================================
-# Cloud-Native Detection Functions
-# =============================================================================
-
-
 def is_valid_parquet(path: Path) -> bool:
-    """Check if a file is a valid Parquet file (can be read by PyArrow).
-
-    Args:
-        path: Path to the file to check.
-
-    Returns:
-        True if the file is a valid Parquet file, False if corrupted or not Parquet.
-    """
+    """Check if a file is a valid Parquet file (can be read by PyArrow)."""
     try:
         import pyarrow.parquet as pq
     except ImportError:
@@ -259,18 +185,7 @@ def is_valid_parquet(path: Path) -> bool:
 
 
 def read_geo_metadata(source: Path | pq.ParquetFile) -> dict[str, Any] | None:
-    """Read and parse the ``geo`` footer key of a GeoParquet file.
-
-    Args:
-        source: Path to a Parquet file, or a file the caller already opened.
-            A path goes through :func:`parquet_footer`, so the readers of one
-            file in one run share one footer read.
-
-    Returns:
-        The parsed GeoParquet metadata object. None for a plain Parquet file,
-        for a ``geo`` value that is not a JSON object, and for an unreadable
-        file.
-    """
+    """Read and parse the ``geo`` footer key of a GeoParquet file."""
     try:
         footer = parquet_footer(source) if isinstance(source, Path) else source
         geo = json.loads((footer.metadata.metadata or {}).get(b"geo", b"null"))
@@ -282,10 +197,6 @@ def read_geo_metadata(source: Path | pq.ParquetFile) -> dict[str, Any] | None:
 
 def is_geoparquet(path: Path) -> bool:
     """Check if a Parquet file has GeoParquet metadata.
-
-    The one GeoParquet test. It reads the raw footer through
-    :func:`read_geo_metadata`, so a ``geo`` key that sits after ``ARROW:schema``
-    counts (issue #864).
 
     Args:
         path: Path to the Parquet file.
@@ -299,19 +210,7 @@ def is_geoparquet(path: Path) -> bool:
 
 
 def is_cloud_optimized_geotiff(path: Path, *, quiet: bool = True) -> bool:
-    """Check if a TIFF file is a Cloud-Optimized GeoTIFF.
-
-    Uses rio-cogeo's validation to determine if the file meets COG requirements.
-    This delegates to upstream library rather than reimplementing.
-
-    Args:
-        path: Path to the TIFF file.
-        quiet: If True, suppress rio-cogeo's warning output to stdout.
-            Default is True to avoid polluting JSON output.
-
-    Returns:
-        True if the file is a valid COG, False otherwise.
-    """
+    """Check if a TIFF file is a Cloud-Optimized GeoTIFF."""
     try:
         from rio_cogeo.cogeo import cog_validate
     except ImportError:
@@ -330,20 +229,7 @@ def is_cloud_optimized_geotiff(path: Path, *, quiet: bool = True) -> bool:
 
 
 def _status_by_content(path: Path, extension: str) -> FormatInfo | None:
-    """Classify a file whose extension alone does not give the status.
-
-    A .parquet file may or may not carry geo metadata. A .tif file may or may
-    not be a COG. A .json file may or may not be GeoJSON. Each case reads the
-    file to decide.
-
-    Args:
-        path: Path to the file to classify.
-        extension: Lowercase file extension, with the leading dot.
-
-    Returns:
-        FormatInfo for a content-inspected extension, or None for any other
-        extension.
-    """
+    """Classify a file whose extension alone does not give the status."""
     if extension == ".parquet":
         if not is_valid_parquet(path):
             return FormatInfo(
@@ -437,17 +323,7 @@ def detect_format(
 def _plugin_handler(
     path: Path, catalog_root: Path | None = None, state: ConfigSource | None = None
 ) -> tuple[FormatHandler | None, bool]:
-    """Return the plugin handler for ``path``, and whether only plugins register its extension.
-
-    The lookup runs for every extension that a plugin registers, so an
-    ambiguous claim or a pin to a missing handler raises here, before
-    ``check --fix`` converts a file. A ``conversion.handlers`` pin that selects
-    a built-in hides the plugin.
-
-    Raises:
-        AmbiguousFormatError: Two plugin handlers claim the file and no pin decides.
-        UnknownFormatHandlerError: A pin names a handler that does not exist.
-    """
+    """Return the plugin handler for ``path``, and whether only plugins register its extension."""
     from portolan_cli.plugins.formats import (
         builtin_extensions,
         extension_of,
@@ -465,28 +341,11 @@ def _plugin_handler(
 def get_cloud_native_status(
     path: Path, catalog_root: Path | None = None, *, state: ConfigSource | None = None
 ) -> FormatInfo:
-    """Determine cloud-native status and format info for a file.
-
-    Classifies a file as CLOUD_NATIVE, CONVERTIBLE, or UNSUPPORTED based on
-    its format. Uses content inspection for ambiguous cases (e.g., .tif files
-    that may or may not be COGs, .parquet files that may or may not have geo metadata).
-
-    Args:
-        path: Path to the file to classify.
-        catalog_root: Catalog root, for a ``conversion.handlers`` pin.
-        state: The run state, which parses the config once per run.
-
-    Returns:
-        FormatInfo with status, display name, target format, and error message.
-
-    Raises:
-        FileNotFoundError: If the file does not exist.
-    """
+    """Determine cloud-native status and format info for a file."""
     info = _default_status(path, catalog_root, state)
     if catalog_root is None:
         return info
-    # The catalog's conversion.extensions and conversion.paths lists win over
-    # the default status, so convert and check agree on a file (#1020).
+    # Catalog conversion.extensions and conversion.paths win over the default status.
     from portolan_cli.conversion_config import get_conversion_overrides
 
     overrides = get_conversion_overrides(catalog_root, state=state)
@@ -511,10 +370,7 @@ def _default_status(
             )
         raise IsADirectoryError(f"Path is a directory: {path}")
 
-    # A plugin format handler converts the formats it claims (#947). For an
-    # extension that a built-in handler also registers, the built-in checks
-    # decide the status, so a valid COG stays CLOUD_NATIVE when a plugin
-    # claims .tif. The plugin still names the target format.
+    # A built-in handler's checks decide the status for its extensions; a plugin still names the target.
     handler, plugin_only = _plugin_handler(path, catalog_root, state)
     if handler is not None and plugin_only:
         return FormatInfo(
@@ -604,11 +460,6 @@ def _builtin_status(path: Path) -> FormatInfo:
     )
 
 
-# =============================================================================
-# Effective Status with Conversion Overrides
-# =============================================================================
-
-
 def get_effective_status(
     path: Path,
     overrides: ConversionOverrides | None = None,
@@ -616,36 +467,7 @@ def get_effective_status(
     root: Path | None = None,
     state: ConfigSource | None = None,
 ) -> FormatInfo:
-    """Get cloud-native status with conversion overrides applied.
-
-    This function wraps get_cloud_native_status() and applies user-configured
-    overrides to modify the classification:
-    - Force-convert: Cloud-native formats can be marked as CONVERTIBLE
-    - Preserve: Convertible formats can be marked as CLOUD_NATIVE
-
-    Path-based overrides take precedence over extension-based overrides.
-
-    Args:
-        path: Path to the file to classify.
-        overrides: Optional ConversionOverrides with user configuration.
-            If None, returns the same result as get_cloud_native_status().
-        root: Catalog root for resolving relative paths in glob patterns
-            and for a ``conversion.handlers`` pin. Required if using
-            path-based overrides.
-        state: The run state, which parses the config once per run.
-
-    Returns:
-        FormatInfo with potentially modified status based on overrides.
-
-    Raises:
-        FileNotFoundError: If the file does not exist.
-
-    Example:
-        >>> from portolan_cli.conversion_config import ConversionOverrides
-        >>> overrides = ConversionOverrides(extensions_convert=frozenset({".fgb"}))
-        >>> result = get_effective_status(Path("data.fgb"), overrides=overrides)
-        >>> result.status  # CONVERTIBLE instead of CLOUD_NATIVE
-    """
+    """Get cloud-native status with conversion overrides applied."""
     info = _default_status(path, root, state)
     if overrides is None:
         return info
@@ -691,43 +513,12 @@ def _apply_overrides(
     return info
 
 
-# =============================================================================
-# Format Type Detection (existing functionality)
-# =============================================================================
-
-
-# =============================================================================
-# Multi-Layer Format Support (Issue #265)
-# =============================================================================
-
 # Formats that can contain multiple layers (derived from the registry).
 MULTILAYER_EXTENSIONS: frozenset[str] = _reg.extensions_where(is_multilayer=True)
 
 
 def list_layers(path: Path) -> list[str] | None:
-    """List all layers in a multi-layer geospatial file.
-
-    For multi-layer formats (GeoPackage, FileGDB), returns all layer names.
-    For single-layer formats (GeoJSON, Shapefile), returns None.
-
-    Delegates to geoparquet-io which uses DuckDB's spatial extension internally.
-    No external GDAL installation required.
-
-    Args:
-        path: Path to the geospatial file.
-
-    Returns:
-        List of layer names for multi-layer formats, None for single-layer formats.
-
-    Raises:
-        FileNotFoundError: If the file does not exist.
-
-    Example:
-        >>> list_layers(Path("multi.gpkg"))
-        ['points', 'lines', 'polygons']
-        >>> list_layers(Path("single.geojson"))
-        None
-    """
+    """List all layers in a multi-layer geospatial file."""
     import geoparquet_io as gpio
 
     if not path.exists():
@@ -740,11 +531,7 @@ def list_layers(path: Path) -> list[str] | None:
     if extension not in MULTILAYER_EXTENSIONS and not (path.is_dir() and extension == ".gdb"):
         return None
 
-    # A GeoPackage declares its own layers: gpkg_contents is spec-mandated and
-    # names each table's data_type. Reading it directly returns only feature
-    # layers, so non-spatial tables (QGIS ``layer_styles``, attribute-only
-    # tables) never become collection assets (#784) — and it keeps working on
-    # files where the delegated listing comes back empty.
+    # Read gpkg_contents directly so non-spatial tables never become assets.
     if extension == ".gpkg":
         feature_layers = _gpkg_feature_layers(path)
         if feature_layers is not None:
@@ -772,12 +559,7 @@ def list_layers(path: Path) -> list[str] | None:
 
 
 def _gpkg_feature_layers(path: Path) -> list[str] | None:
-    """Feature layers of a GeoPackage, straight from ``gpkg_contents``.
-
-    Returns None when the file cannot be read as a GeoPackage (caller falls
-    back to the delegated listing); an empty list means the file genuinely
-    has no feature layers.
-    """
+    """Feature layers of a GeoPackage, straight from ``gpkg_contents``."""
     import sqlite3
 
     try:
@@ -796,17 +578,7 @@ def _gpkg_feature_layers(path: Path) -> list[str] | None:
 
 
 def is_multilayer(path: Path) -> bool:
-    """Check if a file contains multiple layers.
-
-    Args:
-        path: Path to the geospatial file.
-
-    Returns:
-        True if the file has more than one layer, False otherwise.
-
-    Raises:
-        FileNotFoundError: If the file does not exist.
-    """
+    """Check if a file contains multiple layers."""
     if not path.exists():
         raise FileNotFoundError(f"File not found: {path}")
 

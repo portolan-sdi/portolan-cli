@@ -1,25 +1,4 @@
-"""Breaking change detection for schema evolution.
-
-Detects breaking changes between schema versions per Issue #77 spec:
-
-GeoParquet breaking changes:
-- Column removed
-- Column type changed
-- Column renamed
-- Geometry type changed
-- CRS changed
-
-COG breaking changes:
-- Band removed
-- Band data_type changed
-- CRS changed
-- Resolution changed (not tracked in schema)
-- Nodata changed
-
-NOT breaking:
-- Adding columns or bands (additive)
-- Changing description, unit, semantic_type (metadata-only)
-"""
+"""Breaking change detection for schema evolution."""
 
 from __future__ import annotations
 
@@ -31,11 +10,7 @@ from portolan_core.models.schema import BandSchema, ColumnSchema, SchemaModel
 
 
 def _nodata_equals(a: float | None, b: float | None) -> bool:
-    """Compare nodata values, handling NaN correctly.
-
-    In Python, float('nan') != float('nan') is always True.
-    This function treats two NaN values as equal.
-    """
+    """Compare nodata values, handling NaN correctly."""
     if a is None and b is None:
         return True
     if a is None or b is None:
@@ -92,15 +67,7 @@ def detect_breaking_changes(
     old_schema: SchemaModel,
     new_schema: SchemaModel,
 ) -> list[BreakingChange]:
-    """Detect breaking changes between two schema versions.
-
-    Args:
-        old_schema: Previous schema version.
-        new_schema: New schema version.
-
-    Returns:
-        List of breaking changes. Empty list means no breaking changes.
-    """
+    """Detect breaking changes between two schema versions."""
     changes: list[BreakingChange] = []
 
     # Check format mismatch
@@ -316,13 +283,5 @@ def _columns_by_name(
 
 
 def is_breaking(old_schema: SchemaModel, new_schema: SchemaModel) -> bool:
-    """Check if schema change is breaking.
-
-    Args:
-        old_schema: Previous schema version.
-        new_schema: New schema version.
-
-    Returns:
-        True if any breaking changes detected.
-    """
+    """Check if schema change is breaking."""
     return len(detect_breaking_changes(old_schema, new_schema)) > 0

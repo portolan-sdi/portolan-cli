@@ -1,8 +1,4 @@
-"""Portolan CLI - Command-line interface for managing cloud-native geospatial data.
-
-The CLI is a thin wrapper around the Python API (see catalog.py).
-All business logic lives in the library; the CLI handles user interaction.
-"""
+"""Portolan CLI - Command-line interface for managing cloud-native geospatial data."""
 
 from __future__ import annotations
 
@@ -92,11 +88,7 @@ def click_writer(
     file: TextIO | None,
     nl: bool,
 ) -> None:
-    """Write an ``output`` message through ``click.echo``.
-
-    ``click.echo`` strips color from a pipe, follows the CliRunner ``color``
-    setting, and wraps a Windows console. The library writer does not.
-    """
+    """Write an ``output`` message through ``click.echo``."""
     click.echo(
         f"{click.style(prefix, fg=fg, dim=dim)} {click.style(message, fg=fg, dim=dim)}",
         file=file,
@@ -115,11 +107,7 @@ def show_warning(
     file: TextIO | None = None,
     line: str | None = None,
 ) -> None:
-    """Print a ``PluginWarning`` as an output warning. Pass other warnings on.
-
-    A plugin warning names the plugin and the problem. The source path and
-    line that Python adds point into Portolan, which does not help the user.
-    """
+    """Print a ``PluginWarning`` as an output warning. Pass other warnings on."""
     if issubclass(category, PluginWarning):
         warn(str(message))
         return
@@ -132,24 +120,7 @@ warnings.showwarning = show_warning
 
 
 def should_output_json(ctx: click.Context, json_flag: bool = False) -> bool:
-    """Determine if JSON output should be used, and keep stdout for the envelope.
-
-    Checks both the global --format option and per-command --json flags.
-    Global --format=json takes precedence, but per-command flags also work
-    for backward compatibility.
-
-    In JSON mode this also routes the stdout-bound ``output`` messages to
-    stderr until the root context closes, so the library messages of the
-    run cannot break the JSON document on stdout (#1005). A second call in
-    the same run changes nothing.
-
-    Args:
-        ctx: Click context containing the format preference.
-        json_flag: Per-command --json flag value.
-
-    Returns:
-        True if JSON output should be used, False for text output.
-    """
+    """Determine if JSON output should be used, and keep stdout for the envelope."""
     root = ctx.find_root()
     obj = root.obj or {}
     use_json = obj.get("format", "text") == "json" or json_flag
@@ -168,16 +139,7 @@ def _fail_on_add_error(
     *,
     use_json: bool,
 ) -> NoReturn:
-    """Report a failed add and exit 1, naming the path when there was only one.
-
-    Args:
-        err: The error raised by the library layer.
-        resolved_paths: Paths the add was asked to process.
-        use_json: Whether output goes out as a JSON envelope.
-
-    Raises:
-        SystemExit: Always, with status 1.
-    """
+    """Report a failed add and exit 1, naming the path when there was only one."""
     path_context = f"{resolved_paths[0]}: " if len(resolved_paths) == 1 else ""
     code = err.code if isinstance(err, PortolanError) else None
     emit_error("add", type(err).__name__, f"{path_context}{err}", use_json=use_json, code=code)
@@ -190,16 +152,7 @@ def _fail_on_missing_license(
     *,
     use_json: bool,
 ) -> NoReturn:
-    """Report an unlicensed collection and exit 1, naming the file to edit.
-
-    Args:
-        command: Command name, for the error envelope.
-        err: The error raised by the library layer.
-        use_json: Whether output goes out as a JSON envelope.
-
-    Raises:
-        SystemExit: Always, with status 1.
-    """
+    """Report an unlicensed collection and exit 1, naming the file to edit."""
     emit_error(command, type(err).__name__, str(err), use_json=use_json, code=err.code)
     if not use_json:
         info_output(METADATA_LICENSE_REMEDIATION)
@@ -213,24 +166,7 @@ def _validated_cli_license(
     *,
     use_json: bool,
 ) -> str:
-    """Validate a --license / --license-url pair, or exit 1 naming both flags.
-
-    Shared by ``init`` and ``add-external``, the two commands that take the license
-    as a flag rather than reading it out of metadata.yaml. Validating here means a
-    bad pair fails before either command touches the filesystem (issue #686).
-
-    Args:
-        command: Command name, for the error envelope.
-        license_id: Value of --license, or None when it was not passed.
-        license_url: Value of --license-url, or None.
-        use_json: Whether output goes out as a JSON envelope.
-
-    Returns:
-        The stripped license identifier.
-
-    Raises:
-        SystemExit: Always exits 1 when the pair cannot produce a conformant license.
-    """
+    """Validate a --license / --license-url pair, or exit 1 naming both flags."""
     declared = license_id.strip() if license_id else ""
     has_link = bool(license_url and license_url.strip())
 
@@ -246,32 +182,12 @@ def _validated_cli_license(
 
 
 def output_json_envelope(envelope: Any) -> None:
-    """Output a JSON envelope to stdout.
-
-    Args:
-        envelope: OutputEnvelope instance to output.
-    """
+    """Output a JSON envelope to stdout."""
     click.echo(envelope.to_json())
 
 
 def load_dotenv_from_catalog(catalog_path: Path | None = None) -> bool:
-    """Load environment variables from .env file in catalog root.
-
-    It lives in the CLI layer because python-dotenv is a portolan-cli
-    dependency. portolan-core does not install it (#1133).
-
-    Searches for .env file in catalog root directory and loads it using
-    python-dotenv. Does NOT override existing environment variables.
-
-    This enables storing sensitive settings (remote, profile, region) in
-    a .env file that won't be pushed to remote storage.
-
-    Args:
-        catalog_path: Path to catalog root. If None, attempts to find it.
-
-    Returns:
-        True if a .env file was found and loaded, False otherwise.
-    """
+    """Load environment variables from .env file in catalog root."""
     from dotenv import load_dotenv
 
     if catalog_path is None:
@@ -286,16 +202,7 @@ def load_dotenv_from_catalog(catalog_path: Path | None = None) -> bool:
 
 
 def load_dotenv_and_warn_sensitive(catalog_path: Path, *, state: RunState | None = None) -> None:
-    """Load .env from catalog and warn if config.yaml has sensitive settings.
-
-    This should be called after the actual catalog path is resolved (not in
-    the global CLI callback) to ensure the correct .env is loaded when
-    --catalog/--portolan-dir overrides the default.
-
-    Args:
-        catalog_path: Resolved catalog root path.
-        state: The run state, which parses config.yaml once per run.
-    """
+    """Load .env from catalog and warn if config.yaml has sensitive settings."""
     from portolan_core.config import check_sensitive_settings_in_config
 
     load_dotenv_from_catalog(catalog_path)
@@ -313,22 +220,7 @@ def require_catalog_root(
     use_json: bool = False,
     command_name: str = "command",
 ) -> Path:
-    """Find and validate catalog root, or exit with git-style error.
-
-    Git-style behavior: walks up from cwd to find .portolan/config.yaml.
-    Commands that need to operate on the entire catalog use this to find
-    the root regardless of which subdirectory they're run from.
-
-    Args:
-        use_json: If True, output error as JSON envelope.
-        command_name: Name of the command for error messages.
-
-    Returns:
-        Path to catalog root.
-
-    Raises:
-        SystemExit: If not inside a catalog.
-    """
+    """Find and validate catalog root, or exit with git-style error."""
     catalog_root = find_catalog_root()
     if catalog_root is None:
         msg = "fatal: not a portolan catalog (or any parent up to mount point)"
@@ -347,16 +239,7 @@ def resolve_remote(
     catalog_path: Path | None,
     collection: str | None = None,
 ) -> str | None:
-    """Resolve remote destination with precedence: CLI > env var > config.
-
-    Args:
-        destination: CLI-provided destination value (None if not specified).
-        catalog_path: Path to catalog root for config lookup.
-        collection: Optional collection name for collection-level config.
-
-    Returns:
-        Resolved destination URL or None if not configured.
-    """
+    """Resolve remote destination with precedence: CLI > env var > config."""
     from portolan_core.config import get_setting
 
     return get_setting(
@@ -373,20 +256,7 @@ def resolve_aws_profile(
     catalog_path: Path | None,
     collection: str | None = None,
 ) -> str | None:
-    """Resolve the AWS profile: CLI, then env var, then config.
-
-    A Portolan setting wins, because a user writes it for this tool. None means
-    that nothing here names a profile. The sync layer then reads `AWS_PROFILE`,
-    and falls back to the `default` profile, as boto3 and the AWS CLI do.
-
-    Args:
-        profile: CLI-provided profile value (None if not specified).
-        catalog_path: Path to catalog root for config lookup.
-        collection: Optional collection name for collection-level config.
-
-    Returns:
-        The profile name, or None when nothing here names one.
-    """
+    """Resolve the AWS profile: CLI, then env var, then config."""
     from portolan_core.config import get_setting
 
     return get_setting(
@@ -444,9 +314,7 @@ def cli(ctx: click.Context, output_format: str, verbosity: int, quiet: bool, tim
     should_output_json(ctx)
 
     configure_logging(verbosity=verbosity, quiet=quiet)
-    # Tracing state is process-wide. A second run in the same process (a
-    # notebook, an agent harness, a test) must not report the spans of the
-    # first run, or get a meta block it did not ask for.
+    # Tracing state is process-wide: reset it so a second run reports only its own spans.
     trace.reset()
     trace.enable_from_env(timings_flag=timings)
     if trace.is_enabled():
@@ -457,16 +325,10 @@ def cli(ctx: click.Context, output_format: str, verbosity: int, quiet: bool, tim
 
     # Note: .env loading moved to individual commands after catalog path resolution
     # to ensure correct .env is loaded when --catalog/--portolan-dir is used.
-    # See load_dotenv_and_warn_sensitive() helper.
 
 
 def _finish_trace(output_format: str) -> None:
-    """Write the trace file and, in text mode, the timing table to stderr.
-
-    Click runs this when the root context closes, after a success and after
-    ``SystemExit``. The JSON envelope prints before this point, so its root
-    span reports the duration up to the print.
-    """
+    """Write the trace file and, in text mode, the timing table to stderr."""
     trace_file = os.environ.get(trace.TRACE_FILE_ENV)
     if trace_file:
         trace.write_chrome_trace(Path(trace_file))
@@ -480,21 +342,7 @@ def _prompt_init_metadata(
     license_id: str | None,
     license_url: str | None,
 ) -> tuple[str | None, str | None, str | None, str | None]:
-    """Ask the user for the catalog metadata the flags did not supply.
-
-    A value that came from a flag is kept. The function runs only in
-    interactive mode, so --auto and --json never reach it.
-
-    Args:
-        title: Catalog title, or None to prompt.
-        description: Catalog description, or None to prompt.
-        license_id: SPDX identifier, or None to prompt.
-        license_url: URL of the license text, or None to prompt when the
-            identifier is "other".
-
-    Returns:
-        Tuple of (title, description, license_id, license_url).
-    """
+    """Ask the user for the catalog metadata the flags did not supply."""
     if title is None:
         title_input = click.prompt(
             "Catalog title (optional, press Enter to skip)",
@@ -643,9 +491,6 @@ def init(
             title, description, license_id, license_url
         )
 
-    # Only gate the license on a directory that can actually become a catalog. An
-    # existing catalog is the more fundamental problem and --license cannot fix it,
-    # so let init_catalog report that instead of sending the user after a flag.
     if detect_state(path) is CatalogState.FRESH:
         license_id = _validated_cli_license("init", license_id, license_url, use_json=use_json)
 
@@ -673,7 +518,7 @@ def init(
 
     except InputValidationError as err:
         # A bad --id fails before init_catalog writes anything, so the directory
-        # is untouched and the caller can retry with a valid id (issue #821).
+        # is untouched and the caller can retry with a valid id.
         emit_error("init", "InputValidationError", str(err), use_json=use_json)
         raise SystemExit(1) from err
     except LogoError as err:
@@ -704,21 +549,8 @@ def init(
         raise SystemExit(1) from err
 
 
-# =============================================================================
-# List command (top-level)
-# =============================================================================
-
-
 def _get_format_display_name(format_type: str | None) -> str:
-    """Get human-readable format name.
-
-    Args:
-        format_type: Format family, for example "vector" or "raster".
-
-    Returns:
-        Human-readable format name (e.g., "GeoParquet", "COG"). A family
-        from a plugin format shows as written.
-    """
+    """Get human-readable format name."""
     from portolan_core.format_families import RASTER, VECTOR
 
     if format_type == VECTOR:
@@ -729,28 +561,7 @@ def _get_format_display_name(format_type: str | None) -> str:
 
 
 def _list_tree_output_with_status(result: CatalogListResult) -> None:
-    """Output items in hierarchical tree view with status indicators.
-
-    Shows ALL files per item, grouped under their parent item directory
-    with status counts. Per issue #210, everything in a catalog is tracked.
-
-    Format:
-        censo-2010/
-            data/ (3 tracked, 2 untracked)
-              + census-data.parquet (GeoParquet, 4.5MB)
-              + metadata.parquet (GeoParquet, 1.2MB)
-              + README.md (2KB)
-              + style.json (1KB)
-
-    Status indicators:
-        + = tracked (in versions.json, unchanged)
-        + = untracked (on disk, not in versions.json)
-        ~ = modified (in versions.json, checksum changed)
-        ! = deleted (in versions.json, missing from disk)
-
-    Args:
-        result: CatalogListResult with all collections and items.
-    """
+    """Output items in hierarchical tree view with status indicators."""
     # Status indicator symbols and colors
     status_symbols = {
         AssetStatus.TRACKED: "\u2713",  # Checkmark
@@ -898,11 +709,6 @@ def list_cmd(
         _list_tree_output_with_status(result)
 
 
-# =============================================================================
-# Status command (Issue #389 - git-like version management)
-# =============================================================================
-
-
 @cli.command("status")
 @click.option(
     "--collection",
@@ -1034,11 +840,6 @@ def _output_status_human(statuses: list[CollectionStatus]) -> None:
         info_output("")
 
 
-# =============================================================================
-# Info command (top-level)
-# =============================================================================
-
-
 @cli.command("info")
 @click.argument("target", type=click.Path(path_type=Path), required=False)
 @click.option(
@@ -1156,12 +957,7 @@ def _print_remediation_split(payload: dict[str, Any]) -> None:
 
 
 def _print_format_check_results(report: Any, *, verbose: bool = False) -> None:
-    """Print format check results (not conversion, just status check).
-
-    Args:
-        report: CheckReport with file statuses.
-        verbose: If True, show all files including cloud-native.
-    """
+    """Print format check results (not conversion, just status check)."""
     from portolan_cli.formats import CloudNativeStatus
 
     if report.total == 0:
@@ -1191,12 +987,7 @@ def _print_format_check_results(report: Any, *, verbose: bool = False) -> None:
 
 
 def _output_check_json(payload: dict[str, Any], *, failed: bool) -> None:
-    """Wrap the validation payload in the standard output envelope.
-
-    The envelope's error list names the failing rule ids so an agent reading
-    only the envelope still learns what broke; the full findings, with fix hints
-    and remediation buckets, sit in ``data``.
-    """
+    """Wrap the validation payload in the standard output envelope."""
     if not failed:
         output_json_envelope(success_envelope("check", payload))
         return
@@ -1448,11 +1239,7 @@ def check(
 def _output_check_result(
     result: Any, *, use_json: bool, verbose: bool, strict: bool, dry_run: bool
 ) -> None:
-    """Render the check result, then exit 1 when it failed.
-
-    The exit code follows ``passed``: a blocking finding fails the command,
-    whatever ``--fix`` repaired. ``result.failed`` sets the envelope's ``success``.
-    """
+    """Render the check result, then exit 1 when it failed."""
     payload = result.to_dict()
     fixed = "fix" in payload
     if use_json:
@@ -1474,14 +1261,7 @@ def _output_fix_human(
     verbose: bool,
     dry_run: bool,
 ) -> None:
-    """Output combined fix results in human-readable format.
-
-    Args:
-        metadata_fix_report: Results from metadata fix (if run).
-        format_fix_report: Results from geo-asset fix (if run).
-        verbose: Show detailed output.
-        dry_run: Whether this was a dry run.
-    """
+    """Output combined fix results in human-readable format."""
     from portolan_cli.metadata.fix import FixReport
 
     # Output metadata fix results
@@ -1534,22 +1314,7 @@ def _print_fix_skips(skipped: dict[str, list[str]]) -> None:
 
 
 def _print_fix_split(payload: dict[str, Any], *, dry_run: bool = False) -> None:
-    """Render the post-fix verdict: what --fix handled, what still needs a person.
-
-    The "Action required" list is the agent's stopping condition — every entry
-    carries the imperative requirement for the defect, and a survivor of an AUTO
-    fixer says so, so nobody re-runs --fix hoping for a different answer.
-
-    "Applied" names only fixers that changed something, and every fixer that ran
-    without changing anything is listed with its reason at default verbosity: a
-    skip an operator cannot see reads as a silent success.
-
-    Under ``dry_run`` the report stops after the selection. No re-check ran, so
-    there is no survivor set to annotate and no repair count to give. What a
-    preview can honestly report is which fixers the findings selected and how
-    many AUTO defects they were selected against. A dry run keeps the findings
-    list above, which already carries the requirement for each one.
-    """
+    """Render the post-fix verdict: what --fix handled, what still needs a person."""
     fix_data: dict[str, Any] = payload.get("fix", {})
     applied = fix_data.get("applied", [])
     skipped: dict[str, list[str]] = fix_data.get("skipped", {})
@@ -1597,13 +1362,7 @@ def _render_check(
     strict: bool,
     post_fix: bool = False,
 ) -> None:
-    """Render the human-readable check result.
-
-    After ``--fix`` the per-finding list and the remediation split are dropped:
-    :func:`_print_fix_split` says the same things better, naming what was fixed
-    and giving every remaining finding its requirement. Printing both listed each
-    survivor twice. ``--verbose`` keeps the raw findings for the detail.
-    """
+    """Render the human-readable check result."""
     if outcome.legacy_note is not None:
         warn(outcome.legacy_note)
     if outcome.workflow_notice is not None:
@@ -1639,12 +1398,7 @@ def _print_check_fix_preview(report: Any) -> None:
 
 
 def _print_legacy_removal_results(removal: Any, *, verbose: bool = False) -> None:
-    """Print the outcome of the legacy-file removal step.
-
-    Args:
-        removal: LegacyRemovalReport, or None when the step did not run.
-        verbose: If True, name every removed file.
-    """
+    """Print the outcome of the legacy-file removal step."""
     if removal is None:
         return
     if removal.success_count > 0:
@@ -1659,12 +1413,7 @@ def _print_legacy_removal_results(removal: Any, *, verbose: bool = False) -> Non
 
 
 def _print_check_fix_results(report: Any, *, verbose: bool = False) -> None:
-    """Print conversion results.
-
-    Args:
-        report: CheckReport with conversion results.
-        verbose: If True, show details for all files including skipped.
-    """
+    """Print conversion results."""
     from portolan_cli.convert import ConversionStatus
 
     conv = report.conversion_report
@@ -1697,18 +1446,8 @@ def _print_check_fix_results(report: Any, *, verbose: bool = False) -> None:
     _print_legacy_removal_results(report.legacy_removal_report, verbose=verbose)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Scan command
-# ─────────────────────────────────────────────────────────────────────────────
-
-
 def _print_fix_report(result: ScanResult, *, dry_run: bool) -> None:
-    """Print the fixes that scan --fix proposed and applied.
-
-    Args:
-        result: Scan result with the proposed and applied fixes.
-        dry_run: If True, the fixes are a preview and none were applied.
-    """
+    """Print the fixes that scan --fix proposed and applied."""
     proposed = result.proposed_fixes
     if not proposed:
         info_output("No issues to fix")
@@ -1849,9 +1588,6 @@ def scan(
 
     from portolan_cli.scan.workflow import run_scan
 
-    # Pre-count directories only when progress will be displayed
-    # ScanProgressReporter displays progress when: not json_mode AND stderr is TTY
-    # count_directories returns 0 for a bad path, and run_scan then reports it.
     should_show_progress = not use_json and sys.stderr.isatty()
     total_dirs = 0
     if should_show_progress:
@@ -1917,15 +1653,7 @@ def scan(
 
 
 def _handle_strict_mode_exit(result: ScanResult, *, use_json: bool) -> NoReturn:
-    """Handle strict mode exit with appropriate messaging.
-
-    Args:
-        result: The scan result.
-        use_json: If True, skip human-readable message (already in JSON envelope).
-
-    Raises:
-        SystemExit: Always raises with exit code 1.
-    """
+    """Handle strict mode exit with appropriate messaging."""
     if not use_json:
         # Add strict mode message for human output
         warn_count = result.warning_count
@@ -1947,15 +1675,7 @@ def _output_scan_results(
     show_tree: bool,
     elapsed_seconds: float = 0.0,
 ) -> None:
-    """Print human-readable scan results.
-
-    Args:
-        result: The scan result.
-        manual_only: If True, show only manual-resolution issues.
-        show_all: If True, show all issues without truncation.
-        show_tree: If True, show directory tree view.
-        elapsed_seconds: Time elapsed during scan (for progress reporting).
-    """
+    """Print human-readable scan results."""
     if manual_only:
         from portolan_cli.scan.output import format_scan_output
 
@@ -1971,14 +1691,7 @@ def _output_scan_results(
 
 
 def _output_scan_json(data: dict[str, Any], failing_issues: list[ScanIssue]) -> None:
-    """Output scan results as JSON envelope.
-
-    A scan with failing issues still returns its data, in an error envelope.
-
-    Args:
-        data: The envelope data, from ScanOutcome.to_dict.
-        failing_issues: The errors, plus the warnings in strict mode.
-    """
+    """Output scan results as JSON envelope."""
     if not failing_issues:
         emit_success("scan", data, use_json=True)
         return
@@ -1989,12 +1702,7 @@ def _output_scan_json(data: dict[str, Any], failing_issues: list[ScanIssue]) -> 
 
 
 def _print_scan_header(result: ScanResult, *, elapsed_seconds: float = 0.0) -> None:
-    """Print scan header with file counts and timing.
-
-    Args:
-        result: The scan result.
-        elapsed_seconds: Time elapsed during scan.
-    """
+    """Print scan header with file counts and timing."""
     ready_count = len(result.ready)
     dirs_scanned = result.directories_scanned
 
@@ -2032,23 +1740,7 @@ def _print_scan_summary_enhanced(
     show_tree: bool = False,
     elapsed_seconds: float = 0.0,
 ) -> None:
-    """Print enhanced human-readable scan summary.
-
-    Includes:
-    - Summary header with timing
-    - Format breakdown
-    - Tree view (if --tree)
-    - Issues with fixability labels
-    - Skipped files by category
-    - Collection suggestions
-    - Actionable next steps
-
-    Args:
-        result: The scan result to print.
-        show_all: If True, show all issues without truncation.
-        show_tree: If True, show directory tree view.
-        elapsed_seconds: Time elapsed during scan.
-    """
+    """Print enhanced human-readable scan summary."""
     # Header with timing info
     _print_scan_header(result, elapsed_seconds=elapsed_seconds)
     _print_format_breakdown(result)
@@ -2078,17 +1770,7 @@ _GroupKey = tuple[IssueType, str]
 
 
 def _print_issues_with_fixability(result: ScanResult, *, show_all: bool = False) -> None:
-    """Print issues grouped by severity and IssueType with fixability labels.
-
-    Issues that share the same severity AND IssueType are batched together so
-    that noisy repetitions (e.g. 265 uppercase-named directories) collapse into
-    a single summary line with up to 3 example paths.  The full list is shown
-    when ``show_all=True``.
-
-    Args:
-        result: The scan result containing issues.
-        show_all: If True, show all example paths instead of truncating at 3.
-    """
+    """Print issues grouped by severity and IssueType with fixability labels."""
     if not result.issues:
         return
 
@@ -2107,7 +1789,6 @@ def _print_issues_with_fixability(result: ScanResult, *, show_all: bool = False)
 
         # Group by (IssueType, message) so issues with the same problem description
         # batch together, while distinct messages get separate groups.
-        # Preserves insertion order (Python 3.7+).
         groups: dict[_GroupKey, list[ScanIssue]] = {}
         for issue in severity_issues:
             key: _GroupKey = (issue.issue_type, issue.message)
@@ -2148,12 +1829,7 @@ def _print_issues_with_fixability(result: ScanResult, *, show_all: bool = False)
 
 
 def _print_skipped_by_category(result: ScanResult, *, show_all: bool = False) -> None:
-    """Print skipped files grouped by category.
-
-    Args:
-        result: The scan result containing skipped files.
-        show_all: If True, show all unrecognized files. If False, truncate after 10.
-    """
+    """Print skipped files grouped by category."""
     if not result.skipped:
         return
 
@@ -2203,11 +1879,7 @@ def _print_skipped_by_category(result: ScanResult, *, show_all: bool = False) ->
 
 
 def _print_collection_suggestions(result: ScanResult) -> None:
-    """Print collection suggestions if available.
-
-    Args:
-        result: The scan result with collection suggestions.
-    """
+    """Print collection suggestions if available."""
     if not result.collection_suggestions:
         return
 
@@ -2218,11 +1890,7 @@ def _print_collection_suggestions(result: ScanResult) -> None:
 
 
 def _print_next_steps(result: ScanResult) -> None:
-    """Print actionable next steps.
-
-    Args:
-        result: The scan result to analyze for next steps.
-    """
+    """Print actionable next steps."""
     steps = generate_next_steps(result)
     if not steps:
         return
@@ -2231,11 +1899,6 @@ def _print_next_steps(result: ScanResult) -> None:
     info_output("Next steps:")
     for step in steps:
         detail(f"  \u2192 {step}")
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Top-level add/rm commands
-# ─────────────────────────────────────────────────────────────────────────────
 
 
 if TYPE_CHECKING:
@@ -2273,11 +1936,7 @@ def _format_sidecar_note(ds: ItemInfo) -> str:
 
 
 def _output_added_single_collection(added: list[ItemInfo], *, verbose: bool = False) -> None:
-    """Output added items for a single collection.
-
-    Only show per-file output when verbose=True.
-    Default is summary only (progress bar + final count).
-    """
+    """Output added items for a single collection."""
     if verbose:
         coll = added[0].collection_id
         count = len(added)
@@ -2287,11 +1946,7 @@ def _output_added_single_collection(added: list[ItemInfo], *, verbose: bool = Fa
 
 
 def _output_added_multi_collection(added: list[ItemInfo], *, verbose: bool = False) -> None:
-    """Output added items grouped by collection.
-
-    Only show per-file output when verbose=True.
-    Default is summary only (progress bar + final count).
-    """
+    """Output added items grouped by collection."""
     if verbose:
         collections: dict[str, list[ItemInfo]] = {}
         for ds in added:
@@ -2308,18 +1963,7 @@ def _output_added_multi_collection(added: list[ItemInfo], *, verbose: bool = Fal
 
 
 def _print_add_failures_batched(failures: list[AddFailure]) -> None:
-    """Print add failures grouped by error message.
-
-    Groups failures with identical error messages to reduce noise.
-    Single-occurrence errors are shown inline; repeated errors are batched
-    with example paths (up to BATCH_EXAMPLES_LIMIT) and a remainder count.
-
-    Follows the same batching pattern used by ``_print_issues_with_fixability``
-    for scan output (PR #194).
-
-    Args:
-        failures: List of AddFailure objects to display.
-    """
+    """Print add failures grouped by error message."""
     if not failures:
         return
 
@@ -2417,7 +2061,7 @@ def _output_add_human(
     if added:
         _output_add_summary(added)
 
-    # Output failures batched by error message (Issue #199)
+    # Output failures batched by error message
     if failures:
         _print_add_failures_batched(failures)
 
@@ -2497,11 +2141,7 @@ def _report_pmtiles_result(result: PMTilesResult, *, verbose: bool, requested: b
 
 
 def _output_add_results(outcome: AddOutcome, verbose: bool, use_json: bool) -> None:
-    """Output results for add command.
-
-    Per Issue #175: Shows both successes and failures, enabling users to see
-    all issues at once rather than stopping on the first error.
-    """
+    """Output results for add command."""
     if use_json:
         _output_add_json(outcome)
     else:
@@ -2512,18 +2152,7 @@ def _resolve_catalog_root_for_add(
     catalog_path: Path | None,
     use_json: bool,
 ) -> Path:
-    """Resolve and validate catalog root for add command.
-
-    Args:
-        catalog_path: Explicit catalog path from --portolan-dir, or None for auto-detect.
-        use_json: Whether to output errors as JSON.
-
-    Returns:
-        Resolved catalog root path.
-
-    Raises:
-        SystemExit: If not inside a catalog or catalog is invalid.
-    """
+    """Resolve and validate catalog root for add command."""
     if catalog_path is not None:
         catalog_root = catalog_path.resolve()
         # Validate catalog exists (when explicitly specified)
@@ -2557,16 +2186,7 @@ def _validate_item_id_usage(
     paths: tuple[Path, ...],
     use_json: bool,
 ) -> None:
-    """Validate --item-id is only used with a single file.
-
-    Args:
-        item_id: Item ID override, or None if not specified.
-        paths: Paths from CLI arguments.
-        use_json: Whether to output errors as JSON.
-
-    Raises:
-        SystemExit: If --item-id is used with multiple paths or a directory.
-    """
+    """Validate --item-id is only used with a single file."""
     if item_id is None:
         return
 
@@ -2595,19 +2215,7 @@ def _check_partition_prompt(
     catalog_root: Path,
     state: RunState | None = None,
 ) -> bool:
-    """Check if user wants to skip partitioning for large files.
-
-    Pre-scans files against partition threshold and prompts user in interactive
-    mode. Returns True if partitioning should be skipped.
-
-    Args:
-        resolved_paths: List of resolved paths to check.
-        catalog_root: Path to catalog root for config lookup.
-        state: The run state, which parses the config once per run.
-
-    Returns:
-        True if user declined partitioning, False otherwise.
-    """
+    """Check if user wants to skip partitioning for large files."""
     from portolan_cli.partitioning import find_large_partition_candidates
 
     # Prompting only makes sense interactively; skip the config read + scan
@@ -2783,8 +2391,8 @@ def add_cmd(
         --datetime applies to ALL items added in this command. For items
         with different acquisition dates, run separate add commands:
 
-            portolan add census/2020/ --datetime 2020-04-01
-            portolan add census/2023/ --datetime 2023-04-01
+            portolan add census/2020/ --datetime 2020-04-01T00:00:00Z
+            portolan add census/2023/ --datetime 2023-04-01T00:00:00Z
 
         If --datetime is omitted, items have a null temporal extent and carry
         the sentinel start/end range. Run 'portolan check' to find items
@@ -2797,7 +2405,7 @@ def add_cmd(
         portolan add imagery/                      # Add all files in directory
         portolan add .                             # Add all files in catalog
         portolan add data.geojson --item-id my-id  # Override item ID (single file only)
-        portolan add sat.tif --datetime 2024-06-15 # Explicit acquisition date
+        portolan add sat.tif --datetime 2024-06-15T12:00:00Z # Explicit acquisition date
 
     Smart behavior:
     - Unchanged files are silently skipped (use --verbose to see them)
@@ -2831,7 +2439,7 @@ def add_cmd(
 
     from portolan_core.run_state import RunState
 
-    # One state for the whole command: each YAML file parses once (issue #994).
+    # One state for the whole command: each YAML file parses once.
     # run_add commits it.
     state = RunState.open(catalog_root)
 
@@ -2857,9 +2465,6 @@ def add_cmd(
 
     # Pre-count files for progress bar (unified progress output)
     # Only count when progress will be displayed:
-    # - Not JSON mode (agents get structured output)
-    # - Not verbose mode (verbose gets per-file output instead)
-    # - TTY available (progress bars need terminal)
     should_show_progress = not use_json and not verbose and sys.stderr.isatty()
     total_files = count_files(resolved_paths) if should_show_progress else 0
 
@@ -2888,7 +2493,7 @@ def add_cmd(
             with progress_reporter:
                 yield
         except MissingLicenseError as err:
-            # Issue #686: a collection with no license fails PTL-LIC-001/002 the moment
+            # A collection with no license fails PTL-LIC-001/002 the moment
             # check reads it, so add refuses the write and names what to supply.
             _fail_on_missing_license("add", err, use_json=use_json)
         except (
@@ -2898,11 +2503,6 @@ def add_cmd(
             ConfigError,
             UnknownFormatHandlerError,
         ) as err:
-            # Issue #933: AssetKeyCollisionError is add refusing to replace one
-            # file's asset with another file. A ConfigError is a config.yaml key
-            # that add reads, such as a malformed ignored_files (#1044). An
-            # UnknownFormatHandlerError is a conversion.handlers pin to a handler
-            # that no plugin provides. Its message names the known handlers.
             _fail_on_add_error(err, resolved_paths, use_json=use_json)
         trace.current_span().set(elapsed_seconds=progress_reporter.elapsed_seconds)
 
@@ -3133,7 +2733,7 @@ def _render_rm_result(
             warn(f"Skipped {p.name} (not in catalog or outside catalog)")
 
     # Nothing matched a tracked asset or a file on disk. Report the
-    # no-op so a typo does not look like a success (issue #827).
+    # no-op so a typo does not look like a success.
     if not removed:
         if path.exists():
             warn(f"Nothing to remove: {path.name} is not tracked")
@@ -3249,11 +2849,6 @@ def rm_cmd(
         raise SystemExit(1) from err
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Push command
-# ─────────────────────────────────────────────────────────────────────────────
-
-
 def _check_backend_push_support(
     catalog_path: Path,
     collection: str | None,
@@ -3278,22 +2873,7 @@ def _resolve_push_settings(
     use_json: bool,
     command: str,
 ) -> tuple[str | None, str | None, str | None]:
-    """Resolve remote/profile/region for push/sync commands.
-
-    Args:
-        destination: CLI destination argument
-        profile: CLI profile argument
-        catalog_path: Resolved catalog path
-        collection: Optional collection name
-        use_json: Whether to output JSON
-        command: Command name for error messages
-
-    Returns:
-        Tuple of (resolved_destination, resolved_profile, resolved_region)
-
-    Raises:
-        SystemExit: If config.yaml contains stale sensitive settings
-    """
+    """Resolve remote/profile/region for push/sync commands."""
     from portolan_core.config import resolve_push_settings
 
     try:
@@ -3310,7 +2890,7 @@ def _warn_push_footprint(
     workers: int | None,
     collection: str | None,
 ) -> None:
-    """Warn when the connection footprint of a push is high (Issue #344)."""
+    """Warn when the connection footprint of a push is high."""
     from portolan_cli.async_utils import MAX_SAFE_CONNECTIONS, calculate_connection_footprint
     from portolan_cli.sync.push import effective_push_concurrency
 
@@ -3329,15 +2909,7 @@ def _warn_push_footprint(
 
 
 def _report_push_error(err: Exception, *, collection: str | None, use_json: bool) -> bool:
-    """Report an error that a push raised.
-
-    A catalog-wide push reports every error by its class name. A push of one
-    collection reports its known errors, and it names any other ValueError
-    by the base class.
-
-    Returns:
-        False when the caller must re-raise the error.
-    """
+    """Report an error that a push raised."""
     from portolan_cli.sync.push import PushConflictError
     from portolan_core.errors import ProfileCredentialsError, PushVerifyError
 
@@ -3364,18 +2936,7 @@ def _report_push_error(err: Exception, *, collection: str | None, use_json: bool
 
 
 def _report_push_all_result(all_result: Any, *, use_json: bool) -> None:
-    """Report the outcome of a push that covered every collection.
-
-    The report lines of the run already wrote the terminal output, so this adds
-    the JSON envelope and the exit code.
-
-    Args:
-        all_result: PushAllResult from push_all_collections.
-        use_json: If True, emit a JSON envelope.
-
-    Raises:
-        SystemExit: If any collection failed.
-    """
+    """Report the outcome of a push that covered every collection."""
     if use_json:
         data = all_result.to_dict()
         # A failed push returns success=false, with one error per message.
@@ -3404,16 +2965,7 @@ def _report_push_all_result(all_result: Any, *, use_json: bool) -> None:
 
 
 def _report_push_result(result: Any, *, dry_run: bool, use_json: bool) -> None:
-    """Report the outcome of a single-collection push.
-
-    Args:
-        result: PushResult from run_push.
-        dry_run: If True, the run wrote nothing.
-        use_json: If True, emit a JSON envelope.
-
-    Raises:
-        SystemExit: If the push failed.
-    """
+    """Report the outcome of a single-collection push."""
     if not result.success:
         # Route a returned failure through the error path, so JSON mode reports
         # success=false and exits non-zero. It never emits a success envelope.
@@ -3441,7 +2993,7 @@ def _report_push_result(result: Any, *, dry_run: bool, use_json: bool) -> None:
     elif result.files_uploaded == 0:
         info_output("Nothing to push - local and remote are in sync")
     # A metadata-only sync uploads files without a version bump. push_async
-    # already reported "Synced N metadata file(s)" for it (#816).
+    # already reported "Synced N metadata file(s)" for it.
 
 
 @cli.command()
@@ -3625,10 +3177,6 @@ def push(
         )
         raise SystemExit(1)
 
-    # Warn when no credential source answers. The push still runs, because a
-    # plaintext endpoint accepts an unsigned upload. A dry run reports it too,
-    # because a dry run exists to show what the real push meets.
-    # `--json` carries a machine-readable envelope, so the hint stays out of it.
     if not use_json:
         from portolan_cli.sync.upload import check_credentials
 
@@ -3662,10 +3210,8 @@ def push(
             max_connections=max_connections,
             adaptive=adaptive,
             verify=verify,
-            # As before #1133, only a catalog-wide push prints the per-file lines of -v.
             verbose=verbose and collection is None,
             report=_report,
-            # As before #1133, the bar draws on a terminal unless the output is JSON.
             show_progress=not use_json,
         )
     except Exception as err:
@@ -3677,11 +3223,6 @@ def push(
         _report_push_all_result(result, use_json=use_json)
     else:
         _report_push_result(result, dry_run=dry_run, use_json=use_json)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Pull command
-# ─────────────────────────────────────────────────────────────────────────────
 
 
 def _report(level: str, message: str) -> None:
@@ -3853,7 +3394,7 @@ def pull_command(
             workers=workers,
             concurrency=concurrency,
             report=_report,
-            show_progress=True,  # As before #1133: the bar draws on a terminal in every output mode.
+            show_progress=True,
         )
     except caught as err:
         error_type = type(err).__name__
@@ -3880,11 +3421,6 @@ def pull_command(
 
     if not outcome.success:
         raise SystemExit(1)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Sync command
-# ─────────────────────────────────────────────────────────────────────────────
 
 
 @cli.command()
@@ -3988,7 +3524,7 @@ def sync(
             profile=resolved_profile,
             region=resolved_region,
             report=_report,
-            show_progress=True,  # As before #1133: the bar draws on a terminal in every output mode.
+            show_progress=True,
         )
     except ProfileCredentialsError as err:
         emit_error("sync", type(err).__name__, str(err), use_json=use_json, code=err.code)
@@ -4015,11 +3551,6 @@ def sync(
 
     if not result.success:
         raise SystemExit(1)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Clone command
-# ─────────────────────────────────────────────────────────────────────────────
 
 
 @cli.command()
@@ -4111,7 +3642,7 @@ def clone(
         collection=collection,
         profile=resolved_profile,
         report=_report,
-        show_progress=True,  # As before #1133: the bar draws on a terminal in every output mode.
+        show_progress=True,
     )
 
     if use_json:
@@ -4142,11 +3673,6 @@ def clone(
 
     if not result.success:
         raise SystemExit(1)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Config Commands
-# ─────────────────────────────────────────────────────────────────────────────
 
 
 @cli.group()
@@ -4427,11 +3953,6 @@ def config_unset(ctx: click.Context, json_output: bool, key: str, collection: st
             info_output(f"{key} was not set in config")
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Clean Command
-# ─────────────────────────────────────────────────────────────────────────────
-
-
 def _print_clean_preview(
     catalog_path: Path,
     files_to_remove: list[Path],
@@ -4526,11 +4047,6 @@ def clean(ctx: click.Context, json_output: bool, dry_run: bool) -> None:
         detail(f"  Data files preserved: {result.data_files_preserved}")
     else:
         info_output("Nothing to clean - no metadata files found")
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Metadata Commands
-# ─────────────────────────────────────────────────────────────────────────────
 
 
 @cli.group()
@@ -4662,11 +4178,6 @@ def metadata_validate(
         _print_metadata_validate(result)
     if not result.valid:
         raise SystemExit(1)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# README Command
-# ─────────────────────────────────────────────────────────────────────────────
 
 
 if TYPE_CHECKING:
@@ -5330,11 +4841,6 @@ def bump(
             detail(f"  {result.published.message}")
 
 
-# =============================================================================
-# STAC GeoParquet Command
-# =============================================================================
-
-
 def _report_parquet_collection(outcome: Any) -> None:
     """Print the outcome of one collection of stac-geoparquet."""
     if outcome.error is not None:
@@ -5468,11 +4974,6 @@ def stac_geoparquet(
         raise SystemExit(1)
 
     _output_parquet_results(result, collection is None, dry_run, use_json)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Skills Commands
-# ─────────────────────────────────────────────────────────────────────────────
 
 
 @cli.group()

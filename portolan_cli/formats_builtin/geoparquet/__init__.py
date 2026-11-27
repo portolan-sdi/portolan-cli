@@ -1,4 +1,4 @@
-"""Vector sources to GeoParquet through geoparquet-io (#947)."""
+"""Vector sources to GeoParquet through geoparquet-io."""
 
 from __future__ import annotations
 
@@ -35,13 +35,7 @@ class GeoParquetHandler:
         return output_dir / f"{source.stem}.parquet"
 
     def convert(self, source: Path, output_dir: Path, catalog_root: Path | None) -> Path:
-        """Convert and validate.
-
-        A GeoParquet source is copied, or rewritten in place behind the
-        fidelity gate when it lacks the bbox covering column (issue #805).
-        There is no per-file thumbnail: ``add`` writes one thumbnail per
-        collection, and a collection can hold thousands of vector files.
-        """
+        """Convert and validate."""
         output = api.convert_vector(source, output_dir, catalog_root)
         # A table with no geometry is tabular data. ``add`` reads no bbox from
         # it, removes it, and tracks the source as a tabular asset.

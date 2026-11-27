@@ -1,10 +1,4 @@
-"""Run `portolan check` and `portolan check --fix` as one library call.
-
-:func:`run_check_workflow` takes the options of the command and returns a
-:class:`CheckWorkflowResult`. Its ``to_dict()`` is the envelope ``data`` the
-command emits. The function prints nothing. The CLI renders the human view
-from the result and decides the exit code from it.
-"""
+"""Run `portolan check` and `portolan check --fix` as one library call."""
 
 from __future__ import annotations
 
@@ -33,15 +27,7 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class CheckWorkflowResult:
-    """Everything one `portolan check` run produced.
-
-    Attributes:
-        outcome: The check that the payload reports. After ``--fix`` it is the
-            re-check. After ``--fix --dry-run`` it is the check before the fix.
-        payload: The envelope ``data``, with the ``fix`` section under ``--fix``.
-        failed: The envelope ``success`` is false. The exit code is 1 when this
-            is true or when ``payload["passed"]`` is false.
-    """
+    """Everything one `portolan check` run produced."""
 
     outcome: CheckOutcome
     payload: dict[str, Any]
@@ -72,56 +58,12 @@ def run_check_workflow(
     on_progress: Callable[[ConversionResult], None] | None = None,
     on_fix_report: FixReportCallback | None = None,
 ) -> CheckWorkflowResult:
-    """Validate the catalog at ``path``, and with ``fix`` repair it and re-check it.
-
-    Without ``fix`` this validates once.
-
-    With ``fix`` the run is check, fix, re-check **exactly once**, never a
-    loop. The first check produces the findings. The AUTO ones dispatch the
-    fixer registry. The second check reports what is left. An AUTO finding that
-    survives the re-check is a fixer that did not resolve it, so the ``fix``
-    section lists it under ``survivors``. Otherwise an agent that keeps calling
-    ``--fix`` on it never stops.
-
-    ``dry_run`` reports what the fixers would change, writes nothing, and skips
-    the re-check. With no writes there is nothing new to find.
-
-    Args:
-        path: Directory to check.
-        fix: Apply the repairs, then re-check.
-        dry_run: With ``fix``, preview the repairs and write nothing.
-        remove_legacy: With ``fix``, remove source files after a conversion.
-        force: With ``fix``, re-optimize already-valid COGs.
-        workers: Parallel worker processes. None uses the CPU count.
-        metadata: Limit the run to the catalog metadata.
-        geo_assets: Limit the run to the source files on disk.
-        strict: Fail on warnings and on the workflow notice too.
-        live: Probe the published host over HTTP.
-        public_url: Base URL the catalog is published under.
-        data: Run the data pass over asset bytes.
-        data_scope: Which assets the data pass may read, ``all`` or ``local``.
-        structural: Run the STAC 1.1.0 structural pass.
-        schema: Run the Portolan profile schema pass.
-        on_progress: Called after each conversion that ``fix`` runs.
-        on_fix_report: Called with each fix report as soon as that pass ends.
-            First the freshness pass with its conversion report, then the fixer
-            registry with None. A later failure, for example in the commit,
-            does not hide what the fix already wrote.
-
-    Returns:
-        A :class:`CheckWorkflowResult`.
-
-    Raises:
-        InvalidLiveUrlError: ``live`` has no valid https base URL. Nothing ran.
-        NotACatalogError: A metadata-only ``fix`` found no catalog. Nothing was
-            committed.
-    """
+    """Validate the catalog at ``path``, and with ``fix`` repair it and re-check it."""
     # Through the package, as before the move, so tests that patch it still apply.
     from portolan_cli.validation import annotate_survivors, build_check_payload, run_check
     from portolan_cli.validation.runner import validate_live_base_url
 
-    # Auto-detect the worker count when unset, so a large --fix run
-    # parallelizes by default (issue #530). An explicit value wins.
+    # Auto-detect the worker count when unset; an explicit value wins.
     workers = workers if workers is not None else (os.cpu_count() or 1)
     run_metadata, run_geo_assets, mode = _determine_check_mode(metadata, geo_assets)
     validate_metadata = _should_validate(path, run_metadata=run_metadata, fix=fix)
@@ -145,9 +87,7 @@ def run_check_workflow(
         from portolan_cli.scan.check import resolve_catalog_root_for_check
         from portolan_cli.version_ops import owned_run
 
-        # One run state for the check, the fix, and the re-check. Each pass
-        # parses the config through it and stages its versions in it. The block
-        # commits once, before the re-check reads the result (issue #995).
+        # One run state for the check, the fix, and the re-check; the block commits once before the re-check.
         # An exception in the block commits nothing.
         with owned_run(resolve_catalog_root_for_check(path) or path) as state:
             with span("check.pre"):
@@ -184,12 +124,7 @@ def run_check_workflow(
     payload = build_check_payload(outcome, mode=mode, fix_failed=fix_failed)
     if fix_data is not None:
         if dry_run:
-            # A survivor is only knowable from a re-check, and a dry run wrote
-            # nothing to re-check. Annotating here compares the pre-fix findings
-            # against themselves, so every AUTO defect reads as having outlived
-            # a pass that never ran, and `fixed_count` lands on 0 next to the
-            # fixers the same catalog really does repair. Null reports what a
-            # preview knows: nothing was measured.
+            # A dry run wrote nothing to re-check, so survivors are unknowable; report null, not a wrong count.
             fix_data["survivors"] = None
             fix_data["fixed_count"] = None
         else:
@@ -206,19 +141,7 @@ def run_check_workflow(
 
 
 def _determine_check_mode(metadata: bool, geo_assets: bool) -> tuple[bool, bool, str]:
-    """Determine which checks to run and the mode string.
-
-    The scope flags (--metadata, --geo-assets) determine WHAT to check/fix:
-    - Neither flag: check/fix both (default)
-    - --metadata: check/fix metadata only
-    - --geo-assets: check/fix geo-assets only
-    - Both flags: check/fix both (explicit)
-
-    The --fix flag separately controls WHETHER to apply fixes (orthogonal).
-
-    Returns:
-        Tuple of (run_metadata, run_geo_assets, mode_string).
-    """
+    """Determine which checks to run and the mode string."""
     explicit_flags = metadata or geo_assets
 
     if explicit_flags:
@@ -241,17 +164,7 @@ def _determine_check_mode(metadata: bool, geo_assets: bool) -> tuple[bool, bool,
 
 
 def _should_validate(path: Path, *, run_metadata: bool, fix: bool) -> bool:
-    """Decide whether to validate, given a path that may not be a catalog at all.
-
-    Mirrors the rule ``check.run_fix_workflow`` already applies to its metadata
-    repair: a mixed-scope ``--fix`` over a directory with no catalog.json still
-    converts the source files and skips metadata, rather than failing on a
-    catalog the user never claimed to have. The re-check has to make the same
-    allowance or ``--fix`` would report PTL-GEN-000 on work that succeeded.
-
-    Without ``--fix``, a missing catalog is reported: `check` on a
-    non-catalog directory has always exited non-zero.
-    """
+    """Decide whether to validate, given a path that may not be a catalog at all."""
     if not run_metadata or not fix:
         return run_metadata
 
@@ -261,23 +174,7 @@ def _should_validate(path: Path, *, run_metadata: bool, fix: bool) -> bool:
 
 
 def check_failed(payload: dict[str, Any], *, strict: bool, refresh: bool = False) -> bool:
-    """Decide the envelope's ``success`` from the findings the mode owns.
-
-    A default run fails on any error. Under ``--strict``, where a catalog is
-    asserted to be publishable, it also fails on a warning or on the workflow
-    notice (unregistered or vanished data files). The notice is not a
-    conformance defect, so on its own it never flips a default run.
-
-    ``refresh`` is ``--fix --metadata`` without ``--strict``: the metadata
-    refresh (#853). It fails on an AUTO error that is still in the findings,
-    which is a repair the refresh did not make. It also fails on a document
-    that does not parse or breaks the STAC schema, because the refresh cannot
-    use it. The findings keep the two cases apart by rule id. Any other
-    INSTRUCT or EXTERNAL error is work for a person or a host. The refresh
-    did its job, so ``success`` stays true. The caller still exits 1, because
-    the error leaves ``passed`` false. A fixer that could not write fails the
-    run through ``fix_failed`` in the caller.
-    """
+    """Decide the envelope's ``success`` from the findings the mode owns."""
     if strict:
         return any(payload.get(key) for key in ("error_count", "warning_count", "workflow"))
     if refresh:
@@ -310,33 +207,7 @@ def _run_fix_and_repairs(
     on_fix_report: FixReportCallback | None = None,
     state: RunState,
 ) -> tuple[dict[str, Any], bool]:
-    """Apply the fixer registry, then the metadata/geo-asset fix workflow.
-
-    Two halves that do not overlap. The registry
-    (:func:`portolan_cli.validation.fixers.apply_fixers`) owns everything a
-    rashid finding names — titles, links, schema URI, README/AGENTS.md,
-    checksums, extents. ``check.run_fix_workflow`` owns item freshness, which no
-    rule reports because it compares the catalog against files on disk rather
-    than against the spec. Conversion belongs to both, so the registry's
-    ``convert`` key is skipped whenever the geo-asset pass is in scope.
-
-    Args:
-        path: Directory to check/fix.
-        findings: Findings from the pre-fix check; the AUTO ones pick fixers.
-        run_metadata: Whether to fix metadata issues.
-        run_geo_assets: Whether to fix geo-asset format issues.
-        dry_run: Preview changes without applying them.
-        remove_legacy: Passed to ``check.run_fix_workflow``.
-        force: Passed to ``check.run_fix_workflow``.
-        workers: Passed to ``check.run_fix_workflow``.
-        on_progress: Passed to ``check.run_fix_workflow``.
-        on_fix_report: Called with each fix report as soon as that pass ends.
-        state: The run state of the command. Every pass stages in it, and the
-            caller commits it once.
-
-    Returns:
-        The JSON ``fix`` section and whether a fix failed.
-    """
+    """Apply the fixer registry, then the metadata/geo-asset fix workflow."""
     from portolan_cli.metadata.fix import FixReport
     from portolan_cli.scan.check import run_fix_workflow
     from portolan_cli.validation import build_fix_payload
@@ -367,10 +238,7 @@ def _run_fix_and_repairs(
     # The mirror writer rebuilds a named items.parquet, under the mirror rules.
     written_items.extend(mirrors)
 
-    # The registry above ran against findings from the pre-fix check, so it
-    # never saw an item the freshness pass has only just written. Repair
-    # those now, or `--fix` publishes an item with no links and no checksums
-    # and reports more defects than it started with (#709).
+    # The registry ran on pre-fix findings and never saw items the freshness pass just wrote; repair them now.
     if run_metadata and written_items:
         from portolan_cli.validation.fixers import repair_written_items
 
@@ -470,12 +338,7 @@ def _run_fixer_registry(
     dry_run: bool,
     state: RunState,
 ) -> tuple[FixReport, list[str], list[str], dict[str, list[str]]]:
-    """Run the title sweep and the fixers that the AUTO findings call for.
-
-    Returns:
-        The fixer report, the applied and selected fixer keys, and the reasons
-        that the fixers which changed nothing gave.
-    """
+    """Run the title sweep and the fixers that the AUTO findings call for."""
     from portolan_cli.catalog import apply_catalog_human_titles
     from portolan_cli.metadata.fix import FixAction, FixReport, FixResult
     from portolan_cli.validation.fixers import apply_fixers
@@ -483,11 +346,7 @@ def _run_fixer_registry(
     if not run_metadata:
         return FixReport(), [], [], {}
     catalog_root = state.catalog_root
-    # Issue #815: a catalog publishes the title and description a human wrote
-    # in its own metadata.yaml. No rashid rule reports the drift, because
-    # rashid grades catalog.json alone and never reads metadata.yaml. The
-    # sweep therefore runs on its own, like the item-freshness pass, and not
-    # through the finding-driven registry.
+    # No rashid rule reports metadata.yaml drift (rashid grades catalog.json alone), so this sweep runs on its own.
     with span("check.fix.title_sweep"):
         title_results = [
             FixResult(
@@ -515,17 +374,7 @@ def _legacy_fix_result(
     outcome: FixWorkflowOutcome,
     on_fix_report: FixReportCallback | None,
 ) -> tuple[dict[str, Any], bool, list[Path]]:
-    """Turn the outcome of ``check.run_fix_workflow`` into the JSON data of the fix.
-
-    Returns:
-        The fix reports as JSON data, whether a fix failed, and the data files
-        whose items the freshness pass updated or whose bytes a conversion
-        rewrote. The caller repairs those items, which the finding-driven
-        registry ran too early to see (#709).
-
-    Raises:
-        NotACatalogError: A metadata-only fix found no catalog root (issue #384).
-    """
+    """Turn the outcome of ``check.run_fix_workflow`` into the JSON data of the fix."""
     from portolan_cli.convert import ConversionStatus
     from portolan_cli.metadata.fix import FixAction
 
@@ -552,9 +401,7 @@ def _legacy_fix_result(
         for result in (metadata_fix_report.results if metadata_fix_report else [])
         if result.success and result.action is FixAction.UPDATED
     ]
-    # A conversion rewrites the bytes after the checksum fixer recorded them.
-    # Without a repair the asset keeps a stale file:size and file:checksum, and
-    # only a second --fix records the new bytes.
+    # A conversion rewrites the bytes after the checksum fixer ran, so refresh file:size and file:checksum.
     conversion_report = format_fix_report.conversion_report if format_fix_report else None
     written_items.extend(
         result.output
@@ -577,15 +424,7 @@ def _fix_json_section(
     metadata_fix_report: FixReport | None,
     format_fix_report: Any,
 ) -> dict[str, Any]:
-    """Build the ``fix`` section of the check payload.
-
-    Args:
-        metadata_fix_report: Results from metadata fix (if run).
-        format_fix_report: Results from geo-asset fix (if run).
-
-    Returns:
-        The fix results, keyed by which repair produced them.
-    """
+    """Build the ``fix`` section of the check payload."""
     from portolan_cli.metadata.fix import FixReport
 
     data: dict[str, Any] = {}

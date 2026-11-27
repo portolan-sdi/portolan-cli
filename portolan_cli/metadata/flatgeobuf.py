@@ -1,10 +1,4 @@
-"""FlatGeobuf metadata extraction.
-
-Uses pyogrio to read FlatGeobuf header metadata without loading all data.
-Extracts bbox, CRS, schema, geometry type, and feature count.
-
-FlatGeobuf files are collection-level assets when added to a catalog.
-"""
+"""FlatGeobuf metadata extraction."""
 
 from __future__ import annotations
 
@@ -23,15 +17,7 @@ if TYPE_CHECKING:
 
 @dataclass
 class FlatGeobufMetadata:
-    """Metadata extracted from a FlatGeobuf file.
-
-    Attributes:
-        bbox: Bounding box as (min_x, min_y, max_x, max_y).
-        crs: CRS as string (e.g., "EPSG:4326").
-        geometry_type: Geometry type (Point, Polygon, etc.).
-        feature_count: Number of features.
-        schema: Field names and types.
-    """
+    """Metadata extracted from a FlatGeobuf file."""
 
     bbox: tuple[float, float, float, float] | None
     crs: str | None

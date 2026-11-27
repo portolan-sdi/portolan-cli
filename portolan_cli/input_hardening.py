@@ -1,26 +1,6 @@
 """Input validation and hardening against agent hallucinations.
 
-This module provides validation functions to protect against common agent
-hallucination patterns identified in agent-native CLI research:
-
-- Path traversals (../../.ssh)
-- Embedded query parameters in IDs (fileId?fields=name)
-- Pre-encoded strings that get double-encoded (%2e%2e)
-- Control characters in string inputs
-- Malicious URL constructions
-
-Reference: https://jpoehnelt.dev/blog/agent-native-cli/
-
-All user-facing inputs should be validated through these functions before
-use in file operations, API calls, or database queries.
-
-The rules are stricter than a human-only CLI needs. They reject some valid
-inputs, such as an uppercase collection id. Agents are primary users, and a
-rule they cannot bend serves them better than a parser that sometimes accepts
-a hallucination. Do not relax a validator to accept an edge case.
-
-The JSON error envelope reports the error class name. ``InputValidationError``
-is therefore part of the agent contract, and a rename breaks agents.
+The rules are strict on purpose: do not relax a validator to accept an edge case.
 """
 
 from __future__ import annotations
@@ -34,37 +14,11 @@ _FIRST_PRINTABLE = 0x20
 
 
 class InputValidationError(ValueError):
-    """Raised when input validation fails.
-
-    This is a ValueError subclass to maintain compatibility with existing
-    error handling while providing semantic clarity.
-    """
+    """Raised when input validation fails; the JSON error envelope reports this class name."""
 
 
 def validate_safe_path(path: Path, base_dir: Path | None = None) -> Path:
-    """Validate a file path for safety against path traversal attacks.
-
-    Agents may hallucinate path traversals like ../../.ssh by confusing
-    path segment context. This function canonicalizes the path and ensures
-    it doesn't escape the base directory.
-
-    Args:
-        path: The path to validate (may be relative or absolute).
-        base_dir: Base directory to restrict access to. If None, uses CWD.
-
-    Returns:
-        The resolved absolute path if valid.
-
-    Raises:
-        InputValidationError: If path traversal is detected.
-
-    Examples:
-        >>> validate_safe_path(Path("data/file.parquet"), Path.cwd())
-        PosixPath('/current/dir/data/file.parquet')
-
-        >>> validate_safe_path(Path("../../.ssh/id_rsa"), Path.cwd())
-        InputValidationError: Path traversal detected
-    """
+    """Validate a file path for safety against path traversal attacks."""
     if base_dir is None:
         base_dir = Path.cwd()
 
@@ -89,32 +43,7 @@ def validate_safe_path(path: Path, base_dir: Path | None = None) -> Path:
 
 
 def validate_collection_id(collection_id: str) -> str:
-    """Validate a collection ID for safety and STAC compliance.
-
-    Agents may hallucinate:
-    - Control characters (< ASCII 0x20)
-    - Query parameters (?fields=name)
-    - URL fragments (#section)
-    - Pre-encoded strings (%2e%2e)
-
-    STAC collection IDs should be URL-safe strings without special characters.
-
-    Args:
-        collection_id: The collection ID to validate.
-
-    Returns:
-        The validated collection ID.
-
-    Raises:
-        InputValidationError: If validation fails.
-
-    Examples:
-        >>> validate_collection_id("census-2020")
-        'census-2020'
-
-        >>> validate_collection_id("census?fields=name")
-        InputValidationError: Query parameters not allowed
-    """
+    """Validate a collection ID for safety and STAC compliance."""
     if not collection_id:
         raise InputValidationError("Collection ID cannot be empty")
 
@@ -140,9 +69,6 @@ def validate_collection_id(collection_id: str) -> str:
     if "\\" in collection_id:
         raise InputValidationError("Backslashes not allowed in collection ID")
 
-    # STAC recommendation: lowercase with hyphens (allows nested paths)
-    # Pattern: segments separated by /, each segment is alphanumeric with hyphens/underscores
-    # Segments CAN start with numbers (e.g., "rivers/2020/q1" for year-based organization)
     if not re.match(r"^[a-z0-9][a-z0-9_-]*(?:/[a-z0-9][a-z0-9_-]*)*$", collection_id):
         raise InputValidationError(
             f"Collection ID '{collection_id}' invalid: use only lowercase letters, numbers, "
@@ -153,20 +79,7 @@ def validate_collection_id(collection_id: str) -> str:
 
 
 def validate_item_id(item_id: str) -> str:
-    """Validate a STAC item ID for safety and compliance.
-
-    Similar to collection ID validation but allows slightly more flexibility
-    (STAC items may include version numbers, dates, etc.).
-
-    Args:
-        item_id: The item ID to validate.
-
-    Returns:
-        The validated item ID.
-
-    Raises:
-        InputValidationError: If validation fails.
-    """
+    """Validate a STAC item ID for safety and compliance."""
     if not item_id:
         raise InputValidationError("Item ID cannot be empty")
 
@@ -188,9 +101,6 @@ def validate_item_id(item_id: str) -> str:
     return item_id
 
 
-# STAC identifiers match ^[a-zA-Z0-9_-]+$. A catalog ID is stricter than an item
-# ID. It names a directory-level identity that reaches catalog.json and
-# versions.json, so it carries no dots or other punctuation (issue #821).
 _CATALOG_ID_PATTERN = re.compile(r"^[a-zA-Z0-9_-]+$")
 
 #: Upper bound on a catalog ID. The ID reaches catalog.json, versions.json, and
@@ -200,26 +110,7 @@ MAX_CATALOG_ID_LENGTH = 255
 
 
 def validate_catalog_id(catalog_id: str) -> str:
-    """Validate a STAC catalog ID for safety and compliance.
-
-    ``init_catalog`` sanitizes a *derived* ID by coercing it, because the
-    directory name is not something the caller typed. An ID the caller supplies
-    is a deliberate choice, so this function rejects a bad value instead of
-    silently rewriting it (issue #821).
-
-    The pattern alone rejects control characters, path separators, traversals,
-    and URL punctuation, so this function states one rule rather than repeat
-    each class of bad input as its own check.
-
-    Args:
-        catalog_id: The catalog ID to validate.
-
-    Returns:
-        The validated catalog ID.
-
-    Raises:
-        InputValidationError: If validation fails.
-    """
+    """Validate a STAC catalog ID for safety and compliance."""
     if not catalog_id:
         raise InputValidationError("Catalog ID cannot be empty")
 
@@ -237,29 +128,7 @@ def validate_catalog_id(catalog_id: str) -> str:
 
 
 def validate_remote_url(url: str) -> str:
-    """Validate a remote storage URL for push/pull/sync operations.
-
-    Validates S3, GCS, Azure Blob Storage URLs and rejects:
-    - Path traversals in bucket paths
-    - Unsupported schemes
-    - Malformed URLs
-
-    Args:
-        url: The remote URL to validate (e.g., s3://bucket/path).
-
-    Returns:
-        The validated URL.
-
-    Raises:
-        InputValidationError: If validation fails.
-
-    Examples:
-        >>> validate_remote_url("s3://my-bucket/catalog")
-        's3://my-bucket/catalog'
-
-        >>> validate_remote_url("s3://bucket/../etc/passwd")
-        InputValidationError: Path traversal in URL
-    """
+    """Validate a remote storage URL for push/pull/sync operations."""
     if not url:
         raise InputValidationError("Remote URL cannot be empty")
 
@@ -296,17 +165,7 @@ def validate_remote_url(url: str) -> str:
 
 
 def validate_config_key(key: str) -> str:
-    """Validate a configuration key for portolan config set.
-
-    Args:
-        key: The config key to validate.
-
-    Returns:
-        The validated key.
-
-    Raises:
-        InputValidationError: If validation fails.
-    """
+    """Validate a configuration key for portolan config set."""
     if not key:
         raise InputValidationError("Config key cannot be empty")
 
@@ -324,18 +183,7 @@ def validate_config_key(key: str) -> str:
 
 
 def validate_config_value(value: str, key: str) -> str:
-    """Validate a configuration value for portolan config set.
-
-    Args:
-        value: The config value to validate.
-        key: The config key (used for context-specific validation).
-
-    Returns:
-        The validated value.
-
-    Raises:
-        InputValidationError: If validation fails.
-    """
+    """Validate a configuration value for portolan config set."""
     if not value:
         raise InputValidationError(f"Config value for '{key}' cannot be empty")
 

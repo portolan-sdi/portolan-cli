@@ -1,24 +1,4 @@
-"""PMTiles generation from GeoParquet collections.
-
-This module provides functionality to generate PMTiles (vector tiles) from
-GeoParquet files in STAC collections. PMTiles are stored as sibling files
-to the source GeoParquet, registered as collection-level assets with role
-["visual"], and tracked in versions.json for push.
-
-Requires:
-- geoparquet-io (a core dependency) for `create_pmtiles`
-- tippecanoe binary installed and in PATH
-
-Usage:
-    from portolan_cli.viz.pmtiles import generate_pmtiles_for_collection
-
-    result = generate_pmtiles_for_collection(
-        collection_path=Path("municipalities"),
-        catalog_root=Path("."),
-        force=False,
-    )
-    print(f"Generated: {len(result.generated)}, Skipped: {len(result.skipped)}")
-"""
+"""PMTiles generation from GeoParquet collections."""
 
 from __future__ import annotations
 
@@ -31,12 +11,6 @@ from typing import TYPE_CHECKING, Any
 from portolan_cli.formats import is_geoparquet, run_scope
 from portolan_cli.report import emit
 from portolan_cli.stac_parquet import stamp_file_fields, sync_file_extension
-
-# The PMTiles constants and pure asset/link classifiers now live in the
-# framework-free leaf pmtiles_links.py so validation/ can reach them without
-# importing this module (which pulls in output/thumbnail/style). Re-imported
-# here — both constants are used below — so pmtiles.py's public API is unchanged
-# for existing callers/tests (see pmtiles_links.py, issue #563).
 from portolan_cli.viz.pmtiles_links import (
     PMTILES_MEDIA_TYPE,
     PMTILES_SUFFIX,
@@ -127,15 +101,7 @@ class PMTilesGenerationError(PMTilesError):
 
 @dataclass
 class PMTilesResult:
-    """Result of PMTiles generation for a collection.
-
-    Attributes:
-        generated: Paths to successfully generated PMTiles files.
-        skipped: Paths to PMTiles that this run did not build.
-        failed: List of (source_path, error_message) for failed generations.
-        sources: The GeoParquet of each PMTiles in the plan.
-        older: PMTiles that were older than their GeoParquet at the start.
-    """
+    """Result of PMTiles generation for a collection."""
 
     generated: list[Path] = field(default_factory=list)
     skipped: list[Path] = field(default_factory=list)
@@ -158,16 +124,10 @@ class PMTilesResult:
 
 
 def check_pmtiles_available() -> None:
-    """Check that PMTiles generation dependencies are available.
-
-    Raises:
-        PMTilesNotAvailableError: If geoparquet-io has no PMTiles support.
-        TippecanoeNotFoundError: If tippecanoe is not in PATH.
-    """
-    # Check for the geoparquet-io PMTiles API. geoparquet-io is a core
-    # dependency, so this only fails on a version below 1.3.0 (Issue #754).
+    """Check that PMTiles generation dependencies are available."""
+    # geoparquet-io below 1.3.0 has no PMTiles API.
     try:
-        from geoparquet_io.api.ops import (  # noqa: F401
+        from geoparquet_io.api.ops import (  # noqa: F401 - probes that the PMTiles API exists
             create_pmtiles,
         )
     except ImportError as e:
@@ -179,14 +139,7 @@ def check_pmtiles_available() -> None:
 
 
 def _find_geoparquet_assets(collection_path: Path) -> list[tuple[str, Path]]:
-    """Find all GeoParquet assets in a collection.
-
-    Args:
-        collection_path: Path to collection directory.
-
-    Returns:
-        List of (asset_key, asset_path) tuples for GeoParquet assets.
-    """
+    """Find all GeoParquet assets in a collection."""
     collection_json_path = collection_path / "collection.json"
     if not collection_json_path.exists():
         return []
@@ -214,37 +167,17 @@ def _find_geoparquet_assets(collection_path: Path) -> list[tuple[str, Path]]:
 
 
 def _older_than_data(parquet_path: Path, pmtiles_path: Path) -> bool:
-    """Report whether an existing PMTiles is older than its GeoParquet.
-
-    This is the one up-to-date rule. Tiles that are not older than the
-    GeoParquet are current. No PMTiles writer records the checksum of its
-    source, and geoparquet-io gives no way to write one, so the mtime is the
-    only comparison.
-    """
+    """Report whether an existing PMTiles is older than its GeoParquet."""
     return pmtiles_path.exists() and parquet_path.stat().st_mtime > pmtiles_path.stat().st_mtime
 
 
 def _should_generate(parquet_path: Path, pmtiles_path: Path, force: bool) -> bool:
-    """Determine if PMTiles should be generated.
-
-    Args:
-        parquet_path: Path to source GeoParquet file.
-        pmtiles_path: Path to target PMTiles file.
-        force: If True, always regenerate.
-
-    Returns:
-        True if PMTiles should be generated.
-    """
+    """Determine if PMTiles should be generated."""
     return force or not pmtiles_path.exists() or _older_than_data(parquet_path, pmtiles_path)
 
 
 def _set_aside(pmtiles_path: Path) -> Path | None:
-    """Move an existing PMTiles to a hidden name for the length of a build.
-
-    tippecanoe refuses to overwrite a tileset (exit code 104). The caller puts
-    the file back when the build fails, so a failed rebuild keeps valid data
-    (Issue #814). A hidden file is never an asset.
-    """
+    """Move an existing PMTiles to a hidden name for the length of a build."""
     if not pmtiles_path.exists():
         return None
     previous = pmtiles_path.with_name(f".{pmtiles_path.name}.previous")
@@ -253,12 +186,7 @@ def _set_aside(pmtiles_path: Path) -> Path | None:
 
 
 def _end_build(pmtiles_path: Path, previous: Path | None, *, succeeded: bool) -> None:
-    """Remove the partial output of a failed build and put the old tileset back.
-
-    A partial file is a phantom asset (Issue #385). The tileset of an earlier
-    run is valid data, so a failed rebuild keeps it (Issue #814). After a
-    build that succeeds, the old tileset goes.
-    """
+    """Remove the partial output of a failed build and put the old tileset back."""
     if succeeded:
         if previous is not None:
             previous.unlink(missing_ok=True)
@@ -273,17 +201,7 @@ def _end_build(pmtiles_path: Path, previous: Path | None, *, succeeded: bool) ->
 
 
 def _discover_style_for_thumbnail(collection_dir: Path) -> Path | None:
-    """Find a style file for thumbnail generation.
-
-    Searches for styles/default.json or styles/source.json in the collection
-    directory, preferring default.json (the extracted style, per Issue #497).
-
-    Args:
-        collection_dir: Path to collection directory.
-
-    Returns:
-        Path to style file if found, None otherwise.
-    """
+    """Find a style file for thumbnail generation."""
     styles_dir = collection_dir / "styles"
     if not styles_dir.exists():
         return None
@@ -311,26 +229,7 @@ def generate_pmtiles(
     attribution: str | None = None,
     src_crs: str | None = None,
 ) -> None:
-    """Generate a single PMTiles file from GeoParquet.
-
-    Args:
-        parquet_path: Path to source GeoParquet file.
-        pmtiles_path: Path to output PMTiles file.
-        min_zoom: Minimum zoom level (None = auto-detect).
-        max_zoom: Maximum zoom level (None = auto-detect).
-        layer: Layer name in PMTiles (None = use filename).
-        bbox: Bounding box filter as "minx,miny,maxx,maxy".
-        where: SQL WHERE clause for filtering features.
-        include_cols: Comma-separated columns to include in tiles.
-        precision: Coordinate decimal precision (default: 6).
-        attribution: Attribution HTML for tiles.
-        src_crs: Override source CRS if metadata is incorrect.
-
-    Raises:
-        PMTilesNotAvailableError: If geoparquet-io has no PMTiles support.
-        TippecanoeNotFoundError: If tippecanoe not in PATH.
-        PMTilesGenerationError: If generation fails.
-    """
+    """Generate a single PMTiles file from GeoParquet."""
     check_pmtiles_available()
 
     from geoparquet_io.api.ops import create_pmtiles
@@ -361,19 +260,7 @@ def _write_default_style_for_geoparquet(
     catalog_path: Path | None = None,
     state: RunState | None = None,
 ) -> Path | None:
-    """Write a default style file for a PMTiles asset.
-
-    Args:
-        parquet_path: Path to source GeoParquet (for geometry type detection).
-        layer_name: Layer name in the PMTiles.
-        collection_path: Path to the collection directory.
-        pmtiles_relative_path: PMTiles path relative to collection (e.g., "data.pmtiles").
-        catalog_path: Optional catalog path for loading style config.
-        state: The run state, which parses the config once per run.
-
-    Returns:
-        Path to the written style file, or None if skipped.
-    """
+    """Write a default style file for a PMTiles asset."""
     # Check existence before expensive metadata extraction
     default_path = collection_path / "styles" / "default.json"
     if default_path.exists():
@@ -404,8 +291,7 @@ def _write_default_style_for_geoparquet(
             else VectorStyleConfig()
         )
 
-        # Thread the archive's zoom range into the style source so MapLibre
-        # never requests tiles beyond what tippecanoe produced (issue #756).
+        # Pass the archive's zoom range so MapLibre never requests tiles tippecanoe did not make.
         min_zoom, max_zoom = _pmtiles_zoom_range(collection_path / pmtiles_relative_path)
 
         return write_default_style(
@@ -423,13 +309,7 @@ def _write_default_style_for_geoparquet(
 
 
 def _style_geometry_type(geometry_types: list[str]) -> str:
-    """Pick the one geometry type the default style draws (issue #1010).
-
-    The default style holds one layer, so a layer that declares several types
-    gets the layer of its highest dimension: polygon, then line, then point.
-    A fill or line layer shows where the data lies. A circle layer drawn over
-    polygons shows only their vertices.
-    """
+    """Pick the one geometry type the default style draws."""
     for family in ("polygon", "line"):
         for geometry_type in geometry_types:
             if family in geometry_type.lower():
@@ -449,12 +329,7 @@ def _archive_layer(pmtiles_path: Path) -> str | None:
 
 
 def _pmtiles_zoom_range(pmtiles_path: Path) -> tuple[int | None, int | None]:
-    """Read (min_zoom, max_zoom) from a PMTiles archive header, or (None, None).
-
-    Zoom range is advisory for styles: a style without it still loads, so any
-    failure to read the header degrades to omitting the range rather than
-    failing style generation.
-    """
+    """Read (min_zoom, max_zoom) from a PMTiles archive header, or (None, None)."""
     try:
         from portolan_cli.metadata.pmtiles import extract_pmtiles_metadata
 
@@ -472,22 +347,7 @@ def add_pmtiles_asset_to_collection(
     *,
     extra_properties: dict[str, Any] | None = None,
 ) -> None:
-    """Add PMTiles asset to collection.json.
-
-    Adds a collection-level asset with role ["visual"] for the PMTiles file.
-    The asset key is derived from the source parquet key with "-tiles" suffix.
-    An asset that already points at ``pmtiles_href`` keeps its key, so the file
-    never gets a second entry (Issue #933).
-
-    Args:
-        collection_path: Path to collection directory.
-        parquet_key: Asset key of the source GeoParquet.
-        pmtiles_href: Relative href to PMTiles file (e.g., "./data.pmtiles").
-        extra_properties: Additional properties to add to the asset.
-
-    Raises:
-        FileNotFoundError: If collection.json doesn't exist.
-    """
+    """Add PMTiles asset to collection.json."""
     collection_json_path = collection_path / "collection.json"
     if not collection_json_path.exists():
         raise FileNotFoundError(f"collection.json not found in {collection_path}")
@@ -495,8 +355,7 @@ def add_pmtiles_asset_to_collection(
     data = json.loads(collection_json_path.read_text(encoding="utf-8"))
     assets = data.get("assets", {})
 
-    # An asset that already tracks this file keeps its key. Otherwise derive the
-    # key from the parquet key (Issue #933).
+    # An asset that already tracks this file keeps its key; otherwise derive it from the parquet key.
     pmtiles_key = next(
         (key for key, asset in assets.items() if asset.get("href") == pmtiles_href),
         pmtiles_asset_key(parquet_key),
@@ -542,10 +401,7 @@ def add_pmtiles_asset_to_collection(
     assets[pmtiles_key] = asset_dict
     data["assets"] = assets
 
-    # PORTO-CORE-028 asks every asset for file:size and file:checksum. The style
-    # and thumbnail writers stamp theirs; PMTiles was the one visual artifact
-    # that shipped without them, drawing a PTL-AST-003 warning nothing caught
-    # until the gate started reading warnings (issue #746).
+    # PORTO-CORE-028 asks every asset for file:size and file:checksum.
     stamp_file_fields(asset_dict, collection_path)
     sync_file_extension(data, assets, collection_json_path)
 
@@ -553,19 +409,7 @@ def add_pmtiles_asset_to_collection(
 
 
 def ensure_web_map_links_extension(collection_path: Path) -> bool:
-    """Declare the web-map-links extension in a collection idempotently.
-
-    Adds ``WEB_MAP_LINKS_EXTENSION`` to ``stac_extensions`` if absent, without
-    touching any links (so existing ``pmtiles:layers`` overrides are preserved).
-    Used by ``check --fix`` to repair a collection that carries the PMTiles link
-    but omits the extension declaration (part of rashid PTL-VIZ-003).
-
-    Args:
-        collection_path: Path to collection directory.
-
-    Returns:
-        True if the extension was added and the file rewritten, else False.
-    """
+    """Declare the web-map-links extension in a collection idempotently."""
     collection_json_path = collection_path / "collection.json"
     if not collection_json_path.exists():
         return False
@@ -587,22 +431,7 @@ def add_pmtiles_link_to_collection(
     *,
     layers: list[str],
 ) -> None:
-    """Add a ``rel="pmtiles"`` collection link following web-map-links (Issue #569).
-
-    The link coexists with the PMTiles *asset* and satisfies rashid PTL-VIZ-003.
-    It declares the web-map-links extension in ``stac_extensions`` and carries the
-    ``pmtiles:layers`` array of default-visible vector layers. The link is keyed by
-    its ``href`` so multiple PMTiles in one collection each get their own link, and
-    re-running keeps ``pmtiles:layers`` in sync without duplicating the link.
-
-    Args:
-        collection_path: Path to collection directory.
-        pmtiles_href: Relative href to the PMTiles file (e.g., "./data.pmtiles").
-        layers: Default-visible vector layer names inside the PMTiles.
-
-    Raises:
-        FileNotFoundError: If collection.json doesn't exist.
-    """
+    """Add a ``rel="pmtiles"`` collection link following web-map-links."""
     collection_json_path = collection_path / "collection.json"
     if not collection_json_path.exists():
         raise FileNotFoundError(f"collection.json not found in {collection_path}")
@@ -654,18 +483,7 @@ def add_pmtiles_link_to_collection(
 def _backfill_skipped_assets(
     collection_path: Path, pmtiles_path: Path, catalog_root: Path, state: RunState | None
 ) -> None:
-    """Track an up-to-date PMTiles and its thumbnail if not already tracked.
-
-    Runs on the skip path to heal catalogs whose artifacts were generated before
-    versions.json tracking existed (Issue #519), without bumping a version when
-    everything is already tracked.
-
-    Registering the thumbnail as a STAC asset is not done here.
-    ``collection_thumbnail.ensure_collection_thumbnails`` adopts any
-    ``.thumb.jpg`` on disk and is the single writer of the thumbnail asset
-    (Issue #683), so a backfilled versions.json entry still cannot be orphaned
-    from collection.json.
-    """
+    """Track an up-to-date PMTiles and its thumbnail if not already tracked."""
     backfill = [pmtiles_path]
     existing_thumb = thumbnail_path_for(pmtiles_path)
     if existing_thumb.exists():
@@ -690,24 +508,12 @@ def _generate_thumbnail_asset(
     catalog_root: Path,
     state: RunState | None,
 ) -> Path | None:
-    """Render the vector thumbnail, preferring the exact GeoParquet geometry.
-
-    Writes the file and returns its path, or None if disabled or failed. Failure
-    is non-fatal: it must not affect PMTiles success (Issue #13). PMTiles are
-    only the fallback source: at thumbnail zoom they carry tippecanoe's
-    simplification and tiny-polygon placeholder squares (issue #786).
-
-    Registering the STAC asset is deliberately not done here.
-    ``collection_thumbnail.ensure_collection_thumbnails`` runs after this and
-    adopts the ``.thumb.jpg`` this writes, so one writer owns the thumbnail
-    asset shape (Issue #683). This render still wins, because it runs first
-    and adoption never overwrites.
-    """
+    """Render the vector thumbnail, preferring the exact GeoParquet geometry."""
     try:
         thumb_config = get_thumbnail_config(catalog_root, state=state)
         if not thumb_config.enabled:
             return None
-        # Discover style for thumbnail (Issue #495)
+        # Discover the style for the thumbnail
         style_path = _discover_style_for_thumbnail(collection_path)
         return generate_vector_thumbnail(
             pmtiles_path=pmtiles_path,  # fallback
@@ -727,12 +533,7 @@ def _track_side_step_assets(
     catalog_root: Path,
     state: RunState | None,
 ) -> None:
-    """Track the PMTiles and its thumbnail in a SINGLE versions.json snapshot.
-
-    One side-step is one version bump, not two (Issue #519). Called outside the
-    generation try/finally so a versions.json write error cannot trigger the
-    partial-file cleanup that deletes the freshly generated PMTiles.
-    """
+    """Track the PMTiles and its thumbnail in a SINGLE versions.json snapshot."""
     generated_assets = [pmtiles_path]
     if thumb_path:
         generated_assets.append(thumb_path)
@@ -767,49 +568,7 @@ def generate_pmtiles_for_collection(  # noqa: PLR0913, PLR0915 - each tippecanoe
     src_crs: str | None = None,
     state: RunState | None = None,
 ) -> PMTilesResult:
-    """Generate PMTiles for all GeoParquet assets in a collection.
-
-    For each GeoParquet asset in collection.json, generates a sibling PMTiles
-    file if it doesn't exist or if the source is newer. Updates collection.json
-    with PMTiles assets and tracks them in versions.json.
-
-    A sibling PMTiles that this run does not build is registered as it is: the
-    asset, the ``rel: pmtiles`` link, and the default style (rashid PTL-VIZ-002
-    and PTL-VIZ-003). tippecanoe is checked only when a tile is built, so
-    pre-built tiles need no tippecanoe (Issue #934). With ``generate`` True,
-    a sibling PMTiles older than its GeoParquet is built again. With
-    ``generate`` False, it is registered as it is and ``older`` names it.
-    ``add`` rewrites a GeoParquet in place for the bbox column (#805), so
-    user tiles (#929) look older although the data is the same. A rebuild
-    with the default settings would replace them.
-
-    Args:
-        collection_path: Path to collection directory.
-        catalog_root: Path to catalog root.
-        force: If True, regenerate even if PMTiles exists and is up-to-date.
-        generate: If False, build nothing and only register the sibling PMTiles
-            that exist. ``add`` runs this without ``--pmtiles``, so tiles a user
-            built with tippecanoe get the same registration (Issue #929).
-        min_zoom: Minimum zoom level (None = auto-detect via tippecanoe).
-        max_zoom: Maximum zoom level (None = auto-detect via tippecanoe).
-        layer: Layer name in PMTiles (None = use filename).
-        bbox: Bounding box filter as "minx,miny,maxx,maxy".
-        where: SQL WHERE clause for filtering features.
-        include_cols: Comma-separated columns to include in tiles.
-        precision: Coordinate decimal precision (default: 6).
-        attribution: Attribution HTML for tiles.
-        src_crs: Override source CRS if metadata is incorrect.
-        state: The run state, which parses the config once per run.
-
-    Returns:
-        PMTilesResult with generated, skipped, and failed counts.
-
-    Raises:
-        PMTilesNotAvailableError: If a tile must be built and geoparquet-io has
-            no PMTiles support.
-        TippecanoeNotFoundError: If a tile must be built and tippecanoe is not
-            in PATH.
-    """
+    """Generate PMTiles for all GeoParquet assets in a collection."""
     # The footer read of each asset goes through the run memo.
     with run_scope(state):
         assets = _find_geoparquet_assets(collection_path)
@@ -849,11 +608,11 @@ def generate_pmtiles_for_collection(  # noqa: PLR0913, PLR0915 - each tippecanoe
             pmtiles_col_rel = pmtiles_path.name
 
         if pmtiles_path not in builds:
-            # Tiles built elsewhere name their layer themselves (Issue #929).
+            # Tiles built elsewhere name their layer themselves.
             layer_name = layer or _archive_layer(pmtiles_path) or parquet_path.stem
             # Ensure asset is registered/updated in collection.json even when skipping
             add_pmtiles_asset_to_collection(collection_path, asset_key, pmtiles_href)
-            # Emit the rel="pmtiles" web-map-links link alongside the asset (#569)
+            # Emit the rel="pmtiles" web-map-links link alongside the asset
             add_pmtiles_link_to_collection(collection_path, pmtiles_href, layers=[layer_name])
             # Ensure default style exists even when PMTiles generation is skipped
             _write_default_style_for_geoparquet(
@@ -864,16 +623,14 @@ def generate_pmtiles_for_collection(  # noqa: PLR0913, PLR0915 - each tippecanoe
                 catalog_path=catalog_root,
                 state=state,
             )
-            # Backfill versions.json for artifacts generated before this tracking
-            # existed (the original #519 bug state), idempotently.
+            # Backfill versions.json for artifacts generated before tracking existed.
             _backfill_skipped_assets(collection_path, pmtiles_path, catalog_root, state)
             result.skipped.append(pmtiles_path)
             continue
 
-        # Determine layer name (Issue #13)
+        # Determine layer name
         layer_name = layer or parquet_path.stem
-        # Track success to clean up partial files on any failure (Issue #385)
-        # Using finally ensures cleanup even on KeyboardInterrupt/SystemExit
+        # Clean up partial files on any failure, including KeyboardInterrupt.
         generation_succeeded = False
         previous = _set_aside(pmtiles_path)
         try:
@@ -891,9 +648,9 @@ def generate_pmtiles_for_collection(  # noqa: PLR0913, PLR0915 - each tippecanoe
                 src_crs=src_crs,
             )
 
-            # Register asset in collection.json (Issue #13)
+            # Register asset in collection.json
             add_pmtiles_asset_to_collection(collection_path, asset_key, pmtiles_href)
-            # Emit the rel="pmtiles" web-map-links link alongside the asset (#569)
+            # Emit the rel="pmtiles" web-map-links link alongside the asset
             add_pmtiles_link_to_collection(collection_path, pmtiles_href, layers=[layer_name])
 
             result.generated.append(pmtiles_path)
@@ -916,9 +673,7 @@ def generate_pmtiles_for_collection(  # noqa: PLR0913, PLR0915 - each tippecanoe
         finally:
             _end_build(pmtiles_path, previous, succeeded=generation_succeeded)
 
-        # Generate thumbnail separately - failure shouldn't affect PMTiles success
-        # (Issue #13) - then track the PMTiles and thumbnail in a SINGLE version
-        # snapshot (one side-step == one version, not two, Issue #519).
+        # A thumbnail failure does not fail PMTiles; track both in one version snapshot.
         if generation_succeeded:
             thumb_path = _generate_thumbnail_asset(
                 collection_path, parquet_path, pmtiles_path, catalog_root, state
@@ -932,9 +687,7 @@ def generate_pmtiles_for_collection(  # noqa: PLR0913, PLR0915 - each tippecanoe
         register_style_assets,
     )
 
-    # Repair styles written before the archive existed (extract-produced SLD
-    # styles have a vector source with no URL) and normalize bare-path URLs to
-    # the loadable pmtiles:// form, filling the archive's zoom range (#756).
+    # Repair styles with no source URL; rewrite bare-path URLs to pmtiles:// and fill the zoom range.
     if result.generated:
         newest = result.generated[-1]
         min_zoom, max_zoom = _pmtiles_zoom_range(newest)
@@ -1006,17 +759,7 @@ def get_pmtiles_settings(
 
 @dataclass
 class PMTilesOutcome:
-    """What the PMTiles side-step did for one collection.
-
-    Attributes:
-        collection_id: The collection.
-        config_enabled: The ``pmtiles.enabled`` setting of the collection.
-        requested: True when ``--pmtiles`` or ``--force-pmtiles`` was passed.
-        result: The generation result, or None when a tool is missing.
-        missing: The error that says which tool is missing, or None.
-        failure: The message of an explicit request that failed here, or None.
-            The step stops at this collection, and the command must exit 1.
-    """
+    """What the PMTiles side-step did for one collection."""
 
     collection_id: str
     config_enabled: bool
@@ -1028,11 +771,7 @@ class PMTilesOutcome:
 
 @dataclass
 class PMTilesReport:
-    """The outcome of one ``generate_or_suggest_pmtiles`` run.
-
-    Attributes:
-        outcomes: One entry for each collection that the step processed.
-    """
+    """The outcome of one ``generate_or_suggest_pmtiles`` run."""
 
     outcomes: list[PMTilesOutcome] = field(default_factory=list)
 
@@ -1051,31 +790,8 @@ def generate_or_suggest_pmtiles(
     state: RunState | None = None,
     on_outcome: Callable[[PMTilesOutcome], None] | None = None,
 ) -> PMTilesReport:
-    """Generate PMTiles for affected collections when requested or configured.
-
-    For each affected collection, resolves PMTiles settings and generates when
-    ``--pmtiles`` or ``--force-pmtiles`` was passed, or ``pmtiles.enabled`` is
-    configured. Otherwise it only registers the sibling PMTiles that exist
-    (Issue #929). Generation runs regardless of output mode so the JSON
-    envelope reflects the final state. An explicitly-requested generation
-    that fails sets ``failure`` and stops the step.
-
-    Args:
-        catalog_root: Catalog root directory.
-        affected_collections: Collection IDs modified by the add command.
-        generate_pmtiles: Whether ``--pmtiles`` was passed.
-        force: Whether to regenerate up-to-date PMTiles.
-        state: The run state, which parses the config once per run.
-        on_outcome: Called with each collection's outcome as soon as it is
-            done, so the caller can report it in order.
-
-    Returns:
-        The report of each collection.
-    """
-    # --force-pmtiles asks for a rebuild, so it also turns generation on. The
-    # default is pmtiles.enabled false, so the flag alone used to exit 0 and
-    # leave the old tiles in place (Issue #760). `requested` also drives the
-    # report: an explicit request that fails must exit non-zero.
+    """Generate PMTiles for affected collections when requested or configured."""
+    # --force-pmtiles also turns generation on. `requested` makes a failed explicit request exit non-zero.
     requested = generate_pmtiles or force
     report = PMTilesReport()
 

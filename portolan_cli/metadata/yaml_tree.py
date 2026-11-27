@@ -1,10 +1,4 @@
-"""Write and validate the .portolan/metadata.yaml files of a catalog tree.
-
-``metadata init`` and ``metadata validate`` call these functions. Each one
-walks the catalog and collection directories below a start directory, or acts
-on the start directory alone, and returns a result whose ``to_dict()`` is the
-JSON envelope ``data`` of its command.
-"""
+"""Write and validate the .portolan/metadata.yaml files of a catalog tree."""
 
 from __future__ import annotations
 
@@ -25,13 +19,7 @@ def _is_stac_dir(dirpath: Path) -> bool:
 
 
 def _stac_dirs(catalog_root: Path, base_dir: Path) -> Iterator[Path]:
-    """Yield the catalog and collection directories at and below ``base_dir``.
-
-    The walk skips symlinks, hidden directories, and item directories.
-
-    Raises:
-        PermissionError: When the walk cannot list a directory.
-    """
+    """Yield the catalog and collection directories at and below ``base_dir``."""
     if base_dir == catalog_root or _is_stac_dir(base_dir):
         yield base_dir
     try:
@@ -51,15 +39,7 @@ def _stac_dirs(catalog_root: Path, base_dir: Path) -> Iterator[Path]:
 
 @dataclass(frozen=True)
 class MetadataInitResult:
-    """The templates a ``metadata init`` run wrote, as catalog-relative paths.
-
-    Attributes:
-        recursive: True when the run walked the tree.
-        created: Paths the run wrote.
-        skipped: Paths that already held a metadata.yaml.
-        permission_errors: Paths the run could not write.
-        overwritten: True when a single-path run replaced an existing file.
-    """
+    """The templates a ``metadata init`` run wrote, as catalog-relative paths."""
 
     recursive: bool
     created: list[str] = field(default_factory=list)
@@ -87,24 +67,7 @@ def init_metadata_templates(
     force: bool = False,
     recursive: bool = True,
 ) -> MetadataInitResult:
-    """Write a metadata.yaml template at each catalog and collection level.
-
-    Args:
-        catalog_root: The catalog root.
-        path: The start directory, relative to the root. None selects the root.
-        force: If True, overwrite an existing metadata.yaml.
-        recursive: If False, write only at the start directory.
-
-    Returns:
-        The paths the run wrote, skipped, and could not write.
-
-    Raises:
-        InputValidationError: When ``path`` escapes the catalog root.
-        PathNotFoundError: When a recursive run starts at a missing path.
-        NotADirectoryError: When a recursive run starts at a file.
-        FileExistsError: When a single-path run finds a file and ``force`` is off.
-        PermissionError: When the recursive walk cannot list a directory.
-    """
+    """Write a metadata.yaml template at each catalog and collection level."""
     from portolan_cli.metadata_yaml import generate_metadata_template
 
     base_dir = resolve_catalog_dir(catalog_root, path, must_exist=recursive)
@@ -140,12 +103,7 @@ def init_metadata_templates(
 
 @dataclass(frozen=True)
 class MetadataValidation:
-    """The validation errors of the merged metadata at one level.
-
-    Attributes:
-        path: The level, relative to the catalog root. "." is the root.
-        errors: The validation errors. Empty when the metadata is valid.
-    """
+    """The validation errors of the merged metadata at one level."""
 
     path: str
     errors: list[str]
@@ -158,12 +116,7 @@ class MetadataValidation:
 
 @dataclass(frozen=True)
 class MetadataValidateResult:
-    """The levels a ``metadata validate`` run checked.
-
-    Attributes:
-        recursive: True when the run walked the tree.
-        validations: One entry for each level that the run checked.
-    """
+    """The levels a ``metadata validate`` run checked."""
 
     recursive: bool
     validations: list[MetadataValidation]
@@ -198,27 +151,7 @@ def validate_metadata_files(
     *,
     recursive: bool = True,
 ) -> MetadataValidateResult:
-    """Validate the merged metadata.yaml at each catalog and collection level.
-
-    A recursive run checks only the levels that hold a metadata.yaml, and it
-    reports invalid YAML as a validation error of that level. A single-path run
-    checks the merged metadata of the start directory.
-
-    Args:
-        catalog_root: The catalog root.
-        path: The start directory, relative to the root. None selects the root.
-        recursive: If False, validate only the start directory.
-
-    Returns:
-        The validation errors of each level.
-
-    Raises:
-        InputValidationError: When ``path`` escapes the catalog root.
-        PathNotFoundError: When a recursive run starts at a missing path.
-        NotADirectoryError: When a recursive run starts at a file.
-        PermissionError: When the recursive walk cannot list a directory.
-        ConfigInvalidStructureError: When a single-path run reads invalid YAML.
-    """
+    """Validate the merged metadata.yaml at each catalog and collection level."""
     from portolan_cli.metadata_yaml import load_and_validate_metadata
     from portolan_core.errors import ConfigInvalidStructureError
 

@@ -16,25 +16,13 @@ if TYPE_CHECKING:
 
 
 def export_schema_json(schema: SchemaModel, path: Path) -> Path:
-    """Export schema to JSON file.
-
-    Args:
-        schema: SchemaModel to export.
-        path: Output file path (must end in .json).
-
-    Returns:
-        Path to written file.
-    """
+    """Export schema to JSON file."""
     write_json_atomic(path, schema.to_dict())
     return path
 
 
 def _write_sidecar_meta(schema: SchemaModel, path: Path) -> Path:
-    """Write schema metadata to a sidecar .meta.json file.
-
-    This preserves schema_version, format, crs, and statistics that
-    aren't stored in the columnar CSV/Parquet format.
-    """
+    """Write schema metadata to a sidecar .meta.json file."""
     meta_path = path.with_suffix(path.suffix + ".meta.json")
     meta = {
         "schema_version": schema.schema_version,
@@ -47,21 +35,7 @@ def _write_sidecar_meta(schema: SchemaModel, path: Path) -> Path:
 
 
 def export_schema_csv(schema: SchemaModel, path: Path) -> Path:
-    """Export schema columns to CSV file for editing.
-
-    The CSV format is a flat table with one row per column.
-    Only user-editable fields (description, unit, semantic_type) should be modified.
-
-    A sidecar .meta.json file is also written to preserve schema metadata
-    (schema_version, format, crs, statistics).
-
-    Args:
-        schema: SchemaModel to export.
-        path: Output file path (must end in .csv).
-
-    Returns:
-        Path to written file.
-    """
+    """Export schema columns to CSV file for editing."""
     # Determine fieldnames based on format
     if schema.format == "geoparquet":
         fieldnames = [
@@ -91,21 +65,7 @@ def export_schema_csv(schema: SchemaModel, path: Path) -> Path:
 
 
 def export_schema_parquet(schema: SchemaModel, path: Path) -> Path:
-    """Export schema columns to Parquet file for editing.
-
-    The Parquet format is a flat table with one row per column.
-    Useful for DuckDB/Pandas users who prefer working with Parquet.
-
-    Args:
-        schema: SchemaModel to export.
-        path: Output file path (must end in .parquet).
-
-    Returns:
-        Path to written file.
-
-    Raises:
-        ImportError: If pyarrow is not installed.
-    """
+    """Export schema columns to Parquet file for editing."""
     import pyarrow as pa
     import pyarrow.parquet as pq
 

@@ -1,4 +1,4 @@
-"""Raster sources to Cloud-Optimized GeoTIFF through rio-cogeo (#947)."""
+"""Raster sources to Cloud-Optimized GeoTIFF through rio-cogeo."""
 
 from __future__ import annotations
 
@@ -31,18 +31,14 @@ class CogHandler:
         return output_dir / f"{source.stem}.tif"
 
     def convert(self, source: Path, output_dir: Path, catalog_root: Path | None) -> Path:
-        """Convert, validate, and write a thumbnail.
-
-        The thumbnail is written only when the COG has none. A thumbnail that
-        a publisher made survives a re-add.
-        """
+        """Convert, validate, and write a thumbnail."""
         output = api.convert_raster(source, output_dir, catalog_root)
         self._check(output)
         api.write_raster_thumbnail(output, catalog_root)
         return output
 
     def reoptimize(self, source: Path, catalog_root: Path | None) -> Path:
-        """Rewrite a COG with the current settings (issue #530)."""
+        """Rewrite a COG with the current settings."""
         output = api.convert_raster(source, source.parent, catalog_root, reoptimize=True)
         self._check(output)
         api.write_raster_thumbnail(output, catalog_root)

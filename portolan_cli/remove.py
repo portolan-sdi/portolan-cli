@@ -24,19 +24,11 @@ logger = logging.getLogger(__name__)
 
 
 class SafetyError(Exception):
-    """A removal that deletes files and has no ``force``.
-
-    It is not a ``PortolanError``, so its message has no code prefix. The
-    ``rm`` envelope keeps the type and the message that it reported before.
-    """
+    """A removal that deletes files and has no ``force``."""
 
 
 def require_force(*, keep: bool, dry_run: bool, force: bool) -> None:
-    """Refuse a removal that deletes files when ``force`` is not set.
-
-    Raises:
-        SafetyError: If ``keep``, ``dry_run``, and ``force`` are all False.
-    """
+    """Refuse a removal that deletes files when ``force`` is not set."""
     if not (keep or dry_run or force):
         raise SafetyError(
             "Destructive rm requires --force flag. "
@@ -45,17 +37,7 @@ def require_force(*, keep: bool, dry_run: bool, force: bool) -> None:
 
 
 def _gather_removable_files(path: Path) -> list[Path]:
-    """Expand a removal target into the concrete files it covers.
-
-    Directories expand to every file beneath them; single files are paired with
-    their sidecars (e.g. ``.dbf``/``.shx``/``.prj``).
-
-    Args:
-        path: A file or directory passed to ``remove_files``.
-
-    Returns:
-        List of candidate file paths to untrack/delete.
-    """
+    """Expand a removal target into the concrete files it covers."""
     if path.is_dir():
         return [f for f in path.rglob("*") if f.is_file()]
 
@@ -64,26 +46,7 @@ def _gather_removable_files(path: Path) -> list[Path]:
 
 
 def _resolve_collection_dir(file_path: Path, catalog_root: Path) -> Path | None:
-    """Find the collection directory that owns ``file_path``.
-
-    Walks up from the file to the catalog root and returns the nearest ancestor
-    carrying a ``collection.json`` or a ``versions.json``. That covers every
-    layout in one pass: a collection-level asset (the file's own parent), an
-    item or Hive-partition asset (one level further up), and a collection nested
-    under a subcatalog, where the id spans several path segments.
-
-    ``resolve_collection_id`` returns only the *first* component, so deriving the
-    directory from it pointed ``rm`` at ``{catalog_root}/climate/`` for a file in
-    ``climate/hittekaart/``. No versions.json sits there, so the removal silently
-    skipped untracking (issue #723).
-
-    Args:
-        file_path: File being removed.
-        catalog_root: Root directory of the catalog.
-
-    Returns:
-        The collection directory, or None if no marker is found below the root.
-    """
+    """Find the collection directory that owns ``file_path``."""
     root = catalog_root.resolve()
     current = file_path.resolve().parent
     while current != root:
@@ -104,28 +67,10 @@ def _remove_one_file(
     keep: bool,
     dry_run: bool,
 ) -> bool:
-    """Untrack (and optionally delete) a single file.
-
-    A file that is gone from disk is still untracked, so ``rm`` can drop a
-    tracked asset that a user already deleted (issue #803). The delete step has
-    nothing to delete, so it is skipped. A path that is neither on disk nor
-    tracked is a no-op and reports as skipped.
-
-    Args:
-        file_path: File to remove.
-        catalog_root: Root directory of the catalog.
-        keep: If True, preserve the file on disk (only untrack).
-        dry_run: If True, do not mutate anything.
-
-    Returns:
-        True if the file was removed (or would be, in dry-run), False if skipped.
-    """
+    """Untrack (and optionally delete) a single file."""
     file_missing = not file_path.exists()
 
-    # Refuse to delete symlinks - they might point outside the catalog and
-    # deleting them could have unintended consequences. Users should resolve
-    # symlinks manually or use --keep to just untrack. A missing path is never a
-    # symlink, so this guard only affects files present on disk.
+    # Refuse to delete a symlink: it may point outside the catalog.
     if file_path.is_symlink() and not keep:
         return False
 
@@ -135,24 +80,14 @@ def _remove_one_file(
     except ValueError:
         return False
 
-    # The owning collection is found by walking up from the file, because a
-    # collection id can span several path segments and `resolve_collection_id`
-    # returns only the first (#723). Fall back to that first component when no
-    # marker is found; nothing is tracked there either way.
     collection_dir = _resolve_collection_dir(file_path, catalog_root) or catalog_root / coll_id
     versions_path = collection_dir / "versions.json"
 
     if dry_run:
-        # A file that is gone from disk is only removable when it is still
-        # tracked. Otherwise the preview reports a phantom removal (#803).
         if file_missing:
             return _file_is_tracked(file_path, versions_path)
         return True
 
-    # The STAC item lives in the file's PARENT directory (issue #602): a Hive
-    # partition dir (`kdtree_cell=…/`) or a nested item dir whose name is the
-    # parent, NOT the file stem, as `add` sets `item_dir = path.parent`. A file
-    # directly in the collection dir has no item dir to remove.
     item_dir = file_path.parent
     drops_item_dir = (
         not keep
@@ -169,9 +104,6 @@ def _remove_one_file(
     if (file_missing or not keep) and not drops_item_dir:
         _drop_collection_assets(collection_dir, [file_path, *get_sidecars(file_path)])
 
-    # A path that is gone from disk untracks only. There is nothing to delete,
-    # so a path that is neither on disk nor tracked is a no-op we report as
-    # skipped (#803).
     if file_missing:
         return untracked
 
@@ -223,23 +155,7 @@ def remove_files(
     keep: bool = False,
     dry_run: bool = False,
 ) -> tuple[list[Path], list[Path]]:
-    """Remove files from Portolan catalog tracking.
-
-    This is the main entry point for the `portolan rm` command.
-    By default, deletes the file AND removes from tracking (git-style).
-    With keep=True, removes from tracking but preserves the file.
-
-    Args:
-        paths: List of paths to remove (files or directories).
-        catalog_root: Root directory of the catalog.
-        keep: If True, preserve file on disk (only untrack).
-        dry_run: If True, preview what would be removed without actually removing.
-
-    Returns:
-        Tuple of (removed_paths, skipped_paths).
-        removed_paths: Paths that were removed from tracking.
-        skipped_paths: Paths that were skipped (not in catalog, errors).
-    """
+    """Remove files from Portolan catalog tracking."""
     removed: list[Path] = []
     skipped: list[Path] = []
 
@@ -251,9 +167,6 @@ def remove_files(
             (removed if was_removed else skipped).append(file_path)
 
     if removed and not dry_run:
-        # The repair that follows a check --fix item write: the item links, the
-        # extent and summaries, and the items.parquet mirror follow the members
-        # that remain (issue #801), so rm equals a fresh build of the rest.
         from portolan_cli.validation.fixers import repair_written_items
 
         for result in repair_written_items(catalog_root, removed, dry_run=False):
@@ -265,15 +178,7 @@ def remove_files(
 
 @dataclass(frozen=True)
 class RemoveResult:
-    """The outcome of ``portolan rm``.
-
-    Attributes:
-        removed: The files that left tracking, or would leave it in a dry run.
-        skipped: The files that stayed, because they are outside the catalog,
-            not tracked, or a symlink.
-        kept_on_disk: True when the files stay on disk.
-        dry_run: True when nothing changed.
-    """
+    """The outcome of ``portolan rm``."""
 
     removed: list[Path]
     skipped: list[Path]
@@ -298,25 +203,7 @@ def remove_path(
     dry_run: bool = False,
     force: bool = False,
 ) -> RemoveResult:
-    """Remove one file or directory from the catalog.
-
-    This is the library function of ``portolan rm``.
-
-    Args:
-        path: The file or directory. A relative path resolves against the
-            working directory.
-        catalog_root: Root directory of the catalog.
-        keep: If True, preserve the files on disk (only untrack).
-        dry_run: If True, report what would be removed and change nothing.
-        force: Allow a removal that deletes files from disk.
-
-    Returns:
-        The removed and skipped files.
-
-    Raises:
-        SafetyError: If the removal deletes files and ``force`` is False.
-        ValueError: If a versions.json is not valid.
-    """
+    """Remove one file or directory from the catalog."""
     require_force(keep=keep, dry_run=dry_run, force=force)
     removed, skipped = remove_files(
         paths=[path.resolve()], catalog_root=catalog_root, keep=keep, dry_run=dry_run
@@ -325,11 +212,7 @@ def remove_path(
 
 
 def _versions_catalog_root(versions_path: Path) -> Path:
-    """Resolve the catalog root that hrefs in ``versions_path`` are relative to.
-
-    Falls back to the collection's grandparent when no ``.portolan`` sentinel is
-    found (e.g. a bare test catalog without ``catalog.json``).
-    """
+    """Resolve the catalog root that hrefs in ``versions_path`` are relative to."""
     from portolan_cli.catalog import find_catalog_root
 
     catalog_root = find_catalog_root(versions_path.parent)
@@ -339,18 +222,7 @@ def _versions_catalog_root(versions_path: Path) -> Path:
 
 
 def _matching_asset_keys(file_path: Path, version: Version, catalog_root: Path) -> set[str]:
-    """Return the asset keys in ``version`` that track ``file_path``.
-
-    Match on the tracked asset's href, not a key reconstructed from the file
-    stem. Hrefs are catalog-root-relative and POSIX and already encode the
-    true item directory that add used as the key prefix when it staged the version
-    ("{collection_id}/{item_id}/{filename}", or "{collection_id}/{filename}"
-    for collection-level assets). Reconstructing "{stem}/{filename}" is wrong
-    for every layout where the item dir name != the file stem — every real
-    Hive partition ("kdtree_cell=.../data.parquet") and nested item dir
-    (issue #589). Href matching is also unique per file, so it can't
-    over-match a sibling item that happens to share a filename.
-    """
+    """Return the asset keys in ``version`` that track ``file_path``."""
     try:
         target_href = file_path.resolve().relative_to(catalog_root.resolve()).as_posix()
     except ValueError:
@@ -359,9 +231,6 @@ def _matching_asset_keys(file_path: Path, version: Version, catalog_root: Path) 
 
     keys = {name for name, asset in version.assets.items() if asset.href == target_href}
 
-    # Convert-on-add: a non-cloud-native source (e.g. roads.shp) is tracked as
-    # its converted roads.parquet. Removing the source must still untrack the
-    # parquet, or it becomes a phantom entry.
     if not keys and file_path.suffix and file_path.suffix != ".parquet":
         parquet_href = (
             file_path.resolve()
@@ -390,20 +259,7 @@ def _file_is_tracked(file_path: Path, versions_path: Path) -> bool:
 def _remove_from_versions(
     file_path: Path, versions_path: Path, *, siblings: Iterable[Path] = ()
 ) -> bool:
-    """Remove a file from version tracking via the active backend.
-
-    This creates a new version entry without the specified file.
-
-    Args:
-        file_path: Path to the file to untrack.
-        versions_path: Path to the versions.json file.
-        siblings: Other files that leave with ``file_path``, untracked in the
-            same version.
-
-    Returns:
-        True if the file was tracked and a removal version was published.
-        False if nothing matched (no new version).
-    """
+    """Remove a file from version tracking via the active backend."""
     if not versions_path.exists():
         return False
 

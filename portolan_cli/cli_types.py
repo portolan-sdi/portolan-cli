@@ -1,8 +1,4 @@
-"""Click parameter types for the CLI layer.
-
-These types import Click, so they live outside the library modules they wrap.
-``temporal.parse_flexible_datetime`` does the parsing (#947).
-"""
+"""Click parameter types for the CLI layer."""
 
 from __future__ import annotations
 
@@ -14,14 +10,7 @@ from portolan_cli.temporal import parse_flexible_datetime
 
 
 class FlexibleDateTime(click.ParamType["datetime | None"]):
-    """Click parameter type for flexible datetime parsing.
-
-    Accepts multiple formats and returns None for empty input.
-
-    ``ParamType`` is generic in the converted value from click 8.4 on; the
-    parameter is a string annotation because the class is not subscriptable at
-    runtime in that release's stubs-only form.
-    """
+    """Click parameter type for flexible datetime parsing."""
 
     name = "datetime"
 

@@ -1,28 +1,4 @@
-"""STAC GeoParquet item mirrors for efficient collection queries.
-
-This module generates the ``items.parquet`` item mirror, enabling efficient
-spatial/temporal queries without N HTTP requests (issue #319, reshaped by
-issue #654 to match the ratified spec).
-
-Per PORTO-FMT-040..043:
-- The mirror SHOULD be published for every item-bearing collection; the spec
-  applies no item-count threshold, so generation defaults on and gates only
-  on ``parquet.enabled`` and a non-zero item count.
-- Registration is a single collection-level asset carrying media type
-  ``application/vnd.apache.parquet`` and the role ``collection-mirror``.
-  That registration is the whole requirement; no ``rel: "items"`` link is
-  written, and a legacy link is removed on refresh.
-- ``items.parquet`` is tracked in versions.json so push detects changes.
-
-Usage:
-    from portolan_cli.stac_parquet import (
-        generate_items_parquet,
-        register_mirror_asset,
-    )
-
-    parquet_path = generate_items_parquet(collection_path)
-    register_mirror_asset(collection_path)
-"""
+"""STAC GeoParquet item mirrors for efficient collection queries."""
 
 from __future__ import annotations
 
@@ -58,17 +34,7 @@ PARQUET_MEDIA_TYPE = "application/vnd.apache.parquet"
 
 
 def count_items(collection_path: Path) -> int:
-    """Count items in a collection from collection.json links.
-
-    Args:
-        collection_path: Path to collection directory containing collection.json.
-
-    Returns:
-        Number of items (links with rel="item").
-
-    Raises:
-        FileNotFoundError: If collection.json doesn't exist.
-    """
+    """Count items in a collection from collection.json links."""
     collection_json_path = collection_path / "collection.json"
     if not collection_json_path.exists():
         raise FileNotFoundError(f"collection.json not found in {collection_path}")
@@ -77,18 +43,7 @@ def count_items(collection_path: Path) -> int:
 
 
 def has_mirror_asset(collection_path: Path) -> bool:
-    """Check if collection.json registers the item mirror.
-
-    The canonical registration is the collection-level asset; a legacy
-    ``rel="items"`` link written by an older CLI also counts so a legacy
-    catalog is recognized as mirrored before its next refresh.
-
-    Args:
-        collection_path: Path to collection directory.
-
-    Returns:
-        True if the mirror asset (or a legacy link) exists.
-    """
+    """Check if collection.json registers the item mirror."""
     collection_json_path = collection_path / "collection.json"
     if not collection_json_path.exists():
         return False
@@ -113,18 +68,7 @@ def has_mirror_asset(collection_path: Path) -> bool:
 
 
 def _load_item_dicts(collection_path: Path, owned: list[tuple[str, Path]]) -> list[dict[str, Any]]:
-    """Load all STAC item dictionaries from a collection.
-
-    Args:
-        collection_path: Path to collection directory.
-        owned: The ``(href, path)`` pairs of the items the collection owns.
-
-    Returns:
-        List of STAC item dictionaries.
-
-    Raises:
-        ValueError: If no items found.
-    """
+    """Load all STAC item dictionaries from a collection."""
     if not owned:
         raise ValueError(f"No items found in collection at {collection_path}")
 
@@ -160,13 +104,7 @@ _SOURCE_FINGERPRINT = "items.parquet.source_fingerprint"
 
 
 def _items_fingerprint(owned: list[tuple[str, Path]]) -> str | None:
-    """Hash each item's href, size, mtime and POSIX status-change time, in link order.
-
-    POSIX ctime catches same-size edits with restored mtimes. On Windows it
-    is creation time, so that platform retains the size/mtime limitation.
-
-    Returns None when an item file is missing, so the build runs and reports it.
-    """
+    """Hash each item's href, size, mtime and POSIX status-change time, in link order."""
     digest = hashlib.sha256()
     for href, item_path in owned:
         try:
@@ -179,11 +117,7 @@ def _items_fingerprint(owned: list[tuple[str, Path]]) -> str | None:
 
 
 def _mirror_is_current(run: RunState, collection_path: Path, fingerprint: str) -> bool:
-    """Whether the latest version records this mirror, built from these item files.
-
-    The record must hold the same item fingerprint, and the file must still hold
-    the recorded bytes. A file that another writer replaced fails the second test.
-    """
+    """Whether the latest version records this mirror, built from these item files."""
     from portolan_core.versions import versions_asset_key
 
     output_path = collection_path / PARQUET_FILENAME
@@ -196,12 +130,7 @@ def _mirror_is_current(run: RunState, collection_path: Path, fingerprint: str) -
 
 
 def _spatially_ordered(table: pa.Table) -> pa.Table:
-    """Put the item rows in Hilbert order, which PTL-DAT-006 requires.
-
-    The rows otherwise follow the link order of the collection, which is
-    rarely spatial. geoparquet-io sorts the rows and keeps the schema and its
-    metadata, so stac-geoparquet writes the same columns.
-    """
+    """Put the item rows in Hilbert order, which PTL-DAT-006 requires."""
     from geoparquet_io.api.table import Table
 
     ordered: pa.Table = Table(table, geometry_column="geometry").sort_hilbert().to_arrow()
@@ -209,37 +138,7 @@ def _spatially_ordered(table: pa.Table) -> pa.Table:
 
 
 def generate_items_parquet(collection_path: Path, *, state: RunState | None = None) -> Path:
-    """Generate items.parquet from STAC items in a collection.
-
-    Uses stac-geoparquet to convert all STAC items to GeoParquet format,
-    enabling efficient spatial/temporal queries.
-
-    The versions.json record of ``items.parquet`` holds a fingerprint of the
-    owned item files: href, size, mtime, and POSIX ctime, in link order. When the record
-    holds the fingerprint of the files now, and the file holds the recorded
-    bytes, the mirror is current. Then this returns with no item read and no
-    write (issue #995). A collection with no record always builds.
-
-    The fingerprint goes into the memo of the run.
-    :func:`track_parquet_in_versions` reads it from there and records it. The
-    Parquet file holds only the stac-geoparquet metadata. A footer key would
-    need a private stac-geoparquet helper, because ``to_parquet`` replaces all
-    schema metadata.
-
-    Args:
-        collection_path: Path to collection directory containing collection.json
-            and item subdirectories.
-        state: The run state. Pass the state that the call to
-            :func:`track_parquet_in_versions` uses, or the record gets no
-            fingerprint and the next run builds again.
-
-    Returns:
-        Path to generated items.parquet file.
-
-    Raises:
-        ValueError: If no items found in collection.
-        ImportError: If stac-geoparquet not installed.
-    """
+    """Generate items.parquet from STAC items in a collection."""
     try:
         import stac_geoparquet.arrow
     except ImportError as e:
@@ -268,11 +167,7 @@ _FILE_FIELDS = ("file:size", "file:checksum")
 
 
 def _strip_file_fields(asset: dict[str, Any]) -> bool:
-    """Drop both file fields, reporting whether either was there to drop.
-
-    Tests membership rather than the popped value, so a field written as JSON
-    ``null`` still counts as a change and the caller still writes the file.
-    """
+    """Drop both file fields, reporting whether either was there to drop."""
     present = [name for name in _FILE_FIELDS if name in asset]
     for name in present:
         del asset[name]
@@ -280,11 +175,7 @@ def _strip_file_fields(asset: dict[str, Any]) -> bool:
 
 
 def _is_relative_href(href: object) -> TypeGuard[str]:
-    """Whether an href is a relative path before and after it decodes.
-
-    ``resolve_href`` decodes the href, so ``%2Fdata%2Fx.parquet`` names an
-    absolute path. The check reads both spellings for that reason.
-    """
+    """Whether an href is a relative path before and after it decodes."""
     return (
         isinstance(href, str)
         and bool(href)
@@ -298,39 +189,7 @@ def _is_relative_href(href: object) -> TypeGuard[str]:
 def stamp_file_fields(
     asset: dict[str, Any], base_dir: Path, *, state: RunState | None = None
 ) -> bool:
-    """Refresh ``file:size``/``file:checksum`` from the bytes the asset points at.
-
-    Public because ``viz.style`` stamps style assets the same way. The rule is one
-    canonical home for the claim, so both writers share this function rather than
-    each hashing on its own terms.
-
-    PORTO-CORE-028 makes the fields a SHOULD, so their absence is only a
-    PTL-AST-003 warning. PORTO-CORE-030 makes a *published* value a claim about
-    the bytes the href resolves to, and rashid's data pass reports a mismatch as
-    an error. A stale value is therefore worse than no value, which is why a
-    vanished file strips the fields instead of leaving them behind.
-
-    Only a relative href that resolves to nothing is proof the claim is false.
-    Everything else is unverifiable rather than wrong, so it is left untouched:
-    an absolute or remote href points at bytes this process cannot read, and a
-    directory (a FileGDB asset) is measured by ``compute_dir_checksum`` elsewhere.
-    Deleting a value on that evidence would destroy metadata the operator
-    supplied. ``_local_asset_path`` in ``validation.fixers`` skips the same hrefs
-    for the same reason.
-
-    Reads each asset's own href rather than assuming ``items.parquet``: the caller
-    matches by asset key as well as by href, so an asset keyed ``geoparquet-items``
-    may legitimately point somewhere else, and must not inherit another file's digest.
-
-    Args:
-        asset: STAC asset dict, mutated in place.
-        base_dir: Directory holding the collection.json that owns the asset.
-        state: The run state. Its memo hashes each file once per run.
-
-    Returns:
-        Whether the asset changed, so the caller writes collection.json only when
-        there is something to write.
-    """
+    """Refresh ``file:size``/``file:checksum`` from the bytes the asset points at."""
     href = asset.get("href")
     if not _is_relative_href(href):
         return False
@@ -362,16 +221,7 @@ def _declares_file_fields(assets: Any) -> bool:
 
 
 def _items_declare_file_fields(collection_json_path: Path) -> bool:
-    """Whether any item the collection owns carries a ``file:`` field on an asset.
-
-    Read from the items themselves rather than from a count beside them: the
-    ``portolan:asset_count`` tally this used to consult is gone (issue #654),
-    and a tally can be stale in a way the items cannot.
-
-    The caller checks the collection's own assets first, so this walk only runs
-    for a collection that has already lost every ``file:`` field of its own —
-    the rare case, not the routine one.
-    """
+    """Whether any item the collection owns carries a ``file:`` field on an asset."""
     for _href, item_path in owned_item_hrefs(collection_json_path):
         try:
             item = json.loads(item_path.read_text(encoding="utf-8"))
@@ -385,36 +235,7 @@ def _items_declare_file_fields(collection_json_path: Path) -> bool:
 def sync_file_extension(
     data: dict[str, Any], assets: dict[str, Any], collection_json_path: Path
 ) -> bool:
-    """Declare the STAC file extension while an asset uses it, withdraw it after.
-
-    Public alongside :func:`stamp_file_fields`, and called by ``viz.style`` for
-    the same reason: an asset that carries ``file:`` fields obliges the
-    collection to declare the extension, whichever writer stamped it.
-
-    ``stac.declare_file_extension`` does this for the add and finalize paths, but
-    it needs a ``pystac.Collection`` and this module works on raw JSON on purpose
-    (pystac ``to_dict()`` can write absolute local paths into links).
-
-    ``collection_thumbnail.register_collection_thumbnail`` needs the same logic
-    too: it writes ``file:size`` and ``file:checksum`` on the thumbnail after
-    both other writers have run, so a collection whose only ``file:``-bearing
-    asset is the thumbnail carried the fields without the declaration (#654).
-
-    Withdrawal matters because :func:`stamp_file_fields` strips the fields when
-    the mirror disappears, which can leave the collection declaring an extension
-    nothing uses. Both writers scope the question the same way — the collection's
-    own assets *and* its items' — so neither withdraws a URI the other is about
-    to redeclare, and they stop trading edits on collection.json.
-
-    Args:
-        data: Parsed collection.json, mutated in place.
-        assets: The collection's asset dicts.
-        collection_json_path: Path to the collection.json ``data`` came from,
-            used to reach the items it owns.
-
-    Returns:
-        Whether the extension list changed.
-    """
+    """Declare the STAC file extension while an asset uses it, withdraw it after."""
     from portolan_cli.stac import EXTENSION_URLS
 
     extensions = data.get("stac_extensions")
@@ -441,21 +262,7 @@ def sync_file_extension(
 
 
 def declare_extensions_in_use(document: dict[str, Any]) -> bool:
-    """Declare the file and table extensions whose fields one STAC document uses.
-
-    Issue #1037: items carried ``file:size``, ``file:checksum`` and
-    ``table:column_statistics`` while only their collection declared the URIs.
-    A reader validates each document against the extensions it declares, so
-    every document declares its own. Only the document's own fields count: its
-    top level, its ``properties``, and its assets. The call never withdraws a
-    URI. :func:`sync_file_extension` owns the withdrawal on a collection.
-
-    Args:
-        document: A parsed item or collection, mutated in place.
-
-    Returns:
-        Whether ``stac_extensions`` changed.
-    """
+    """Declare the file and table extensions whose fields one STAC document uses."""
     from portolan_cli.stac import EXTENSION_URLS
 
     holders: list[Any] = [document, document.get("properties")]
@@ -494,23 +301,7 @@ def _is_selected(asset: dict[str, Any], base_dir: Path, only: AbstractSet[Path] 
 def restamp_collection_assets(
     collection_dir: Path, *, only: AbstractSet[Path] | None = None
 ) -> bool:
-    """Stamp ``file:size``/``file:checksum`` on the local assets of a collection.
-
-    The one pass for a writer that changed files under a collection, such as
-    ``readme`` (issue #930). It walks collection.json and every item the
-    collection owns, stamps each asset with :func:`stamp_file_fields`, and
-    declares the extensions each document uses. A document is written only
-    when it changed.
-
-    Args:
-        collection_dir: Directory that holds collection.json.
-        only: Stamp only the assets whose href resolves to one of these files.
-            A stamp hashes every byte, so a writer that changed one file names
-            it. None stamps every asset.
-
-    Returns:
-        Whether any document changed.
-    """
+    """Stamp ``file:size``/``file:checksum`` on the local assets of a collection."""
     collection_json = collection_dir / "collection.json"
     if not collection_json.is_file():
         return False
@@ -547,24 +338,7 @@ def restamp_collection_assets(
 
 
 def register_mirror_asset(collection_path: Path, *, state: RunState | None = None) -> None:
-    """Register the item mirror as a collection-level asset in collection.json.
-
-    The asset carries media type ``application/vnd.apache.parquet`` and the
-    role ``collection-mirror`` (PORTO-FMT-041, rashid PTL-MIR-002). That
-    single registration is the whole requirement; the spec asks for no
-    companion link, so a legacy ``rel="items"`` link written by an older CLI
-    is removed, and the undefined community role ``stac-items`` is dropped
-    from a legacy asset (issue #654).
-
-    Idempotent - won't duplicate if already present.
-
-    Args:
-        collection_path: Path to collection directory.
-        state: The run state. Its memo hashes ``items.parquet`` once per run.
-
-    Raises:
-        FileNotFoundError: If collection.json doesn't exist.
-    """
+    """Register the item mirror as a collection-level asset in collection.json."""
     collection_json_path = collection_path / "collection.json"
     if not collection_json_path.exists():
         raise FileNotFoundError(f"collection.json not found in {collection_path}")
@@ -588,10 +362,7 @@ def register_mirror_asset(collection_path: Path, *, state: RunState | None = Non
     assets = data.get("assets", {})
     asset_key = "geoparquet-items"
 
-    # Match by key or by href, then set every match to the spec role. A catalog
-    # written before "collection-mirror" existed has only the community role
-    # "stac-items", which PTL-MIR-002 flags. An older asset scan also gave the
-    # mirror the "data" role, which made it a tile source.
+    # Match by key or href and set every match to the spec role (PTL-MIR-002).
     matching = [
         asset
         for key, asset in assets.items()
@@ -602,9 +373,7 @@ def register_mirror_asset(collection_path: Path, *, state: RunState | None = Non
             if asset.get("roles") != [ROLE_COLLECTION_MIRROR]:
                 asset["roles"] = [ROLE_COLLECTION_MIRROR]
                 modified = True
-            # Refresh, do not skip: generate_items_parquet overwrote the bytes
-            # moments ago, so an asset carried over from an earlier run describes
-            # a file that no longer exists in that form.
+            # Refresh, do not skip: a carried-over asset describes bytes that were just rewritten.
             if stamp_file_fields(asset, collection_path, state=state):
                 modified = True
     else:
@@ -628,17 +397,7 @@ def register_mirror_asset(collection_path: Path, *, state: RunState | None = Non
 
 
 def remove_mirror_from_collection(collection_path: Path) -> bool:
-    """Remove the item mirror registration from collection.json.
-
-    Removes the collection-level asset and any legacy ``rel="items"`` link
-    an older CLI may have written.
-
-    Args:
-        collection_path: Path to collection directory.
-
-    Returns:
-        True if link or asset was removed, False if neither existed.
-    """
+    """Remove the item mirror registration from collection.json."""
     collection_json_path = collection_path / "collection.json"
     if not collection_json_path.exists():
         return False
@@ -692,38 +451,7 @@ def track_parquet_in_versions(
     amend_latest: bool = False,
     state: RunState | None = None,
 ) -> None:
-    """Stage items.parquet in versions.json so push detects changes.
-
-    The record goes into the run state, so the run commits one version for the
-    collection. The checksum comes from the memo of the run, so
-    ``items.parquet`` is hashed once per run (issue #995). On a plugin backend,
-    the record goes to the local ``versions.json`` at once, as before #995. The
-    plugin never gets the mirror, because it reads each Parquet asset as data.
-
-    A mirror whose bytes are already tracked in the latest snapshot is a
-    no-op: regenerating identical content records no new user intent, so it
-    must not bump anything (the #683 double-versioning family). With
-    ``amend_latest``, the record of the same bytes takes the new mtime and item
-    fingerprint, because the version is the one this command writes.
-
-    The item fingerprint comes from the memo of the run, where
-    :func:`generate_items_parquet` puts it. A run that did not build the
-    mirror records no fingerprint.
-
-    Args:
-        collection_path: Path to collection directory.
-        catalog_root: Catalog root for catalog-root-relative hrefs. Defaults
-            to the collection's parent, which is correct for top-level
-            collections.
-        amend_latest: Fold the mirror into the version the caller just wrote
-            (the add flow) instead of creating a new one. Leave False when
-            the latest version may already be published.
-        state: The run state. Without one, the call opens its own and
-            commits it.
-
-    Raises:
-        FileNotFoundError: If items.parquet doesn't exist.
-    """
+    """Stage items.parquet in versions.json so push detects changes."""
     from portolan_cli.version_ops import owned_run
     from portolan_core.versions import generated_asset_record, track_generated_assets
 
@@ -765,15 +493,7 @@ def track_parquet_in_versions(
 
 @dataclass
 class MirrorReport:
-    """The outcome of one ``generate_parquet_mirrors`` run.
-
-    The function returns this report and writes no terminal output. The caller
-    reports it, so a library caller does not load Click (issue #944).
-
-    Attributes:
-        generated: Collection IDs that received a new ``items.parquet``.
-        failed: Collection IDs whose default generation failed, with the error.
-    """
+    """The outcome of one ``generate_parquet_mirrors`` run."""
 
     generated: list[str] = field(default_factory=list)
     failed: dict[str, Exception] = field(default_factory=dict)
@@ -787,34 +507,7 @@ def generate_parquet_mirrors(
     versioned_collections: set[str] | None = None,
     state: RunState | None = None,
 ) -> MirrorReport:
-    """Generate the item mirror for each affected item-bearing collection.
-
-    PORTO-FMT-040 says the mirror SHOULD be published, and the spec applies
-    no item-count threshold, so generation defaults on. For each affected
-    collection the only gates are:
-
-    - ``parquet.enabled`` (hierarchical lookup, default true) as the opt-out;
-      the explicit ``--stac-geoparquet`` flag overrides it.
-    - A non-zero item count: a collection with only collection-level assets
-      has no items to mirror.
-
-    Generation always runs regardless of output mode so the JSON envelope
-    reflects the final state. An explicitly-requested generation that fails
-    re-raises. A default-generation failure goes into the report.
-
-    Args:
-        catalog_root: Catalog root directory.
-        affected_collections: Collection IDs modified by the add command.
-        generate_parquet: Whether ``--stac-geoparquet`` was passed.
-        versioned_collections: Collections the add command wrote a version
-            for in this run. Their mirror folds into that snapshot instead
-            of bumping a second version (one add is one version, #683).
-        state: The run state. Without one, the call opens its own and
-            commits it when every collection is done.
-
-    Returns:
-        The collections that got a mirror and the ones that failed.
-    """
+    """Generate the item mirror for each affected item-bearing collection."""
     report = MirrorReport()
     if not affected_collections:
         return report
@@ -856,17 +549,7 @@ def generate_parquet_mirrors(
 
 
 def collections_with_items(catalog_root: Path) -> list[str]:
-    """Find all collections that own STAC items.
-
-    Ownership includes the items an organizing catalog groups beneath a
-    collection (core.md:168-170).
-
-    Args:
-        catalog_root: Path to the catalog root directory.
-
-    Returns:
-        Sorted list of collection IDs relative to catalog_root.
-    """
+    """Find all collections that own STAC items."""
     from portolan_core.stac_links import catalog_collections
 
     collections: list[str] = []
@@ -882,18 +565,7 @@ def collections_with_items(catalog_root: Path) -> list[str]:
 
 @dataclass(frozen=True)
 class CollectionMirrorResult:
-    """The outcome of ``portolan stac-geoparquet`` for one collection.
-
-    Attributes:
-        collection: Collection ID.
-        item_count: Items in the mirror.
-        parquet_path: Path of ``items.parquet``.
-        dry_run: True when nothing was written.
-        error: The type and the message that the envelope reports, or None.
-            A plain tuple, because push imports this module and must not
-            load ``json_output``.
-        error_summary: The line that the CLI prints for the failure.
-    """
+    """The outcome of ``portolan stac-geoparquet`` for one collection."""
 
     collection: str
     item_count: int = 0
@@ -914,13 +586,7 @@ class CollectionMirrorResult:
 
 @dataclass(frozen=True)
 class StacGeoparquetResult:
-    """The outcome of ``portolan stac-geoparquet``.
-
-    Attributes:
-        outcomes: One result per processed collection. A collection with no
-            items is skipped when the run covers the whole catalog.
-        error: A failure of the whole run, or None.
-    """
+    """The outcome of ``portolan stac-geoparquet``."""
 
     outcomes: list[CollectionMirrorResult] = field(default_factory=list)
     error: tuple[str, str] | None = None
@@ -997,20 +663,7 @@ def _mirror_collection(
 def generate_stac_geoparquet(
     catalog_root: Path, collection: str | None = None, *, dry_run: bool = False
 ) -> StacGeoparquetResult:
-    """Generate ``items.parquet`` for one collection, or for each item-bearing one.
-
-    Each collection gets its own run state, which commits when its mirror is
-    done. A failed collection commits nothing and goes into the result.
-
-    Args:
-        catalog_root: Catalog root directory.
-        collection: Collection ID, or None for each collection with items.
-        dry_run: Report what would be generated and write nothing.
-
-    Returns:
-        The outcome of each collection, or the error when the catalog holds no
-        collection with items.
-    """
+    """Generate ``items.parquet`` for one collection, or for each item-bearing one."""
     if collection is not None:
         targets = [collection]
     else:

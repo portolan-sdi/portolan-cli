@@ -1,15 +1,4 @@
-"""Conversion API for transforming files to cloud-native formats.
-
-This module provides the core conversion functionality for Portolan CLI:
-- ConversionStatus: Enum of possible conversion outcomes
-- ConversionResult: Result of a single file conversion
-- ConversionReport: Aggregate results from batch conversion
-- convert_file(): Convert a single file to cloud-native format
-- convert_directory(): Convert all files in a directory
-
-This module contains the logic; CLI commands are thin wrappers.
-Actual conversion is delegated to geoparquet-io and rio-cogeo.
-"""
+"""Conversion API for transforming files to cloud-native formats."""
 
 from __future__ import annotations
 
@@ -83,15 +72,7 @@ ResamplingMethod = Literal[
 
 
 class ConversionStatus(Enum):
-    """Possible outcomes of a file conversion operation.
-
-    Attributes:
-        SUCCESS: File was converted successfully and validated.
-        SKIPPED: File was already cloud-native, no conversion needed.
-        FAILED: Conversion threw an exception (original file preserved).
-        INVALID: Conversion completed but validation failed (output kept for inspection).
-        UNSUPPORTED: Format is not supported for conversion (not an error).
-    """
+    """Possible outcomes of a file conversion operation."""
 
     SUCCESS = "success"
     SKIPPED = "skipped"
@@ -102,19 +83,7 @@ class ConversionStatus(Enum):
 
 @dataclass
 class ConversionResult:
-    """Result of a single file conversion operation.
-
-    Attributes:
-        source: Path to the source file that was converted.
-        output: Path to the output file (None if conversion failed or skipped).
-        format_from: Display name of the source format (e.g., "SHP", "GeoJSON").
-        format_to: Display name of the target format (e.g., "GeoParquet", "COG").
-            None if skipped.
-        status: Outcome of the conversion operation.
-        error: Error message if conversion failed or validation failed.
-            None on success or skip.
-        duration_ms: Time taken for the conversion in milliseconds.
-    """
+    """Result of a single file conversion operation."""
 
     source: Path
     output: Path | None
@@ -125,12 +94,7 @@ class ConversionResult:
     duration_ms: int
 
     def to_dict(self) -> dict[str, Any]:
-        """Convert to a JSON-serializable dictionary.
-
-        Returns:
-            Dictionary with all fields, paths converted to strings,
-            and status converted to its string value.
-        """
+        """Convert to a JSON-serializable dictionary."""
         return {
             "source": str(self.source),
             "output": str(self.output) if self.output else None,
@@ -144,11 +108,7 @@ class ConversionResult:
 
 @dataclass
 class ConversionReport:
-    """Aggregate results from batch conversion operations.
-
-    Attributes:
-        results: List of ConversionResult from processing each file.
-    """
+    """Aggregate results from batch conversion operations."""
 
     results: list[ConversionResult]
 
@@ -183,11 +143,7 @@ class ConversionReport:
         return len(self.results)
 
     def to_dict(self) -> dict[str, Any]:
-        """Convert to a JSON-serializable dictionary.
-
-        Returns:
-            Dictionary with summary counts and full results array.
-        """
+        """Convert to a JSON-serializable dictionary."""
         return {
             "summary": {
                 "succeeded": self.succeeded,
@@ -207,29 +163,8 @@ def generate_cog_thumbnail(
     quality: int = 75,
     basemap_provider: str = "none",
 ) -> Path | None:
-    """Generate a JPEG thumbnail from a COG file (Issue #372).
-
-    Reads the lowest-resolution overview when available, downsamples to fit
-    within ``max_size`` pixels on the longest edge, and writes a JPEG next to
-    the COG. Per STAC best practices, this is the asset that should carry the
-    ``thumbnail`` role.
-
-    Args:
-        cog_path: Path to the source COG file.
-        max_size: Maximum pixel dimension for the longest edge (default 512).
-        quality: JPEG quality 1-100 (default 75).
-        basemap_provider: Unused. Raster thumbnails don't need basemaps because
-            the raster data fills the entire extent — a basemap underneath would
-            be invisible. Vector data needs basemaps because points/lines are
-            sparse and benefit from geographic context. See.
-
-    Returns:
-        Path to the written JPEG thumbnail, or None if the source could not be
-        read as a raster (e.g., corrupt file).
-    """
-    # Basemaps intentionally not supported for rasters:
-    # Raster data fills the extent, so a basemap would be hidden underneath.
-    # Vector thumbnails need basemaps because points/lines are sparse.
+    """Generate a JPEG thumbnail from a COG file."""
+    # No basemap for rasters: the raster fills the extent and hides it.
     if basemap_provider != "none":
         logger.debug("Basemap ignored for raster thumbnail (not needed)")
     try:
@@ -241,11 +176,7 @@ def generate_cog_thumbnail(
         logger.debug("rasterio/numpy not available, skipping thumbnail generation")
         return None
 
-    # `thumbnail_path_for` names it ".thumb.jpg" rather than ".jpg", so we leave
-    # a user-supplied sibling alone (e.g. hand-curated data.jpg next to
-    # data.tif). The extension stays .jpg, so _scan_item_assets assigns role
-    # "thumbnail". The vector render calls the same helper. One convention then
-    # names every thumbnail we write, and push recognizes it (Issue #735).
+    # `thumbnail_path_for` names it .thumb.jpg, so a user's data.jpg next to data.tif is left alone.
     thumb_path = thumbnail_path_for(cog_path)
 
     try:
@@ -260,9 +191,7 @@ def generate_cog_thumbnail(
             # Pick up to 3 bands for RGB; fall back to first band for grayscale
             indexes: list[int] = [1, 2, 3] if src.count >= _RGB_BAND_COUNT else [1]
 
-            # masked=True applies the dataset mask (nodata sentinels, alpha,
-            # internal mask band) so percentile stretch on float/int rasters
-            # ignores fill values like -9999.
+            # masked=True applies the dataset mask so the percentile stretch ignores nodata.
             masked = src.read(
                 indexes=indexes,
                 out_shape=(len(indexes), out_h, out_w),
@@ -288,9 +217,7 @@ def generate_cog_thumbnail(
                 # Fill masked samples with 0 (black) after stretch
                 data = np.clip(stretched.filled(0), 0, 255).astype("uint8")
 
-            # `indexes` reads 1 or 3 bands, the two counts JPEG takes. The
-            # driver reads the colour model from the band count, and rejects
-            # a PHOTOMETRIC creation option.
+            # `indexes` reads 1 or 3 bands, the counts JPEG takes; the driver rejects PHOTOMETRIC.
             profile = {
                 "driver": "JPEG",
                 "width": out_w,
@@ -317,17 +244,7 @@ def generate_cog_thumbnail(
 
 
 def _discover_style_for_thumbnail(collection_dir: Path) -> Path | None:
-    """Find a style file for thumbnail generation.
-
-    Searches for styles/default.json or styles/source.json in the collection
-    directory, preferring default.json (the extracted style, per Issue #497).
-
-    Args:
-        collection_dir: Path to collection directory.
-
-    Returns:
-        Path to style file if found, None otherwise.
-    """
+    """Find a style file for thumbnail generation."""
     styles_dir = collection_dir / "styles"
     if not styles_dir.exists():
         return None
@@ -350,13 +267,7 @@ def _early_exit_result(
     catalog_path: Path | None = None,
     state: RunState | None = None,
 ) -> ConversionResult | None:
-    """Return a SKIPPED/UNSUPPORTED result if no conversion should run, else None.
-
-    Cloud-native files are skipped, EXCEPT when ``force`` is set and the handler
-    has a ``reoptimize`` method. That case rewrites the file in place, so this
-    returns None to let conversion proceed. The caller picks which files to force.
-    Unsupported formats are accepted with no error.
-    """
+    """Return a SKIPPED/UNSUPPORTED result if no conversion should run, else None."""
     if format_info.status == CloudNativeStatus.CLOUD_NATIVE:
         # force re-optimizes a file whose handler can rewrite it.
         from portolan_cli.plugins.formats import handler_for
@@ -397,34 +308,7 @@ def convert_file(
     force: bool = False,
     state: RunState | None = None,
 ) -> ConversionResult:
-    """Convert a single file to cloud-native format.
-
-    Converts vector files to GeoParquet and raster files to COG.
-    Files that are already cloud-native are skipped.
-
-    Args:
-        source: Path to the source file to convert.
-        output_dir: Directory for the output file. If None, uses the same
-            directory as the source file.
-        catalog_path: Path to the catalog root for loading conversion config.
-            If None, uses the built-in defaults.
-        cog_settings: Explicit COG settings override. Takes precedence over
-            ``catalog_path``-loaded settings. If None, loads from
-            ``catalog_path`` or falls back to defaults.
-        vector_settings: Explicit vector settings override. Takes precedence over
-            ``catalog_path``-loaded settings. If None, loads from
-            ``catalog_path`` or falls back to no spatial optimization.
-        force: Rewrite an already-cloud-native file whose handler has a
-            ``reoptimize`` method, with the current settings. Has no effect on
-            CONVERTIBLE or UNSUPPORTED files.
-        state: The run state, which parses the config once per command.
-
-    Returns:
-        ConversionResult with conversion outcome, timing, and paths.
-
-    Raises:
-        FileNotFoundError: If the source file does not exist.
-    """
+    """Convert a single file to cloud-native format."""
     # Each footer read of the file goes through the run memo.
     with span("convert.file", file=source.name), run_scope(state):
         start_time = time.perf_counter()
@@ -434,8 +318,7 @@ def convert_file(
 
         from portolan_cli.plugins.formats import handler_for, plugin_handler_for
 
-        # A plugin format handler converts the formats it claims (#947). A built-in
-        # format, or a cloud-native file under force, first passes the cloud-native check.
+        # A plugin handler converts the formats it claims; built-in formats pass the cloud-native check first.
         handler = plugin_handler_for(source, catalog_path, state=state)
         reoptimize = False
         display_name = handler.display_name if handler is not None else ""
@@ -479,9 +362,7 @@ def convert_file(
                     if reoptimize
                     else _convert_partitioned_by_index(handler, source, out_dir, catalog_path)
                 )
-                # The size partition rule belongs to `add` only, as before #947.
-                # This path converts a source again on every run, and a second
-                # size partition into the same directory would collide.
+                # Size partitioning belongs to `add` only: this path reconverts every run and would collide.
                 output_path = partitioned or convert_with_handler(
                     handler, source, out_dir, catalog_path, reoptimize=reoptimize
                 )
@@ -559,28 +440,7 @@ def convert_with_handler(
     target: Path | None = None,
     state: RunState | None = None,
 ) -> Path:
-    """Convert ``source`` with its format handler. ``add`` and ``check --fix`` both call this.
-
-    The output never replaces a file that ``source`` did not write. See
-    :func:`claim_output`.
-
-    Args:
-        handler: The handler ``handler_for`` picked.
-        source: Source file.
-        output_dir: Directory for the converted file.
-        catalog_root: Catalog root, for settings.
-        reoptimize: Rewrite a file that is already cloud-native. Only a handler
-            with a ``reoptimize`` method supports it.
-        target: The output path that :func:`claim_output` gave. None claims it here.
-        state: The run state, for one hash per file and run.
-
-    Returns:
-        The converted file.
-
-    Raises:
-        InvalidOutputError: The converted file fails the handler's validation.
-        OutputExistsError: No output name is free of another file.
-    """
+    """Convert ``source`` with its format handler. ``add`` and ``check --fix`` both call this."""
     reoptimize_method = getattr(handler, "reoptimize", None)
     if reoptimize and reoptimize_method is not None:
         output: Path = reoptimize_method(source, catalog_root)
@@ -630,18 +490,7 @@ def _provenance_path(source: Path, state: RunState | None = None) -> tuple[str, 
 
 
 def with_provenance(table: Any, source: Path, *, require_geometry: bool = False) -> Any:
-    """Return a geoparquet-io table whose footer will name ``source``.
-
-    geoparquet-io 1.7.0 keeps the schema metadata keys of the table it writes
-    (gpio#1280), so the key reaches the file with no second write.
-
-    Args:
-        table: The table to write.
-        source: The file the table comes from.
-        require_geometry: Add no record to a table with no geometry. ``add``
-            deletes that output and tracks the source as a companion, so a
-            record would only cost a hash of the source.
-    """
+    """Return a geoparquet-io table whose footer will name ``source``."""
     from geoparquet_io.api.table import Table
 
     if not isinstance(table, Table):
@@ -688,15 +537,7 @@ def _recorded_source(output: Path) -> dict[str, object] | None:
 
 
 def _produced_by(output: Path, source: Path, state: RunState | None) -> bool | None:
-    """Report whether ``output`` is a file that a conversion of ``source`` wrote.
-
-    The provenance record decides. A file with no record is the source's when
-    it is a byte copy of it, such as a COG that ``convert_raster`` copied to
-    its ``.tif`` name.
-
-    Returns:
-        True or False when the file proves it, None when it carries no record.
-    """
+    """Report whether ``output`` is a file that a conversion of ``source`` wrote."""
     memo = state or current_run()
     recorded = (
         memo.memo("conversion.provenance", output, _recorded_source)
@@ -746,28 +587,7 @@ def distinct_output_path(source: Path, output: Path) -> Path:
 
 
 def claim_output(source: Path, output: Path, *, state: RunState | None = None) -> Path:
-    """Pick the path a conversion of ``source`` writes, so it replaces no other file.
-
-    A converter names its output after the source stem, so ``b1.csv`` and a
-    GeoParquet ``b1.parquet`` claim one name. A file at that name is the
-    source's to replace when its provenance record names the source. Any other
-    file can belong to the operator. The output then takes the name
-    ``<stem>-<source extension>``, such as ``b1-csv.parquet``, and the asset
-    key follows the new stem. A file with no record can be the output of a
-    0.8.0 add, or a file that the operator supplied. Nothing in the catalog
-    tells the two apart, so the conversion never replaces it.
-
-    Args:
-        source: The file to convert.
-        output: The path the converter names.
-        state: The run state, for one hash per file and run.
-
-    Returns:
-        ``output``, or the distinct name when ``output`` holds another file.
-
-    Raises:
-        OutputExistsError: Both names hold a file that ``source`` did not write.
-    """
+    """Pick the path a conversion of ``source`` writes, so it replaces no other file."""
     # A multilayer conversion prepares each new layer as its own input after
     # the container reserved it. An in-place input keeps its own name.
     if output.resolve() == source.resolve():
@@ -784,12 +604,7 @@ def claim_output(source: Path, output: Path, *, state: RunState | None = None) -
 
 
 def _batch_has_output_inputs(paths: list[Path], catalog_root: Path, state: RunState | None) -> bool:
-    """Report whether one batch input is also another input's possible output.
-
-    After a crash there may be no versions.json to filter out generated files.
-    Such inputs must run sequentially: a rewrite of the old output must never
-    race the conversion that replaces it with the source's current contents.
-    """
+    """Report whether one batch input is also another input's possible output."""
     from portolan_cli.formats import list_layers
     from portolan_cli.plugins.formats import handler_for
 
@@ -823,13 +638,7 @@ def _convert_to(
     catalog_root: Path | None,
     target: Path,
 ) -> Path:
-    """Convert ``source`` with its handler and store the output at ``target``.
-
-    The handler writes the name it derives, so it converts into a scratch
-    directory. Each file it writes moves to ``output_dir``, with the output
-    stem changed to the stem of ``target``. A side file whose new name holds a
-    file stays out, so the move replaces nothing but ``target``.
-    """
+    """Convert ``source`` with its handler and store the output at ``target``."""
     import shutil
     import tempfile
 
@@ -852,20 +661,7 @@ def _convert_to(
 def _convert_partitioned_by_index(
     handler: FormatHandler, source: Path, output_dir: Path, catalog_root: Path | None
 ) -> Path | None:
-    """Convert a vector source into Hive partitions by the configured spatial index.
-
-    Only ``check --fix`` does this, and only for the built-in GeoParquet
-    handler. ``add`` keeps one file with the index column. The partitions go
-    to ``<output_dir>/<stem>/``, so two sources in one directory cannot write
-    to the same cell.
-
-    Returns:
-        The partition directory, or None when the settings ask for no
-        partitions or the handler is not the built-in GeoParquet handler.
-
-    Raises:
-        InvalidOutputError: The partitions are not valid GeoParquet.
-    """
+    """Convert a vector source into Hive partitions by the configured spatial index."""
     from portolan_cli.plugins.formats import handler_named
     from portolan_cli.preparation import convert_vector
 
@@ -883,21 +679,15 @@ def _convert_partitioned_by_index(
     return output
 
 
-# A transient interrupt clears after one attempt. If a file fails all three,
-# the signal source is sustained. Find what delivers signals to the process
-# during the run, such as subprocess reaping or a timeout. Do not raise this
-# count.
+# A transient interrupt clears after one attempt; if three fail, find the signal source.
+# Do not raise this count.
 _CONVERT_MAX_ATTEMPTS = 3
 
 
 def write_raster_thumbnail(cog_path: Path, catalog_root: Path | None) -> None:
     """Write ``<stem>.thumb.jpg`` next to a COG when the COG settings ask for it.
 
-    A thumbnail that exists stays, so a re-add keeps a hand-made thumbnail.
-    Portolan cannot tell a hand-made thumbnail from one it wrote, so an old
-    thumbnail also stays after the imagery changes. Delete ``<stem>.thumb.jpg``
-    to make the next conversion write a new one. A thumbnail is optional, so a
-    failure only warns.
+    An existing thumbnail stays, so delete it to get a new one. A failure only warns.
 
     Args:
         cog_path: The COG.
@@ -917,20 +707,7 @@ def write_raster_thumbnail(cog_path: Path, catalog_root: Path | None) -> None:
 
 
 def _is_transient_conversion_error(exc: BaseException) -> bool:
-    """Return True for a transient DuckDB interrupt that is safe to retry.
-
-    ``geoparquet-io`` runs conversions through DuckDB, whose Python client raises
-    ``duckdb.InterruptException('Query interrupted')`` when a pending process
-    signal trips its per-query signal check. This is non-deterministic and
-    environment-driven (observed ~1 in 1000 files during bulk nightly ``add``
-    runs, on a different file each time) and the interrupt flag clears once the
-    exception is raised, so re-running the same conversion reliably succeeds.
-
-    We match by exception type name plus message rather than importing ``duckdb``
-    directly: it is a transitive dependency (via ``geoparquet-io``) that we do
-    not declare, and importing it here would break the deptry transitive-import
-    contract. Matching the name keeps the coupling at the string level.
-    """
+    """Return True for a transient DuckDB interrupt that is safe to retry."""
     return type(exc).__name__ == "InterruptException" or "query interrupted" in str(exc).lower()
 
 
@@ -942,29 +719,7 @@ def run_with_transient_convert_retry(
     *,
     source_name: str,
 ) -> _ConvertT:
-    """Run a DuckDB-backed conversion, retrying transient interrupts.
-
-    ``geoparquet-io`` runs conversions through DuckDB, which can raise a
-    transient ``InterruptException('Query interrupted')`` (see
-    :func:`_is_transient_conversion_error`). ``operation`` is retried up to
-    ``_CONVERT_MAX_ATTEMPTS`` times so a single interrupted query does not fail a
-    whole bulk ``add`` (the interrupt flag clears once raised, and each attempt
-    opens a fresh ``gpio.convert()`` connection); any other error propagates on
-    the first occurrence.
-
-    Shared by every conversion entry point the ``add`` pipeline uses
-    (:func:`_convert_vector_layer`, ``preparation.convert_vector``, and
-    ``preparation.convert_tabular``) so the
-    retry is applied uniformly rather than on a single code path (Issue #339
-    nightly ``test_add_1000_files_*`` flake).
-
-    Args:
-        operation: Zero-argument callable performing the conversion.
-        source_name: Human-readable source name for retry log messages.
-
-    Returns:
-        Whatever ``operation`` returns.
-    """
+    """Run a DuckDB-backed conversion, retrying transient interrupts."""
     for attempt in range(1, _CONVERT_MAX_ATTEMPTS + 1):
         try:
             return operation()
@@ -985,32 +740,10 @@ def run_with_transient_convert_retry(
 
 
 def repair_shapefile_encoding_sidecar(shp: Path) -> Path | None:
-    """Make a shapefile's ``.cpg`` sidecar match what its DBF records contain.
-
-    Legacy government shapefiles routinely ship Latin-1 attribute text with no
-    ``.cpg`` (GDAL then passes raw bytes through and the GeoParquet writer's
-    UTF-8 validation fails deep in the pipeline), and some ship a sidecar that
-    LIES — UTF-8 records declared as ``1252``, which converts "successfully"
-    into mojibake (issue #783; both defects observed in SITEX Extremadura
-    data).
-
-    The encoding test reads only the DBF *records region* (after the header
-    length at bytes 8-9): the header is binary and would false-flag valid
-    UTF-8 files. Rules, both safe by construction:
-
-    - records are NOT valid UTF-8 and no/UTF-8 sidecar -> write ``ISO-8859-1``
-      (the standard single-byte fallback; it always decodes);
-    - records ARE valid UTF-8 with non-ASCII content but the sidecar declares
-      something else -> correct it to ``UTF-8`` (non-ASCII UTF-8 is
-      essentially unambiguous).
-
-    Returns the sidecar path when one was written or corrected, else None.
-    """
+    """Make a shapefile's ``.cpg`` sidecar match what its DBF records contain."""
     import struct
 
-    # The sidecar write changes the operator's files, so the notice is
-    # user-facing. The CLI prints it through the output writer, which sends it
-    # to stderr in JSON mode (#1005).
+    # The notice is user-facing; the CLI prints it through the output writer (stderr in JSON mode).
     dbf, cpg = shp.with_suffix(".dbf"), shp.with_suffix(".cpg")
     if not dbf.exists():
         return None
@@ -1040,44 +773,14 @@ def repair_shapefile_encoding_sidecar(shp: Path) -> Path | None:
 
 
 def has_geometry(table: Any) -> bool:
-    """Report whether a gpio Table carries a geometry column.
-
-    ``gpio.convert`` reads a geometry-less source, a CSV of records for
-    example, as a plain table with ``geometry_column`` set to None. Every
-    spatial operation below needs a geometry column, and DuckDB raises
-    ``Binder Error: Column "geometry" referenced ...`` without one. A Table
-    from an older geoparquet-io may not expose the attribute at all, so a
-    missing attribute counts as "has geometry" and keeps the previous
-    behavior.
-
-    Args:
-        table: geoparquet-io Table instance.
-
-    Returns:
-        False only when the Table reports no geometry column.
-    """
+    """Report whether a gpio Table carries a geometry column."""
     return getattr(table, "geometry_column", "geometry") is not None
 
 
 def apply_vector_settings(
     table: Any, settings: VectorSettings, *, partitioned: bool = False
 ) -> Any:
-    """Apply spatial optimization settings to a gpio Table.
-
-    A table with no geometry column is returned untouched. Sorting and the
-    bbox covering column are spatial operations, and the Portolan GeoParquet
-    profile asks for them only of spatial tables (issue #805).
-
-    Args:
-        table: geoparquet-io Table instance.
-        settings: Vector conversion settings.
-        partitioned: True when the caller writes the table with
-            ``_write_partitioned``. The partition call then adds the spatial
-            index column itself, at the size it partitions by.
-
-    Returns:
-        Modified Table with optimizations applied.
-    """
+    """Apply spatial optimization settings to a gpio Table."""
     if not has_geometry(table):
         return table
 
@@ -1085,9 +788,7 @@ def apply_vector_settings(
     if settings.add_bbox:
         table = table.add_bbox()
 
-    # Add spatial index column if specified. geoparquet-io partitions on an
-    # existing column at that column's resolution, so a column added here
-    # would bypass the `auto` sizing of a partitioned write.
+    # geoparquet-io partitions on an existing column, so adding one here would bypass `auto` sizing.
     if settings.spatial_index != "none" and not partitioned:
         resolution = _resolve_resolution(settings.resolution)
         table = _add_spatial_index(table, settings.spatial_index, resolution)
@@ -1107,33 +808,14 @@ def apply_vector_settings(
 
 
 def _resolve_resolution(resolution: int | str) -> int | None:
-    """Resolve resolution value for a spatial index type.
-
-    Args:
-        resolution: Either "auto" or explicit int.
-
-    Returns:
-        Resolution int, or None to use geoparquet-io defaults.
-    """
+    """Resolve resolution value for a spatial index type."""
     if resolution == "auto":
         return None  # Let gpio use its defaults
     return int(resolution)
 
 
 def _add_spatial_index(table: Any, index_type: str, resolution: int | None) -> Any:
-    """Add a spatial index column to the table.
-
-    Args:
-        table: geoparquet-io Table instance.
-        index_type: Type of spatial index (h3, s2, quadkey, a5, kdtree).
-        resolution: Resolution/level/iterations, or None for defaults.
-
-    Returns:
-        Table with spatial index column added.
-
-    Raises:
-        ValueError: If index_type is not recognized.
-    """
+    """Add a spatial index column to the table."""
     if index_type == "h3":
         return table.add_h3() if resolution is None else table.add_h3(resolution=resolution)
     if index_type == "s2":
@@ -1145,7 +827,7 @@ def _add_spatial_index(table: Any, index_type: str, resolution: int | None) -> A
     if index_type == "a5":
         return table.add_a5() if resolution is None else table.add_a5(resolution=resolution)
     if index_type == "kdtree":
-        # geoparquet-io 1.5 requires a size or `auto` for kdtree (geoparquet-io#855).
+        # geoparquet-io 1.5 requires a size or `auto` for kdtree: https://github.com/geoparquet/geoparquet-io/pull/855
         if resolution is None:
             return table.add_kdtree(auto=True)
         return table.add_kdtree(iterations=resolution)
@@ -1163,24 +845,13 @@ _PARTITION_SIZE_KWARG = {
     "kdtree": "iterations",
 }
 
-# Quadkey partitions group cells by a prefix of the quadkey column. geoparquet-io
-# 1.5 made the prefix length required next to an explicit resolution
-# (geoparquet-io#800). 6 is the length that geoparquet-io 1.4 used by default.
+# geoparquet-io 1.5 requires a prefix length beside an explicit resolution: https://github.com/geoparquet/geoparquet-io/pull/800
+# 6 is the length geoparquet-io 1.4 used by default.
 _QUADKEY_PARTITION_RESOLUTION = 6
 
 
 def _write_partitioned(table: Any, output_dir: Path, settings: VectorSettings) -> None:
-    """Write table as hive-partitioned output.
-
-    ``resolution: auto`` passes ``auto=True``, which sizes the cells from the
-    row count. geoparquet-io 1.5 refuses a partition call that names neither a
-    size nor ``auto`` (geoparquet-io#800, #855).
-
-    Args:
-        table: geoparquet-io Table instance with spatial index column.
-        output_dir: Output directory for partitioned files.
-        settings: Vector settings with partition strategy.
-    """
+    """Write table as hive-partitioned output."""
     index_type = settings.spatial_index
     size_kwarg = _PARTITION_SIZE_KWARG.get(index_type)
     if size_kwarg is None:
@@ -1191,12 +862,8 @@ def _write_partitioned(table: Any, output_dir: Path, settings: VectorSettings) -
     if index_type == "quadkey" and resolution is not None:
         sizing["partition_resolution"] = min(resolution, _QUADKEY_PARTITION_RESOLUTION)
 
-    # geoparquet-io 1.4.0 changed the Python API default for `hive` from True to
-    # False (gpio#661). Portolan needs the Hive layout: each partition directory
-    # becomes a STAC Item, and `partitioning.build_glob_pattern` matches
-    # `<scheme>_cell=*`. Pass both flags at every call so a later default change
-    # cannot alter the layout again. `keep_*_column` keeps partition pruning
-    # available to a reader, which `partitioning.partition_file` already does.
+    # geoparquet-io 1.4 changed the `hive` default to False: https://github.com/geoparquet/geoparquet-io/pull/661
+    # Pass hive and the keep_*_column flags on every call; each partition directory must be a STAC Item.
     partition = getattr(table, f"partition_by_{index_type}")
     partition(str(output_dir), hive=True, **{f"keep_{index_type}_column": True}, **sizing)
 
@@ -1212,19 +879,7 @@ EXACT_STATISTICS_PIXELS = 4096 * 4096
 
 
 def _compute_band_statistics(src: Any, *, approx: bool) -> None:
-    """Make GDAL compute the statistics of each band and keep them as band tags.
-
-    ``DatasetReader.stats`` leaves the GDAL error of a band with no valid pixel
-    pending, and the next GDAL call in rio-cogeo raises it, so the write
-    fails. ``DatasetReader.statistics`` raises that error at once. Such a band
-    gets only ``STATISTICS_VALID_PERCENT=0``, and the write continues.
-    ``statistics`` is deprecated in rasterio 1.4, and the rasterio floor 1.3.0
-    has no ``stats``.
-
-    Args:
-        src: The source raster, open for reading.
-        approx: Sample a subset of the blocks.
-    """
+    """Make GDAL compute the statistics of each band and keep them as band tags."""
     from rasterio.errors import RasterioDeprecationWarning, StatisticsError
 
     for bidx in src.indexes:
@@ -1238,7 +893,7 @@ def _compute_band_statistics(src: Any, *, approx: bool) -> None:
 
 #: Marks a scratch file that an in-place rewrite swaps in. ``add`` collects a
 #: directory before it converts anything, so the marker keeps a file left by a
-#: killed run out of the next run's source list (issue #805).
+#: killed run out of the next run's source list.
 REWRITE_TEMP_INFIX = ".portolan-rewrite"
 
 #: The ``conversion.cog.predictor`` values, as the GDAL COG driver names them.
@@ -1255,41 +910,7 @@ def write_cog(
     *,
     target: Path | None = None,
 ) -> Path:
-    """Write a raster file as a COG with the given settings.
-
-    ``preparation.convert_raster`` decides when to call this. It keeps a
-    source that is already a COG unless the operator asks to re-optimize.
-
-    Uses COG settings from config if provided, otherwise the built-in defaults:
-    - DEFLATE compression
-    - 512x512 tiles
-    - Predictor and overview resampling derived from the source raster's dtype
-      (see derive_cog_defaults)
-
-    The GDAL COG driver writes the codecs it has (:func:`copy_to_cog`). It
-    keeps every pixel. PACKBITS uses a tiled GTiff copy with internal overviews,
-    since the COG driver has no PACKBITS codec. rio-cogeo writes the codecs in
-    ``RIO_COGEO_CODECS``.
-    rio-cogeo reads the source through a WarpedVRT. The warper reads a pixel
-    at the nodata value of one band as valid when another band holds data
-    there, and writes nodata + 1 into the first band.
-
-    The explicit source open gives the dtype and the band statistics. The
-    lossless writer's VRT opens the source again to read the pixels.
-
-    Args:
-        source: Source raster file.
-        output_dir: Directory for output file.
-        settings: COG conversion settings. If None, uses the built-in defaults.
-        target: An output already checked by :func:`claim_output`. None claims it here.
-
-    Returns:
-        Path to the output COG file.
-
-    Note:
-        If output_dir is the same directory as source, the original file
-        will be replaced with the COG. This is by design for raster conversion.
-    """
+    """Write a raster file as a COG with the given settings."""
     import rasterio
 
     settings = settings or CogSettings()
@@ -1315,11 +936,7 @@ def write_cog(
 
 
 def _cog_options(settings: CogSettings, width: int, height: int) -> dict[str, Any]:
-    """Return the GDAL COG driver options for a lossless codec.
-
-    The overview count is the count rio-cogeo picks, so the output has the
-    same overviews as the rio-cogeo output had.
-    """
+    """Return the GDAL COG driver options for a lossless codec."""
     from rasterio.rio.overview import get_maximum_overview_level
 
     options: dict[str, Any] = {
@@ -1342,23 +959,7 @@ def _cog_options(settings: CogSettings, width: int, height: int) -> dict[str, An
 
 
 def copy_to_cog(src: Any, output: Path, options: dict[str, Any], tags: dict[str, str]) -> Path:
-    """Write the open raster ``src`` to a scratch COG beside ``output``.
-
-    GDAL computes the band statistics on ``src`` and keeps them as band tags
-    (issue #748, PTL-DAT-009 and PTL-DAT-010). A VRT of ``src`` carries the
-    band tags and ``tags`` into the one COG write. The COG driver
-    copies the pixels, the mask, and the nodata value as they are.
-    :func:`place_cog` moves the scratch file over ``output``.
-
-    Args:
-        src: The source, open for reading with PAM off.
-        output: The COG to write.
-        options: The GDAL COG driver options.
-        tags: Dataset tags to set in the COG, such as the provenance record.
-
-    Returns:
-        The scratch COG.
-    """
+    """Write the open raster ``src`` to a scratch COG beside ``output``."""
     from rasterio.enums import MaskFlags
     from rasterio.shutil import copy as gdal_copy
 
@@ -1392,12 +993,7 @@ def copy_to_cog(src: Any, output: Path, options: dict[str, Any], tags: dict[str,
 
 
 def _copy_packbits_cog(vrt: Path, scratch: Path, options: dict[str, Any]) -> None:
-    """Copy through a tiled GTiff to avoid rio-cogeo's nodata-changing warp.
-
-    GTiff's COPY_SRC_OVERVIEWS arranges the final IFDs and tiles in COG order.
-    Build fresh overviews on the intermediate, so the requested resampling
-    replaces any source pyramid. Both copies keep the internal mask.
-    """
+    """Copy through a tiled GTiff to avoid rio-cogeo's nodata-changing warp."""
     import rasterio
     from rasterio.enums import Resampling
     from rasterio.shutil import copy as gdal_copy
@@ -1450,20 +1046,7 @@ def _tag_vrt(vrt: Path, tags: dict[str, str]) -> None:
 def _rio_cogeo_cog(
     src: Any, source: Path, output: Path, settings: CogSettings, *, record: bool
 ) -> Path:
-    """Write the open raster ``src`` to a scratch COG with a codec of ``RIO_COGEO_CODECS``.
-
-    rio-cogeo forwards the band statistics that GDAL computes on ``src``.
-
-    Args:
-        src: The source, open for reading with PAM off.
-        source: The path of the source, for the provenance record.
-        output: The COG to write.
-        settings: The resolved COG settings.
-        record: Write the provenance record of ``source`` into the COG.
-
-    Returns:
-        The scratch COG.
-    """
+    """Write the open raster ``src`` to a scratch COG with a codec of ``RIO_COGEO_CODECS``."""
     from rio_cogeo.cogeo import cog_translate
     from rio_cogeo.profiles import cog_profiles
 
@@ -1506,24 +1089,7 @@ def _cog_scratch(output: Path) -> Path:
 
 
 def place_cog(scratch: Path, output: Path) -> Path:
-    """Check a scratch COG, move it over ``output``, and give the run what it read.
-
-    One open of the scratch COG checks that each band carries its statistics,
-    and reads the item metadata and the band statistics. The file closes
-    before the replace, because an open handle blocks it on Windows. The run
-    memo then holds the values for ``output``, so the item metadata and the
-    band statistics need no further open (``formats.remember``).
-
-    Args:
-        scratch: The COG that :func:`copy_to_cog` or :func:`_rio_cogeo_cog` wrote.
-        output: The path the COG goes to.
-
-    Returns:
-        ``output``.
-
-    Raises:
-        InvalidOutputError: When a band has no statistics in the file.
-    """
+    """Check a scratch COG, move it over ``output``, and give the run what it read."""
     import rasterio
 
     from portolan_cli.metadata.statistics import embedded_statistics
@@ -1543,12 +1109,7 @@ def place_cog(scratch: Path, output: Path) -> Path:
 
 
 def read_cog(src: Any) -> tuple[Any, list[Any] | None]:
-    """Read the item metadata and the embedded band statistics of an open COG.
-
-    Returns:
-        The ``COGMetadata``, and the statistics of each band. The statistics
-        are None when a band has none in the file.
-    """
+    """Read the item metadata and the embedded band statistics of an open COG."""
     from portolan_cli.metadata.cog import cog_metadata_of
     from portolan_cli.metadata.statistics import band_statistics_of
 
@@ -1589,16 +1150,7 @@ def validate_geoparquet(path: Path) -> str | None:
 
 
 def _validate_partitioned_geoparquet(partition_dir: Path) -> str | None:
-    """Validate a hive-partitioned GeoParquet directory.
-
-    Checks that at least one parquet file exists and is valid GeoParquet.
-
-    Args:
-        partition_dir: Path to the partitioned output directory.
-
-    Returns:
-        Error message if validation failed, None if valid.
-    """
+    """Validate a hive-partitioned GeoParquet directory."""
     from portolan_cli.formats import is_geoparquet
 
     parquet_files = list(partition_dir.rglob("*.parquet"))
@@ -1651,39 +1203,7 @@ def convert_directory(  # noqa: PLR0917 - each convert option is an argument
     force: bool = False,
     state: RunState | None = None,
 ) -> ConversionReport:
-    """Convert all geospatial files in a directory to cloud-native formats.
-
-    Iterates through the directory, converts each geospatial file to its
-    cloud-native equivalent (GeoParquet or COG), and returns an aggregate report.
-
-    Args:
-        path: Directory containing files to convert.
-        output_dir: Directory for output files. If None, outputs are placed
-            in the same directory as each source file.
-        on_progress: Optional callback invoked after each file is processed.
-            Receives the ConversionResult for streaming progress updates.
-        recursive: If True (default), process subdirectories recursively.
-        file_paths: Optional list of specific files to convert. If provided,
-            skips directory scanning and converts only these files. Useful
-            when the caller has already scanned and filtered the files.
-        catalog_path: Path to the catalog root for loading conversion config.
-            If None, uses the built-in defaults for COG conversion.
-        workers: Number of parallel worker processes. ``None`` or ``1`` runs
-            serially (the default, so existing callers are unchanged). A value
-            > 1 uses a ``ProcessPoolExecutor`` for CPU-bound raster re-encoding
-            (issue #530). Callers wanting parallel-by-default resolve a concrete
-            count (e.g. ``os.cpu_count()``) before calling.
-        force: Rewrite each cloud-native file whose handler has a ``reoptimize``
-            method, raster or vector (passed through to :func:`convert_file`).
-        state: The run state, which parses the config once per command.
-
-    Returns:
-        ConversionReport with results for all processed files.
-
-    Raises:
-        FileNotFoundError: If the directory does not exist.
-        NotADirectoryError: If the path is a file, not a directory.
-    """
+    """Convert all geospatial files in a directory to cloud-native formats."""
     if not path.exists():
         raise FileNotFoundError(f"Directory not found: {path}")
 
@@ -1710,9 +1230,7 @@ def convert_directory(  # noqa: PLR0917 - each convert option is an argument
     cog_settings = get_cog_settings(catalog_path, state=state) if catalog_path else None
     vector_settings = get_vector_settings(catalog_path, state=state) if catalog_path else None
 
-    # Parallelize only when explicitly asked for (>1 worker) and there is more
-    # than one file. A single file or workers<=1 stays serial to avoid pool
-    # overhead and preserve the default behavior of every existing caller.
+    # Parallelize only for more than one worker and more than one file.
     effective_workers = workers if workers is not None else 1
     if effective_workers > 1 and len(files) > 1:
         results = _convert_files_parallel(
@@ -1753,13 +1271,7 @@ def _convert_files_serial(
     on_progress: Callable[[ConversionResult], None] | None,
     state: RunState | None = None,
 ) -> list[ConversionResult]:
-    """Convert files one at a time in the current process.
-
-    The default path for every existing caller (``workers <= 1`` or a single
-    file), and the fallback used by :func:`_convert_files_parallel` when a
-    process pool cannot start. Outputs land side-by-side with each source unless
-    ``output_dir`` overrides it, matching the parallel path exactly.
-    """
+    """Convert files one at a time in the current process."""
     results: list[ConversionResult] = []
     for file_path in files:
         file_output_dir = output_dir or file_path.parent
@@ -1792,9 +1304,7 @@ def _init_worker_state(catalog_path: Path | None, tracing: bool = False) -> None
     _Worker.state = RunState.open(catalog_path) if catalog_path is not None else None
     if tracing:
         trace.enable()
-        # The perf harness supplies the same instrumentation used in its parent.
-        # Spawn does not inherit patched library readers. Normal tracing has no
-        # dependency on the harness.
+        # Spawn does not inherit patched library readers, so the perf harness supplies its own.
         import importlib
         import os
 
@@ -1816,13 +1326,7 @@ def _replay_worker_output(increments: dict[str, int], messages: list[tuple[str, 
 def _convert_in_worker(
     source: Path, **kwargs: Any
 ) -> tuple[ConversionResult, dict[str, int], list[tuple[str, str]]]:
-    """Return a conversion, its counters, and its messages to the parent process.
-
-    Only this task's increments cross the boundary. Returning cumulative
-    counters would count the earlier tasks of a reused worker again. The
-    parent's report scope does not reach this process, so the messages come
-    back with the result (``report.recording``).
-    """
+    """Return a conversion, its counters, and its messages to the parent process."""
     from portolan_cli.report import recording
     from portolan_core import trace
 
@@ -1849,33 +1353,14 @@ def _convert_files_parallel(
     workers: int,
     state: RunState | None = None,
 ) -> list[ConversionResult]:
-    """Convert files concurrently with a ProcessPoolExecutor (issue #530).
-
-    Conversion is CPU/GDAL-bound, so true parallelism needs separate processes,
-    not threads. The ``on_progress`` callback is invoked in the PARENT process as
-    each future completes (it is never pickled into a worker), preserving the
-    streaming-progress contract. A worker that dies or raises is
-    captured into a FAILED result so one bad file does not abort the batch.
-
-    If the pool itself cannot run (``BrokenProcessPool`` -- e.g. a restricted
-    container with no ``/dev/shm``, a seccomp-filtered ``clone``, or a nested
-    multiprocessing context inside another test runner), the remaining
-    files are converted serially in this process instead of all being reported
-    FAILED.
-
-    Each worker process opens one run state for ``catalog_path``, so it parses
-    the config once. A run state cannot cross a process boundary. The serial
-    fallback uses ``state``.
-    """
+    """Convert files concurrently with a ProcessPoolExecutor."""
     import multiprocessing
     from concurrent.futures import ProcessPoolExecutor, as_completed
     from concurrent.futures.process import BrokenProcessPool
 
     from portolan_core import trace
 
-    # Use a "spawn" context, not fork. GDAL/rasterio run worker threads, and
-    # fork()-ing a multi-threaded process can deadlock the child (and aborts on
-    # macOS). Spawn re-imports this module cleanly in each worker.
+    # Spawn, not fork: GDAL threads can deadlock a forked child (and abort on macOS).
     mp_context = multiprocessing.get_context("spawn")
 
     # Keyed by source path so a mid-run pool failure can convert only the files
@@ -1928,10 +1413,7 @@ def _convert_files_parallel(
                     )
                 _record(file_path, result)
     except BrokenProcessPool:
-        # A ProcessPoolExecutor can fail to start or keep workers in restricted
-        # environments (no /dev/shm, seccomp-filtered clone, or a nested
-        # multiprocessing context inside another test runner). Rather than
-        # report every file FAILED, finish the batch serially in this process.
+        # A pool can fail to start in restricted environments; finish the batch serially.
         remaining = [file_path for file_path in files if file_path not in completed]
         logger.warning(
             "Process pool unavailable; converting %d remaining file(s) serially",
@@ -1953,22 +1435,9 @@ def _convert_files_parallel(
     return [completed[file_path] for file_path in files]
 
 
-# ---------------------------------------------------------------------------
-# Multi-layer conversion (GeoPackage, FileGDB)
-# ---------------------------------------------------------------------------
-
-
 @dataclass
 class LayerConversionResult:
-    """Result of converting a single layer from a multi-layer file.
-
-    Attributes:
-        source: Path to the source multi-layer file.
-        layer: Name of the layer that was converted.
-        output: Path to the output GeoParquet file (None if failed).
-        success: Whether the conversion succeeded.
-        error: Error message if conversion failed.
-    """
+    """Result of converting a single layer from a multi-layer file."""
 
     source: Path
     layer: str
@@ -1984,31 +1453,7 @@ def convert_multilayer_file(
     *,
     state: RunState | None = None,
 ) -> list[LayerConversionResult]:
-    """Convert all layers in a multi-layer file to separate GeoParquet files.
-
-    For GeoPackage and FileGDB files that contain multiple layers, this function
-    converts each layer to a separate GeoParquet file named:
-        {source_stem}_{layer_name}.parquet
-
-    A layer output never replaces a file that ``source`` did not write. It
-    takes a distinct name instead (see :func:`claim_output`).
-
-    Args:
-        source: Path to the multi-layer file (GeoPackage or FileGDB).
-        output_dir: Directory for output files.
-        settings: Vector conversion settings. If None, uses defaults (no optimization).
-        state: The run state, for one hash per file and run.
-
-    Returns:
-        List of LayerConversionResult, one per layer.
-
-    Raises:
-        FileNotFoundError: If the source file does not exist.
-        ValueError: If the file has no layers or layer listing fails.
-
-    Note:
-        Uses geoparquet-io's layer parameter for multi-layer format support.
-    """
+    """Convert all layers in a multi-layer file to separate GeoParquet files."""
     from portolan_cli.formats import list_layers
 
     if not source.exists():
@@ -2085,19 +1530,7 @@ def _convert_vector_layer(
     output: Path,
     settings: VectorSettings | None = None,
 ) -> None:
-    """Convert a single layer from a multi-layer file to GeoParquet.
-
-    Uses geoparquet-io's layer parameter for multi-layer format support.
-
-    Args:
-        source: Path to the multi-layer file.
-        layer: Name of the layer to convert.
-        output: Path for the output GeoParquet file.
-        settings: Vector conversion settings. If None, uses defaults (no optimization).
-
-    Raises:
-        Exception: If conversion fails.
-    """
+    """Convert a single layer from a multi-layer file to GeoParquet."""
     import geoparquet_io as gpio
 
     if settings is None:

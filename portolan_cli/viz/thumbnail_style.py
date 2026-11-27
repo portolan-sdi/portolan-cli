@@ -1,14 +1,4 @@
-"""Mapbox GL style parsing for thumbnail rendering.
-
-This module extracts rendering parameters from Mapbox GL styles to apply
-consistent colors when generating thumbnails. Supports:
-- Simple fill colors (hex strings)
-- Match expressions for categorical styling
-- Case-insensitive field matching
-
-For full Mapbox GL rendering, use a proper map renderer. This module provides
-a minimal subset for matplotlib-based thumbnail generation.
-"""
+"""Mapbox GL style parsing for thumbnail rendering."""
 
 from __future__ import annotations
 
@@ -28,16 +18,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class ThumbnailStyle:
-    """Parsed style for thumbnail rendering.
-
-    Attributes:
-        fill_color: Default fill color (hex). Used for all features if no
-            categorical mapping, or as fallback for unmapped values.
-        fill_opacity: Fill opacity (0.0-1.0).
-        edge_color: Optional outline color (hex).
-        color_field: Field name for categorical coloring (from match expression).
-        color_map: Mapping of field values to colors (from match expression).
-    """
+    """Parsed style for thumbnail rendering."""
 
     fill_color: str
     fill_opacity: float
@@ -49,17 +30,7 @@ class ThumbnailStyle:
 def parse_match_expression(
     expr: Any,
 ) -> tuple[str, dict[Any, str], str] | None:
-    """Parse a Mapbox GL match expression.
-
-    Expected format: ["match", ["get", "field"], value1, color1, value2, color2, ..., default]
-
-    Args:
-        expr: The expression to parse (typically from paint["fill-color"]).
-
-    Returns:
-        Tuple of (field_name, {value: color}, default_color), or None if not
-        a valid match expression.
-    """
+    """Parse a Mapbox GL match expression."""
     if not isinstance(expr, list) or len(expr) < _MATCH_MIN_LEN:
         return None
 
@@ -73,9 +44,7 @@ def parse_match_expression(
 
     field_name = get_expr[1]
 
-    # A match expression lists the operator, the field expression, then the
-    # value/color pairs, then the default color. Slice expr[2:] to get the
-    # pairs and the default.
+    # Match expressions are operator, field expression, value/color pairs, default color.
     pairs_and_default = expr[2:]
     if len(pairs_and_default) < _PAIRS_MIN_LEN:
         return None
@@ -97,17 +66,7 @@ def parse_match_expression(
 
 
 def load_thumbnail_style(style_path: Path) -> ThumbnailStyle | None:
-    """Load Mapbox GL style and extract thumbnail rendering parameters.
-
-    Finds the first fill layer and extracts its paint properties. Supports
-    both simple fill colors and match expressions for categorical styling.
-
-    Args:
-        style_path: Path to Mapbox GL style JSON file.
-
-    Returns:
-        ThumbnailStyle if a fill layer was found and parsed, None otherwise.
-    """
+    """Load Mapbox GL style and extract thumbnail rendering parameters."""
     try:
         with Path(style_path).open(encoding="utf-8") as f:
             style = json.load(f)
@@ -146,9 +105,7 @@ def load_thumbnail_style(style_path: Path) -> ThumbnailStyle | None:
         # Not a match expression we understand (e.g., interpolate)
         # Try to extract a reasonable default
         elif len(fill_color_expr) > 0 and fill_color_expr[0] == "interpolate":
-            # An interpolate expression lists the operator, the
-            # interpolation type, the field expression, then stop/color
-            # pairs. Take the first color as the default.
+            # Interpolate expressions are operator, type, field expression, stop/color pairs.
             fill_color = _extract_first_color_from_interpolate(fill_color_expr)
         else:
             fill_color = "#3388ff"
@@ -183,25 +140,7 @@ def resolve_colors_for_gdf(
     style: ThumbnailStyle,
     fallback: str | None = None,
 ) -> Any:
-    """Resolve per-feature colors from style and GeoDataFrame attributes.
-
-    For categorical styles (with color_map), maps each feature's field value
-    to its corresponding color. Handles case-insensitive field matching.
-
-    For simple styles (no color_map), returns the uniform fill_color.
-
-    Args:
-        gdf: GeoDataFrame with feature attributes.
-        style: Parsed thumbnail style.
-        fallback: Color for unmapped values and missing fields. Defaults to the
-            style's own ``fill_color``. Thumbnail rendering passes a punchy
-            override here so the (often pale) WFS default never reaches the
-            canvas (#518).
-
-    Returns:
-        Either a pandas Series of hex colors (categorical) or a single hex
-        string (uniform color).
-    """
+    """Resolve per-feature colors from style and GeoDataFrame attributes."""
     default = fallback if fallback is not None else style.fill_color
 
     if style.color_map is None or style.color_field is None:
@@ -229,15 +168,7 @@ def _find_column_case_insensitive(
     columns: Any,
     target: str,
 ) -> str | None:
-    """Find column name matching target case-insensitively.
-
-    Args:
-        columns: DataFrame column index.
-        target: Target column name (any case).
-
-    Returns:
-        Actual column name if found, None otherwise.
-    """
+    """Find column name matching target case-insensitively."""
     target_lower = target.lower()
     for col in columns:
         if str(col).lower() == target_lower:
@@ -250,19 +181,7 @@ def resolve_color_for_properties(
     style: ThumbnailStyle,
     fallback: str | None = None,
 ) -> str:
-    """Resolve color for a single feature from its properties.
-
-    Used for PMTiles path where features are dicts, not GeoDataFrame rows.
-
-    Args:
-        properties: Feature properties dict.
-        style: Parsed thumbnail style.
-        fallback: Color for unmapped values and missing fields. Defaults to the
-            style's own ``fill_color`` (see ``resolve_colors_for_gdf``).
-
-    Returns:
-        Hex color string.
-    """
+    """Resolve color for a single feature from its properties."""
     default = fallback if fallback is not None else style.fill_color
 
     if style.color_map is None or style.color_field is None:

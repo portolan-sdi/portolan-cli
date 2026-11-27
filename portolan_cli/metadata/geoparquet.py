@@ -1,8 +1,4 @@
-"""GeoParquet metadata extraction.
-
-Uses pyarrow to read GeoParquet metadata without loading full data.
-Extracts bbox, CRS, schema, and geometry type from file metadata.
-"""
+"""GeoParquet metadata extraction."""
 
 from __future__ import annotations
 
@@ -31,21 +27,14 @@ T = TypeVar("T")
 
 
 class _Memo(Protocol):
-    """The part of ``run_state.RunState`` this module uses.
-
-    A Protocol, not an import: the ``viz`` layer imports this module, and
-    ``run_state`` imports ``sync.checksums``, which ``viz`` must not reach.
-    """
+    """The part of ``run_state.RunState`` this module uses."""
 
     def memo(self, kind: str, path: Path, loader: Callable[[Path], T]) -> T:
         """Load a value derived from one file once per run."""
         ...
 
 
-# Footer keys the writer owns. geoparquet-io writes a fresh ``geo``. It drops
-# ``ARROW:schema``, ``pandas`` and ``geo:overviews`` on purpose, because they
-# describe the rows of the input, not of the output (gpio#1268). A rewrite
-# keeps every other key.
+# Footer keys the writer owns; geoparquet-io drops the others on purpose: https://github.com/geoparquet/geoparquet-io/issues/1268
 _WRITER_OWNED_KEYS: frozenset[bytes] = frozenset(
     {b"geo", b"ARROW:schema", b"pandas", b"geo:overviews"}
 )
@@ -53,19 +42,7 @@ _WRITER_OWNED_KEYS: frozenset[bytes] = frozenset(
 
 @dataclass
 class GeoParquetMetadata:
-    """Metadata extracted from a GeoParquet file.
-
-    Attributes:
-        bbox: Bounding box as (minx, miny, maxx, maxy) or None.
-        crs: CRS as EPSG code, WKT, or PROJJSON dict.
-        geometry_type: Every declared geometry type (Point, Polygon, etc.), in
-            footer order without duplicates, or None when the types are unknown.
-        geometry_column: Name of the geometry column.
-        feature_count: Number of features (rows).
-        schema: Column names and types.
-        schema_fingerprint: The freshness fingerprint of the Arrow schema (see
-            :func:`schema_fingerprint`), read in the same footer read.
-    """
+    """Metadata extracted from a GeoParquet file."""
 
     bbox: tuple[float, float, float, float] | None
     crs: str | dict[str, Any] | None
@@ -87,12 +64,7 @@ class GeoParquetMetadata:
         }
 
     def _crs_to_epsg(self) -> int | None:
-        """Resolve the CRS to an EPSG code, or None if unavailable.
-
-        ``crs`` may be an EPSG/WKT/OGC-URN string or a PROJJSON dict. A PROJJSON
-        dict that already carries ``id.code`` is read directly (mirroring
-        ``_extract_crs``); otherwise pyproj resolves it.
-        """
+        """Resolve the CRS to an EPSG code, or None if unavailable."""
         crs = self.crs
         if crs is None:
             return None
@@ -116,9 +88,7 @@ class GeoParquetMetadata:
         """Convert to STAC Item properties format."""
         props: dict[str, Any] = {}
 
-        # Derive the EPSG code from the file's real CRS (issue #488). The
-        # proj:epsg key is the internal handoff to the STAC layer, which
-        # publishes it as proj:code on the data asset (issue #654).
+        # proj:epsg is the handoff to the STAC layer, which publishes it as proj:code.
         epsg = self._crs_to_epsg()
         if epsg is not None:
             props["proj:epsg"] = epsg
@@ -143,11 +113,6 @@ def schema_fingerprint(schema: Any) -> str:
 def extract_geoparquet_metadata(path: Path, *, state: _Memo | None = None) -> GeoParquetMetadata:
     """Extract metadata from a GeoParquet file.
 
-    Uses pyarrow to read file metadata without loading all data.
-    Parses GeoParquet geo metadata from file's custom metadata. One footer read
-    gives every field, the schema fingerprint included. With ``state``, the run
-    reads each footer once while the file stays unchanged.
-
     Args:
         path: Path to GeoParquet file.
         state: The run state, for one footer read per file and run.
@@ -157,10 +122,6 @@ def extract_geoparquet_metadata(path: Path, *, state: _Memo | None = None) -> Ge
 
     Raises:
         FileNotFoundError: If file doesn't exist.
-
-    Note:
-        For Parquet files without GeoParquet metadata, returns metadata with
-        None/empty fields for geo-specific properties (bbox, crs, geometry_type).
     """
     if not path.exists():
         raise FileNotFoundError(f"File not found: {path}")
@@ -212,26 +173,14 @@ def geoparquet_metadata_of(pf: pq.ParquetFile) -> GeoParquetMetadata:
 
 
 class SpatialLayout(NamedTuple):
-    """What one Parquet footer says about a file's spatial layout.
-
-    Attributes:
-        is_geoparquet: True when the file declares GeoParquet ``geo`` metadata.
-        has_bbox_covering: True when the ``geo`` metadata names a
-            ``covering.bbox`` entry whose root column exists in the schema.
-    """
+    """What one Parquet footer says about a file's spatial layout."""
 
     is_geoparquet: bool
     has_bbox_covering: bool
 
 
 def open_footer(path: Path) -> pq.ParquetFile | None:
-    """Read the footer of a Parquet file, or None when it does not open.
-
-    The file is closed, and it still answers the footer questions
-    (:func:`formats.parquet_footer`). :func:`read_spatial_layout` and
-    :func:`read_rewrite_fidelity` both take it, so a caller that needs both
-    answers reads the footer once.
-    """
+    """Read the footer of a Parquet file, or None when it does not open."""
     try:
         return parquet_footer(path)
     except Exception:  # an unreadable file has no footer to read
@@ -246,32 +195,7 @@ def _footer_or_open(source: Path | pq.ParquetFile) -> tuple[pq.ParquetFile | Non
 
 
 def read_spatial_layout(source: Path | pq.ParquetFile) -> SpatialLayout:
-    """Read a Parquet footer once and report both spatial-layout answers.
-
-    Reads only the footer, so the cost does not grow with the file. Callers
-    that need both answers must use this rather than calling
-    ``formats.is_geoparquet`` and then reading the covering, which would open
-    the file twice.
-
-    rashid resolves both PTL-DAT-006 and PTL-DAT-007 through the covering
-    column. It reads per-row-group extents from the column's min/max statistics
-    for PTL-DAT-007, and it reads row order from the same column for
-    PTL-DAT-006. A file without the column fails PTL-DAT-007 and leaves
-    PTL-DAT-006 unevaluated, so Portolan rewrites such a file on ``add``
-    (issue #805).
-
-    The answer says nothing about row order. A file that carries the column but
-    holds unordered rows still fails PTL-DAT-006, and ``check --fix`` or
-    ``add --force --reconvert`` rewrites it.
-
-    Args:
-        source: Path to a Parquet file, or a file the caller opened with
-            :func:`open_footer`. A path is opened and closed here.
-
-    Returns:
-        The layout. Both fields are False for an unreadable file, and
-        ``has_bbox_covering`` is False for a plain Parquet file.
-    """
+    """Read a Parquet footer once and report both spatial-layout answers."""
     parquet, owned = _footer_or_open(source)
     if parquet is None:
         # An unreadable file is not a conformant one.
@@ -307,21 +231,7 @@ def _spatial_layout(parquet: pq.ParquetFile) -> SpatialLayout:
 
 
 class RewriteFidelity(NamedTuple):
-    """What a rewrite must not lose, read from one Parquet footer.
-
-    Attributes:
-        row_count: Number of rows in the file.
-        crs: The primary geometry column's declared CRS, as written.
-        columns: Every column name in the schema.
-        extra_keys: The footer keys the writer does not own, such as a
-            publisher's provenance key.
-        geo_columns: The publisher fields of each geometry column in ``geo``:
-            ``crs`` when the key is present, ``edges``, ``epoch``, and
-            ``orientation``. None when the gate has nothing to compare.
-        field_metadata: The field metadata of each column and nested child.
-            Nested children use a tuple of the column name and child indexes.
-            None when the gate has nothing to compare.
-    """
+    """What a rewrite must not lose, read from one Parquet footer."""
 
     row_count: int
     crs: Any
@@ -338,20 +248,7 @@ _PUBLISHER_GEO_FIELDS = ("crs", "edges", "epoch", "orientation")
 
 
 def read_rewrite_fidelity(source: Path | pq.ParquetFile) -> RewriteFidelity | None:
-    """Read what an in-place rewrite must carry over unchanged.
-
-    The rewrite replaces the operator's own file, so it needs a before-and-after
-    comparison to prove it lost nothing. geoparquet-io drops the CRS on every
-    write, which turns a projected GeoParquet into one that declares no CRS
-    (issue #805). A malformed geometry makes it fail outright.
-
-    Args:
-        source: Path to a Parquet file, or a file the caller opened with
-            :func:`open_footer`. A path is opened and closed here.
-
-    Returns:
-        The fidelity fields, or None when the file cannot be read.
-    """
+    """Read what an in-place rewrite must carry over unchanged."""
     parquet, owned = _footer_or_open(source)
     if parquet is None:
         # An unreadable file cannot be compared.
@@ -389,13 +286,7 @@ def _rewrite_fidelity(parquet: pq.ParquetFile) -> RewriteFidelity:
 def _raw_field_metadata(
     parquet: pq.ParquetFile, geometry_columns: frozenset[str]
 ) -> dict[str | tuple[str, ...], dict[bytes, bytes]]:
-    """Read extension declarations without consulting Arrow's global registry.
-
-    Registered types consume the extension metadata and can normalize away
-    publisher fields. Decode the stored IPC schema with its extension-name key
-    masked by an equal-length, absent token. This preserves the IPC offsets and
-    leaves the registry untouched, including during concurrent footer reads.
-    """
+    """Read extension declarations without consulting Arrow's global registry."""
     import pyarrow as pa
 
     stored = (parquet.metadata.metadata or {}).get(b"ARROW:schema")
@@ -429,10 +320,7 @@ def _field_metadata(
                 )
                 for key, value in metadata.items()
             }
-        # The writer normalizes the GeoArrow WKB declaration. Its CRS and
-        # edges also live in `geo`, where the gate compares their meaning.
-        # Other extension declarations (and arbitrary ARROW:/PARQUET: keys)
-        # carry semantics the writer must not silently drop.
+        # The writer normalizes the GeoArrow WKB declaration; other keys carry semantics to keep.
         if (
             len(path) == 1
             and path[0] in geometry_columns
@@ -442,9 +330,7 @@ def _field_metadata(
                 declaration = json.loads(metadata.get(b"ARROW:extension:metadata", b"{}"))
             except ValueError:
                 declaration = None  # An unreadable declaration must survive verbatim.
-            # Registered GeoArrow types also emit crs_type=projjson. It names
-            # the CRS representation already compared through `geo`, rather
-            # than publisher metadata. Keep unknown representation tags raw.
+            # crs_type=projjson names a representation already compared through `geo`; keep unknown tags.
             if (
                 isinstance(declaration, dict)
                 and declaration.keys() <= {"crs", "edges", "crs_type"}
@@ -466,12 +352,7 @@ def _field_metadata(
 
 
 def _extract_bbox(column_meta: dict[str, Any]) -> tuple[float, float, float, float] | None:
-    """Extract bbox from column metadata.
-
-    Validates bbox for finite values (issue #516). Does NOT check WGS84 range
-    since source data may be in projected CRS.
-    Returns None if bbox is missing, malformed, or contains inf/nan values.
-    """
+    """Extract bbox from column metadata."""
     import logging
 
     from portolan_core.bbox import is_finite_bbox, to_2d_bbox
@@ -501,9 +382,7 @@ def _extract_crs(column_meta: dict[str, Any]) -> str | dict[str, Any] | None:
 
     # CRS can be PROJJSON dict or WKT string
     if isinstance(crs, dict):
-        # Read the code with its own authority, so OGC:CRS84 does not become
-        # EPSG:CRS84. Keep the full PROJJSON when pyproj cannot resolve the
-        # id, such as a custom authority (#928).
+        # Keep the authority so OGC:CRS84 stays CRS84; keep PROJJSON when pyproj cannot resolve the id.
         crs_id = crs.get("id", {})
         if crs_id.get("code"):
             code = f"{crs_id.get('authority', 'EPSG')}:{crs_id['code']}"
@@ -517,12 +396,7 @@ def _extract_crs(column_meta: dict[str, Any]) -> str | dict[str, Any] | None:
 
 
 def _extract_geometry_type(column_meta: dict[str, Any]) -> list[str] | None:
-    """Every geometry type a column declares, or None when they are unknown.
-
-    The list keeps the footer order and drops duplicates. GeoParquet reads an
-    empty ``geometry_types`` as unknown types, so it gives None, not a guess.
-    Keeping only the first type hid the rest from the STAC metadata (#1010).
-    """
+    """Every geometry type a column declares, or None when they are unknown."""
     declared = column_meta.get("geometry_types")
     if declared is None:
         # Fallback to a single geometry_type field.
@@ -557,22 +431,7 @@ def extract_schema_from_geoparquet(
     *,
     return_warnings: bool = False,
 ) -> SchemaModel | tuple[SchemaModel, list[str]]:
-    """Extract SchemaModel from a GeoParquet file.
-
-    Extracts column metadata including types, nullability, and geometry info.
-    Returns a SchemaModel compatible with the Portolan metadata model.
-
-    Args:
-        path: Path to GeoParquet file.
-        return_warnings: If True, return (SchemaModel, warnings) tuple.
-
-    Returns:
-        SchemaModel with column definitions, or (SchemaModel, warnings) tuple
-        if return_warnings is True.
-
-    Raises:
-        FileNotFoundError: If file doesn't exist.
-    """
+    """Extract SchemaModel from a GeoParquet file."""
     if not path.exists():
         raise FileNotFoundError(f"File not found: {path}")
 

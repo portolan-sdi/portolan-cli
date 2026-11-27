@@ -1,37 +1,4 @@
-"""Metadata extraction and validation for cloud-native geospatial formats.
-
-This module provides:
-
-Extraction functions:
-- extract_geoparquet_metadata(): Extract from GeoParquet
-- extract_cog_metadata(): Extract from COG
-- extract_tabular_metadata(): Extract from plain (geometry-less) Parquet
-
-Detection functions:
-- get_stored_metadata(): Read existing STAC item + versions.json
-- get_current_metadata(): Extract fresh metadata from file
-- is_stale(): MTIME check + heuristic fallback
-- detect_changes(): Return list of what changed
-- check_file_metadata(): Return MetadataCheckResult for single file
-- compute_schema_fingerprint(): Generate hash of file schema
-
-Update functions:
-- update_item_metadata(): Re-extract and update existing STAC item
-- prepare_missing_item(): Prepare a new STAC item for a file without metadata
-- update_versions_tracking(): Update source_mtime in versions.json
-
-Fix functions:
-- fix_metadata(): Apply fixes for all issues in a MetadataReport
-
-Check data structures:
-- MetadataStatus: Enum for file metadata states (MISSING, FRESH, STALE, BREAKING)
-- FileMetadataState: Holds current vs stored metadata for comparison
-- MetadataCheckResult: Per-file validation result with status and fix hints
-- MetadataReport: Aggregate report with counts and issue lists
-- StoredMetadata: Bridges STAC item and versions.json data
-
-Metadata includes: bbox, CRS, schema/bands, feature/pixel count.
-"""
+"""Metadata extraction and validation for cloud-native geospatial formats."""
 
 from __future__ import annotations
 
@@ -142,10 +109,7 @@ __all__ = [
     "update_versions_tracking",
 ]
 
-# Python runs this file before any submodule. An eager re-export here makes
-# `import portolan_cli.metadata.models` load rasterio, pyogrio, and pandas,
-# and `portolan --help` pays for them through `cli.py` (#994). Each export
-# loads from its module on first access instead.
+# Lazy exports keep `portolan --help` from importing rasterio, pyogrio, and pandas.
 _EXPORTS = {
     "COGMetadata": "portolan_cli.metadata.cog",
     "extract_cog_metadata": "portolan_cli.metadata.cog",

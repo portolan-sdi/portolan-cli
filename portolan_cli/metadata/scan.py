@@ -1,44 +1,4 @@
-"""Manifest-driven metadata scanner.
-
-This module is the single source of truth for "what assets does this catalog
-have, and is each asset's STAC metadata fresh?"
-
-It walks the STAC manifest tree (catalog.json -> collection.json -> item.json)
-rather than the filesystem with extension filters. Anything registered in a
-manifest is checked for freshness; anything on disk under a collection but
-NOT registered is reported as ORPHANED.
-
-Both `MetadataFreshRule.check()` and the `--fix` flow consume the
-`MetadataReport` produced here, eliminating the historical asymmetry where
-`check` could report MISSING for files `--fix` never saw (issue #384) and
-where collection-level rollup assets like `items.parquet` were treated as
-items-needing-JSON (issue #345).
-
-The scanner assumes the layout that `portolan add` writes. Change `add` and
-this module in the same commit:
-
-    {collection_dir}/
-      collection.json     registers collection-level assets
-      versions.json       freshness truth for the whole collection
-      data.parquet        single-file vector collection, no item JSON
-      items.parquet       rollup from `add --stac-geoparquet`
-      {item_id}/
-        {item_id}.json    item manifest
-        <asset>           item assets, next to the item JSON
-
-Items in a nested sub-catalog still belong to the enclosing collection.
-`versions.json` and their assets resolve against `collection_dir`.
-
-Three rules follow from this layout:
-
-- A subdirectory is an item only when it holds a data file whose stem is the
-  directory name. Other loose files are ORPHANED. Without this anchor,
-  `--fix` would write a `{dir_name}.json` for an item that does not exist.
-- A registered collection-level asset with no `versions.json` entry is not
-  STALE. A new rollup has nothing to be stale against.
-- The legacy flat layout, an item JSON next to its data file in the
-  collection root, is ORPHANED. Migrate it with `portolan add`.
-"""
+"""Manifest-driven metadata scanner."""
 
 from __future__ import annotations
 
@@ -73,9 +33,7 @@ _DATA_EXTENSIONS = frozenset(
         ".tif",
         ".tiff",
         ".pmtiles",
-        # Vector source formats accepted. Orphan-checked but
-        # not freshness-checked (see _is_freshness_checkable) — there is
-        # no extractor for these in detection.py, mirroring .pmtiles.
+        # Vector source formats: orphan-checked, not freshness-checked.
         ".gpkg",
         ".shp",
         ".geojson",
@@ -87,17 +45,8 @@ _SYSTEM_FILES = frozenset(
     {"catalog.json", "collection.json", "versions.json", "config.yaml", "metadata.yaml"}
 )
 
-# Media types whose assets are not local files on disk. The STAC Iceberg
-# extension publishes the table itself as an `application/x-iceberg` asset
-# whose href points at a backend-managed warehouse (often a relative,
-# scheme-less path) — there is no single local file to existence- or
-# freshness-check, so the scanner must skip it just like a scheme-qualified
-# href. Without this guard a relative iceberg href is path-joined to the
-# collection dir and reported as a (false) MISSING data file.
-#
-# Trade-off: skipping means `check` no longer detects a genuinely missing
-# Iceberg warehouse — integrity of the table is owned by the Iceberg backend
-# , not this scanner.
+# Media types whose assets are not local files, such as the Iceberg table asset.
+# Check skips them, so a missing Iceberg warehouse is the backend's to report.
 _NON_LOCAL_MEDIA_TYPES = frozenset(
     {
         "application/x-iceberg",
@@ -106,29 +55,7 @@ _NON_LOCAL_MEDIA_TYPES = frozenset(
 
 
 def scan_catalog_metadata(catalog_path: Path, *, state: RunState | None = None) -> MetadataReport:
-    """Scan a catalog using STAC manifests as ground truth.
-
-    Walks the catalog tree from `catalog.json`, descends into nested
-    catalogs, and at each collection emits one `MetadataCheckResult` per
-    registered or stray data asset.
-
-    The scan reads each versions.json once, and it opens a data file only
-    when its stat differs from the size and mtime that versions.json holds
-    (issue #995).
-
-    Args:
-        catalog_path: Catalog root (must contain `catalog.json`).
-        state: The run state. None opens one for this scan.
-
-    Returns:
-        Aggregate `MetadataReport`.
-
-    Raises:
-        FileNotFoundError: If `catalog_path` has no `catalog.json`. The
-            scanner refuses to silently return an empty report for a
-            non-catalog path — callers (CLI, validation rule) pre-check
-            so this exception only fires for direct misuse.
-    """
+    """Scan a catalog using STAC manifests as ground truth."""
     if not (catalog_path / "catalog.json").exists():
         raise FileNotFoundError(f"Not a portolan catalog: {catalog_path} has no catalog.json")
     report = MetadataReport()
@@ -141,11 +68,7 @@ def _scan_node(node_dir: Path, report: MetadataReport, state: RunState) -> None:
         _scan_collection(node_dir, report, state)
         return
     if (node_dir / "catalog.json").exists():
-        # Pattern 1: catalog above collections. Each significant
-        # child is either a sub-catalog or a collection — recurse via
-        # _scan_node. Pattern 2 (sub-catalog *inside* a collection) is
-        # handled by _scan_collection_child where the collection's own
-        # context is preserved.
+        # Each child of a catalog is a sub-catalog or a collection; recurse.
         for child in _iter_significant_subdirs(node_dir):
             _scan_node(child, report, state)
 
@@ -168,11 +91,7 @@ def _scan_collection(collection_dir: Path, report: MetadataReport, state: RunSta
         if not href:
             continue
         if _is_non_local_asset(asset):
-            # Asset lives outside the local filesystem: a scheme-qualified
-            # href (file:///warehouse, gs://, s3://, https://) or an
-            # extension/backend-managed media type such as
-            # application/x-iceberg (whose href may be a relative warehouse
-            # path). No local existence or freshness check applies.
+            # The asset is not a local file (scheme-qualified href or backend-managed media type).
             continue
         asset_path = (collection_dir / href).resolve()
         registered.add(asset_path)
@@ -206,19 +125,14 @@ def _scan_collection_child(
     state: RunState,
 ) -> None:
     if (child / "catalog.json").exists():
-        # Pattern 2 sub-catalog under a collection: organize items by year,
-        # theme, etc. The DATA-OWNING unit is still `collection_dir`, so
-        # versions.json + item assets are resolved against it.
+        # The collection stays the data-owning unit for versions.json and item assets.
         for grandchild in _iter_significant_subdirs(child):
             _scan_collection_child(grandchild, collection_dir, registered, report, state)
         _emit_orphans(child, registered, report)
         return
 
     if (child / "collection.json").exists():
-        # Nested collection owns its own contents; recurse and let it emit
-        # its own orphans. The outer `_emit_orphans` only walks top-level
-        # files in collection_dir (no recursion), so nested files are out
-        # of its sweep regardless — no need to mark them registered.
+        # A nested collection emits its own orphans.
         _scan_collection(child, report, state)
         return
 
@@ -228,22 +142,14 @@ def _scan_collection_child(
         _scan_item(item_json_path, child, collection_dir, registered, report, state)
         return
 
-    # `add --item-id` names the item file after the id, not after the directory,
-    # so the directory can hold a perfectly good item under another name. Asking
-    # only for `{directory name}.json` made the scan report the data file as
-    # MISSING, and `--fix` then wrote a second item for it (#709). Any STAC Item
-    # in the directory covers it.
+    # `add --item-id` names the item file after the id, so any STAC Item in the directory covers it.
     named_items = _item_jsons_in(child)
     if named_items:
         for path in named_items:
             _scan_item(path, child, collection_dir, registered, report, state)
         return
 
-    # Heuristic: a subdir is treated as an item-needing-JSON only if it
-    # contains a data file whose stem matches the dir name (the convention
-    # `add` writes). Otherwise the subdir is a stray container and its
-    # data files are reported as ORPHANED rather than coerced into MISSING
-    # — coercion would invite `--fix` to create a wrong item.json.
+    # A subdir needs an item JSON only if it holds a data file named like the dir; else its files are ORPHANED.
     data_files = [p for p in child.iterdir() if p.is_file() and _is_data_file(p)]
     matching = [p for p in data_files if p.stem == item_id]
     if not matching:
@@ -266,17 +172,7 @@ def _scan_collection_child(
 
 
 def _item_jsons_in(directory: Path) -> list[Path]:
-    """Every STAC Item JSON directly inside ``directory``, in a stable order.
-
-    Identified by content rather than by file name, so an item named after an
-    ``--item-id`` override still counts and a schema file never does.
-
-    Both `type: "Feature"` and a string `stac_version` are required, because the
-    STAC Item spec makes `stac_version` mandatory and plain GeoJSON has no such
-    field. `type` alone would let a hand-dropped `footprint.json` stand in for
-    the item, which would suppress the MISSING result for a data file that
-    really has no item and leave `--fix` nothing to create.
-    """
+    """Every STAC Item JSON directly inside ``directory``, in a stable order."""
     found: list[Path] = []
     for path in sorted(directory.glob("*.json")):
         data = _safe_read_json(path)
@@ -322,9 +218,7 @@ def _scan_item(
             continue
         if not _is_freshness_checkable(asset_path):
             continue
-        # versions.json + item.json lookup happen via `collection_dir` so
-        # the data-owning unit is the truth, even when the
-        # item lives under a Pattern 2 sub-catalog.
+        # Resolve versions.json and item JSON through `collection_dir`, even under a sub-catalog.
         report.results.append(check_file_metadata(asset_path, collection_dir, state=state))
 
     _emit_orphans(item_dir, registered, report)
@@ -362,27 +256,13 @@ def _check_collection_level_asset(
     collection_dir: Path,
     state: RunState,
 ) -> MetadataCheckResult | None:
-    """Freshness check for a registered collection-level asset.
-
-    Reads stored values from `versions.json` directly; collection-level
-    assets have no companion `item.json` by design, so the
-    item-centric `check_file_metadata` path does not apply.
-
-    Returns None if the asset is registered but untracked in versions.json
-    — registration alone is not a freshness claim, and emitting STALE for
-    every rollup index (e.g., `items.parquet`) would be noise.
-    """
+    """Freshness check for a registered collection-level asset."""
     assets = load_current_assets(collection_dir, state)
     stored = assets.get(asset_path.name) if assets else None
     if stored is None:
         return None
 
-    # Freshness baseline is the asset's own mtime. `add` records it under the
-    # `mtime` field (fast-path), while `--fix`'s
-    # `update_versions_tracking` records it under `source_mtime`; a single asset
-    # may carry either (or both). Prefer `source_mtime` but fall back to `mtime`
-    # so a plain `add` (which never wrote `source_mtime` for collection-level
-    # assets) is not perpetually STALE — the #512 regression.
+    # `add` records `mtime`, `--fix` records `source_mtime`; prefer the latter and fall back.
     stored_mtime = stored_baseline_mtime(stored)
     stored_size = stored.get("size_bytes")
     st = asset_path.stat()
@@ -400,9 +280,7 @@ def _check_collection_level_asset(
         file_path=asset_path,
         current_mtime=current.current_mtime,
         stored_mtime=stored_mtime,
-        # Collection-level assets have no item.json bbox source. Heuristics
-        # fall through to feature-count + schema fingerprint comparisons,
-        # which is sufficient signal for STALE/BREAKING detection.
+        # No item bbox source; feature count and schema fingerprint decide.
         current_bbox=None,
         stored_bbox=None,
         current_feature_count=current.current_feature_count,
@@ -417,14 +295,7 @@ def _check_collection_level_asset(
             status=MetadataStatus.FRESH,
             message=f"Metadata is up to date ({reason})",
         )
-    # Older catalogs (and entries written before heuristics were persisted) carry
-    # no schema-fingerprint baseline, so `is_stale` treats any mtime change as an
-    # unprovable change and forces STALE. Before reporting that, fall back to the
-    # stored content hash — the same tiebreaker `add` uses to skip unchanged files
-    # (`is_current`, query.py). A byte-identical asset (e.g. after a `git clone`,
-    # which resets mtimes) then reads FRESH instead of a perpetual STALE that
-    # neither `--fix` nor a plain `add` can clear (#512). Newer catalogs carry
-    # heuristics and resolve touched-but-identical without hashing.
+    # Without a fingerprint baseline, a matching stored content hash reads FRESH.
     stored_sha256 = stored.get("sha256")
     if (
         stored_schema_fingerprint is None
@@ -437,10 +308,7 @@ def _check_collection_level_asset(
             message="Metadata is up to date (content unchanged)",
         )
     changes = detect_changes(file_state)
-    # Only escalate to BREAKING when a stored schema fingerprint actually
-    # exists to compare against. Without a baseline (older catalogs, or entries
-    # written before heuristics were persisted) a mtime change cannot prove a
-    # schema break — report STALE rather than a blocking BREAKING error.
+    # Without a fingerprint baseline, report STALE, not BREAKING.
     if reason == "schema_changed" and stored_schema_fingerprint is not None:
         return MetadataCheckResult(
             file_path=asset_path,
@@ -459,15 +327,7 @@ def _check_collection_level_asset(
 
 
 def _content_hash_matches(asset_path: Path, stored_sha256: str, state: RunState) -> bool:
-    """True if the asset file's SHA-256 equals the stored checksum.
-
-    Mirrors the slow-path tiebreaker in `is_current` (query.py) so `check`
-    agrees with `add`'s skip decision: a byte-identical asset is FRESH even
-    when its mtime moved (e.g. after `git clone`, which resets mtimes). Only
-    regular files are hashed — freshness-checkable collection-level assets are
-    always `.parquet`/`.tif`/`.tiff` files (see `_is_freshness_checkable`); a
-    directory asset falls through to the mtime path (and `add` can clear it).
-    """
+    """True if the asset file's SHA-256 equals the stored checksum."""
     if not asset_path.is_file():
         return False
     try:
@@ -497,41 +357,17 @@ _URI_SCHEME_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9+.\-]*://")
 
 
 def _is_scheme_qualified(href: str) -> bool:
-    """True if href is an absolute URI (file://, gs://, s3://, https://).
-
-    Such hrefs reference resources outside the catalog's local filesystem
-    (or, in iceberg's case, a backend-managed warehouse that the scanner
-    has no business validating). They must not be path-joined to a
-    collection/item directory.
-    """
+    """True if href is an absolute URI (file://, gs://, s3://, https://)."""
     return bool(_URI_SCHEME_RE.match(href))
 
 
 def _is_non_local_asset(asset: Any) -> bool:
-    """True if the asset should not be treated as a local file on disk.
-
-    Two independent signals mark an asset as non-local, either of which is
-    sufficient:
-
-    - A scheme-qualified href (``s3://``, ``gs://``, ``https://``, …) — the
-      data lives outside the catalog's filesystem.
-    - A media type that denotes an extension/backend-managed asset, e.g.
-      ``application/x-iceberg`` (STAC Iceberg extension). The href there may
-      be a relative, scheme-less warehouse path, so the scheme check alone
-      misses it.
-
-    Such assets are skipped by the local-data-file logic (no existence or
-    freshness check), so a remote/extension href is never mistaken for a
-    missing local file.
-    """
+    """True if the asset should not be treated as a local file on disk."""
     if not isinstance(asset, dict):
         return False
     media_type = asset.get("type")
     if isinstance(media_type, str):
-        # Media types are case-insensitive and may carry parameters
-        # (RFC 9110), e.g. ``application/x-iceberg; version=2`` or differing
-        # case from a hand-authored catalog. Normalize before matching so the
-        # guard isn't defeated by harmless variation.
+        # Media types are case-insensitive and may carry parameters (RFC 9110).
         normalized = media_type.split(";", 1)[0].strip().lower()
         if normalized in _NON_LOCAL_MEDIA_TYPES:
             return True

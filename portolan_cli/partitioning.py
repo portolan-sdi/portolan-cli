@@ -1,25 +1,4 @@
-"""Partitioning support for large GeoParquet files.
-
-This module provides automatic spatial partitioning of large GeoParquet files
-using geoparquet-io's KD-tree partitioning. Partitioned collections
-use Hive-style directories where each partition becomes a STAC Item.
-
-Issue #443: Supports arbitrary Hive partition column names (not just kdtree/h3/s2/quadkey/a5),
-multi-level partitions (year=*/month=*), and schema consistency validation.
-
-Usage:
-    from portolan_cli.partitioning import should_partition, partition_geoparquet
-
-    if should_partition(file_path, threshold_gb=2.0):
-        partitions = partition_geoparquet(file_path, output_dir)
-        # Each partition path can be used to create a STAC Item
-
-    # For pre-existing partitioned data with arbitrary columns:
-    from portolan_cli.partitioning import detect_partitioning, build_glob_pattern
-
-    metadata = detect_partitioning(directory)  # Auto-detects any Hive columns
-    glob = build_glob_pattern(partition_columns=["gms_feature_id"])
-"""
+"""Partitioning support for large GeoParquet files."""
 
 from __future__ import annotations
 
@@ -80,16 +59,7 @@ def should_partition(
     threshold_gb: float = DEFAULT_THRESHOLD_GB,
     enabled: bool = True,
 ) -> bool:
-    """Check if a file should be partitioned based on size threshold.
-
-    Args:
-        file_path: Path to the GeoParquet file.
-        threshold_gb: Size threshold in GB (default: 2.0 per OGC best practices).
-        enabled: Whether partitioning is enabled (default: True).
-
-    Returns:
-        True if file exceeds threshold and partitioning is enabled.
-    """
+    """Check if a file should be partitioned based on size threshold."""
     if not enabled:
         return False
 
@@ -101,12 +71,7 @@ def should_partition(
 
 @dataclass
 class PartitionPromptDecision:
-    """Config-driven decision inputs for the interactive partition prompt.
-
-    The library computes *whether* there is anything to prompt about (config
-    gating + which files exceed the threshold); the CLI owns the actual TTY
-    check and ``click.confirm`` prompt.
-    """
+    """Config-driven decision inputs for the interactive partition prompt."""
 
     enabled: bool
     """Value of ``partitioning.enabled`` (default True)."""
@@ -128,22 +93,7 @@ def find_large_partition_candidates(
     *,
     state: ConfigSource | None = None,
 ) -> PartitionPromptDecision:
-    """Read partition config and scan paths for files that would be partitioned.
-
-    Reads ``partitioning.{enabled,prompt,threshold_gb}`` (hierarchical config)
-    and, when both ``enabled`` and ``prompt`` are set, scans ``resolved_paths``
-    for ``.parquet`` files exceeding the threshold. Returns an empty
-    ``large_files`` list when gating is disabled so the caller can skip the
-    prompt. Does no terminal I/O — the TTY check and confirmation live in the CLI.
-
-    Args:
-        resolved_paths: Paths (files or directories) the add command will import.
-        catalog_root: Catalog root used for hierarchical config lookup.
-        state: The run state, which parses the config once per run.
-
-    Returns:
-        A :class:`PartitionPromptDecision` describing the gating and candidates.
-    """
+    """Read partition config and scan paths for files that would be partitioned."""
     from portolan_core.config import get_setting
 
     def _setting(key: str) -> Any:
@@ -216,25 +166,7 @@ def partition_geoparquet(
     target_rows: int = DEFAULT_TARGET_ROWS,
     verbose: bool = False,
 ) -> list[Path]:
-    """Partition a GeoParquet file using spatial indexing.
-
-    Uses geoparquet-io's partition_by_kdtree (or other strategies) to split
-    large files into manageable partitions. Uses Hive-style
-    partitioning so each partition can become a STAC Item.
-
-    Args:
-        input_path: Path to the input GeoParquet file.
-        output_dir: Directory for partitioned output.
-        strategy: Partitioning strategy (kdtree, h3, s2, quadkey). Default: kdtree.
-        target_rows: Target rows per partition. Default: 120,000.
-        verbose: Enable verbose output.
-
-    Returns:
-        List of paths to the created partition files.
-
-    Raises:
-        ValueError: If strategy is not supported.
-    """
+    """Partition a GeoParquet file using spatial indexing."""
     import shutil
 
     from geoparquet_io.core.partition.by_kdtree import (
@@ -273,15 +205,7 @@ def partition_geoparquet(
 
 
 def _collect_partition_files(output_dir: Path, strategy: str) -> list[Path]:
-    """Collect partition files from Hive-style output directory.
-
-    Args:
-        output_dir: Directory containing partitioned output.
-        strategy: Partitioning strategy used.
-
-    Returns:
-        List of paths to partition parquet files.
-    """
+    """Collect partition files from Hive-style output directory."""
     partition_col = PARTITION_COLUMNS.get(strategy, f"{strategy}_cell")
     pattern = f"{partition_col}=*"
 
@@ -296,16 +220,7 @@ def _collect_partition_files(output_dir: Path, strategy: str) -> list[Path]:
 
 
 def get_partition_info(partition_path: Path) -> dict[str, str]:
-    """Extract partition information from a partition file path.
-
-    Args:
-        partition_path: Path to a partition parquet file in Hive-style structure.
-
-    Returns:
-        Dict with partition metadata:
-        - cell_id: The partition cell identifier
-        - partition_column: The column name used for partitioning
-    """
+    """Extract partition information from a partition file path."""
     # Parse Hive-style directory name: "column_name=value"
     parent_name = partition_path.parent.name
     match = re.match(r"^(.+)=(.+)$", parent_name)
@@ -327,26 +242,7 @@ def build_glob_pattern(
     strategy: str = DEFAULT_STRATEGY,
     partition_columns: list[str] | None = None,
 ) -> str:
-    """Build glob pattern for collection-level asset href.
-
-    Per Issue #351, partitioned collections expose a glob URL for bulk access.
-    Per Issue #443, supports arbitrary partition column names and multi-level partitions.
-
-    Args:
-        strategy: Partitioning strategy used (for backwards compatibility).
-        partition_columns: Explicit list of partition column names. Takes precedence
-            over strategy. For multi-level partitions, provide columns in order
-            (e.g., ["year", "month"]).
-
-    Returns:
-        Relative glob pattern like "./kdtree_cell=*/*.parquet" for Hive-style partitions,
-        or "./year=*/month=*/*.parquet" for multi-level partitions.
-
-    Note:
-        The pattern matches ALL .parquet files in partition directories.
-        geoparquet-io creates files named by cell ID (e.g., "0000000000.parquet").
-        Do not place additional parquet files in partition directories.
-    """
+    """Build glob pattern for collection-level asset href."""
     if partition_columns:
         # Build multi-level glob pattern from explicit columns
         pattern_parts = [f"{col}=*" for col in partition_columns]
@@ -363,21 +259,7 @@ def build_remote_glob(
     strategy: str = DEFAULT_STRATEGY,
     partition_columns: list[str] | None = None,
 ) -> str:
-    """Build absolute remote glob URL for portolan:glob field.
-
-    Per Issue #443, supports arbitrary partition column names and multi-level partitions.
-
-    Args:
-        remote_base: Remote storage base URL (e.g., "s3://bucket/").
-        collection_id: The collection identifier.
-        strategy: Partitioning strategy used (for backwards compatibility).
-        partition_columns: Explicit list of partition column names. Takes precedence
-            over strategy. For multi-level partitions, provide columns in order.
-
-    Returns:
-        Absolute glob URL like "s3://bucket/collection/kdtree_cell=*/*.parquet",
-        or "s3://bucket/collection/year=*/month=*/*.parquet" for multi-level.
-    """
+    """Build absolute remote glob URL for portolan:glob field."""
     # Normalize: ensure no trailing slash on base
     base = remote_base.rstrip("/")
 
@@ -398,30 +280,7 @@ def get_partition_metadata(
     description: str | None = None,
     descriptions: dict[str, str] | None = None,
 ) -> dict[str, object]:
-    """Extract partition metadata from Hive-style output directory.
-
-    Returns metadata conforming to the STAC Partition Extension schema:
-    https://portolan-sdi.github.io/stac-partition-extension/v1.0.0/schema.json
-
-    Per Issue #443, supports arbitrary partition column names and custom descriptions.
-
-    Args:
-        output_dir: Directory containing Hive-style partitioned output.
-        strategy: Partitioning strategy used (kdtree, h3, etc.). Optional if
-            partition_columns is provided.
-        partition_columns: Explicit list of partition column names. If not provided,
-            auto-detects from directory structure.
-        description: Free-text description for single-column partitions.
-        descriptions: Per-column descriptions for multi-level partitions.
-            Keys are column names, values are descriptions.
-
-    Returns:
-        Dict with partition extension fields:
-        - partition:scheme: "hive"
-        - partition:strategy: The strategy used (if known)
-        - partition:keys: List of partition key definitions
-        - partition:file_count: Total number of partition files
-    """
+    """Extract partition metadata from Hive-style output directory."""
     # Auto-detect partition columns if not provided
     if partition_columns is None:
         detected = detect_partitioning(output_dir)
@@ -474,17 +333,7 @@ def get_partition_metadata(
 
 
 def _count_partition_files(directory: Path, partition_columns: list[str]) -> int:
-    """Count parquet files across all partition directories.
-
-    Handles both single-level and multi-level partitions.
-
-    Args:
-        directory: Root directory containing partitions.
-        partition_columns: List of partition column names.
-
-    Returns:
-        Total count of .parquet files in leaf partition directories.
-    """
+    """Count parquet files across all partition directories."""
     if not partition_columns:
         return 0
 
@@ -496,18 +345,7 @@ def _count_partition_files(directory: Path, partition_columns: list[str]) -> int
 
 
 def detect_partitioning(directory: Path) -> dict[str, Any] | None:
-    """Detect existing Hive-style partitioning in a directory.
-
-    Scans for directories matching the pattern "column=value/" and extracts
-    partition metadata if found. Per Issue #443, supports multi-level partitions
-    like year=*/month=*/*.parquet.
-
-    Args:
-        directory: Directory to scan for partitions.
-
-    Returns:
-        Partition metadata dict if partitioning detected, None otherwise.
-    """
+    """Detect existing Hive-style partitioning in a directory."""
     # Guard: directory must exist
     if not directory.exists() or not directory.is_dir():
         return None
@@ -564,22 +402,7 @@ def detect_partitioning(directory: Path) -> dict[str, Any] | None:
 
 
 def validate_partition_schemas(directory: Path) -> SchemaValidationResult:
-    """Validate schema consistency across all partitions in a Hive-partitioned collection.
-
-    Per Issue #443, reads Parquet metadata (not data) from each partition file
-    to verify all partitions have identical schemas. This is fast because Parquet
-    stores schema in the file footer.
-
-    Args:
-        directory: Root directory containing Hive-style partitioned data.
-
-    Returns:
-        SchemaValidationResult with:
-        - is_consistent: True if all schemas match
-        - schema: The unified schema if consistent
-        - error_message: Description of mismatch if inconsistent
-        - partition_count: Number of partitions validated
-    """
+    """Validate schema consistency across all partitions in a Hive-partitioned collection."""
     # First detect the partition structure
     partition_info = detect_partitioning(directory)
     if partition_info is None:
@@ -650,12 +473,7 @@ def validate_partition_schemas(directory: Path) -> SchemaValidationResult:
 
 
 def _schemas_equal(schema1: pa.Schema, schema2: pa.Schema) -> bool:
-    """Check if two PyArrow schemas are equal.
-
-    Compares field names and types in an order-independent way.
-    Two schemas are equal if they have the same fields with the same types,
-    regardless of column order.
-    """
+    """Check if two PyArrow schemas are equal."""
     if len(schema1) != len(schema2):
         return False
 
@@ -702,27 +520,7 @@ def _describe_schema_diff(
 def partition_strategy(
     path: Path, catalog_root: Path | None, *, state: ConfigSource | None = None
 ) -> str | None:
-    """Decide whether and how to partition a converted GeoParquet file (#947).
-
-    This is the size rule. Only ``add`` applies it, as before #947, because
-    ``check --fix`` converts a source again on every run. A file at or above
-    ``partitioning.threshold_gb`` (2 GB by default) partitions by
-    ``partitioning.strategy`` (kdtree by default), unless
-    ``partitioning.enabled`` is false.
-
-    ``conversion.vector.partition`` is a different rule. Only ``check --fix``
-    applies it, when it converts. See ``preparation.convert_vector``.
-
-    Settings resolve for the file's directory, so a collection can set its own.
-
-    Args:
-        path: The converted GeoParquet file.
-        catalog_root: Catalog root. None applies only the built-in defaults.
-        state: The run state, which parses the config once per run.
-
-    Returns:
-        The strategy name, or None to keep one file.
-    """
+    """Decide whether and how to partition a converted GeoParquet file."""
     if catalog_root is None:
         return None
 
@@ -740,11 +538,7 @@ def partition_strategy(
 def _directory_setting(
     key: str, directory: Path, catalog_root: Path, state: ConfigSource | None
 ) -> Any:
-    """Resolve a setting for the config hierarchy of ``directory``.
-
-    The partition settings that ``add`` resolved through its run state win.
-    A format handler calls ``partition_vector_file`` without the state.
-    """
+    """Resolve a setting for the config hierarchy of ``directory``."""
     from portolan_cli.conversion_config import partition_override
     from portolan_core.config import get_setting
 
@@ -760,14 +554,6 @@ def partition_vector_file(
     path: Path, catalog_root: Path | None, *, state: ConfigSource | None = None
 ) -> list[Path]:
     """Partition a converted GeoParquet file when ``partition_strategy`` says so.
-
-    The partitions go next to the file in Hive directories, through
-    ``partition_geoparquet``. The file is removed only when the step wrote at
-    least one partition file.
-
-    The directory must hold no partitions for the strategy. geoparquet-io does
-    not write over a cell that exists, so a second source, or a re-add, would
-    lose the rows in each shared cell.
 
     Args:
         path: The converted GeoParquet file.
@@ -864,27 +650,7 @@ def partition_file(
     preview: bool = False,
     verbose: bool = False,
 ) -> PartitionPreview | PartitionOutcome:
-    """Partition a GeoParquet file into ``output_dir``, or preview the partition.
-
-    The preview reads ``partitioning.threshold_gb`` and ``partitioning.enabled``
-    from the configuration of the working directory and writes nothing.
-
-    Args:
-        input_file: The GeoParquet file.
-        output_dir: Directory for the Hive-style partitions. Only the preview
-            accepts None.
-        strategy: Partitioning strategy.
-        target_rows: Target rows per partition.
-        preview: Report the recommendation and write nothing.
-        verbose: Ask geoparquet-io for its verbose output.
-
-    Returns:
-        The preview, or the partition files.
-
-    Raises:
-        PartitionError: If ``output_dir`` is None, or if geoparquet-io fails.
-            A failure removes the partial partitions.
-    """
+    """Partition a GeoParquet file into ``output_dir``, or preview the partition."""
     if preview:
         from portolan_core.config import get_setting
 

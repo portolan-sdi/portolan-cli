@@ -1,8 +1,4 @@
-"""Register the built-in format handlers (#947).
-
-The handlers live in ``portolan_cli.formats_builtin``, one package per format.
-Those packages use the public API only, the same as an outside plugin.
-"""
+"""Register the built-in format handlers."""
 
 from __future__ import annotations
 
