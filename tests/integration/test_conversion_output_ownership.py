@@ -48,7 +48,8 @@ def _geojson(path: Path, value: int) -> Path:
                     }
                 ],
             }
-        )
+        ),
+        encoding="utf-8",
     )
     return path
 
@@ -79,7 +80,7 @@ def test_parallel_claims_reserve_free_names(tmp_path: Path, suffix: str) -> None
 
 def test_parallel_add_keeps_both_same_stem_outputs(tmp_path: Path) -> None:
     """Phase-2 workers must publish both converted values, in one version."""
-    import portolan_cli.preparation as preparation
+    from portolan_cli import preparation
     from portolan_cli.add import add_files
     from portolan_core.versions import read_versions
 

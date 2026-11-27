@@ -58,6 +58,7 @@ from portolan_cli.scan.output import (
 from portolan_cli.scan.progress import ScanProgressReporter, count_directories
 from portolan_cli.utils import format_size as format_size
 from portolan_core import trace
+from portolan_core.bbox import BBOX_2D_LEN
 from portolan_core.catalog_list import (
     AssetInfo,
     AssetStatus,
@@ -78,6 +79,8 @@ from portolan_core.licensing import (
     OTHER_LICENSE,
     license_gap,
 )
+
+_MAX_LARGE_FILES_SHOWN = 5
 
 
 def click_writer(
@@ -2251,7 +2254,7 @@ def _output_add_json(outcome: AddOutcome) -> None:
         envelope = error_envelope(
             "add",
             [
-                ErrorDetail(type="AddError", message=f"{str(f.path)}: {f.error}")
+                ErrorDetail(type="AddError", message=f"{f.path!s}: {f.error}")
                 for f in outcome.failures
             ],
             data=data,
@@ -2620,7 +2623,7 @@ def _check_partition_prompt(
     warn(f"Found {len(large_files)} file(s) exceeding {decision.threshold_gb} GB threshold:")
     for lf, size in large_files[:5]:  # Show first 5
         detail(f"  {lf.name} ({size:.2f} GB)")
-    if len(large_files) > 5:
+    if len(large_files) > _MAX_LARGE_FILES_SHOWN:
         detail(f"  ... and {len(large_files) - 5} more")
 
     if not click.confirm("Partition large files into spatial chunks?", default=True):
@@ -3044,7 +3047,7 @@ def add_external_cmd(
         except ValueError as err:
             emit_error("add-external", "UsageError", f"Invalid --bbox: {err}", use_json=use_json)
             raise SystemExit(1) from err
-        if len(parsed_bbox) != 4:
+        if len(parsed_bbox) != BBOX_2D_LEN:
             emit_error(
                 "add-external",
                 "UsageError",
@@ -3698,14 +3701,13 @@ def _output_pull_human(result: PullResult, *, dry_run: bool) -> None:
         else:
             success(f"Pulled {result.files_downloaded} file(s)")
             detail(f"  Local: {result.local_version} -> {result.remote_version}")
+    elif result.uncommitted_changes:
+        error("Pull blocked by uncommitted changes:")
+        for filename in result.uncommitted_changes:
+            detail(f"  {filename}")
+        warn("Use --force to discard local changes")
     else:
-        if result.uncommitted_changes:
-            error("Pull blocked by uncommitted changes:")
-            for filename in result.uncommitted_changes:
-                detail(f"  {filename}")
-            warn("Use --force to discard local changes")
-        else:
-            error("Pull failed")
+        error("Pull failed")
 
 
 def _single_pull_errors(result: PullResult) -> list[ErrorDetail]:
@@ -4000,17 +4002,16 @@ def sync(
             envelope = error_envelope("sync", errors, data=result.to_dict())
 
         output_json_envelope(envelope)
-    else:
-        # sync() reported each step through _report.
-        # Just handle the final status
-        if result.success:
-            if dry_run:
-                info_output("[DRY RUN] Sync completed successfully")
-            else:
-                success("Sync completed successfully")
+    # sync() reported each step through _report.
+    # Just handle the final status
+    elif result.success:
+        if dry_run:
+            info_output("[DRY RUN] Sync completed successfully")
         else:
-            # Errors already logged by sync() - just emit final status
-            error("Sync failed")
+            success("Sync completed successfully")
+    else:
+        # Errors already logged by sync() - just emit final status
+        error("Sync failed")
 
     if not result.success:
         raise SystemExit(1)
@@ -4124,21 +4125,20 @@ def clone(
             envelope = error_envelope("clone", errors)
 
         output_json_envelope(envelope)
-    else:
-        if result.success:
-            if result.collections_cloned:
-                success(
-                    f"Clone completed: {result.local_path} "
-                    f"({len(result.collections_cloned)} collection(s), "
-                    f"{result.total_files_downloaded} file(s))"
-                )
-            else:
-                success(f"Clone completed: {result.local_path}")
+    elif result.success:
+        if result.collections_cloned:
+            success(
+                f"Clone completed: {result.local_path} "
+                f"({len(result.collections_cloned)} collection(s), "
+                f"{result.total_files_downloaded} file(s))"
+            )
         else:
-            if result.errors:
-                for err_msg in result.errors:
-                    error(err_msg)
-            error("Clone failed")
+            success(f"Clone completed: {result.local_path}")
+    else:
+        if result.errors:
+            for err_msg in result.errors:
+                error(err_msg)
+        error("Clone failed")
 
     if not result.success:
         raise SystemExit(1)
@@ -4421,11 +4421,10 @@ def config_unset(ctx: click.Context, json_output: bool, key: str, collection: st
                 success(f"Removed {key} from collection '{collection}' config")
             else:
                 success(f"Removed {key} from config")
+        elif collection:
+            info_output(f"{key} was not set in collection '{collection}' config")
         else:
-            if collection:
-                info_output(f"{key} was not set in collection '{collection}' config")
-            else:
-                info_output(f"{key} was not set in config")
+            info_output(f"{key} was not set in config")
 
 
 # ─────────────────────────────────────────────────────────────────────────────

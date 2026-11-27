@@ -137,7 +137,7 @@ def test_shipped_commands_list_the_builtin_sources_without_plugins(
     shipped = extract_group.shipped_commands(ctx)  # type: ignore[attr-defined]
 
     assert sorted(shipped) == ["arcgis", "carto", "wfs"]
-    assert manager._manager is None
+    assert manager.get_plugin_manager.cache_info().currsize == 0
 
 
 class _SingleResultPlugin:

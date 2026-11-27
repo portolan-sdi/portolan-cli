@@ -92,6 +92,10 @@ if TYPE_CHECKING:
     from obstore import PutMode, PutResult
     from obstore.store import S3Credential, S3CredentialProvider
 
+_AZURE_MIN_PARTS = 2
+_AZURE_PREFIX_INDEX = 2
+_MAX_FILES_LISTED = 10
+
 # Type alias for all supported object stores
 ObjectStore = S3Store | GCSStore | AzureStore | HTTPStore | LocalStore | MemoryStore
 
@@ -165,11 +169,11 @@ def parse_object_store_url(url: str) -> tuple[str, str]:
     if url.startswith("az://"):
         # Azure: az://account/container/path
         parts = url[5:].split("/", 2)
-        if len(parts) < 2:
+        if len(parts) < _AZURE_MIN_PARTS:
             raise ValueError(f"Invalid Azure URL: {url}. Expected az://account/container/path")
         account, container = parts[0], parts[1]
         # Strip trailing slashes to prevent double-slash in path construction (issue #144)
-        prefix = parts[2].rstrip("/") if len(parts) > 2 else ""
+        prefix = parts[_AZURE_PREFIX_INDEX].rstrip("/") if len(parts) > _AZURE_PREFIX_INDEX else ""
         return f"az://{account}/{container}", prefix
 
     if url.startswith(("https://", "http://")):
@@ -1253,8 +1257,8 @@ def _print_dry_run_directory(
     for f in files[:10]:
         target_key = _build_target_key(f, source, prefix)
         tell(report, "detail", f"  {f.name} -> {target_key}")
-    if len(files) > 10:
-        tell(report, "detail", f"  ... and {len(files) - 10} more file(s)")
+    if len(files) > _MAX_FILES_LISTED:
+        tell(report, "detail", f"  ... and {len(files) - _MAX_FILES_LISTED} more file(s)")
 
 
 def _execute_parallel_uploads(

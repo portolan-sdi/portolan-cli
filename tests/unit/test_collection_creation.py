@@ -224,7 +224,7 @@ class TestWriteCollectionJson:
 
         result_path = write_collection_json(sample_collection, tmp_path)
 
-        with open(result_path) as f:
+        with open(result_path, encoding="utf-8") as f:
             data = json.load(f)
 
         assert data["type"] == "Collection"
@@ -273,7 +273,7 @@ class TestWriteSchemaJson:
 
         result_path = write_schema_json(sample_schema, tmp_path)
 
-        with open(result_path) as f:
+        with open(result_path, encoding="utf-8") as f:
             data = json.load(f)
 
         assert data["format"] == "geoparquet"

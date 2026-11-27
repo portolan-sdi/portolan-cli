@@ -227,19 +227,19 @@ versioning.
 
 ### Format handler helpers
 
-::: portolan_cli.api.FileInfo
-    options:
-      heading_level: 4
-
-::: portolan_cli.api.InvalidOutputError
-    options:
-      heading_level: 4
-
 ::: portolan_cli.api.RASTER_EXTENSIONS
     options:
       heading_level: 4
 
 ::: portolan_cli.api.VECTOR_EXTENSIONS
+    options:
+      heading_level: 4
+
+::: portolan_cli.api.FileInfo
+    options:
+      heading_level: 4
+
+::: portolan_cli.api.InvalidOutputError
     options:
       heading_level: 4
 

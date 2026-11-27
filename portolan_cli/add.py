@@ -57,32 +57,32 @@ from portolan_cli.finalization import (
 # ``portolan_cli.add.finalize_items`` effective) and the test-suite keeps
 # importing them from this module. The edge is one-directional (add ->
 # finalization); finalization imports nothing from add.
-from portolan_cli.finalization import (  # noqa: F401
-    _asset_freshness_fields as _asset_freshness_fields,  # noqa: PLC0414
-)
-from portolan_cli.finalization import (  # noqa: F401
-    _ensure_partition_metadata as _ensure_partition_metadata,  # noqa: PLC0414
-)
-from portolan_cli.finalization import (  # noqa: F401
-    _finalize_with_backend as _finalize_with_backend,  # noqa: PLC0414
-)
-from portolan_cli.finalization import (  # noqa: F401
-    _fix_collection_links as _fix_collection_links,  # noqa: PLC0414
-)
-from portolan_cli.finalization import (  # noqa: F401
-    _get_or_create_collection as _get_or_create_collection,  # noqa: PLC0414
-)
-from portolan_cli.finalization import (  # noqa: F401
-    _save_collection_with_links as _save_collection_with_links,  # noqa: PLC0414
+from portolan_cli.finalization import (
+    _asset_freshness_fields as _asset_freshness_fields,
 )
 from portolan_cli.finalization import (
-    _update_catalog_links as _update_catalog_links,  # noqa: PLC0414
+    _ensure_partition_metadata as _ensure_partition_metadata,
 )
 from portolan_cli.finalization import (
-    apply_human_metadata as apply_human_metadata,  # noqa: PLC0414
+    _finalize_with_backend as _finalize_with_backend,
 )
 from portolan_cli.finalization import (
-    finalize_items as finalize_items,  # noqa: PLC0414
+    _fix_collection_links as _fix_collection_links,
+)
+from portolan_cli.finalization import (
+    _get_or_create_collection as _get_or_create_collection,
+)
+from portolan_cli.finalization import (
+    _save_collection_with_links as _save_collection_with_links,
+)
+from portolan_cli.finalization import (
+    _update_catalog_links as _update_catalog_links,
+)
+from portolan_cli.finalization import (
+    apply_human_metadata as apply_human_metadata,
+)
+from portolan_cli.finalization import (
+    finalize_items as finalize_items,
 )
 from portolan_cli.formats import (
     in_run,
@@ -94,10 +94,10 @@ from portolan_cli.hookspecs import EnrichContext
 from portolan_cli.humanize import humanize_slug
 from portolan_cli.plugins.formats import handler_for, plugin_extensions
 from portolan_cli.preparation import (
-    _MEDIA_TYPE_MAP as _MEDIA_TYPE_MAP,  # noqa: PLC0414
+    _MEDIA_TYPE_MAP as _MEDIA_TYPE_MAP,
 )
 from portolan_cli.preparation import (
-    _ROLE_MAP as _ROLE_MAP,  # noqa: PLC0414
+    _ROLE_MAP as _ROLE_MAP,
 )
 
 # Per-item preparation and conversion routing were extracted to preparation.py
@@ -106,8 +106,8 @@ from portolan_cli.preparation import (
 # re-exported so external callers (external.py) and the test-suite keep importing
 # them from this module. The dependency edge is one-directional (add ->
 # preparation); preparation imports nothing from add.
-from portolan_cli.preparation import (  # noqa: F401
-    IGNORED_FILES as IGNORED_FILES,  # noqa: PLC0414
+from portolan_cli.preparation import (
+    IGNORED_FILES as IGNORED_FILES,
 )
 from portolan_cli.preparation import (
     ROLE_SOURCE,
@@ -115,43 +115,43 @@ from portolan_cli.preparation import (
     is_rewrite_temp,
 )
 from portolan_cli.preparation import (
-    PreparedItem as PreparedItem,  # noqa: PLC0414
+    PreparedItem as PreparedItem,
 )
 from portolan_cli.preparation import (
-    _convert_and_extract_metadata as _convert_and_extract_metadata,  # noqa: PLC0414
+    _convert_and_extract_metadata as _convert_and_extract_metadata,
 )
 from portolan_cli.preparation import (
-    _create_and_save_item as _create_and_save_item,  # noqa: PLC0414
+    _create_and_save_item as _create_and_save_item,
 )
 from portolan_cli.preparation import (
-    _derive_item_id_and_asset_level as _derive_item_id_and_asset_level,  # noqa: PLC0414
+    _derive_item_id_and_asset_level as _derive_item_id_and_asset_level,
 )
 from portolan_cli.preparation import (
-    _get_asset_role as _get_asset_role,  # noqa: PLC0414
+    _get_asset_role as _get_asset_role,
 )
 from portolan_cli.preparation import (
-    _get_media_type as _get_media_type,  # noqa: PLC0414
+    _get_media_type as _get_media_type,
 )
 from portolan_cli.preparation import (
-    _pre_validate_geometry as _pre_validate_geometry,  # noqa: PLC0414
+    _pre_validate_geometry as _pre_validate_geometry,
 )
 from portolan_cli.preparation import (
-    _scan_item_assets as _scan_item_assets,  # noqa: PLC0414
+    _scan_item_assets as _scan_item_assets,
 )
 from portolan_cli.preparation import (
-    _warn_if_source_newer as _warn_if_source_newer,  # noqa: PLC0414
+    _warn_if_source_newer as _warn_if_source_newer,
 )
 from portolan_cli.preparation import (
-    convert_raster as convert_raster,  # noqa: PLC0414
+    convert_raster as convert_raster,
 )
 from portolan_cli.preparation import (
-    convert_tabular as convert_tabular,  # noqa: PLC0414
+    convert_tabular as convert_tabular,
 )
 from portolan_cli.preparation import (
-    convert_vector as convert_vector,  # noqa: PLC0414
+    convert_vector as convert_vector,
 )
 from portolan_cli.preparation import (
-    prepare_item as prepare_item,  # noqa: PLC0414
+    prepare_item as prepare_item,
 )
 from portolan_cli.remove import remove_files  # noqa: F401
 from portolan_cli.report import emit
@@ -763,12 +763,11 @@ def _collect_files_for_add(
     ignored_patterns = get_ignored_files(catalog_root, state=state)
 
     for path in paths:
-        files = iter_files_with_sidecars(path) if path.is_dir() else [path] + get_sidecars(path)
+        files = iter_files_with_sidecars(path) if path.is_dir() else [path, *get_sidecars(path)]
 
-        for file_path in files:
+        for listed_path in files:
             # Resolve symlinks to track the real file
-            if file_path.is_symlink():
-                file_path = file_path.resolve()
+            file_path = listed_path.resolve() if listed_path.is_symlink() else listed_path
 
             if file_path in processed_paths:
                 continue
@@ -1108,14 +1107,13 @@ def _record_prepared(
         if prepared.is_collection_level_asset:
             # Collection-level: map source to collection dir (Issue #383)
             result.source_to_collection_dir[source_dir] = (collection_dir, coll_id)
-        else:
-            # The document location is independent of --item-id.
-            if prepared.item_json_path is not None:
-                result.source_to_item_dir[source_dir] = (
-                    prepared.item_json_path,
-                    coll_id,
-                    prepared.item_id,
-                )
+        # The document location is independent of --item-id.
+        elif prepared.item_json_path is not None:
+            result.source_to_item_dir[source_dir] = (
+                prepared.item_json_path,
+                coll_id,
+                prepared.item_id,
+            )
 
 
 def _phase_process(
@@ -1324,7 +1322,7 @@ def add_files(
     from portolan_cli.version_ops import owned_run
 
     # Every footer read of the run goes through the run memo (formats.in_run).
-    with owned_run(catalog_root, state) as state, in_run(state):
+    with owned_run(catalog_root, state) as run_state, in_run(run_state):
         skipped: list[Path] = []
 
         # Track which nested collections have had their catalogs set up
@@ -1341,7 +1339,7 @@ def add_files(
                 setup_collections,
                 force=force,
                 skip_reasons=reasons,
-                state=state,
+                state=run_state,
             )
             stage.set(files=len(files_to_process), skipped=len(skipped))
         if not files_to_process:
@@ -1350,7 +1348,7 @@ def add_files(
         # Phase 1.5: refuse the add before any GDAL work when a target collection would
         # end up with no usable license (issue #686).
         with span("add.licenses"):
-            _require_licenses(catalog_root, {coll_id for _, coll_id in files_to_process}, state)
+            _require_licenses(catalog_root, {coll_id for _, coll_id in files_to_process}, run_state)
 
         # Issue #465: filenames of every batch item (sources + converted outputs) so a
         # collection-level asset scan can skip siblings that are tracked as their own
@@ -1363,8 +1361,8 @@ def add_files(
             reconvert=reconvert,
             skip_partitioning=skip_partitioning,
             batch_exclude_names=_batch_sibling_names([fp for fp, _ in files_to_process]),
-            state=state,
-            vector_settings=get_vector_settings(catalog_root, state=state),
+            state=run_state,
+            vector_settings=get_vector_settings(catalog_root, state=run_state),
         )
 
         # Phase 2: Prepare each file (GDAL work), accumulating prepared items (Issue #281).
@@ -1387,7 +1385,7 @@ def add_files(
 
         # Phase 2.5: plan the deferred non-geo files, so that a collection that
         # finalize writes takes its companions in the same write.
-        plan = _plan_deferred(proc, catalog_root, failures, state)
+        plan = _plan_deferred(proc, catalog_root, failures, run_state)
 
         # Phase 2.6: finalize writes each collection once (Issue #281).
         with span("add.finalize", items=len(proc.prepared_items)):
@@ -1395,7 +1393,7 @@ def add_files(
                 catalog_root,
                 proc.prepared_items,
                 merge_strategy,
-                state=state,
+                state=run_state,
                 companions=plan.companions,
             )
 
@@ -1411,7 +1409,7 @@ def add_files(
                 merge_strategy=merge_strategy,
                 touched_items=touched_items,
                 skip_reasons=reasons,
-                state=state,
+                state=run_state,
             )
 
         # Phase 4: run the enrichment hooks on the documents phase 3 changed (#947).

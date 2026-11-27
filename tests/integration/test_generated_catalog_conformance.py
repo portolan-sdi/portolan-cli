@@ -698,7 +698,7 @@ def build_scenario(
             try:
                 SCENARIOS[name].build(root, harness)
                 built[name] = (root, sorted(harness.roots | {root.resolve()}))
-            except BaseException as exc:  # noqa: BLE001 - cached and raised again
+            except BaseException as exc:  # cached and raised again
                 built[name] = exc
         result = built[name]
         if isinstance(result, BaseException):

@@ -279,7 +279,7 @@ def test_rollback_nonexistent_version_raises_valueerror(iceberg_backend, tmp_pat
         message="v1",
     )
 
-    with pytest.raises(ValueError, match="99.99.99"):
+    with pytest.raises(ValueError, match=r"99.99.99"):
         iceberg_backend.rollback("test-collection", "99.99.99")
 
 
@@ -391,20 +391,20 @@ def test_check_drift_no_collection(iceberg_backend):
 @pytest.mark.integration
 def test_empty_collection_name_rejected(iceberg_backend):
     """Empty collection name should raise ValueError."""
-    with pytest.raises(ValueError, match="[Ee]mpty"):
+    with pytest.raises(ValueError, match=r"[Ee]mpty"):
         iceberg_backend.list_versions("")
 
-    with pytest.raises(ValueError, match="[Ee]mpty"):
+    with pytest.raises(ValueError, match=r"[Ee]mpty"):
         iceberg_backend.list_versions("   ")
 
 
 @pytest.mark.integration
 def test_directory_traversal_rejected(iceberg_backend):
     """Directory traversal attempts should raise ValueError."""
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"Invalid collection name"):
         iceberg_backend.list_versions("../../etc/passwd")
 
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"Invalid collection name"):
         iceberg_backend.list_versions("..")
 
 

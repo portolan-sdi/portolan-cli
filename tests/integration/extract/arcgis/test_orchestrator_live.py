@@ -76,7 +76,7 @@ class TestLiveExtraction:
             output_dir=tmp_path,
             layer_filter=["*"],  # All layers
             options=options,
-            on_progress=lambda p: progress_events.append(p),
+            on_progress=progress_events.append,
         )
 
         # Should have extracted at least one layer

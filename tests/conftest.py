@@ -453,7 +453,7 @@ def rapidai4eo_path(fixtures_dir: Path) -> Path:
 
 
 @pytest.fixture
-def temp_catalog_dir(tmp_path: Path) -> Iterator[Path]:
+def temp_catalog_dir(tmp_path: Path) -> Path:
     """Create a temporary directory for catalog operations.
 
     Yields the path to a clean temporary directory that will be
@@ -461,7 +461,7 @@ def temp_catalog_dir(tmp_path: Path) -> Iterator[Path]:
     """
     catalog_dir = tmp_path / "test-catalog"
     catalog_dir.mkdir()
-    yield catalog_dir
+    return catalog_dir
 
 
 # =============================================================================

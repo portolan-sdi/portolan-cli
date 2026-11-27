@@ -75,6 +75,8 @@ if TYPE_CHECKING:
 
     from portolan_cli.version_ops import BackendPullResult
 
+_MAX_FILES_LISTED = 5
+
 
 # Default concurrency for async downloads (imported from async_utils)
 DEFAULT_CONCURRENCY = get_default_concurrency()
@@ -683,10 +685,10 @@ def _report_pull_plan(
         report("info", f"Pulling {update_count} file(s) from {remote_url}")
 
     report("info", f"Using concurrency: {concurrency}")
-    for filename in all_files[:5]:
+    for filename in all_files[:_MAX_FILES_LISTED]:
         report("detail", f" {filename}")
-    if len(all_files) > 5:
-        report("detail", f" ... and {len(all_files) - 5} more")
+    if len(all_files) > _MAX_FILES_LISTED:
+        report("detail", f" ... and {len(all_files) - _MAX_FILES_LISTED} more")
 
 
 # =============================================================================

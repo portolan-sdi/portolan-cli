@@ -67,7 +67,7 @@ class TestParseFilter:
         field, value = parse_filter_to_value(filter_xml)
         assert field == "class"
         # Value should be coerced to int if it looks numeric
-        assert value == 42 or value == "42"  # Either is acceptable
+        assert value in {42, "42"}  # Either is acceptable
 
 
 class TestParsePolygonSymbolizer:
@@ -494,7 +494,7 @@ class TestWarningsAndPartialConversion:
         <sld:StyledLayerDescriptor xmlns:sld="http://www.opengis.net/sld">
         </sld:StyledLayerDescriptor>
         """
-        with pytest.raises(SLDConverterError, match="No.*rules"):
+        with pytest.raises(SLDConverterError, match=r"No.*rules"):
             convert_sld(sld, source_layer="data")
 
     def test_sld_1_1_se_namespace(self) -> None:

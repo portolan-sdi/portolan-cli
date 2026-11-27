@@ -229,7 +229,8 @@ class TestBasemapOrdering:
         (figure,) = saved_figures
         xlim = figure.axes[0].get_xlim()
         # 10 and 20 degrees east in EPSG:3857 metres, inside the framed limits.
-        assert xlim[0] < 1_113_194.9 < 2_226_389.8 < xlim[1]
+        assert xlim[0] < 1_113_194.9
+        assert xlim[1] > 2_226_389.8
 
 
 # =============================================================================
@@ -884,7 +885,7 @@ class TestThumbnailIgnoresPaleStylePaint:
 
         The pale style fill is #dadada. The preset fill #3388ff is blue.
         """
-        gpd = pytest.importorskip("geopandas")
+        geopandas = pytest.importorskip("geopandas")
         import numpy as np
         from PIL import Image
         from shapely.geometry import box
@@ -892,7 +893,7 @@ class TestThumbnailIgnoresPaleStylePaint:
         from portolan_cli.viz.thumbnail import ThumbnailConfig, _render_geoparquet
 
         gpq_path = tmp_path / "test.parquet"
-        gpd.GeoDataFrame(geometry=[box(10, 10, 90, 90)], crs="OGC:CRS84").to_parquet(gpq_path)
+        geopandas.GeoDataFrame(geometry=[box(10, 10, 90, 90)], crs="OGC:CRS84").to_parquet(gpq_path)
         output_path = tmp_path / "test.thumb.jpg"
         config = ThumbnailConfig(basemap_provider="none")
 
@@ -953,9 +954,9 @@ class TestThumbnailRendersVisibleGeometry:
 
     @staticmethod
     def _write_gdf(geometries: list, tmp_path: Path, name: str) -> Path:
-        import geopandas as gpd
+        import geopandas
 
-        gdf = gpd.GeoDataFrame(geometry=geometries, crs="EPSG:4326")
+        gdf = geopandas.GeoDataFrame(geometry=geometries, crs="EPSG:4326")
         path = tmp_path / f"{name}.parquet"
         gdf.to_parquet(path)
         return path
@@ -992,7 +993,8 @@ class TestThumbnailRendersVisibleGeometry:
         config = ThumbnailConfig(basemap_provider="none")  # no network
         result = generate_thumbnail_from_geoparquet(gpq_path, config)
 
-        assert result is not None and result.exists()
+        assert result is not None
+        assert result.exists()
         assert result.stat().st_size > 0
         arr = np.asarray(pil.open(result).convert("L"))
         # Not a blank white tile: real ink is present.
@@ -1028,7 +1030,8 @@ class TestThumbnailRendersVisibleGeometry:
         config = ThumbnailConfig(basemap_provider="none")  # no network
         result = generate_thumbnail_from_geoparquet(gpq_path, config)
 
-        assert result is not None and result.exists()
+        assert result is not None
+        assert result.exists()
         arr = np.asarray(pil.open(result).convert("L"))
         h, w = arr.shape
         # Top-right block holds only the points (polygons are bottom-left).
@@ -1044,7 +1047,7 @@ class TestThumbnailRendersVisibleGeometry:
         coords and raises "aspect must be finite and positive", yielding no
         thumbnail. We force an equal aspect to keep the floor robust.
         """
-        gpd = pytest.importorskip("geopandas")
+        geopandas = pytest.importorskip("geopandas")
         pytest.importorskip("matplotlib")
         from shapely.geometry import Polygon
 
@@ -1062,14 +1065,15 @@ class TestThumbnailRendersVisibleGeometry:
             )
             for i in range(0, 1000, 100)
         ]
-        gdf = gpd.GeoDataFrame(geometry=geoms, crs="OGC:CRS84")
+        gdf = geopandas.GeoDataFrame(geometry=geoms, crs="OGC:CRS84")
         gpq_path = tmp_path / "mislabeled.parquet"
         gdf.to_parquet(gpq_path)
 
         config = ThumbnailConfig(basemap_provider="none")
         result = generate_thumbnail_from_geoparquet(gpq_path, config)
 
-        assert result is not None and result.exists()
+        assert result is not None
+        assert result.exists()
         assert result.stat().st_size > 0
 
 
@@ -1084,10 +1088,10 @@ class TestGeoparquetSampling:
         output, so a leading-N sample would draw only the western corner. The
         ordering is what makes the stride assertion meaningful.
         """
-        import geopandas as gpd
+        import geopandas
         import shapely
 
-        gdf = gpd.GeoDataFrame(
+        gdf = geopandas.GeoDataFrame(
             {"idx": list(range(rows))},
             geometry=[shapely.Point(x / rows * 10.0, 0.5) for x in range(rows)],
             crs="EPSG:4326",
@@ -1450,15 +1454,15 @@ class TestCheapBasemap:
         contextily raises for a zoom above the provider maximum, so an
         unclamped zoom would leave the thumbnail with no basemap.
         """
-        gpd = pytest.importorskip("geopandas")
+        geopandas = pytest.importorskip("geopandas")
         from shapely.geometry import box
 
         from portolan_cli.viz.thumbnail import ThumbnailConfig, generate_thumbnail_from_geoparquet
 
         gpq = tmp_path / "tiny.parquet"
-        gpd.GeoDataFrame(geometry=[box(2.0, 41.0, 2.00001, 41.00001)], crs="OGC:CRS84").to_parquet(
-            gpq
-        )
+        geopandas.GeoDataFrame(
+            geometry=[box(2.0, 41.0, 2.00001, 41.00001)], crs="OGC:CRS84"
+        ).to_parquet(gpq)
 
         result = generate_thumbnail_from_geoparquet(gpq, ThumbnailConfig())
 
@@ -1516,12 +1520,12 @@ class TestCheapBasemap:
     @pytest.mark.integration
     def test_polar_data_keeps_its_basemap(self, tmp_path: Path, stub_tiles: list[str]) -> None:
         """Latitude 90 maps to infinity in EPSG:3857, so the render clips it."""
-        gpd = pytest.importorskip("geopandas")
+        geopandas = pytest.importorskip("geopandas")
         from shapely.geometry import Polygon
 
         from portolan_cli.viz.thumbnail import ThumbnailConfig, generate_thumbnail_from_geoparquet
 
-        gdf = gpd.GeoDataFrame(
+        gdf = geopandas.GeoDataFrame(
             geometry=[Polygon([(-65, -90), (-63, -90), (-63, -20), (-65, -20)])], crs="OGC:CRS84"
         )
         gpq = tmp_path / "polar.parquet"
@@ -1557,12 +1561,12 @@ class TestCheapBasemap:
         self, tmp_path: Path, stub_tiles: list[str]
     ) -> None:
         """Coordinates that cannot be lon/lat get no basemap, but still a thumbnail."""
-        gpd = pytest.importorskip("geopandas")
+        geopandas = pytest.importorskip("geopandas")
         from shapely.geometry import box
 
         from portolan_cli.viz.thumbnail import ThumbnailConfig, generate_thumbnail_from_geoparquet
 
-        gdf = gpd.GeoDataFrame(
+        gdf = geopandas.GeoDataFrame(
             geometry=[box(1_611_000 + i, 1_910_000, 1_611_500 + i, 1_910_500) for i in range(5)],
             crs="OGC:CRS84",
         )
@@ -1661,7 +1665,7 @@ class TestBulkGeometry:
     @pytest.mark.integration
     def test_polygons_draw_as_one_path(self, tmp_path: Path, saved_figures: list[Any]) -> None:
         """Before the fix geopandas built one PathPatch per polygon (2,000 here)."""
-        gpd = pytest.importorskip("geopandas")
+        geopandas = pytest.importorskip("geopandas")
         from shapely.geometry import box
 
         from portolan_cli.viz.thumbnail import ThumbnailConfig, generate_thumbnail_from_geoparquet
@@ -1672,7 +1676,7 @@ class TestBulkGeometry:
             for j in range(40)
         ]
         gpq = tmp_path / "boxes.parquet"
-        gpd.GeoDataFrame(geometry=boxes, crs="OGC:CRS84").to_parquet(gpq)
+        geopandas.GeoDataFrame(geometry=boxes, crs="OGC:CRS84").to_parquet(gpq)
 
         assert generate_thumbnail_from_geoparquet(gpq, ThumbnailConfig(basemap_provider="none"))
 
@@ -1711,7 +1715,7 @@ class TestBulkGeometry:
     @pytest.mark.integration
     def test_a_hole_stays_empty(self, tmp_path: Path) -> None:
         """The interior ring of a polygon is not filled, whatever its winding."""
-        gpd = pytest.importorskip("geopandas")
+        geopandas = pytest.importorskip("geopandas")
         import numpy as np
         from PIL import Image
         from shapely.geometry import Polygon
@@ -1721,7 +1725,7 @@ class TestBulkGeometry:
         outer = [(0, 0), (10, 0), (10, 10), (0, 10)]
         inner = [(3, 3), (7, 3), (7, 7), (3, 7)]  # the same winding as the shell, on purpose
         gpq = tmp_path / "donut.parquet"
-        gpd.GeoDataFrame(geometry=[Polygon(outer, [inner])], crs="OGC:CRS84").to_parquet(gpq)
+        geopandas.GeoDataFrame(geometry=[Polygon(outer, [inner])], crs="OGC:CRS84").to_parquet(gpq)
 
         result = generate_thumbnail_from_geoparquet(gpq, ThumbnailConfig(basemap_provider="none"))
 
@@ -1737,10 +1741,10 @@ class TestGeometryOnlyReads:
 
     @staticmethod
     def _wide_parquet(path: Path, rows: int) -> None:
-        gpd = pytest.importorskip("geopandas")
+        geopandas = pytest.importorskip("geopandas")
         import shapely
 
-        gdf = gpd.GeoDataFrame(
+        gdf = geopandas.GeoDataFrame(
             {
                 "name": [f"feature-{i}" for i in range(rows)],
                 "kind": ["a" if i % 2 else "b" for i in range(rows)],
@@ -1818,10 +1822,10 @@ def _data_pixels(image_path: Path) -> int:
 
 def _write_crs84(path: Path, geometries: list[Any], bbox: list[float] | None = None) -> Path:
     """Write CRS84 geometries to GeoParquet, with an optional footer bbox."""
-    gpd = pytest.importorskip("geopandas")
+    geopandas = pytest.importorskip("geopandas")
     import pyarrow.parquet as pq
 
-    gpd.GeoDataFrame(geometry=geometries, crs="OGC:CRS84").to_parquet(path)
+    geopandas.GeoDataFrame(geometry=geometries, crs="OGC:CRS84").to_parquet(path)
     if bbox is not None:
         table = pq.read_table(path)
         metadata = dict(table.schema.metadata)
@@ -2051,12 +2055,12 @@ class TestOneOpenPerThumbnail:
     @staticmethod
     def _record_opens(monkeypatch: pytest.MonkeyPatch) -> list[str]:
         """Record each ParquetFile and each geopandas.read_parquet call."""
-        import geopandas as gpd
+        import geopandas
         import pyarrow.parquet as pq
 
         opens: list[str] = []
         original_init = pq.ParquetFile.__init__
-        original_read = gpd.read_parquet
+        original_read = geopandas.read_parquet
 
         def init(self: Any, *args: Any, **kwargs: Any) -> None:
             opens.append("ParquetFile")
@@ -2067,7 +2071,7 @@ class TestOneOpenPerThumbnail:
             return original_read(*args, **kwargs)
 
         monkeypatch.setattr(pq.ParquetFile, "__init__", init)
-        monkeypatch.setattr(gpd, "read_parquet", read)
+        monkeypatch.setattr(geopandas, "read_parquet", read)
         return opens
 
     @pytest.mark.integration
@@ -2076,14 +2080,14 @@ class TestOneOpenPerThumbnail:
         self, max_features: int, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Before the fix, the footer read and geopandas each opened the file."""
-        gpd = pytest.importorskip("geopandas")
+        geopandas = pytest.importorskip("geopandas")
         from shapely.geometry import box
 
         from portolan_cli.viz.thumbnail import _read_geoparquet_for_thumbnail
 
         gpq = tmp_path / "geoarrow.parquet"
         boxes = [box(i, 0, i + 1, 1) for i in range(10)]
-        gpd.GeoDataFrame(geometry=boxes, crs="EPSG:4326").to_parquet(
+        geopandas.GeoDataFrame(geometry=boxes, crs="EPSG:4326").to_parquet(
             gpq, geometry_encoding="geoarrow"
         )
         opens = self._record_opens(monkeypatch)
@@ -2104,7 +2108,7 @@ class TestOneOpenPerThumbnail:
 
         Before the fix, geopandas opened the file a second time for it.
         """
-        gpd = pytest.importorskip("geopandas")
+        geopandas = pytest.importorskip("geopandas")
         from shapely.geometry import Point
 
         from portolan_cli.viz.thumbnail import _read_geoparquet_for_thumbnail
@@ -2113,7 +2117,7 @@ class TestOneOpenPerThumbnail:
         # The one far point is row 1, so a stride of 3 does not sample it.
         points = [Point(i, i) for i in range(30)]
         points[1] = Point(-50, 70)
-        gpd.GeoDataFrame(geometry=points, crs="EPSG:4326").to_parquet(
+        geopandas.GeoDataFrame(geometry=points, crs="EPSG:4326").to_parquet(
             gpq, write_covering_bbox=False, row_group_size=7
         )
         # The footer that to_parquet writes holds a bbox, so drop it.
@@ -2315,7 +2319,8 @@ def test_all_provider_token_names_stay_out_of_logs(
     with caplog.at_level("DEBUG", logger="portolan_cli.viz.thumbnail"):
         thumbnail.add_basemap(TestAddBasemap._axes(), provider, api_key=key)
 
-    assert asked and all(key in url for url in asked)
+    assert asked
+    assert all(key in url for url in asked)
     messages = [record.getMessage() for record in caplog.records]
     assert any(
         "Basemap provider" in message or "Failed to add basemap" in message for message in messages

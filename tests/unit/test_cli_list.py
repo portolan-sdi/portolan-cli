@@ -36,11 +36,12 @@ def _write_catalog() -> None:
                 "description": "Test",
                 "links": [],
             }
-        )
+        ),
+        encoding="utf-8",
     )
     Path(".portolan").mkdir()
     # config.yaml is the sentinel for catalog detection
-    Path(".portolan/config.yaml").write_text("version: 1\n")
+    Path(".portolan/config.yaml").write_text("version: 1\n", encoding="utf-8")
 
 
 def _write_asset(path: str, size: int) -> None:

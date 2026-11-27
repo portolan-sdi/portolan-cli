@@ -264,7 +264,7 @@ class TestWriteItemJson:
 
         result_path = write_item_json(sample_item, tmp_path)
 
-        with open(result_path) as f:
+        with open(result_path, encoding="utf-8") as f:
             data = json.load(f)
 
         assert data["type"] == "Feature"

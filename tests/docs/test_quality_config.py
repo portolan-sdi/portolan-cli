@@ -90,7 +90,7 @@ OBJECT_STORE_IMPORTERS = frozenset(
 
 # Delete only. Lower these numbers when a name or a clone goes away.
 VULTURE_WHITELIST_NAMES = 95
-JSCPD_BASELINE_FINGERPRINTS = 520
+JSCPD_BASELINE_FINGERPRINTS = 516
 
 
 def _pyproject() -> dict[str, Any]:
@@ -233,7 +233,7 @@ def test_vulture_whitelist_entries_are_still_unused() -> None:
     """
     vulture = _pyproject()["tool"]["vulture"]
     paths = [path for path in vulture["paths"] if path != "vulture_whitelist.py"]
-    run = subprocess.run(  # noqa: S603 - fixed argument list
+    run = subprocess.run(  # fixed argument list
         [
             sys.executable,
             "-m",

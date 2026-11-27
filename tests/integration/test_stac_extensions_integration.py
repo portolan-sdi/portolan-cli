@@ -9,6 +9,7 @@ Tests the full workflow integration of STAC extensions:
 from __future__ import annotations
 
 import json
+import math
 from typing import TYPE_CHECKING
 
 import pystac
@@ -234,7 +235,7 @@ class TestAntimeridianHandling:
 
         # All coordinates should be valid numbers
         assert all(isinstance(c, float) for c in wgs84_bbox)
-        assert all(c == c for c in wgs84_bbox)  # Not NaN
+        assert all(not math.isnan(c) for c in wgs84_bbox)  # Not NaN
 
         # Latitude should be valid and ordered
         assert -90 <= south <= 90
@@ -253,7 +254,7 @@ class TestAntimeridianHandling:
             pytest.skip("Antimeridian fixture not available")
 
         # Read the GeoJSON to get the bbox
-        with open(antimeridian_path) as f:
+        with open(antimeridian_path, encoding="utf-8") as f:
             geojson = json.load(f)
 
         if "bbox" in geojson:

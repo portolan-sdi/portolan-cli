@@ -247,7 +247,7 @@ def test_index_recovery_keeps_an_entry_that_another_add_wrote_first(
     conformant_catalog: Path, valid_points_parquet: Path
 ) -> None:
     """The recovery reads the summaries under the lock, so a newer entry survives."""
-    import portolan_cli.catalog as catalog
+    from portolan_cli import catalog
 
     root = conformant_catalog
     source = root / "roads" / "roads.parquet"

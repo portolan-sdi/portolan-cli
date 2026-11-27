@@ -95,7 +95,7 @@ class TestTabularExtensions:
     """Tests for tabular file extension classification."""
 
     @pytest.mark.parametrize(
-        "filename,expected_category",
+        ("filename", "expected_category"),
         [
             ("data.csv", FileCategory.TABULAR_DATA),
             ("data.tsv", FileCategory.TABULAR_DATA),
@@ -110,7 +110,7 @@ class TestTabularExtensions:
         file_path = tmp_path / filename
         file_path.touch()
 
-        category, skip_type, message = classify_file(file_path)
+        category, skip_type, _message = classify_file(file_path)
 
         assert category == expected_category
         assert skip_type is not None  # Tabular files have skip reasons
@@ -275,7 +275,7 @@ class TestTabularEnabledCheck:
         config_file.write_text("tabular:\n  enabled: false\n")
 
         # Add the file - should fail with hint
-        added, skipped, failures = add_files(
+        _added, _skipped, failures = add_files(
             paths=[parquet_file],
             catalog_root=catalog_root,
         )
@@ -498,7 +498,7 @@ class TestTabularEnabledCheck:
         config_file.write_text("tabular:\n  enabled: false\n")
 
         # Add both files - should work for both
-        added, skipped, failures = add_files(
+        _added, _skipped, failures = add_files(
             paths=[geo_file, tabular_file],
             catalog_root=catalog_root,
         )
@@ -676,7 +676,7 @@ class TestAoiInheritance:
         config_file.write_text("tabular:\n  enabled: true\n")
 
         # Add the tabular file
-        added, skipped, failures = add_files(
+        _added, _skipped, failures = add_files(
             paths=[parquet_file],
             catalog_root=catalog_root,
         )
@@ -745,7 +745,7 @@ class TestAoiInheritance:
         config_file = catalog_root / ".portolan" / "config.yaml"
         config_file.write_text("tabular:\n  enabled: true\n")
 
-        added, skipped, failures = add_files(
+        _added, _skipped, failures = add_files(
             paths=[parquet_file],
             catalog_root=catalog_root,
         )
@@ -782,7 +782,7 @@ class TestAoiInheritance:
         config_file = catalog_root / ".portolan" / "config.yaml"
         config_file.write_text("tabular:\n  enabled: true\n")
 
-        added, skipped, failures = add_files(
+        _added, _skipped, failures = add_files(
             paths=[parquet_file],
             catalog_root=catalog_root,
         )
@@ -831,7 +831,7 @@ class TestAoiInheritance:
         config_file = catalog_root / ".portolan" / "config.yaml"
         config_file.write_text("tabular:\n  enabled: true\n")
 
-        added, skipped, failures = add_files(
+        _added, _skipped, failures = add_files(
             paths=[parquet_file],
             catalog_root=catalog_root,
         )
@@ -892,7 +892,7 @@ class TestAoiInheritance:
         config_file = catalog_root / ".portolan" / "config.yaml"
         config_file.write_text("tabular:\n  enabled: true\n")
 
-        added, skipped, failures = add_files(
+        _added, _skipped, failures = add_files(
             paths=[parquet_file],
             catalog_root=catalog_root,
         )
@@ -994,7 +994,7 @@ class TestTabularConversionIntegration:
         config_file.write_text("tabular:\n  enabled: true\n  convert: false\n")
 
         # Add the CSV
-        added, skipped, failures = add_files(
+        _added, _skipped, failures = add_files(
             paths=[csv_file],
             catalog_root=catalog_root,
         )
@@ -1040,7 +1040,7 @@ class TestTabularConversionIntegration:
         config_file.write_text("tabular:\n  enabled: true\n  convert: true\n")
 
         # Add the XLSX
-        added, skipped, failures = add_files(
+        _added, _skipped, failures = add_files(
             paths=[xlsx_file],
             catalog_root=catalog_root,
         )

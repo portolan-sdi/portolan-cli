@@ -238,7 +238,7 @@ def test_push_blocked_backend(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A collection whose backend refuses push fails the same way in both."""
-    import portolan_cli.backends as backends
+    from portolan_cli import backends
 
     real_get_backend = backends.get_backend
 
@@ -273,7 +273,7 @@ def test_push_dry_run_constructs_no_backend(
     built. A dry run reads only the local versions.json. The command still
     refuses the blocked collection with its own early check.
     """
-    import portolan_cli.backends as backends
+    from portolan_cli import backends
 
     def get_backend(name: str, **_kwargs: Any) -> Any:
         raise AssertionError(f"a dry run must not build the {name!r} backend")

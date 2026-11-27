@@ -49,7 +49,8 @@ def _write_test_point_geojson(path: Path) -> None:
                     }
                 ],
             }
-        )
+        ),
+        encoding="utf-8",
     )
 
 
@@ -153,7 +154,7 @@ class TestNonGeospatialCsvSkip:
     ) -> None:
         """add_files should skip CSVs without geometry and emit a warning."""
         with caplog.at_level(logging.WARNING):
-            added, skipped, failures = add_files(
+            added, _skipped, _failures = add_files(
                 paths=[non_geo_csv],
                 catalog_root=initialized_catalog,
                 collection_id="collection",
@@ -186,7 +187,7 @@ class TestNonGeospatialCsvSkip:
 
             # Add directory containing both non-geo CSV and valid GeoJSON
             directory = non_geo_csv.parent
-            added, skipped, failures = add_files(
+            _added, _skipped, failures = add_files(
                 paths=[directory],
                 catalog_root=initialized_catalog,
                 collection_id="collection",
@@ -225,7 +226,7 @@ class TestNonGeospatialCsvSkip:
         """add_files should NOT raise an exception for non-geospatial CSV."""
         # This should NOT raise - it should handle gracefully
         try:
-            added, skipped, failures = add_files(
+            added, _skipped, failures = add_files(
                 paths=[non_geo_csv],
                 catalog_root=initialized_catalog,
                 collection_id="collection",
@@ -264,7 +265,7 @@ class TestMixedDirectoryProcessing:
             mock_add.return_value = MagicMock(item_id="data", collection_id="collection")
             mock_finalize.return_value = []
 
-            added, skipped, failures = add_files(
+            _added, _skipped, _failures = add_files(
                 paths=[collection_dir],
                 catalog_root=initialized_catalog,
                 collection_id="collection",
@@ -291,7 +292,7 @@ class TestMixedDirectoryProcessing:
         (item_dir / "config.csv").write_text("key,value\nsetting1,true\n")
 
         with caplog.at_level(logging.WARNING):
-            added, skipped, failures = add_files(
+            added, _skipped, _failures = add_files(
                 paths=[item_dir],
                 catalog_root=initialized_catalog,
                 collection_id="collection",
@@ -334,7 +335,7 @@ class TestCsvGeometryDetection:
             mock_add.return_value = MagicMock(item_id="points", collection_id="collection")
             mock_finalize.return_value = []
 
-            added, skipped, failures = add_files(
+            _added, skipped, failures = add_files(
                 paths=[geo_csv],
                 catalog_root=initialized_catalog,
                 collection_id="collection",
@@ -395,7 +396,7 @@ class TestCsvGeometryDetection:
             mock_add.return_value = MagicMock(item_id="wkt_data", collection_id="collection")
             mock_finalize.return_value = []
 
-            added, skipped, failures = add_files(
+            _added, skipped, failures = add_files(
                 paths=[wkt_csv],
                 catalog_root=initialized_catalog,
                 collection_id="collection",
@@ -513,7 +514,7 @@ class TestCsvSkipHypothesis:
             csv_file.write_text(csv_content)
 
             # This should NOT raise - ever
-            added, skipped, failures = add_files(
+            added, _skipped, failures = add_files(
                 paths=[csv_file],
                 catalog_root=tmp_path,
                 collection_id="collection",
@@ -593,7 +594,7 @@ class TestCsvSkipHypothesis:
             csv_file.write_text(csv_content)
 
             # Should not raise
-            added, skipped, failures = add_files(
+            added, _skipped, failures = add_files(
                 paths=[csv_file],
                 catalog_root=tmp_path,
                 collection_id="collection",
@@ -637,7 +638,7 @@ class TestTsvSupport:
 
         with caplog.at_level(logging.WARNING):
             try:
-                added, skipped, failures = add_files(
+                added, _skipped, _failures = add_files(
                     paths=[tsv_file],
                     catalog_root=initialized_catalog,
                     collection_id="collection",
@@ -671,7 +672,7 @@ class TestTsvSupport:
             mock_add.return_value = MagicMock(item_id="points", collection_id="collection")
             mock_finalize.return_value = []
 
-            added, skipped, failures = add_files(
+            _added, skipped, failures = add_files(
                 paths=[geo_tsv],
                 catalog_root=initialized_catalog,
                 collection_id="collection",
@@ -721,7 +722,7 @@ class TestExceptionHandlingNarrowness:
         with patch("portolan_cli.add.prepare_item") as mock_add:
             mock_add.side_effect = click.ClickException("Permission denied: /some/path")
 
-            added, skipped, failures = add_files(
+            _added, _skipped, failures = add_files(
                 paths=[csv_file],
                 catalog_root=initialized_catalog,
                 collection_id="collection",
@@ -766,7 +767,7 @@ class TestAdr0028AssetTracking:
             mock_finalize.return_value = []
 
             with caplog.at_level(logging.INFO):
-                added, skipped, failures = add_files(
+                _added, _skipped, failures = add_files(
                     paths=[collection_dir],
                     catalog_root=initialized_catalog,
                     collection_id="collection",
@@ -790,7 +791,7 @@ class TestAdr0028AssetTracking:
         (collection_dir / "config.csv").write_text("key,value\nsetting1,true\n")
 
         with caplog.at_level(logging.WARNING):
-            added, skipped, failures = add_files(
+            added, _skipped, _failures = add_files(
                 paths=[collection_dir],
                 catalog_root=initialized_catalog,
                 collection_id="collection",
@@ -1069,7 +1070,7 @@ class TestAddFilesCodePaths:
             mock_add.return_value = MagicMock(item_id="data", collection_id="collection")
             mock_finalize.return_value = []
 
-            added, skipped, failures = add_files(
+            _added, _skipped, _failures = add_files(
                 paths=[symlink],
                 catalog_root=initialized_catalog,
                 collection_id="collection",
@@ -1097,7 +1098,7 @@ class TestAddFilesCodePaths:
             mock_finalize.return_value = []
 
             # Pass the same file twice
-            added, skipped, failures = add_files(
+            _added, _skipped, _failures = add_files(
                 paths=[geojson, geojson],
                 catalog_root=initialized_catalog,
                 collection_id="collection",
@@ -1125,7 +1126,7 @@ class TestAddFilesCodePaths:
         ):
             mock_finalize.return_value = []
 
-            added, skipped, failures = add_files(
+            added, _skipped, _failures = add_files(
                 paths=[txt_file],
                 catalog_root=initialized_catalog,
                 collection_id="collection",
@@ -1148,7 +1149,7 @@ class TestAddFilesCodePaths:
             patch("portolan_cli.add.prepare_item") as mock_add,
             patch("portolan_cli.add.is_current", return_value=True),
         ):
-            added, skipped, failures = add_files(
+            _added, skipped, _failures = add_files(
                 paths=[geojson],
                 catalog_root=initialized_catalog,
                 collection_id="collection",
@@ -1181,7 +1182,7 @@ class TestAddFilesCodePaths:
             mock_finalize.return_value = []
 
             # Don't pass collection_id - should be inferred
-            added, skipped, failures = add_files(
+            _added, _skipped, _failures = add_files(
                 paths=[geojson],
                 catalog_root=initialized_catalog,
                 collection_id=None,
@@ -1273,7 +1274,7 @@ class TestAddFilesCodePaths:
             mock_finalize.return_value = []
 
             with caplog.at_level(logging.INFO):
-                added, skipped, failures = add_files(
+                _added, skipped, _failures = add_files(
                     paths=[source_dir],
                     catalog_root=initialized_catalog,
                     collection_id="collection",
@@ -1304,7 +1305,7 @@ class TestAddFilesCodePaths:
             mock_add.side_effect = errors.NoGeometryError(str(geojson), "No geometry columns.")
 
             # Per Issue #175: errors are now collected instead of raised
-            added, skipped, failures = add_files(
+            _added, _skipped, failures = add_files(
                 paths=[geojson],
                 catalog_root=initialized_catalog,
                 collection_id="collection",
@@ -1329,7 +1330,7 @@ class TestAddFilesCodePaths:
             mock_add.side_effect = ValueError("Invalid data")
 
             # Per Issue #175: errors are now collected instead of raised
-            added, skipped, failures = add_files(
+            _added, _skipped, failures = add_files(
                 paths=[geojson],
                 catalog_root=initialized_catalog,
                 collection_id="collection",
@@ -1354,7 +1355,7 @@ class TestAddFilesCodePaths:
             mock_add.side_effect = FileNotFoundError("File missing")
 
             # Per Issue #175: errors are now collected instead of raised
-            added, skipped, failures = add_files(
+            _added, _skipped, failures = add_files(
                 paths=[geojson],
                 catalog_root=initialized_catalog,
                 collection_id="collection",
@@ -1401,7 +1402,7 @@ class TestMixedFormatIntegration:
 
             with caplog.at_level(logging.INFO):
                 try:
-                    added, skipped, failures = add_files(
+                    _added, _skipped, _failures = add_files(
                         paths=[collection_dir],
                         catalog_root=initialized_catalog,
                         collection_id="collection",

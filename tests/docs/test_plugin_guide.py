@@ -48,7 +48,7 @@ def _expanded_guide() -> str:
 
 
 def _hookspec_names() -> list[str]:
-    import portolan_cli.hookspecs as hookspecs
+    from portolan_cli import hookspecs
 
     marker = f"{hookspecs.PROJECT_NAME}_spec"
     return [name for name, value in vars(hookspecs).items() if hasattr(value, marker)]

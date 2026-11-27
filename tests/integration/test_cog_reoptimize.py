@@ -242,7 +242,7 @@ class TestCheckDirectoryForce:
         """force without fix is a programmer error (mirrors remove_legacy guard)."""
         from portolan_cli.scan.check import check_directory
 
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match=r"force requires fix=True"):
             check_directory(tmp_path, fix=False, force=True)
 
     @pytest.mark.integration

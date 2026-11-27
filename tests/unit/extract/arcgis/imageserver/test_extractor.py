@@ -1628,7 +1628,7 @@ class TestCoarseScanResume:
         import json
 
         empty = (LERC_FIXTURES / "lerc2d_empty.bin").read_bytes()
-        seen, handler = TestCoarseScan._recording_handler(empty)
+        _seen, handler = TestCoarseScan._recording_handler(empty)
 
         await TestCoarseScan._run(
             TestCoarseScan._wide(tiles_only_metadata), tmp_path, handler, True

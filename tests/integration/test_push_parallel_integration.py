@@ -111,7 +111,7 @@ class TestParallelPushIntegration:
     def test_parallel_execution_observes_worker_count(
         self,
         mock_push_async: AsyncMock,
-        _mock_setup_store: MagicMock,
+        mock_setup_store: MagicMock,
         multi_collection_catalog: Path,
     ) -> None:
         """Parallel execution respects the workers parameter."""
@@ -147,7 +147,7 @@ class TestParallelPushIntegration:
     def test_sequential_execution_with_workers_1(
         self,
         mock_push_async: AsyncMock,
-        _mock_setup_store: MagicMock,
+        mock_setup_store: MagicMock,
         multi_collection_catalog: Path,
     ) -> None:
         """workers=1 executes collections sequentially."""
@@ -177,7 +177,7 @@ class TestParallelPushIntegration:
     def test_parallel_continues_on_individual_failure(
         self,
         mock_push_async: AsyncMock,
-        _mock_setup_store: MagicMock,
+        mock_setup_store: MagicMock,
         multi_collection_catalog: Path,
     ) -> None:
         """Parallel execution continues when individual collections fail."""

@@ -115,21 +115,25 @@ def default_writer(
     stream.flush()
 
 
-_writer: Writer = default_writer
+class _Switches:
+    """Hold the process-wide output switches, so that no function rebinds a global."""
+
+    def __init__(self) -> None:
+        self.writer: Writer = default_writer
+        self.stdout_to_stderr = False
+
+
+_state = _Switches()
 
 
 def set_writer(writer: Writer) -> None:
     """Install the writer that every output function uses."""
-    global _writer
-    _writer = writer
+    _state.writer = writer
 
 
 def get_writer() -> Writer:
     """Return the installed writer."""
-    return _writer
-
-
-_stdout_to_stderr = False
+    return _state.writer
 
 
 @contextmanager
@@ -139,13 +143,12 @@ def stdout_to_stderr() -> Generator[None, None, None]:
     The switch is process-wide, so messages from worker threads follow it too.
     A message with an explicit ``file`` keeps that stream.
     """
-    global _stdout_to_stderr
-    previous = _stdout_to_stderr
-    _stdout_to_stderr = True
+    previous = _state.stdout_to_stderr
+    _state.stdout_to_stderr = True
     try:
         yield
     finally:
-        _stdout_to_stderr = previous
+        _state.stdout_to_stderr = previous
 
 
 def _output(
@@ -173,12 +176,12 @@ def _output(
     fg = str(style_kwargs["fg"]) if "fg" in style_kwargs else None
     dim = bool(style_kwargs.get("dim", False))
 
-    if file is None and _stdout_to_stderr:
+    if file is None and _state.stdout_to_stderr:
         file = sys.stderr
 
     # Thread-safe output to prevent interleaving from concurrent threads
     with _output_lock:
-        _writer(_PREFIXES[style], message, fg=fg, dim=dim, file=file, nl=nl)
+        _state.writer(_PREFIXES[style], message, fg=fg, dim=dim, file=file, nl=nl)
 
 
 def success(

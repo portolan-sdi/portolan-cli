@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     )
     from portolan_cli.extract.arcgis.url_parser import ParsedArcGISURL
     from portolan_cli.extract.common.report import ExtractRunResult
+from portolan_core.bbox import BBOX_2D_LEN
 
 
 def _handle_list_services_mode(
@@ -97,7 +98,7 @@ def _parse_imageserver_bbox(
         return None
     try:
         parts = [float(x.strip()) for x in bbox.split(",")]
-        if len(parts) != 4:
+        if len(parts) != BBOX_2D_LEN:
             raise ValueError("bbox must have exactly 4 values")
     except (ValueError, TypeError) as e:
         cli_helpers.output_extract_error(

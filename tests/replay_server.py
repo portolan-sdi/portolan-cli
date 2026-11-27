@@ -139,7 +139,7 @@ class _Server(ThreadingHTTPServer):
 class _Handler(BaseHTTPRequestHandler):
     server: _Server
 
-    def log_message(self, format: str, *args: object) -> None:  # noqa: A002 - BaseHTTPRequestHandler API
+    def log_message(self, format: str, *args: object) -> None:  # BaseHTTPRequestHandler API
         """Keep stderr quiet. ``ReplayServer.requests`` is the log."""
 
     def __getattr__(self, name: str) -> Callable[[], None]:

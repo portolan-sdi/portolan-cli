@@ -46,7 +46,9 @@ class TestMetadataInit:
 
             assert result.exit_code == 1
             assert "already exists" in result.output
-            assert 'license: "CC-BY-4.0"' in Path(".portolan/metadata.yaml").read_text()
+            assert 'license: "CC-BY-4.0"' in Path(".portolan/metadata.yaml").read_text(
+                encoding="utf-8"
+            )
 
     @pytest.mark.unit
     def test_creates_metadata_yaml_at_collection(self, runner: CliRunner, tmp_path: Path) -> None:
@@ -65,12 +67,12 @@ class TestMetadataInit:
         """metadata init --no-recursive should not overwrite existing metadata.yaml."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
             runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
-            Path(".portolan/metadata.yaml").write_text("license: CC-BY-4.0\n")
+            Path(".portolan/metadata.yaml").write_text("license: CC-BY-4.0\n", encoding="utf-8")
 
             runner.invoke(cli, ["metadata", "init", "--no-recursive"])
 
             # Should either error or warn, not overwrite
-            content = Path(".portolan/metadata.yaml").read_text()
+            content = Path(".portolan/metadata.yaml").read_text(encoding="utf-8")
             assert "CC-BY-4.0" in content  # Original content preserved
 
     @pytest.mark.unit
@@ -78,12 +80,12 @@ class TestMetadataInit:
         """metadata init --force --no-recursive should overwrite existing metadata.yaml."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
             runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
-            Path(".portolan/metadata.yaml").write_text("license: Old\n")
+            Path(".portolan/metadata.yaml").write_text("license: Old\n", encoding="utf-8")
 
             result = runner.invoke(cli, ["metadata", "init", "--force", "--no-recursive"])
 
             assert result.exit_code == 0
-            content = Path(".portolan/metadata.yaml").read_text()
+            content = Path(".portolan/metadata.yaml").read_text(encoding="utf-8")
             assert "Old" not in content  # Overwritten
             assert "contact" in content.lower()  # Template content
 
@@ -132,13 +134,17 @@ class TestMetadataInit:
             runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             # Subcatalog
             Path("climate").mkdir()
-            Path("climate/catalog.json").write_text('{"type": "Catalog"}')
+            Path("climate/catalog.json").write_text('{"type": "Catalog"}', encoding="utf-8")
             # Collection under subcatalog
             Path("climate/hittekaart").mkdir()
-            Path("climate/hittekaart/collection.json").write_text('{"type": "Collection"}')
+            Path("climate/hittekaart/collection.json").write_text(
+                '{"type": "Collection"}', encoding="utf-8"
+            )
             # Direct collection
             Path("demographics").mkdir()
-            Path("demographics/collection.json").write_text('{"type": "Collection"}')
+            Path("demographics/collection.json").write_text(
+                '{"type": "Collection"}', encoding="utf-8"
+            )
 
             result = runner.invoke(cli, ["metadata", "init"])
 
@@ -159,15 +165,19 @@ class TestMetadataInit:
             runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             # Create collection with existing metadata
             Path("demographics").mkdir()
-            Path("demographics/collection.json").write_text('{"type": "Collection"}')
+            Path("demographics/collection.json").write_text(
+                '{"type": "Collection"}', encoding="utf-8"
+            )
             Path("demographics/.portolan").mkdir()
-            Path("demographics/.portolan/metadata.yaml").write_text("license: CC-BY-4.0\n")
+            Path("demographics/.portolan/metadata.yaml").write_text(
+                "license: CC-BY-4.0\n", encoding="utf-8"
+            )
 
             result = runner.invoke(cli, ["metadata", "init"])
 
             assert result.exit_code == 0
             # Existing metadata should be preserved
-            content = Path("demographics/.portolan/metadata.yaml").read_text()
+            content = Path("demographics/.portolan/metadata.yaml").read_text(encoding="utf-8")
             assert "CC-BY-4.0" in content
             # Root should still be created
             assert Path(".portolan/metadata.yaml").exists()
@@ -179,9 +189,13 @@ class TestMetadataInit:
             runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             # Collection with an item
             Path("demographics").mkdir()
-            Path("demographics/collection.json").write_text('{"type": "Collection"}')
+            Path("demographics/collection.json").write_text(
+                '{"type": "Collection"}', encoding="utf-8"
+            )
             Path("demographics/census-2020").mkdir()
-            Path("demographics/census-2020/item.json").write_text('{"type": "Feature"}')
+            Path("demographics/census-2020/item.json").write_text(
+                '{"type": "Feature"}', encoding="utf-8"
+            )
 
             result = runner.invoke(cli, ["metadata", "init"])
 
@@ -197,7 +211,9 @@ class TestMetadataInit:
         with runner.isolated_filesystem(temp_dir=tmp_path):
             runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             Path("demographics").mkdir()
-            Path("demographics/collection.json").write_text('{"type": "Collection"}')
+            Path("demographics/collection.json").write_text(
+                '{"type": "Collection"}', encoding="utf-8"
+            )
 
             result = runner.invoke(cli, ["--format", "json", "metadata", "init"])
 
@@ -214,12 +230,16 @@ class TestMetadataInit:
             runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             # Subcatalog with nested collection
             Path("climate").mkdir()
-            Path("climate/catalog.json").write_text('{"type": "Catalog"}')
+            Path("climate/catalog.json").write_text('{"type": "Catalog"}', encoding="utf-8")
             Path("climate/hittekaart").mkdir()
-            Path("climate/hittekaart/collection.json").write_text('{"type": "Collection"}')
+            Path("climate/hittekaart/collection.json").write_text(
+                '{"type": "Collection"}', encoding="utf-8"
+            )
             # Another top-level collection (should NOT be touched)
             Path("demographics").mkdir()
-            Path("demographics/collection.json").write_text('{"type": "Collection"}')
+            Path("demographics/collection.json").write_text(
+                '{"type": "Collection"}', encoding="utf-8"
+            )
 
             result = runner.invoke(cli, ["metadata", "init", "climate"])
 
@@ -228,7 +248,9 @@ class TestMetadataInit:
             assert Path("climate/.portolan/metadata.yaml").exists()
             assert Path("climate/hittekaart/.portolan/metadata.yaml").exists()
             # Root was seeded by init and must be untouched (we started from climate)
-            assert 'license: "CC-BY-4.0"' in Path(".portolan/metadata.yaml").read_text()
+            assert 'license: "CC-BY-4.0"' in Path(".portolan/metadata.yaml").read_text(
+                encoding="utf-8"
+            )
             # demographics should NOT have metadata
             assert not Path("demographics/.portolan/metadata.yaml").exists()
 
@@ -267,16 +289,20 @@ class TestMetadataInit:
         with runner.isolated_filesystem(temp_dir=tmp_path):
             runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             Path("demographics").mkdir()
-            Path("demographics/collection.json").write_text('{"type": "Collection"}')
+            Path("demographics/collection.json").write_text(
+                '{"type": "Collection"}', encoding="utf-8"
+            )
             Path("demographics/.portolan").mkdir()
             original_content = "# Custom content\nlicense: CC-BY-4.0\n"
-            Path("demographics/.portolan/metadata.yaml").write_text(original_content)
+            Path("demographics/.portolan/metadata.yaml").write_text(
+                original_content, encoding="utf-8"
+            )
 
             result = runner.invoke(cli, ["metadata", "init", "--force"])
 
             assert result.exit_code == 0
             # Content should be overwritten with template
-            new_content = Path("demographics/.portolan/metadata.yaml").read_text()
+            new_content = Path("demographics/.portolan/metadata.yaml").read_text(encoding="utf-8")
             assert new_content != original_content
             assert "contact:" in new_content  # Template has contact field
 
@@ -287,12 +313,16 @@ class TestMetadataInit:
             runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             # Create collection with existing metadata (to get skipped paths)
             Path("demographics").mkdir()
-            Path("demographics/collection.json").write_text('{"type": "Collection"}')
+            Path("demographics/collection.json").write_text(
+                '{"type": "Collection"}', encoding="utf-8"
+            )
             Path("demographics/.portolan").mkdir()
-            Path("demographics/.portolan/metadata.yaml").write_text("license: MIT\n")
+            Path("demographics/.portolan/metadata.yaml").write_text(
+                "license: MIT\n", encoding="utf-8"
+            )
             # Create another collection (to get created paths)
             Path("climate").mkdir()
-            Path("climate/collection.json").write_text('{"type": "Collection"}')
+            Path("climate/collection.json").write_text('{"type": "Collection"}', encoding="utf-8")
 
             result = runner.invoke(cli, ["--format", "json", "metadata", "init"])
 
@@ -320,7 +350,7 @@ class TestMetadataInit:
         with runner.isolated_filesystem(temp_dir=tmp_path):
             runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             Path("climate").mkdir()
-            Path("climate/catalog.json").write_text('{"type": "Catalog"}')
+            Path("climate/catalog.json").write_text('{"type": "Catalog"}', encoding="utf-8")
             # Create a symlink that would cause infinite loop
             try:
                 Path("climate/loop").symlink_to(Path.cwd() / "climate")
@@ -349,7 +379,8 @@ class TestMetadataValidate:
             runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             # Only contact and license are required now
             Path(".portolan/metadata.yaml").write_text(
-                "contact:\n  name: Test User\n  email: test@example.org\nlicense: CC-BY-4.0\n"
+                "contact:\n  name: Test User\n  email: test@example.org\nlicense: CC-BY-4.0\n",
+                encoding="utf-8",
             )
 
             result = runner.invoke(cli, ["metadata", "validate", "--no-recursive"])
@@ -362,7 +393,8 @@ class TestMetadataValidate:
         with runner.isolated_filesystem(temp_dir=tmp_path):
             runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             Path(".portolan/metadata.yaml").write_text(
-                "citation: Some citation\n"  # Missing contact and license
+                "citation: Some citation\n",
+                encoding="utf-8",  # Missing contact and license
             )
 
             result = runner.invoke(cli, ["metadata", "validate", "--no-recursive"])
@@ -377,7 +409,7 @@ class TestMetadataValidate:
         with runner.isolated_filesystem(temp_dir=tmp_path):
             runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             Path(".portolan/metadata.yaml").write_text(
-                "contact:\n  name: Test\n  email: not-an-email\nlicense: MIT\n"
+                "contact:\n  name: Test\n  email: not-an-email\nlicense: MIT\n", encoding="utf-8"
             )
 
             result = runner.invoke(cli, ["metadata", "validate", "--no-recursive"])
@@ -392,7 +424,8 @@ class TestMetadataValidate:
             runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             Path("demographics/.portolan").mkdir(parents=True)
             Path("demographics/.portolan/metadata.yaml").write_text(
-                "contact:\n  name: Team\n  email: team@org.com\nlicense: CC0-1.0\n"
+                "contact:\n  name: Team\n  email: team@org.com\nlicense: CC0-1.0\n",
+                encoding="utf-8",
             )
 
             result = runner.invoke(cli, ["metadata", "validate", "demographics", "--no-recursive"])
@@ -405,7 +438,7 @@ class TestMetadataValidate:
         with runner.isolated_filesystem(temp_dir=tmp_path):
             runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             Path(".portolan/metadata.yaml").write_text(
-                "contact:\n  name: N\n  email: a@b.c\nlicense: MIT\n"
+                "contact:\n  name: N\n  email: a@b.c\nlicense: MIT\n", encoding="utf-8"
             )
 
             result = runner.invoke(
@@ -423,7 +456,9 @@ class TestMetadataValidate:
         """metadata validate --format json --no-recursive should output errors in JSON."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
             runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
-            Path(".portolan/metadata.yaml").write_text("citation: Test\n")  # Incomplete
+            Path(".portolan/metadata.yaml").write_text(
+                "citation: Test\n", encoding="utf-8"
+            )  # Incomplete
 
             result = runner.invoke(
                 cli, ["--format", "json", "metadata", "validate", "--no-recursive"]
@@ -442,17 +477,21 @@ class TestMetadataValidate:
             runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             valid_metadata = "contact:\n  name: Test\n  email: test@example.org\nlicense: MIT\n"
             # Root metadata
-            Path(".portolan/metadata.yaml").write_text(valid_metadata)
+            Path(".portolan/metadata.yaml").write_text(valid_metadata, encoding="utf-8")
             # Subcatalog
             Path("climate").mkdir()
-            Path("climate/catalog.json").write_text('{"type": "Catalog"}')
+            Path("climate/catalog.json").write_text('{"type": "Catalog"}', encoding="utf-8")
             Path("climate/.portolan").mkdir()
-            Path("climate/.portolan/metadata.yaml").write_text(valid_metadata)
+            Path("climate/.portolan/metadata.yaml").write_text(valid_metadata, encoding="utf-8")
             # Collection
             Path("demographics").mkdir()
-            Path("demographics/collection.json").write_text('{"type": "Collection"}')
+            Path("demographics/collection.json").write_text(
+                '{"type": "Collection"}', encoding="utf-8"
+            )
             Path("demographics/.portolan").mkdir()
-            Path("demographics/.portolan/metadata.yaml").write_text(valid_metadata)
+            Path("demographics/.portolan/metadata.yaml").write_text(
+                valid_metadata, encoding="utf-8"
+            )
 
             result = runner.invoke(cli, ["metadata", "validate"])
 
@@ -472,17 +511,23 @@ class TestMetadataValidate:
             # Invalid metadata: override with invalid email (can't be fixed by inheritance)
             invalid_email_metadata = "contact:\n  name: Test\n  email: not-an-email\nlicense: MIT\n"
             # Root: valid
-            Path(".portolan/metadata.yaml").write_text(valid_metadata)
+            Path(".portolan/metadata.yaml").write_text(valid_metadata, encoding="utf-8")
             # Collection 1: invalid email
             Path("climate").mkdir()
-            Path("climate/collection.json").write_text('{"type": "Collection"}')
+            Path("climate/collection.json").write_text('{"type": "Collection"}', encoding="utf-8")
             Path("climate/.portolan").mkdir()
-            Path("climate/.portolan/metadata.yaml").write_text(invalid_email_metadata)
+            Path("climate/.portolan/metadata.yaml").write_text(
+                invalid_email_metadata, encoding="utf-8"
+            )
             # Collection 2: invalid email
             Path("demographics").mkdir()
-            Path("demographics/collection.json").write_text('{"type": "Collection"}')
+            Path("demographics/collection.json").write_text(
+                '{"type": "Collection"}', encoding="utf-8"
+            )
             Path("demographics/.portolan").mkdir()
-            Path("demographics/.portolan/metadata.yaml").write_text(invalid_email_metadata)
+            Path("demographics/.portolan/metadata.yaml").write_text(
+                invalid_email_metadata, encoding="utf-8"
+            )
 
             result = runner.invoke(cli, ["metadata", "validate"])
 
@@ -498,12 +543,12 @@ class TestMetadataValidate:
             valid_metadata = "contact:\n  name: Test\n  email: test@example.org\nlicense: MIT\n"
             invalid_metadata = "citation: Test\n"
             # Root: valid
-            Path(".portolan/metadata.yaml").write_text(valid_metadata)
+            Path(".portolan/metadata.yaml").write_text(valid_metadata, encoding="utf-8")
             # Collection: invalid
             Path("climate").mkdir()
-            Path("climate/collection.json").write_text('{"type": "Collection"}')
+            Path("climate/collection.json").write_text('{"type": "Collection"}', encoding="utf-8")
             Path("climate/.portolan").mkdir()
-            Path("climate/.portolan/metadata.yaml").write_text(invalid_metadata)
+            Path("climate/.portolan/metadata.yaml").write_text(invalid_metadata, encoding="utf-8")
 
             result = runner.invoke(cli, ["--format", "json", "metadata", "validate"])
 
@@ -532,12 +577,12 @@ class TestMetadataValidate:
             # Invalid: override with invalid email (can't be fixed by inheritance)
             invalid_email = "contact:\n  name: Test\n  email: not-valid\nlicense: MIT\n"
             # Root: valid
-            Path(".portolan/metadata.yaml").write_text(valid_metadata)
+            Path(".portolan/metadata.yaml").write_text(valid_metadata, encoding="utf-8")
             # Collection: invalid (only one)
             Path("climate").mkdir()
-            Path("climate/collection.json").write_text('{"type": "Collection"}')
+            Path("climate/collection.json").write_text('{"type": "Collection"}', encoding="utf-8")
             Path("climate/.portolan").mkdir()
-            Path("climate/.portolan/metadata.yaml").write_text(invalid_email)
+            Path("climate/.portolan/metadata.yaml").write_text(invalid_email, encoding="utf-8")
 
             result = runner.invoke(cli, ["metadata", "validate"])
 
@@ -551,12 +596,12 @@ class TestMetadataValidate:
             valid_metadata = "contact:\n  name: Test\n  email: test@example.org\nlicense: MIT\n"
             invalid_metadata = "citation: Test\n"
             # Root: valid
-            Path(".portolan/metadata.yaml").write_text(valid_metadata)
+            Path(".portolan/metadata.yaml").write_text(valid_metadata, encoding="utf-8")
             # Collection: invalid (should NOT be checked with --no-recursive)
             Path("climate").mkdir()
-            Path("climate/collection.json").write_text('{"type": "Collection"}')
+            Path("climate/collection.json").write_text('{"type": "Collection"}', encoding="utf-8")
             Path("climate/.portolan").mkdir()
-            Path("climate/.portolan/metadata.yaml").write_text(invalid_metadata)
+            Path("climate/.portolan/metadata.yaml").write_text(invalid_metadata, encoding="utf-8")
 
             result = runner.invoke(cli, ["metadata", "validate", "--no-recursive"])
 
@@ -572,10 +617,10 @@ class TestMetadataValidate:
             runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             valid_metadata = "contact:\n  name: Test\n  email: test@example.org\nlicense: MIT\n"
             # Root: valid
-            Path(".portolan/metadata.yaml").write_text(valid_metadata)
+            Path(".portolan/metadata.yaml").write_text(valid_metadata, encoding="utf-8")
             # Collection: no metadata.yaml (should be skipped, not fail)
             Path("climate").mkdir()
-            Path("climate/collection.json").write_text('{"type": "Collection"}')
+            Path("climate/collection.json").write_text('{"type": "Collection"}', encoding="utf-8")
             # No .portolan/metadata.yaml created
 
             result = runner.invoke(cli, ["metadata", "validate"])
@@ -588,7 +633,7 @@ class TestMetadataValidate:
         with runner.isolated_filesystem(temp_dir=tmp_path):
             runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             Path(".portolan/metadata.yaml").write_text(
-                "contact:\n  name: N\n  email: a@b.c\nlicense: MIT\n"
+                "contact:\n  name: N\n  email: a@b.c\nlicense: MIT\n", encoding="utf-8"
             )
 
             result = runner.invoke(

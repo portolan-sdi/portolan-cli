@@ -191,7 +191,7 @@ class TestMissingCRSWarning:
         """Missing CRS should return a warning when requested."""
         from portolan_cli.metadata.geoparquet import extract_schema_from_geoparquet
 
-        schema, warnings = extract_schema_from_geoparquet(geoparquet_no_crs, return_warnings=True)
+        _schema, warnings = extract_schema_from_geoparquet(geoparquet_no_crs, return_warnings=True)
 
         assert any("crs" in w.lower() for w in warnings)
 

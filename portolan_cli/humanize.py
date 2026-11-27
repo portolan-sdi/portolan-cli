@@ -40,7 +40,7 @@ def humanize_slug(slug: str) -> str:
         return ""
 
     # Use the leaf segment of a nested path.
-    leaf = slug.split("/")[-1]
+    leaf = slug.rsplit("/", maxsplit=1)[-1]
 
     # Underscores/hyphens become word boundaries.
     spaced = _SLUG_SEPARATORS.sub(" ", leaf)

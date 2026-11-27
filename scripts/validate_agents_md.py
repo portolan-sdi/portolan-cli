@@ -291,8 +291,8 @@ def extract_pytest_markers_from_pyproject(root: Path) -> dict[str, str]:
         if match:
             markers_section = match.group(1)
             # Parse individual markers
-            for line in markers_section.split("\n"):
-                line = line.strip().strip(",").strip('"').strip("'")
+            for raw_line in markers_section.split("\n"):
+                line = raw_line.strip().strip(",").strip('"').strip("'")
                 if ":" in line:
                     name, description = line.split(":", 1)
                     markers[name.strip()] = description.strip()
@@ -355,7 +355,7 @@ def _find_module_source(module_path: str, root: Path) -> Path | None:
 def _extract_defined_names(source_file: Path) -> set[str]:
     """Extract all defined names (functions, classes, variables) from a source file."""
     try:
-        tree = ast.parse(source_file.read_text())
+        tree = ast.parse(source_file.read_text(encoding="utf-8"))
     except (SyntaxError, FileNotFoundError):
         return set()
 

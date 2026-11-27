@@ -178,7 +178,7 @@ class TestRasterFixturesValid:
         """rgb.tif should be a valid Cloud-Optimized GeoTIFF."""
         from rio_cogeo.cogeo import cog_validate
 
-        is_valid, errors, warnings = cog_validate(str(valid_rgb_cog))
+        is_valid, errors, _warnings = cog_validate(str(valid_rgb_cog))
         assert is_valid, f"COG validation failed: {errors}"
 
     @pytest.mark.unit
@@ -197,7 +197,7 @@ class TestRasterFixturesValid:
         """singleband.tif should be a valid Cloud-Optimized GeoTIFF."""
         from rio_cogeo.cogeo import cog_validate
 
-        is_valid, errors, warnings = cog_validate(str(valid_singleband_cog))
+        is_valid, errors, _warnings = cog_validate(str(valid_singleband_cog))
         assert is_valid, f"COG validation failed: {errors}"
 
     @pytest.mark.unit
@@ -291,4 +291,5 @@ class TestEdgeCaseFixtures:
         # Should have eastern (positive, near 180) and western (negative, near -180) parts
         has_east = any(lon >= 170 for lon in all_lons)
         has_west = any(lon <= -170 for lon in all_lons)
-        assert has_east and has_west, "Should have parts on both sides of antimeridian"
+        assert has_east, "Should have parts on both sides of antimeridian"
+        assert has_west, "Should have parts on both sides of antimeridian"

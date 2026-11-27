@@ -268,7 +268,7 @@ class TestAddIntegration:
 
         # Check version 1.0.0 has BOTH files
         versions_path = collection_dir / "versions.json"
-        with open(versions_path) as f:
+        with open(versions_path, encoding="utf-8") as f:
             v1 = json.load(f)
         assert len(v1["versions"]) == 1
         # First add should capture ALL geo files in directory
@@ -292,7 +292,7 @@ class TestAddIntegration:
         assert result2.exit_code == 0, f"Second add failed: {result2.output}"
 
         # Assert: still only 1 version (second add was no-op)
-        with open(versions_path) as f:
+        with open(versions_path, encoding="utf-8") as f:
             v2 = json.load(f)
 
         assert len(v2["versions"]) == 1, (
@@ -348,7 +348,7 @@ class TestAddItemIdOverrideIntegration:
         # Versions.json is at the collection level (imagery/)
         versions_path = collection_dir / "versions.json"
         assert versions_path.exists(), "versions.json not created at collection level"
-        with open(versions_path) as f:
+        with open(versions_path, encoding="utf-8") as f:
             versions = json.load(f)
         assert len(versions["versions"]) > 0, "No version entries created"
 
@@ -357,7 +357,7 @@ class TestAddItemIdOverrideIntegration:
         item_json_path = item_dir / "custom-scene-2024.json"
         assert item_json_path.exists(), f"Item JSON not found at {item_json_path}"
 
-        with open(item_json_path) as f:
+        with open(item_json_path, encoding="utf-8") as f:
             item_json = json.load(f)
         assert item_json["id"] == "custom-scene-2024", (
             f"STAC item ID should be 'custom-scene-2024', got '{item_json['id']}'"
@@ -397,7 +397,7 @@ class TestAddItemIdOverrideIntegration:
         item_json_path = item_dir / "my-custom-item.json"
         assert item_json_path.exists(), f"Item JSON not found at {item_json_path}"
 
-        with open(item_json_path) as fh:
+        with open(item_json_path, encoding="utf-8") as fh:
             item_json = json.load(fh)
 
         assert item_json is not None, "No STAC item found"
@@ -440,7 +440,7 @@ class TestAddItemIdOverrideIntegration:
         versions_path = collection_dir / "versions.json"
         assert versions_path.exists(), f"versions.json not found at {versions_path}"
 
-        with open(collection_json_path) as f:
+        with open(collection_json_path, encoding="utf-8") as f:
             collection_json = json.load(f)
         assert collection_json["id"] == "census-2020", (
             f"Collection ID should be 'census-2020', got '{collection_json['id']}'"

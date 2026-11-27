@@ -1885,7 +1885,7 @@ class TestMirrorOnPluginBackend:
     ) -> None:
         from typing import Any
 
-        import portolan_cli.version_ops as version_ops
+        from portolan_cli import version_ops
         from portolan_cli.stac_parquet import generate_parquet_mirrors
         from portolan_core.versions import read_versions
 

@@ -86,8 +86,18 @@ KNOWN_COUNTERS: tuple[str, ...] = (
 
 _MB = 1024 * 1024
 
-_enabled = False
-_mem = False
+
+class _Switches:
+    """Hold the process-wide trace switches, so that no function rebinds a global."""
+
+    def __init__(self) -> None:
+        self.enabled = False
+        self.mem = False
+        self.run_id = uuid.uuid4().hex
+        self.t0 = time.perf_counter()
+
+
+_state = _Switches()
 _lock = threading.Lock()
 _roots: list[_Span] = []
 # The spans open now, when mem mode is on. Each reset of the tracemalloc peak
@@ -97,8 +107,6 @@ _counters: dict[str, int] = {}
 _current: contextvars.ContextVar[_Span | None] = contextvars.ContextVar(
     "portolan_trace_span", default=None
 )
-_run_id = uuid.uuid4().hex
-_t0 = time.perf_counter()
 
 
 def _rss_peak_mb() -> float | None:
@@ -179,7 +187,7 @@ class _Span:
                 _roots.append(self)
             else:
                 self._parent.children.append(self)
-        if _mem and tracemalloc.is_tracing():
+        if _state.mem and tracemalloc.is_tracing():
             with _lock:
                 _fold_mem_peak()
                 tracemalloc.reset_peak()
@@ -200,7 +208,7 @@ class _Span:
         # process_time() covers every thread in the process, not only this span's.
         self.cpu_end = time.process_time()
         self.rss_peak_mb = _rss_peak_mb()
-        if _mem and tracemalloc.is_tracing():
+        if _state.mem and tracemalloc.is_tracing():
             with _lock:
                 _fold_mem_peak()
                 if self in _open:
@@ -219,7 +227,7 @@ class _Span:
         cpu_end = self.cpu_end if self.cpu_end is not None else time.process_time()
         node: dict[str, Any] = {
             "name": self.name,
-            "start_s": round(self.start - _t0, 6),
+            "start_s": round(self.start - _state.t0, 6),
             "wall_s": round(end - self.start, 6),
             "cpu_s": round(cpu_end - self.cpu_start, 6),
             "rss_peak_mb": self.rss_peak_mb if self.end is not None else _rss_peak_mb(),
@@ -227,7 +235,7 @@ class _Span:
             "attrs": _json_safe(self.attrs),
             "children": [c.to_dict(now) for c in list(self.children)],
         }
-        if _mem:
+        if _state.mem:
             node["mem_growth_mb"] = round(max(self.mem_peak - self.mem_base, 0) / _MB, 3)
         if self.end is None:
             node["open"] = True
@@ -248,11 +256,10 @@ def _fold_mem_peak() -> None:
 
 def enable(*, mem: bool = False) -> None:
     """Turn tracing on. With ``mem``, also start ``tracemalloc``."""
-    global _enabled, _mem, _t0
     with _lock:
-        _enabled = True
-        _mem = mem
-        _t0 = time.perf_counter()
+        _state.enabled = True
+        _state.mem = mem
+        _state.t0 = time.perf_counter()
         for name in KNOWN_COUNTERS:
             _counters.setdefault(name, 0)
     if mem and not tracemalloc.is_tracing():
@@ -270,14 +277,13 @@ def enable_from_env(*, timings_flag: bool = False) -> None:
 
 def reset() -> None:
     """Turn tracing off and drop every span and counter. Tests use it."""
-    global _enabled, _mem, _run_id
     with _lock:
-        _enabled = False
-        _mem = False
+        _state.enabled = False
+        _state.mem = False
         _roots.clear()
         _open.clear()
         _counters.clear()
-        _run_id = uuid.uuid4().hex
+        _state.run_id = uuid.uuid4().hex
     _current.set(None)
     if tracemalloc.is_tracing():
         tracemalloc.stop()
@@ -295,17 +301,17 @@ def tracing(*, mem: bool = False) -> Iterator[None]:
 
 def is_enabled() -> bool:
     """Return True when tracing is on."""
-    return _enabled
+    return _state.enabled
 
 
 def mem_enabled() -> bool:
     """Return True when tracing also records the tracemalloc peak."""
-    return _mem
+    return _state.mem
 
 
 def run_id() -> str:
     """Return the ID of this run. Log records and ``meta`` carry it."""
-    return _run_id
+    return _state.run_id
 
 
 def span(name: str, **attrs: Any) -> _Span | _NullSpan:
@@ -315,21 +321,21 @@ def span(name: str, **attrs: Any) -> _Span | _NullSpan:
         name: The stage name, as ``<command>.<stage>``.
         **attrs: Values to record with the span.
     """
-    if not _enabled:
+    if not _state.enabled:
         return _NULL_SPAN
     return _Span(name, attrs)
 
 
 def current_span() -> _Span | _NullSpan:
     """Return the open span of this context, or the no-op span."""
-    if not _enabled:
+    if not _state.enabled:
         return _NULL_SPAN
     return _current.get() or _NULL_SPAN
 
 
 def count(name: str, n: int = 1) -> None:
     """Add ``n`` to the process-wide counter ``name``."""
-    if not _enabled:
+    if not _state.enabled:
         return
     with _lock:
         _counters[name] = _counters.get(name, 0) + n
@@ -366,7 +372,7 @@ def _package_version() -> str:
 
 def meta() -> dict[str, Any] | None:
     """Return the ``meta`` block for the JSON envelope, or None when tracing is off."""
-    if not _enabled:
+    if not _state.enabled:
         return None
     now = time.perf_counter()
     with _lock:
@@ -376,7 +382,7 @@ def meta() -> dict[str, Any] | None:
         "counters": counters(),
         "peak_rss_mb": _rss_peak_mb(),
         "version": _package_version(),
-        "run_id": _run_id,
+        "run_id": _state.run_id,
     }
 
 
@@ -393,7 +399,7 @@ def chrome_trace_events() -> list[dict[str, Any]]:
 
     The list also holds one ``thread_name`` metadata event for each thread.
     """
-    if not _enabled:
+    if not _state.enabled:
         return []
     now = time.perf_counter()
     pid = os.getpid()
@@ -408,7 +414,7 @@ def chrome_trace_events() -> list[dict[str, Any]]:
             {
                 "name": s.name,
                 "ph": "X",
-                "ts": round((s.start - _t0) * 1e6, 3),
+                "ts": round((s.start - _state.t0) * 1e6, 3),
                 "dur": round((end - s.start) * 1e6, 3),
                 "pid": pid,
                 "tid": s.tid,
@@ -437,7 +443,7 @@ def write_chrome_trace(path: Path) -> None:
 
 def format_table() -> str:
     """Return a text table of the stages directly under each root span."""
-    if not _enabled:
+    if not _state.enabled:
         return ""
     now = time.perf_counter()
     with _lock:

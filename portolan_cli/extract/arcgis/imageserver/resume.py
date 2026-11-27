@@ -29,6 +29,7 @@ from portolan_core.json_io import write_json_atomic
 
 if TYPE_CHECKING:
     from pathlib import Path
+from portolan_core.bbox import BBOX_2D_LEN
 
 logger = logging.getLogger(__name__)
 
@@ -283,7 +284,7 @@ def _parse_grid(raw: Any) -> TileGrid | None:
     if not isinstance(raw, dict):
         return None
     extent = raw.get("extent")
-    if not isinstance(extent, list) or len(extent) != 4:
+    if not isinstance(extent, list) or len(extent) != BBOX_2D_LEN:
         return None
     try:
         return TileGrid(

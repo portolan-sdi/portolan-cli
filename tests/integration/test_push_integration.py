@@ -254,7 +254,7 @@ class TestLocalVersionsReading:
         """Should raise FileNotFoundError for nonexistent collection."""
         from portolan_cli.sync.push import _read_local_versions
 
-        with pytest.raises(FileNotFoundError, match="versions.json not found"):
+        with pytest.raises(FileNotFoundError, match=r"versions.json not found"):
             _read_local_versions(
                 catalog_root=catalog_with_versions,
                 collection="nonexistent",
@@ -879,7 +879,7 @@ class TestErrorHandling:
         """Push should fail with clear error when versions.json doesn't exist."""
         from portolan_cli.sync.push import push
 
-        with pytest.raises(FileNotFoundError, match="versions.json"):
+        with pytest.raises(FileNotFoundError, match=r"versions.json"):
             push(
                 catalog_root=catalog_missing_versions_file,
                 collection="demographics",
@@ -1802,7 +1802,7 @@ class TestPushAgainstMoto:
 
         from portolan_cli.cli import cli
 
-        name, client = bucket
+        name, _client = bucket
         root, cloned = tmp_path / "R", tmp_path / "cloned"
 
         def run(*args: str) -> str:

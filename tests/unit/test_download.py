@@ -851,7 +851,7 @@ class TestFileIntegrity:
             mock_response.__iter__ = lambda self: fail_mid_stream()
             mock_obs.get.return_value = mock_response
 
-            remote_key, error, bytes_downloaded = _download_one_file(
+            _remote_key, error, bytes_downloaded = _download_one_file(
                 mock_store, "path/to/file.parquet", local_path, 1000
             )
 

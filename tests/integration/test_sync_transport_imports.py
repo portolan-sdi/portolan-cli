@@ -37,7 +37,7 @@ print(json.dumps(sorted(
 
 def test_transport_modules_load_no_scan_or_convert_module() -> None:
     """Importing every transport module loads no scan or convert module."""
-    completed = subprocess.run(  # noqa: S603 - fixed arguments, no shell
+    completed = subprocess.run(  # fixed arguments, no shell
         [sys.executable, "-c", PROBE, *TRANSPORT_MODULES],
         capture_output=True,
         text=True,
@@ -48,7 +48,7 @@ def test_transport_modules_load_no_scan_or_convert_module() -> None:
 
 def test_the_probe_sees_a_scan_import() -> None:
     """The probe reports scan modules when a module does load them."""
-    completed = subprocess.run(  # noqa: S603 - fixed arguments, no shell
+    completed = subprocess.run(  # fixed arguments, no shell
         [sys.executable, "-c", PROBE, "portolan_cli.sync.core"],
         capture_output=True,
         text=True,

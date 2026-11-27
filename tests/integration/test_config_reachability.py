@@ -398,12 +398,12 @@ PUSHED = [
 
 @_tests("push.exclude")
 @_forms()
+@pytest.mark.usefixtures("_aws_env")
 def test_push_exclude_keeps_matching_files_out_of_the_bucket(
     form: str,
     catalog: Path,
     run_cli: RunCli,
     s3_bucket: tuple[str, str],
-    _aws_env: None,
 ) -> None:
     _catalog_with_notes(run_cli, catalog)
     configure(run_cli, catalog, form, {"push.exclude": ('["*.md"]', ["*.md"])})
@@ -414,8 +414,9 @@ def test_push_exclude_keeps_matching_files_out_of_the_bucket(
     assert keys == [key for key in PUSHED if not key.endswith(".md") or key.endswith("/README.md")]
 
 
+@pytest.mark.usefixtures("_aws_env")
 def test_push_uploads_agents_md_and_no_untracked_notes_by_default(
-    catalog: Path, run_cli: RunCli, s3_bucket: tuple[str, str], _aws_env: None
+    catalog: Path, run_cli: RunCli, s3_bucket: tuple[str, str]
 ) -> None:
     """The default patterns let AGENTS.md through, so the test above measures the key."""
     _catalog_with_notes(run_cli, catalog)

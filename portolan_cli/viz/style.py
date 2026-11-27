@@ -43,6 +43,8 @@ from portolan_core.json_io import write_json_atomic
 if TYPE_CHECKING:
     from pathlib import Path
 
+_RESCALE_LEN = 2
+
 logger = logging.getLogger(__name__)
 
 
@@ -908,7 +910,7 @@ def get_raster_style_config(
     rescale_max: float | None = None
 
     if rescale:
-        if len(rescale) < 2:
+        if len(rescale) < _RESCALE_LEN:
             logger.warning(
                 "styles.raster.rescale must be [min, max], got %d values; ignoring", len(rescale)
             )

@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING, Any, get_type_hints
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+from portolan_core.bbox import BBOX_2D_LEN
 
 __all__ = ["ConformanceError", "check_backend", "check_extractor", "check_format_handler"]
 
@@ -75,7 +76,7 @@ def check_format_handler(handler: Any, sample: Path, output_dir: Path) -> None:
             f"read_metadata returned {type(metadata).__name__}, expected FormatMetadata."
         )
     bbox = list(metadata.bbox or [])
-    if len(bbox) != 4 or not all(isinstance(v, (int, float)) for v in bbox):
+    if len(bbox) != BBOX_2D_LEN or not all(isinstance(v, (int, float)) for v in bbox):
         problems.append(f"read_metadata bbox is {bbox!r}, expected four numbers.")
     elif bbox[0] > bbox[2] or bbox[1] > bbox[3]:
         problems.append(f"read_metadata bbox {bbox!r} has a minimum above its maximum.")
@@ -305,7 +306,7 @@ def check_extractor(
         problems.append("summary is empty.")
     try:
         command = extractor.cli_command()
-    except Exception as err:  # noqa: BLE001 - report any load failure as a problem
+    except Exception as err:  # report any load failure as a problem
         problems.append(f"cli_command() raised {type(err).__name__}: {err}.")
     else:
         _check_command(extractor.name, command, problems)

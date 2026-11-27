@@ -22,7 +22,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
-@pytest.fixture()
+@pytest.fixture
 def runner() -> CliRunner:
     """Create a Click test runner."""
     return CliRunner()
@@ -35,7 +35,7 @@ def _make_geospatial_dir(parent: Path, name: str) -> None:
     (d / "data.geojson").write_text('{"type":"FeatureCollection","features":[]}')
 
 
-@pytest.fixture()
+@pytest.fixture
 def many_uppercase_dirs(tmp_path: Path) -> Path:
     """Create 10 directories with uppercase names (INVALID_COLLECTION_ID issues)."""
     country_codes = ["USA", "GBR", "CHN", "DEU", "FRA", "BRA", "IND", "JPN", "AUS", "CAN"]

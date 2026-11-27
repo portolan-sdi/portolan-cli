@@ -8,6 +8,7 @@ from __future__ import annotations
 import contextlib
 import copy
 import json
+import re
 from pathlib import Path, PurePath
 from typing import TYPE_CHECKING, Any
 
@@ -143,7 +144,7 @@ def test_status_no_collections(
         "status",
         [],
         catalog=build_conformant_catalog,
-        call=lambda root: get_catalog_status(root),
+        call=get_catalog_status,
     )
 
 
@@ -317,7 +318,7 @@ def test_config_get_sensitive_in_file(
     assert json.loads(result.stdout)["errors"] == [
         {"type": "ConfigError", "message": SENSITIVE_REMOTE}
     ]
-    with pytest.raises(ValueError) as caught:
+    with pytest.raises(ValueError, match=re.escape(SENSITIVE_REMOTE)) as caught:
         read_setting("remote", root)
     assert str(caught.value) == SENSITIVE_REMOTE
 
@@ -380,7 +381,7 @@ def test_config_set_unparseable_value(
         call=lambda root: store_setting(root, "pmtiles.max_zoom", value),
         raises=ValueError,
     )
-    with pytest.raises(ValueError) as caught:
+    with pytest.raises(ValueError, match=r"Exceeds the limit \(4300 digits\)") as caught:
         store_setting(parity.root, "pmtiles.max_zoom", value)
     assert str(caught.value) == (
         "Exceeds the limit (4300 digits) for integer string conversion: value has 5000 "
@@ -407,7 +408,7 @@ def test_config_list_bad_yaml(parity: Parity, configured_catalog: Callable[[Path
         "config list",
         [],
         catalog=_with_config_text("  bad: [\n")(configured_catalog),
-        call=lambda root: read_settings(root),
+        call=read_settings,
         raises=ConfigError,
     )
 
@@ -615,7 +616,7 @@ def test_clean_effects(
         tmp_path,
         points_catalog,
         ["clean"],
-        lambda root: clean_metadata(root),
+        clean_metadata,
     ):
         # The result holds str(Path), backslashes on Windows. _tree keys are POSIX.
         gone = [

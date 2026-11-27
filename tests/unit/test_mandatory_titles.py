@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 
 def _write(path: Path, data: dict[str, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data))
+    path.write_text(json.dumps(data), encoding="utf-8")
 
 
 def _slug_catalog(root: Path) -> None:
@@ -278,7 +278,8 @@ class TestValidateTitleDescription:
 
     def test_non_string_is_rejected(self) -> None:
         errors = _validate_title_description({"title": 123})
-        assert errors and "title" in errors[0]
+        assert errors
+        assert "title" in errors[0]
 
 
 @pytest.mark.unit

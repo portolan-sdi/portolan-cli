@@ -62,7 +62,7 @@ def _enrich_file(path: Path, hook_name: str, arg_name: str, context: EnrichConte
         before = copy.deepcopy(document)
         try:
             call(**{arg_name: document, "context": context})
-        except Exception as err:  # noqa: BLE001 - one broken plugin must not stop the add
+        except Exception as err:  # one broken plugin must not stop the add
             warn_hook_failure(plugin_name, hook_name, err)
             document = before
             continue

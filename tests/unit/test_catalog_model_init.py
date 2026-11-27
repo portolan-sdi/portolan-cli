@@ -273,7 +273,7 @@ class TestAutoFlag:
         catalog_dir = tmp_path / "test"
         catalog_dir.mkdir()
 
-        catalog, warnings = create_catalog(catalog_dir, return_warnings=True)
+        _catalog, warnings = create_catalog(catalog_dir, return_warnings=True)
 
         # Should warn about missing title
         assert any("title" in w.lower() for w in warnings)

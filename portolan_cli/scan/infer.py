@@ -24,6 +24,8 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from portolan_cli.scan.core import ScannedFile
 
+_MIN_GROUP_SIZE = 2
+
 # Numeric suffix pattern: base_123 or base-123 or baseL123
 NUMERIC_SUFFIX_PATTERN = re.compile(r"^(.+?)[-_]?(\d+)$")
 
@@ -53,7 +55,7 @@ class CollectionSuggestion:
         if not 0.0 <= self.confidence <= 1.0:
             msg = f"confidence must be 0.0-1.0, got {self.confidence}"
             raise ValueError(msg)
-        if len(self.files) < 2:
+        if len(self.files) < _MIN_GROUP_SIZE:
             msg = f"files must have >= 2 items, got {len(self.files)}"
             raise ValueError(msg)
 
@@ -82,7 +84,7 @@ def find_common_prefix(names: list[str]) -> str | None:
     Returns:
         Longest common prefix (>= 3 chars), or None if too short.
     """
-    if len(names) < 2:
+    if len(names) < _MIN_GROUP_SIZE:
         return None
 
     # Get stems (without extensions)
@@ -130,7 +132,7 @@ def extract_numeric_groups(names: list[str]) -> dict[str, list[str]]:
             groups[base].append(name)
 
     # Filter to groups with 2+ members
-    return {k: v for k, v in groups.items() if len(v) >= 2}
+    return {k: v for k, v in groups.items() if len(v) >= _MIN_GROUP_SIZE}
 
 
 def detect_pattern_marker(names: list[str]) -> tuple[str, str] | None:
@@ -142,7 +144,7 @@ def detect_pattern_marker(names: list[str]) -> tuple[str, str] | None:
     Returns:
         Tuple of (base_name, pattern_type) if pattern found, None otherwise.
     """
-    if len(names) < 2:
+    if len(names) < _MIN_GROUP_SIZE:
         return None
 
     stems = [_get_stem(name) for name in names]
@@ -159,7 +161,7 @@ def detect_pattern_marker(names: list[str]) -> tuple[str, str] | None:
                 match_count += 1
 
         # If we found matches with consistent base
-        if match_count >= 2 and len(bases) == 1:
+        if match_count >= _MIN_GROUP_SIZE and len(bases) == 1:
             return (bases.pop(), pattern_type)
 
     return None
@@ -187,7 +189,7 @@ def _infer_from_markers(
         return None
 
     matching_names = [n for n in names if pattern_info.match(_get_stem(n))]
-    if len(matching_names) < 2:
+    if len(matching_names) < _MIN_GROUP_SIZE:
         return None
 
     # Flatten all paths for matching names (handles duplicate filenames across dirs)
@@ -251,7 +253,7 @@ def _infer_from_prefix(
     for n in names:
         if _get_stem(n).startswith(prefix):
             matching_paths.extend(paths_by_name[n])
-    if len(matching_paths) < 2:
+    if len(matching_paths) < _MIN_GROUP_SIZE:
         return None
 
     return CollectionSuggestion(
@@ -281,7 +283,7 @@ def infer_collections(
     Returns:
         List of CollectionSuggestion objects, sorted by confidence descending.
     """
-    if len(files) < 2:
+    if len(files) < _MIN_GROUP_SIZE:
         return []
 
     # Dedupe names to avoid iterating same filename multiple times when files

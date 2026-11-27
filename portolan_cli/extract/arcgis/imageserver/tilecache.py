@@ -41,6 +41,11 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from numpy.typing import NDArray
+from http import HTTPStatus
+
+_GRAY_NDIM = 2
+_MULTIBAND_NDIM = 3
+_LERC_NODATA_INDEX = 3
 
 # Tile cache formats this module can decode. LERC2D is what a hosted tiled
 # imagery layer stores. The rest are the image formats a map cache stores.
@@ -534,15 +539,17 @@ def _decode_lerc(content: bytes, tile_format: str) -> tuple[NDArray[Any], NDArra
         raise TileCacheError(f"Failed to decode a {tile_format} tile: lerc error code {code}.")
 
     data = np.asarray(decoded[1])
-    if data.ndim == 2:
+    if data.ndim == _GRAY_NDIM:
         data = data[np.newaxis, :, :]
-    if data.ndim != 3:
+    if data.ndim != _MULTIBAND_NDIM:
         raise TileCacheError(
             f"A {tile_format} tile holds {data.ndim} dimensions. Portolan reads 2 or 3."
         )
 
     mask = _lerc_mask(decoded[2], data.shape[1:])
-    mask = _apply_lerc_nodata(data, mask, decoded[3] if len(decoded) > 3 else None)
+    mask = _apply_lerc_nodata(
+        data, mask, decoded[_LERC_NODATA_INDEX] if len(decoded) > _LERC_NODATA_INDEX else None
+    )
     return data, mask
 
 
@@ -559,7 +566,7 @@ def _lerc_mask(raw: Any, shape: tuple[int, ...]) -> NDArray[np.bool_]:
     if raw is None:
         return np.ones(shape, dtype=np.bool_)
     mask: NDArray[np.bool_] = np.asarray(raw, dtype=np.bool_)
-    if mask.ndim == 3:
+    if mask.ndim == _MULTIBAND_NDIM:
         mask = np.asarray(mask.any(axis=0), dtype=np.bool_)
     return mask
 
@@ -810,11 +817,11 @@ async def _download_cache_tile(
     except httpx.RequestError as exc:
         raise TileCacheError(redact_credentials(f"Failed to read {url}: {exc}")) from exc
 
-    if response.status_code == 404:
+    if response.status_code == HTTPStatus.NOT_FOUND:
         return None
-    if response.status_code == 429:
+    if response.status_code == HTTPStatus.TOO_MANY_REQUESTS:
         raise TileCacheRateLimitError(shown, _retry_after_seconds(response))
-    if response.status_code != 200:
+    if response.status_code != HTTPStatus.OK:
         raise TileCacheError(
             f"Cache read failed: HTTP {response.status_code} for {shown}.",
             status_code=response.status_code,

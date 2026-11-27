@@ -443,7 +443,7 @@ def _archive_layer(pmtiles_path: Path) -> str | None:
         from portolan_cli.metadata.pmtiles import extract_pmtiles_metadata
 
         return extract_pmtiles_metadata(pmtiles_path).layer_name
-    except Exception as e:  # noqa: BLE001 - the layer name falls back to the stem
+    except Exception as e:  # the layer name falls back to the stem
         logger.debug("Could not read the PMTiles layer of %s: %s", pmtiles_path, e)
         return None
 

@@ -47,11 +47,13 @@ def test_fix_reports_reach_the_callback_before_a_failed_commit(
 
 def test_geo_asset_fix_prints_nothing(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     """A shapefile with Latin-1 records and no .cpg gets a sidecar, and the library stays quiet."""
-    import geopandas as gpd
+    import geopandas
     from shapely.geometry import Point
 
     shp = tmp_path / "roads.shp"
-    frame = gpd.GeoDataFrame({"name": ["Zürich"]}, geometry=[Point(8.5, 47.4)], crs="EPSG:4326")
+    frame = geopandas.GeoDataFrame(
+        {"name": ["Zürich"]}, geometry=[Point(8.5, 47.4)], crs="EPSG:4326"
+    )
     frame.to_file(shp, encoding="latin1")
     shp.with_suffix(".cpg").unlink(missing_ok=True)
     capsys.readouterr()
@@ -65,14 +67,16 @@ def test_geo_asset_fix_prints_nothing(tmp_path: Path, capsys: pytest.CaptureFixt
 
 def test_check_fix_command_prints_the_sidecar_notice(tmp_path: Path) -> None:
     """The command prints the encoding sidecar notice that the library reports."""
-    import geopandas as gpd
+    import geopandas
     from click.testing import CliRunner
     from shapely.geometry import Point
 
     from portolan_cli.cli import cli
 
     shp = tmp_path / "roads.shp"
-    frame = gpd.GeoDataFrame({"name": ["Zürich"]}, geometry=[Point(8.5, 47.4)], crs="EPSG:4326")
+    frame = geopandas.GeoDataFrame(
+        {"name": ["Zürich"]}, geometry=[Point(8.5, 47.4)], crs="EPSG:4326"
+    )
     frame.to_file(shp, encoding="latin1")
     shp.with_suffix(".cpg").unlink(missing_ok=True)
 

@@ -51,7 +51,8 @@ def _run_text(job: dict[str, Any]) -> str:
 
 def _load_selftest() -> ModuleType:
     spec = importlib.util.spec_from_file_location("gate_selftest", SELFTEST_SCRIPT)
-    assert spec is not None and spec.loader is not None
+    assert spec is not None
+    assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     sys.modules["gate_selftest"] = module
     spec.loader.exec_module(module)
@@ -173,7 +174,8 @@ def test_only_the_linux_cell_measures_coverage(job: str, prefix: str, flag: str)
         "coverage=()",
         f'if [ "$MATRIX_OS" = "{COVERAGE_OS}" ] && [ "$MATRIX_PYTHON" = "{COVERAGE_PYTHON}" ]; then',
     ]
-    assert lines[2].startswith("coverage=(") and lines[2].endswith(")")
+    assert lines[2].startswith("coverage=(")
+    assert lines[2].endswith(")")
     assert flag in lines[2]
     assert lines[3] == "fi"
     assert [line for line in lines if "coverage=" in line] == lines[0:1] + lines[2:3]
@@ -567,7 +569,8 @@ def _load_digests() -> ModuleType:
     spec = importlib.util.spec_from_file_location(
         "check_pypi_digests", REPO_ROOT / "scripts" / "check_pypi_digests.py"
     )
-    assert spec is not None and spec.loader is not None
+    assert spec is not None
+    assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module

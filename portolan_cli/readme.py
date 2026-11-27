@@ -49,6 +49,12 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
 
     from portolan_core.config import ConfigSource
+from portolan_core.bbox import BBOX_2D_LEN
+
+_KIB = 1024
+_INTERVAL_LEN = 2
+_MAX_CODE_LEN = 8
+_MAX_DESCRIPTION_LEN = 200
 
 # Keyword-badge rendering limits (#515). A junk-dominated list is a machine dump
 # (e.g. WFS layer ids seeded into metadata.yaml at extraction) and is suppressed;
@@ -59,7 +65,7 @@ TECHNICAL_KEYWORD_RATIO = 0.6  # >60% technical entries -> non-curated dump -> o
 
 def _format_size(size_bytes: int) -> str:
     """Format file size in human-readable format."""
-    if size_bytes < 1024:
+    if size_bytes < _KIB:
         return f"{size_bytes} B"
     if size_bytes < 1024 * 1024:
         return f"{size_bytes / 1024:.1f} KB"
@@ -185,7 +191,7 @@ def _add_spatial_section(sections: list[str], stac: dict[str, Any]) -> None:
         return
 
     bbox = bbox_list[0]
-    if len(bbox) < 4:
+    if len(bbox) < BBOX_2D_LEN:
         return
 
     from portolan_core.bbox import to_2d_bbox
@@ -217,7 +223,7 @@ def _add_temporal_section(sections: list[str], stac: dict[str, Any]) -> None:
         return
 
     interval = interval_list[0]
-    if len(interval) < 2:
+    if len(interval) < _INTERVAL_LEN:
         return
 
     start = interval[0] or "open"
@@ -500,7 +506,9 @@ def _is_meaningful_keyword(keyword: str) -> bool:
     if ":" in text:
         return False
     # Short alphanumeric codes (FACC: AP010, DB120, BH020, CA010).
-    return not (len(text) <= 8 and re.fullmatch(r"[A-Za-z]{1,3}\d{1,4}[A-Za-z0-9]*", text))
+    return not (
+        len(text) <= _MAX_CODE_LEN and re.fullmatch(r"[A-Za-z]{1,3}\d{1,4}[A-Za-z0-9]*", text)
+    )
 
 
 def _add_keywords_section(sections: list[str], metadata: dict[str, Any]) -> None:
@@ -788,8 +796,9 @@ def _rebase_item_assets(item: dict[str, Any], item_dir: str) -> dict[str, Any]:
     rebased: dict[str, Any] = {}
     for key, asset in assets.items():
         if isinstance(asset, dict) and isinstance(asset.get("href"), str):
-            asset = {**asset, "href": _collection_relative_href(asset["href"], item_dir)}
-        rebased[key] = asset
+            rebased[key] = {**asset, "href": _collection_relative_href(asset["href"], item_dir)}
+        else:
+            rebased[key] = asset
     return {**item, "assets": rebased}
 
 
@@ -877,13 +886,13 @@ def _extract_collection_extent(
     # Extract spatial
     spatial = extent.get("spatial", {})
     bbox_list = spatial.get("bbox", [])
-    bbox = bbox_list[0] if bbox_list and len(bbox_list[0]) >= 4 else None
+    bbox = bbox_list[0] if bbox_list and len(bbox_list[0]) >= BBOX_2D_LEN else None
 
     # Extract temporal
     temporal = extent.get("temporal", {})
     intervals = temporal.get("interval", [])
     start, end = None, None
-    if intervals and len(intervals) > 0 and len(intervals[0]) >= 2:
+    if intervals and len(intervals) > 0 and len(intervals[0]) >= _INTERVAL_LEN:
         start = intervals[0][0] or None
         end = intervals[0][1] or None
 
@@ -1019,8 +1028,8 @@ def _add_collections_section(
         sections.append("")
         if description:
             # Truncate long descriptions
-            if len(description) > 200:
-                description = description[:197] + "..."
+            if len(description) > _MAX_DESCRIPTION_LEN:
+                description = description[: _MAX_DESCRIPTION_LEN - 3] + "..."
             sections.append(description)
             sections.append("")
 

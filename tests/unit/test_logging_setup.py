@@ -147,7 +147,8 @@ class TestHandlers:
         assert records[0]["level"] == "DEBUG"
         assert records[0]["logger"] == "portolan_cli.sync"
         assert "ValueError: boom" in records[1]["exc"]
-        assert "rel" in records[0] and "ts" in records[0]
+        assert "rel" in records[0]
+        assert "ts" in records[0]
 
 
 class TestUserFormat:

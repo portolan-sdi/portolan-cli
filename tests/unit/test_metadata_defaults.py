@@ -302,7 +302,7 @@ class TestApplyTemporalDefaults:
         """Invalid date string raises ValueError."""
         defaults = {"temporal": {"start": "2025-02-30"}}  # Feb 30 doesn't exist
 
-        with pytest.raises(ValueError) as exc_info:
+        with pytest.raises(ValueError, match=r"Invalid date format|2025-02-30") as exc_info:
             apply_temporal_defaults(defaults)
 
         assert "invalid" in str(exc_info.value).lower() or "2025-02-30" in str(exc_info.value)
@@ -311,7 +311,7 @@ class TestApplyTemporalDefaults:
         """Non-integer year raises ValueError."""
         defaults = {"temporal": {"year": "2025"}}  # String instead of int
 
-        with pytest.raises(ValueError) as exc_info:
+        with pytest.raises(ValueError, match=r"Year must be an integer") as exc_info:
             apply_temporal_defaults(defaults)
 
         assert "integer" in str(exc_info.value).lower()

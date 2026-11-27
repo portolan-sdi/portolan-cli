@@ -34,7 +34,8 @@ def write_point_geojson(path: Path, index: int) -> None:
                     }
                 ],
             }
-        )
+        ),
+        encoding="utf-8",
     )
 
 

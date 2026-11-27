@@ -20,7 +20,7 @@ from typing import Any
 import obstore
 import pytest
 
-import portolan_core.writer as writer
+from portolan_core import writer
 
 pytestmark = pytest.mark.integration
 

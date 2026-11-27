@@ -370,7 +370,7 @@ class TestParseObjectStoreUrl:
                 else f"{scheme}://{bucket}{trailing}"
             )
 
-        bucket_url, prefix = parse_object_store_url(url)
+        _bucket_url, prefix = parse_object_store_url(url)
 
         # The invariant: prefix never ends with slash
         assert not prefix.endswith("/"), f"Prefix {prefix!r} should not end with '/'"

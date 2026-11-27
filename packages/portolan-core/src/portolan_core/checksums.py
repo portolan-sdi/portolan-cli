@@ -12,6 +12,8 @@ from rashid_core.api import SHA2_256, encode_multihash
 
 from portolan_core.trace import count
 
+_SHA256_HEX_LEN = 64
+
 logger = logging.getLogger(__name__)
 
 #: Read size of :func:`compute_checksum`. Every file hash in Portolan goes
@@ -39,7 +41,7 @@ def multihash_sha256(digest_hex: str) -> str:
     Raises:
         ValueError: If ``digest_hex`` is not a 64-character hex string.
     """
-    if len(digest_hex) != 64:
+    if len(digest_hex) != _SHA256_HEX_LEN:
         raise ValueError(f"Not a 64-character SHA-256 hex digest: {digest_hex!r}")
     try:
         digest = bytes.fromhex(digest_hex)

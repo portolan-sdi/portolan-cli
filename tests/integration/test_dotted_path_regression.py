@@ -97,7 +97,7 @@ class TestDottedPathRegression:
 
         # Copy geojson directly into collection directory
         collection_geojson = collection_dir / "data.geojson"
-        collection_geojson.write_text(simple_geojson.read_text())
+        collection_geojson.write_text(simple_geojson.read_text(encoding="utf-8"))
 
         # Add the file using --portolan-dir
         result = runner.invoke(
@@ -187,7 +187,7 @@ class TestDottedPathRegression:
         new_collection_dir = catalog_root / "new-collection"
         new_collection_dir.mkdir()
         new_collection_geojson = new_collection_dir / "data.geojson"
-        new_collection_geojson.write_text(simple_geojson.read_text())
+        new_collection_geojson.write_text(simple_geojson.read_text(encoding="utf-8"))
 
         # Add to NEW collection (triggers _update_catalog_links)
         result = runner.invoke(

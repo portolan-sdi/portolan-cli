@@ -11,6 +11,8 @@ from pathlib import Path, PurePath
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
+_KIB = 1024
+
 
 def format_size(size_bytes: int) -> str:
     """Format a file size in human-readable format.
@@ -21,7 +23,7 @@ def format_size(size_bytes: int) -> str:
     Returns:
         Human-readable size string (e.g., "4.2MB", "100B").
     """
-    if size_bytes < 1024:
+    if size_bytes < _KIB:
         return f"{size_bytes}B"
     if size_bytes < 1024 * 1024:
         return f"{size_bytes / 1024:.1f}KB"

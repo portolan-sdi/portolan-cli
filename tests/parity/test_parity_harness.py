@@ -93,7 +93,8 @@ def parity_calls(source: str, name: str) -> set[str]:
         ):
             continue
         first = node.args[0] if node.args else None
-        assert isinstance(first, ast.Constant) and isinstance(first.value, str), (
+        assert isinstance(first, ast.Constant)
+        assert isinstance(first.value, str), (
             f"{name}:{node.lineno}: the first argument of parity() must be a "
             "string literal, so this test can read the command path"
         )
@@ -165,7 +166,7 @@ def test_drop_path_index_removes_one_list_element() -> None:
 
 def test_drop_path_fails_on_a_missing_key() -> None:
     """An ignore path that is not in the result fails, so a typo cannot hide a field."""
-    with pytest.raises(AssertionError, match="nested.missing"):
+    with pytest.raises(AssertionError, match=r"nested.missing"):
         drop_path(_sample(), "nested.missing")
 
 
@@ -236,7 +237,7 @@ class _Loud:
         self.inner = inner
 
     def to_dict(self) -> dict[str, Any]:
-        print("loud")  # noqa: T201 - the test needs a to_dict that prints
+        print("loud")  # the test needs a to_dict that prints
         return self.inner.to_dict()
 
 

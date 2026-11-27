@@ -40,6 +40,12 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
 
+_RGB_BAND_COUNT = 3
+_MAX_QUALITY = 100
+_MIN_TILE_SIZE = 64
+_MAX_TILE_SIZE = 4096
+_MAX_THUMBNAIL_SIZE = 4096
+
 logger = logging.getLogger(__name__)
 
 
@@ -304,13 +310,13 @@ def derive_cog_defaults(source: Path | Any) -> tuple[int, str]:
                 band_count = int(src.count)
         else:
             dtype, band_count = str(source.dtypes[0]), int(source.count)
-    except Exception as exc:  # noqa: BLE001 - any read failure means "use fallback"
+    except Exception as exc:  # any read failure means "use fallback"
         logger.debug("Could not inspect %s for COG defaults (%s); using fallback", source, exc)
         return FALLBACK_PREDICTOR, FALLBACK_RESAMPLING
 
     if dtype.startswith(("float", "complex")):
         return 3, "average"
-    if dtype == "uint8" and band_count >= 3:
+    if dtype == "uint8" and band_count >= _RGB_BAND_COUNT:
         return 1, FALLBACK_RESAMPLING
     return FALLBACK_PREDICTOR, FALLBACK_RESAMPLING
 
@@ -329,7 +335,7 @@ def resolve_cog_settings(settings: CogSettings, source: Path | Any) -> CogSettin
     Returns:
         Settings with concrete ``predictor`` and ``resampling`` values.
     """
-    if settings.predictor != AUTO and settings.resampling != AUTO:
+    if AUTO not in (settings.predictor, settings.resampling):
         return settings
 
     derived_predictor, derived_resampling = derive_cog_defaults(source)
@@ -374,7 +380,7 @@ def validate_cog_settings(settings: CogSettings) -> list[str]:
 
     # Validate quality bounds
     if settings.quality is not None:
-        if not 1 <= settings.quality <= 100:
+        if not 1 <= settings.quality <= _MAX_QUALITY:
             warnings.append(
                 f"Quality {settings.quality} is out of range. "
                 "Valid range: 1-100. Using clamped value."
@@ -388,12 +394,12 @@ def validate_cog_settings(settings: CogSettings) -> list[str]:
             )
 
     # Validate tile_size
-    if settings.tile_size < 64:
+    if settings.tile_size < _MIN_TILE_SIZE:
         warnings.append(
             f"tile_size {settings.tile_size} is very small. "
             "Minimum recommended: 64. This may cause performance issues."
         )
-    elif settings.tile_size > 4096:
+    elif settings.tile_size > _MAX_TILE_SIZE:
         warnings.append(
             f"tile_size {settings.tile_size} is very large. "
             "Maximum recommended: 4096. This may cause memory issues."
@@ -414,11 +420,7 @@ def validate_cog_settings(settings: CogSettings) -> list[str]:
         )
 
     # Warn about a predictor that the compression does not use
-    if (
-        settings.compression not in PREDICTOR_COMPRESSIONS
-        and settings.predictor != AUTO
-        and settings.predictor != 1
-    ):
+    if settings.compression not in PREDICTOR_COMPRESSIONS and settings.predictor not in (AUTO, 1):
         warnings.append(
             f"Predictor={settings.predictor} is ignored for compression "
             f"'{settings.compression}'. "
@@ -431,14 +433,14 @@ def validate_cog_settings(settings: CogSettings) -> list[str]:
             f"thumbnail_max_size {settings.thumbnail_max_size} is invalid. "
             "Must be > 0. Using default 512."
         )
-    elif settings.thumbnail_max_size > 4096:
+    elif settings.thumbnail_max_size > _MAX_THUMBNAIL_SIZE:
         warnings.append(
             f"thumbnail_max_size {settings.thumbnail_max_size} is very large. "
             "Recommended: <= 4096. Defeats the purpose of a thumbnail."
         )
 
     # Validate thumbnail_quality (Issue #372)
-    if not 1 <= settings.thumbnail_quality <= 100:
+    if not 1 <= settings.thumbnail_quality <= _MAX_QUALITY:
         warnings.append(
             f"thumbnail_quality {settings.thumbnail_quality} is out of range. "
             "Valid range: 1-100. Using clamped value."
@@ -585,7 +587,7 @@ def get_cog_settings(
         thumbnail_max_size = 512
 
     thumbnail_quality = cog.get("thumbnail_quality")
-    if not isinstance(thumbnail_quality, int) or not 1 <= thumbnail_quality <= 100:
+    if not isinstance(thumbnail_quality, int) or not 1 <= thumbnail_quality <= _MAX_QUALITY:
         thumbnail_quality = 75
 
     settings = CogSettings(
