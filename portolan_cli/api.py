@@ -36,6 +36,10 @@ Groups:
   inspect helpers, thumbnails, validation, and partitioning that the built-in
   format handlers in ``portolan_cli.formats_builtin`` use. A plugin handler
   for a similar format can use them too.
+- STAC builders: ``create_item``, ``create_collection``,
+  ``add_projection_extension``, ``add_vector_extension``,
+  ``add_raster_extension``, ``add_table_extension``, ``wgs84_bbox``. They
+  build pystac objects with no catalog folder (#928).
 """
 
 from __future__ import annotations
@@ -92,6 +96,15 @@ if TYPE_CHECKING:
         convert_vector,
         describe_raster_item,
         describe_vector_item,
+        wgs84_bbox,
+    )
+    from portolan_cli.stac import (
+        add_projection_extension,
+        add_raster_extension,
+        add_table_extension,
+        add_vector_extension,
+        create_collection,
+        create_item,
     )
     from portolan_cli.sync.download import download_file
     from portolan_cli.sync.pull import PullResult
@@ -134,10 +147,16 @@ __all__ = [
     "SourceLink",
     "Version",
     "VersioningBackend",
+    "add_projection_extension",
+    "add_raster_extension",
+    "add_table_extension",
+    "add_vector_extension",
     "aggregate_table_extension",
     "compute_checksum",
     "convert_raster",
     "convert_vector",
+    "create_collection",
+    "create_item",
     "describe_raster_item",
     "describe_vector_item",
     "detail",
@@ -169,6 +188,7 @@ __all__ = [
     "validate_cog",
     "validate_geoparquet",
     "warn",
+    "wgs84_bbox",
     "write_json_atomic",
     "write_raster_thumbnail",
 ]
@@ -203,10 +223,16 @@ _EXPORTS = {
     "VECTOR_EXTENSIONS": "portolan_core.format_families",
     "Version": "portolan_core.versions",
     "VersioningBackend": "portolan_cli.backends.protocol",
+    "add_projection_extension": "portolan_cli.stac",
+    "add_raster_extension": "portolan_cli.stac",
+    "add_table_extension": "portolan_cli.stac",
+    "add_vector_extension": "portolan_cli.stac",
     "aggregate_table_extension": "portolan_cli.finalization",
     "compute_checksum": "portolan_core.checksums",
     "convert_raster": "portolan_cli.preparation",
     "convert_vector": "portolan_cli.preparation",
+    "create_collection": "portolan_cli.stac",
+    "create_item": "portolan_cli.stac",
     "describe_raster_item": "portolan_cli.preparation",
     "describe_vector_item": "portolan_cli.preparation",
     "detail": "portolan_cli.output",
@@ -238,6 +264,7 @@ _EXPORTS = {
     "validate_cog": "portolan_cli.convert",
     "validate_geoparquet": "portolan_cli.convert",
     "warn": "portolan_cli.output",
+    "wgs84_bbox": "portolan_cli.preparation",
     "write_json_atomic": "portolan_core.json_io",
     "write_raster_thumbnail": "portolan_cli.convert",
 }

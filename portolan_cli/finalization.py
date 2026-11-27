@@ -424,7 +424,7 @@ def _read_wgs84_bbox(
     the footprint of each unchanged file once.
     """
     from portolan_cli.plugins.formats import handler_for
-    from portolan_cli.preparation import _extract_bbox_wgs84
+    from portolan_cli.preparation import wgs84_bbox
 
     def _load(file_path: Path) -> list[float] | None:
         handler = handler_for(file_path, catalog_root, state=state)
@@ -433,7 +433,7 @@ def _read_wgs84_bbox(
         metadata = handler.read_metadata(file_path)
         if not getattr(metadata, "bbox", None):
             return None
-        return _extract_bbox_wgs84(metadata, file_path)  # type: ignore[arg-type]
+        return wgs84_bbox(metadata, file_path)  # type: ignore[arg-type]
 
     try:
         return state.memo("wgs84_bbox", path, _load) if state is not None else _load(path)

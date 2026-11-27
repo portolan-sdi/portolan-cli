@@ -12,6 +12,8 @@ from typing import Any, ClassVar, Literal, Self
 
 import pytest
 
+from portolan_core.errors import CRSMismatchError, CRSTransformError, InvalidBboxError
+
 # =============================================================================
 # Phase 1: ConversionStatus Enum Tests
 # =============================================================================
@@ -2916,12 +2918,73 @@ class TestPartitionedOutputWithGeoparquetIO:
         assert skips == {}
         assert layer.exists() is existed
 
-    @pytest.mark.integration
-    def test_prepare_item_reports_a_new_output(self, tmp_path: Path) -> None:
-        """`created_output` is True for a new conversion and False for a kept output."""
-        import shutil
+    @pytest.mark.unit
+    @pytest.mark.parametrize(
+        "failure",
+        [
+            CRSTransformError("EPSG:999999", "crs not found"),
+            InvalidBboxError("south (10.0) > north (-10.0)"),
+        ],
+        ids=["transform", "invalid-bbox"],
+    )
+    def test_a_failed_layer_cleanup_keeps_the_other_layers(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: Exception
+    ) -> None:
+        """An OSError on the removal of a failed layer file stops nothing (#928).
 
-        from portolan_cli.preparation import prepare_item
+        The add reports the real layer error and prepares the other layers.
+        """
+        from portolan_cli import add
+        from portolan_cli.convert import LayerConversionResult
+
+        coll = tmp_path / "coll"
+        coll.mkdir()
+        gpkg = coll / "multi.gpkg"
+        gpkg.write_bytes(b"x")
+        roads, rivers = coll / "roads.parquet", coll / "rivers.parquet"
+        removed: list[Path] = []
+
+        def _convert(source: Path, out: Path, settings: Any = None, **_: Any) -> list[Any]:
+            roads.write_bytes(b"PAR1")
+            rivers.write_bytes(b"PAR1")
+            return [
+                LayerConversionResult(source, "roads", roads, True),
+                LayerConversionResult(source, "rivers", rivers, True),
+            ]
+
+        def _prepare(path: Path, **_: Any) -> Any:
+            if path == roads:
+                raise failure
+            return self._prepared(path, created_output=False)
+
+        def _locked(self: Path, *_args: Any, **_kwargs: Any) -> None:
+            removed.append(self)
+            raise PermissionError(13, "locked", str(self))
+
+        monkeypatch.setattr(add, "convert_multilayer_file", _convert)
+        monkeypatch.setattr(add, "prepare_item", _prepare)
+        monkeypatch.setattr(Path, "unlink", _locked)
+        opts = add._PrepareOptions(
+            catalog_root=tmp_path,
+            item_id=None,
+            item_datetime=None,
+            force=True,
+            reconvert=False,
+            skip_partitioning=True,
+            batch_exclude_names=frozenset(),
+        )
+
+        prepared, failures, skips = add._prepare_multilayer_file(gpkg, "coll", opts)
+
+        assert [p.item_id for p in prepared] == ["rivers"]
+        assert removed == [roads]
+        assert [(f.path, f.error) for f in failures] == [(roads, f"Layer roads: {failure}")]
+        assert skips == {}
+
+    @staticmethod
+    def _points_catalog(tmp_path: Path) -> tuple[Path, Path]:
+        """Make a catalog with one GeoJSON source in collection ``coll``."""
+        import shutil
 
         (tmp_path / ".portolan").mkdir()
         (tmp_path / ".portolan" / "config.yaml").write_text("{}\n", encoding="utf-8")
@@ -2930,12 +2993,103 @@ class TestPartitionedOutputWithGeoparquetIO:
         fixtures = Path(__file__).parents[1] / "fixtures" / "vector" / "valid"
         source = coll / "points.geojson"
         shutil.copy(fixtures / "points.geojson", source)
+        return coll, source
+
+    @pytest.mark.integration
+    def test_prepare_item_reports_a_new_output(self, tmp_path: Path) -> None:
+        """`created_output` is True for a new conversion and False for a kept output."""
+        from portolan_cli.preparation import prepare_item
+
+        _coll, source = self._points_catalog(tmp_path)
 
         first = prepare_item(path=source, catalog_root=tmp_path, collection_id="coll")
         kept = prepare_item(path=source, catalog_root=tmp_path, collection_id="coll", force=True)
 
         assert first.created_output is True
         assert kept.created_output is False
+
+    @pytest.mark.integration
+    @pytest.mark.parametrize(
+        "failure",
+        [
+            CRSTransformError("EPSG:999999", "crs not found"),
+            CRSMismatchError("EPSG:32610", (-122.5, 37.5, -122.0, 38.0)),
+        ],
+        ids=["transform", "mismatch"],
+    )
+    def test_prepare_item_removes_a_new_output_when_the_crs_fails(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: Exception
+    ) -> None:
+        """A CRS that cannot transform stops the add and leaves no converted file (#928)."""
+        from portolan_cli import preparation
+
+        coll, source = self._points_catalog(tmp_path)
+
+        def unreadable(*_args: object) -> list[float]:
+            raise failure
+
+        monkeypatch.setattr(preparation, "wgs84_bbox", unreadable)
+
+        with pytest.raises(type(failure)):
+            preparation.prepare_item(path=source, catalog_root=tmp_path, collection_id="coll")
+
+        assert sorted(p.name for p in coll.iterdir()) == ["points.geojson"]
+
+    @pytest.mark.integration
+    def test_prepare_item_removes_a_new_raster_with_an_invalid_bbox(self, tmp_path: Path) -> None:
+        """Builder validation must run before a new output leaves the bbox cleanup guard."""
+        import numpy as np
+        import rasterio
+        from rasterio.transform import from_origin
+
+        from portolan_cli.preparation import prepare_item
+
+        (tmp_path / ".portolan").mkdir()
+        (tmp_path / ".portolan" / "config.yaml").write_text("{}\n", encoding="utf-8")
+        item_dir = tmp_path / "coll" / "scene"
+        item_dir.mkdir(parents=True)
+        source = item_dir / "scene.jp2"
+        with rasterio.open(
+            source, "w", driver="JP2OpenJPEG", width=32, height=32, count=1, dtype="uint8",
+            crs="EPSG:4326", transform=from_origin(1e10, 50, 0.1, 0.1),
+        ) as dst:  # fmt: skip
+            dst.write(np.ones((1, 32, 32), dtype="uint8"))
+
+        with pytest.raises(InvalidBboxError, match="exceeds sane magnitude"):
+            prepare_item(path=source, catalog_root=tmp_path, collection_id="coll")
+
+        assert source.exists()
+        assert not (item_dir / "scene.tif").exists()
+        assert not (item_dir / "scene.json").exists()
+        assert not (tmp_path / "coll" / "versions.json").exists()
+
+    @pytest.mark.integration
+    def test_a_failed_add_keeps_the_user_files_beside_the_output(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The cleanup removes only the sidecars this run made, not a user's notes (#928)."""
+        from portolan_cli import preparation
+
+        coll, source = self._points_catalog(tmp_path)
+        (coll / "points.parquet.notes.txt").write_text("keep me\n", encoding="utf-8")
+
+        def unreadable(_metadata: object, output_path: Path) -> list[float]:
+            # A sidecar that the conversion wrote, after the run started.
+            output_path.with_name(output_path.name + ".aux.xml").write_text("<x/>")
+            # A parallel add of points.parquet.other.geojson writes this one.
+            output_path.with_name(output_path.name + ".other.parquet").write_bytes(b"PAR1")
+            raise CRSTransformError("EPSG:999999", "crs not found")
+
+        monkeypatch.setattr(preparation, "wgs84_bbox", unreadable)
+
+        with pytest.raises(CRSTransformError):
+            preparation.prepare_item(path=source, catalog_root=tmp_path, collection_id="coll")
+
+        assert sorted(p.name for p in coll.iterdir()) == [
+            "points.geojson",
+            "points.parquet.notes.txt",
+            "points.parquet.other.parquet",
+        ]
 
     @pytest.mark.integration
     def test_single_file_kdtree_index(self, tmp_path: Path) -> None:

@@ -13,6 +13,7 @@ from __future__ import annotations
 import shutil
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 from click.testing import CliRunner
@@ -75,6 +76,46 @@ class TestAddMultilayerIntegration:
             "one of the two files from the collection, or rename it."
         ) in " ".join(result.output.split())
         assert not (collection_dir / "multilayer_points.parquet").exists()
+
+    @pytest.mark.integration
+    @pytest.mark.parametrize("existed", [False, True], ids=["new", "existing"])
+    def test_a_layer_whose_bbox_fails_leaves_no_new_output(
+        self,
+        runner: CliRunner,
+        initialized_catalog: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        existed: bool,
+    ) -> None:
+        """A layer that fails on its CRS loses the file this run wrote, and keeps an old one (#928)."""
+        from portolan_cli import preparation
+        from portolan_core.errors import CRSTransformError
+
+        collection_dir = initialized_catalog / "geodata"
+        collection_dir.mkdir()
+        gpkg_file = collection_dir / "multilayer.gpkg"
+        shutil.copy(FIXTURES_DIR / "multilayer.gpkg", gpkg_file)
+        lines = collection_dir / "multilayer_lines.parquet"
+        if existed:
+            # An earlier run of this source wrote the layer file.
+            runner.invoke(cli, ["add", "--portolan-dir", str(initialized_catalog), str(gpkg_file)])
+            assert lines.exists()
+        measured = preparation.wgs84_bbox
+
+        def fail_lines(metadata: Any, data_path: Path | None = None) -> list[float]:
+            if data_path is not None and data_path.name == lines.name:
+                raise CRSTransformError("EPSG:999999", "crs not found")
+            return measured(metadata, data_path)
+
+        monkeypatch.setattr(preparation, "wgs84_bbox", fail_lines)
+
+        runner.invoke(
+            cli,
+            ["add", "--force", "--portolan-dir", str(initialized_catalog), str(gpkg_file)],
+            catch_exceptions=False,
+        )
+
+        assert lines.exists() is existed
+        assert (collection_dir / "multilayer_points.parquet").exists()
 
     @pytest.mark.integration
     def test_add_geopackage_converts_all_layers(

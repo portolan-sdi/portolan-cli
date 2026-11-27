@@ -297,7 +297,7 @@ def _child_bboxes(node: Node, graph: CatalogGraph) -> list[list[float]]:
     return found
 
 
-#: Asset suffix -> the extractor whose metadata object ``_extract_bbox_wgs84``
+#: Asset suffix -> the extractor whose metadata object ``wgs84_bbox``
 #: understands. Anything absent from this map has no readable footprint, so the
 #: bbox fixer skips it rather than inventing one.
 _BBOX_EXTRACTORS: dict[str, tuple[str, str]] = {
@@ -323,12 +323,12 @@ def _wgs84_bbox_from_asset(node: Node, asset: dict[str, Any]) -> list[float] | N
     entry = _BBOX_EXTRACTORS.get(path.suffix.lower())
     if entry is None:
         return None
-    from portolan_cli.preparation import _extract_bbox_wgs84
+    from portolan_cli.preparation import wgs84_bbox
 
     module_name, attribute = entry
     try:
         extract = getattr(importlib.import_module(module_name), attribute)
-        return _extract_bbox_wgs84(extract(path))
+        return wgs84_bbox(extract(path))
     except Exception:  # any extractor failure is an honest skip
         return None
 

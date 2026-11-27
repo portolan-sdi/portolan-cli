@@ -97,13 +97,15 @@ class GeoParquetMetadata:
         if crs is None:
             return None
 
-        if isinstance(crs, dict):
+        # Only an EPSG id that pyproj resolves is an EPSG code. pyproj matches
+        # the definition for any other id, such as EPSG:999999 or MYORG:1.
+        if isinstance(crs, dict) and crs.get("id", {}).get("authority", "EPSG") == "EPSG":
             code = crs.get("id", {}).get("code")
-            if code is not None:
-                try:
-                    return int(code)
-                except (TypeError, ValueError):
-                    pass
+            try:
+                CRS.from_epsg(int(code))
+                return int(code)
+            except (TypeError, ValueError, CRSError):
+                pass
 
         try:
             return CRS.from_user_input(crs).to_epsg()
@@ -499,10 +501,17 @@ def _extract_crs(column_meta: dict[str, Any]) -> str | dict[str, Any] | None:
 
     # CRS can be PROJJSON dict or WKT string
     if isinstance(crs, dict):
-        # Try to extract EPSG code from PROJJSON
-        epsg = crs.get("id", {}).get("code")
-        if epsg:
-            return f"EPSG:{epsg}"
+        # Read the code with its own authority, so OGC:CRS84 does not become
+        # EPSG:CRS84. Keep the full PROJJSON when pyproj cannot resolve the
+        # id, such as a custom authority (#928).
+        crs_id = crs.get("id", {})
+        if crs_id.get("code"):
+            code = f"{crs_id.get('authority', 'EPSG')}:{crs_id['code']}"
+            try:
+                CRS.from_user_input(code)
+            except CRSError:
+                return crs
+            return code
         return crs
     return str(crs)
 

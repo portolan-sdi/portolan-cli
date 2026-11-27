@@ -19,6 +19,7 @@ from portolan_cli.stac import (
     create_item,
     load_catalog,
 )
+from portolan_core.errors import InvalidBboxError
 
 
 class TestCreateCollection:
@@ -95,6 +96,18 @@ class TestCreateCollection:
         temporal = collection.extent.temporal.intervals[0]
         assert temporal == [None, None]
 
+    @pytest.mark.unit
+    def test_create_collection_rejects_a_projected_bbox(self) -> None:
+        """The collection extent is WGS84 too (#928)."""
+        with pytest.raises(InvalidBboxError) as excinfo:
+            create_collection(
+                collection_id="utm",
+                description="UTM extent",
+                bbox=[383639.2, 4497875.5, 394409.8, 4511909.5],
+            )
+
+        assert excinfo.value.reason == "west longitude 383639.2 out of range [-180.0, 180.0]"
+
 
 class TestCreateItem:
     """Tests for creating STAC items."""
@@ -110,6 +123,28 @@ class TestCreateItem:
         assert item.id == "test-item"
         assert item.bbox == [-122.5, 37.5, -122.0, 38.0]
         assert isinstance(item, pystac.Item)
+
+    @pytest.mark.unit
+    def test_create_item_rejects_a_projected_bbox(self) -> None:
+        """A bbox in a projected CRS is not WGS84, so STAC rejects the Item (#928)."""
+        with pytest.raises(InvalidBboxError) as excinfo:
+            create_item(
+                item_id="utm-item",
+                bbox=[383639.2, 4497875.5, 394409.8, 4511909.5],
+            )
+
+        assert excinfo.value.reason == "west longitude 383639.2 out of range [-180.0, 180.0]"
+
+    @pytest.mark.unit
+    def test_create_item_stores_the_snapped_bbox(self) -> None:
+        """A float that rounds past 180 passes the check, so the Item stores 180.0 (#928)."""
+        item = create_item(item_id="edge", bbox=[170.0, -10.0, 180.00000000000006, 10.0])
+
+        assert item.bbox == [170.0, -10.0, 180.0, 10.0]
+        assert item.geometry is not None
+        ring = item.geometry["coordinates"][0]
+        assert [180.0, 10.0] in ring
+        assert 180.00000000000006 not in [x for x, _ in ring]
 
     @pytest.mark.unit
     def test_create_item_geometry_from_bbox(self) -> None:

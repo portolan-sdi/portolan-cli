@@ -308,6 +308,91 @@ class TestProjectionExtension:
         assert item.properties.get("proj:code") == "EPSG:4326"
 
     @pytest.mark.unit
+    @pytest.mark.parametrize("crs_id", [("EPSG", 999999), ("MYORG", 1)])
+    def test_add_projection_extension_checks_the_projjson_id(self, crs_id: tuple[str, int]) -> None:
+        """An id that pyproj cannot resolve gives way to the EPSG match of the definition (#928)."""
+        from pyproj import CRS
+
+        from portolan_cli.stac import add_projection_extension, create_item
+
+        item = create_item(item_id="test-projjson", bbox=[0, 0, 1, 1])
+        projjson = CRS("EPSG:32610").to_json_dict()
+        projjson["id"] = {"authority": crs_id[0], "code": crs_id[1]}
+        metadata = GeoParquetMetadata(
+            bbox=(500000.0, 4000000.0, 510000.0, 4010000.0),
+            crs=projjson,
+            geometry_type=["Point"],
+            geometry_column="geometry",
+            feature_count=1,
+            schema={},
+        )
+
+        add_projection_extension(item, metadata)
+
+        assert item.properties["proj:code"] == "EPSG:32610"
+        assert metadata.to_stac_properties()["proj:epsg"] == 32610
+
+    @pytest.mark.unit
+    def test_add_projection_extension_writes_projjson_for_a_custom_crs(self) -> None:
+        """A CRS with no code to name goes in proj:projjson, with no proj:code (#928)."""
+        from pyproj import CRS
+
+        from portolan_cli.stac import add_projection_extension, create_item
+
+        item = create_item(item_id="test-projjson", bbox=[0, 0, 1, 1])
+        projjson = CRS(
+            "+proj=tmerc +lat_0=0 +lon_0=-111.37 +k=0.99991 +x_0=512000 +y_0=0 "
+            "+ellps=GRS80 +units=m +no_defs"
+        ).to_json_dict()
+        projjson["id"] = {"authority": "MYORG", "code": 1}
+        metadata = GeoParquetMetadata(
+            bbox=(500000.0, 4000000.0, 510000.0, 4010000.0),
+            crs=projjson,
+            geometry_type=["Point"],
+            geometry_column="geometry",
+            feature_count=1,
+            schema={},
+        )
+
+        add_projection_extension(item, metadata)
+        properties = item.to_dict(include_self_link=False, transform_hrefs=False)["properties"]
+
+        assert properties["proj:projjson"] == projjson
+        assert "proj:code" not in properties
+
+    @pytest.mark.unit
+    def test_add_projection_extension_replaces_the_other_crs_field(self) -> None:
+        """A second call keeps one CRS field, so the Item names one CRS (#928)."""
+        from pyproj import CRS
+
+        from portolan_cli.stac import add_projection_extension, create_item
+
+        item = create_item(item_id="test-projjson", bbox=[0, 0, 1, 1])
+        projjson = CRS(
+            "+proj=tmerc +lat_0=0 +lon_0=-111.37 +k=0.99991 +x_0=512000 +y_0=0 "
+            "+ellps=GRS80 +units=m +no_defs"
+        ).to_json_dict()
+
+        def metadata(crs: str | dict[str, Any]) -> GeoParquetMetadata:
+            return GeoParquetMetadata(
+                bbox=(500000.0, 4000000.0, 510000.0, 4010000.0),
+                crs=crs,
+                geometry_type=["Point"],
+                geometry_column="geometry",
+                feature_count=1,
+                schema={},
+            )
+
+        add_projection_extension(item, metadata("EPSG:32612"))
+        add_projection_extension(item, metadata(projjson))
+        assert "proj:code" not in item.properties
+        assert item.properties["proj:projjson"] == projjson
+
+        add_projection_extension(item, metadata("EPSG:32612"))
+        assert "proj:projjson" not in item.properties
+        assert item.properties["proj:code"] == "EPSG:32612"
+
+    @pytest.mark.unit
     def test_add_projection_extension_sets_proj_shape_for_raster(self) -> None:
         """add_projection_extension sets proj:shape for COGMetadata."""
         from portolan_cli.stac import add_projection_extension, create_item
@@ -432,15 +517,36 @@ class TestBboxWgs84Transformation:
         assert abs(result[1] - bbox[1]) < 0.001
 
     @pytest.mark.unit
-    def test_transform_bbox_to_wgs84_handles_invalid_crs(self) -> None:
-        """transform_bbox_to_wgs84 logs warning and returns unchanged bbox for invalid CRS."""
+    def test_transform_bbox_to_wgs84_rejects_an_unreadable_crs(self) -> None:
+        """An unreadable CRS raises, so a native bbox never passes as WGS84 (#928)."""
         from portolan_cli.crs import transform_bbox_to_wgs84
+        from portolan_core.errors import CRSTransformError
 
-        bbox = (100, 200, 300, 400)
-        result = transform_bbox_to_wgs84(bbox, "NOT_A_VALID_CRS")
+        with pytest.raises(CRSTransformError) as excinfo:
+            transform_bbox_to_wgs84((100, 200, 300, 400), "NOT_A_VALID_CRS")
 
-        # Should return unchanged bbox (with warning logged)
-        assert result == bbox
+        assert excinfo.value.code == "PRTLN-CNV012"
+        assert excinfo.value.context["source_crs"] == "NOT_A_VALID_CRS"
+
+    @pytest.mark.unit
+    def test_transform_bbox_to_wgs84_rejects_a_failed_transform(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A transform that fails raises instead of returning the native bbox (#928)."""
+        from pyproj.exceptions import ProjError
+
+        from portolan_cli import crs
+        from portolan_core.errors import CRSTransformError
+
+        def fail(*_args: object) -> None:
+            raise ProjError("outside the projection bounds")
+
+        monkeypatch.setattr(crs, "_transform_and_compute_bbox", fail)
+
+        with pytest.raises(CRSTransformError) as excinfo:
+            crs.transform_bbox_to_wgs84((500000.0, 4000000.0, 510000.0, 4010000.0), "EPSG:32610")
+
+        assert excinfo.value.context["reason"] == "outside the projection bounds"
 
     @pytest.mark.unit
     def test_transform_bbox_to_wgs84_antimeridian_crossing(self) -> None:
