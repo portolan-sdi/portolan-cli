@@ -1,8 +1,4 @@
-"""E2E tests for full version lifecycle against REST catalog + RustFS.
-
-These tests exercise IcebergBackend.publish/list/rollback/prune
-against a real Iceberg REST catalog server with S3 storage.
-"""
+"""E2E tests for full version lifecycle against REST catalog + RustFS."""
 
 from __future__ import annotations
 

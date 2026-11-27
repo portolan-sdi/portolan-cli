@@ -1,11 +1,5 @@
 """Check nightly that each recorded public service still answers in the recorded shape.
-
-``tests/integration/test_extract_recorded.py`` trusts the recordings in
-``tests/fixtures/network/``. A recording is only worth its shape: sparse layer
-IDs, a layer document, prefixed FeatureType names. These tests ask each public
-source for the same documents and compare fields and names, not values. A
-failure means the recording no longer describes the server, so the recording
-needs a refresh before its scenario proves anything.
+The tests compare fields and names, not values; a failure means the recording needs a refresh.
 """
 
 from __future__ import annotations
@@ -62,7 +56,7 @@ def test_arcgis_documents_keep_the_recorded_fields(scenario: str) -> None:
 
 
 def test_east_hampton_layer_ids_still_have_gaps() -> None:
-    """The layer IDs of the sparse_ids source are not the list positions (#1003)."""
+    """The layer IDs of the sparse_ids source are not the list positions."""
     path = "/arcgis/rest/services/MapServiceForOpenGov/MapServer"
     live = _get(ARCGIS_ORIGINS["arcgis/sparse_ids"] + path, {"f": "json"}).json()
     ids = [layer["id"] for layer in live["layers"]]
@@ -71,7 +65,7 @@ def test_east_hampton_layer_ids_still_have_gaps() -> None:
 
 
 def test_boston_layer_zero_is_a_feature_layer() -> None:
-    """The layer URL of the layer_url source names one feature layer (#652)."""
+    """The layer URL of the layer_url source names one feature layer."""
     path = "/arcgis/rest/services/BaseServices/Open_Space_Public/MapServer/0"
     live = _get(ARCGIS_ORIGINS["arcgis/layer_url"] + path, {"f": "json"}).json()
     assert (live["id"], live["type"]) == (0, "Feature Layer")

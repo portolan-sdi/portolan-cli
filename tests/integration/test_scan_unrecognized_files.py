@@ -1,7 +1,4 @@
-"""Integration tests for listing unrecognized files in scan output.
-
-Tests for GitHub issue #181: Make scan list specific unrecognized files, not just count.
-"""
+"""Integration tests for listing unrecognized files in scan output."""
 
 from __future__ import annotations
 
@@ -29,15 +26,6 @@ class TestScanUnrecognizedFilesOutput:
     def test_scan_lists_unrecognized_files_in_output(
         self, runner: CliRunner, tmp_path: Path
     ) -> None:
-        """Scan output lists specific unrecognized files, not just a count.
-
-        GitHub issue #181: Instead of "5 files with unrecognized format",
-        should show:
-        "5 files with unrecognized format:
-          - legacy.xlsx
-          - notes.docx
-          ..."
-        """
         # Create a directory with known and unknown files
         data_dir = tmp_path / "data"
         data_dir.mkdir()
@@ -92,13 +80,6 @@ class TestScanUnrecognizedFilesOutput:
     def test_scan_many_unrecognized_files_truncated_by_default(
         self, runner: CliRunner, tmp_path: Path
     ) -> None:
-        """When many unrecognized files exist, should truncate after 10.
-
-        Verifies:
-        - First 10 files are shown (sorted alphabetically)
-        - Files 11+ are NOT shown
-        - Truncation message shows exact count remaining
-        """
         data_dir = tmp_path / "data"
         data_dir.mkdir()
 

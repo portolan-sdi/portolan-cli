@@ -1,19 +1,4 @@
-"""Test that README.md examples actually work.
-
-These tests verify that the code examples in README.md execute successfully.
-If a test fails, either the README is out of date or there's a regression.
-
-Markers:
-- @pytest.mark.integration: These are integration tests (touch filesystem)
-
-Non-testable examples (marked with # notest in README):
-- Installation commands (pipx, pip, uv sync)
-- Commands requiring real S3 credentials
-
-Test organization mirrors README structure:
-1. TestReadmeQuickStart - The quick start workflow
-2. TestReadmeCommonCommands - "Other common commands" section
-"""
+"""Check that the README.md examples run. Examples marked ``# notest`` are skipped."""
 
 from __future__ import annotations
 
@@ -33,14 +18,7 @@ if TYPE_CHECKING:
 
 
 class TestReadmeQuickStart:
-    """Test the README Quick Start workflow executes without error.
-
-    The quick start demonstrates the basic flow:
-    1. portolan init
-    2. portolan scan demographics/
-    3. portolan add demographics/
-    4. portolan push ... (skipped - requires S3)
-    """
+    """The README quick start runs without error (push needs S3, so it is skipped)."""
 
     @pytest.mark.integration
     def test_init_creates_catalog(self, runner: CliRunner, tmp_path: Path) -> None:
@@ -80,11 +58,6 @@ class TestReadmeQuickStart:
 
     @pytest.mark.integration
     def test_quickstart_full_workflow(self, runner: CliRunner, tmp_path: Path) -> None:
-        """Full quick start workflow: init -> scan -> add.
-
-        This is the integration test that mirrors exactly what the
-        README quick start shows (minus the push which requires S3).
-        """
         # Step 1: Initialize catalog
         result = runner.invoke(cli, ["init", str(tmp_path), "--auto", "--license", "CC-BY-4.0"])
         assert result.exit_code == 0, f"init failed: {result.output}"
@@ -112,30 +85,13 @@ class TestReadmeQuickStart:
 
 
 class TestReadmeCommonCommands:
-    """Test the 'Other common commands' section from README.
-
-    Tests commands that can run locally without S3:
-    - portolan check
-    - portolan check --fix
-    - portolan rm --keep ...
-    - portolan config set/list
-
-    Skipped (require S3 or network):
-    - portolan push (tested separately with mocks)
-    - portolan pull (tested separately with mocks)
-    - portolan sync (tested separately with mocks)
-    """
+    """The README "Other common commands" that run without S3."""
 
     @pytest.mark.integration
     def test_check_validates_catalog(
         self, runner: CliRunner, catalog_with_minimal_data: Path
     ) -> None:
-        """'portolan check' validates the catalog structure.
-
-        Note: check command may exit with code 1 if it finds issues to report.
-        The test verifies the command runs and produces output, not that
-        the catalog passes all checks. Exit code 0 = pass, 1 = issues found.
-        """
+        """check exits 1 when it reports issues, so the test checks that it runs and prints."""
         demographics = catalog_with_minimal_data / "demographics"
 
         # First add data to have something to check
@@ -170,15 +126,8 @@ class TestReadmeCommonCommands:
         # Run check with --fix
         result = runner.invoke(cli, ["check", str(catalog_with_minimal_data), "--fix", "--json"])
 
-        # --fix now re-validates, and a generated catalog still carries the
-        # known generation gaps the conformance gate tracks (no providers, no
-        # thumbnail, license 'other' without a license link), so the run exits
-        # 1. What this test owns is the fix half: it ran and converted cleanly.
-        #
-        # "Cleanly" means the conversions succeeded, not merely that no format
-        # was *unsupported*: a GeoJSON that errored mid-conversion lands in the
-        # nested conversion report's `failed`, which the outer scan summary does
-        # not carry, so asserting only on `unsupported` passed straight over it.
+        # A generated catalog still has known gaps, so the run exits 1; the test owns the fix half.
+        # A failed conversion lands in the nested report's ``failed``, not in ``unsupported``.
         payload = json.loads(result.output)["data"]
         scan = payload["fix"]["conversion"]
         assert scan["summary"]["unsupported"] == 0, f"check --fix failed: {scan}"
@@ -224,12 +173,7 @@ class TestReadmeCommonCommands:
 
     @pytest.mark.integration
     def test_config_set_and_list(self, runner: CliRunner, catalog_with_minimal_data: Path) -> None:
-        """'portolan config set' and 'config list' work together.
-
-        Note: config commands operate on the cwd, so we change to the catalog dir.
-        Note: Sensitive settings (remote, profile, region) must use env vars/.env,
-        so we test with 'backend' which can be stored in config.yaml.
-        """
+        """Sensitive settings need env vars, so the test sets ``backend``."""
         # Save original cwd
         original_cwd = Path.cwd()
         try:
@@ -250,13 +194,7 @@ class TestReadmeCommonCommands:
 
 
 class TestReadmeWorkflowEdgeCases:
-    """Test edge cases that README examples might encounter.
-
-    These ensure the documented workflow handles:
-    - Empty directories
-    - Already-initialized catalogs
-    - Non-existent paths
-    """
+    """Edge cases that the README examples can meet."""
 
     @pytest.mark.integration
     def test_init_already_initialized(

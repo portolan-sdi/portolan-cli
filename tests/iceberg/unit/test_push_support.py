@@ -1,8 +1,4 @@
-"""Tests for IcebergBackend push support methods.
-
-IcebergBackend.supports_push() should return False, and
-push_blocked_message() should return appropriate messages.
-"""
+"""Tests for IcebergBackend push support methods."""
 
 from __future__ import annotations
 

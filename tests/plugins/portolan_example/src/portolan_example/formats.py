@@ -1,9 +1,5 @@
 """The ``.xyz`` format handler: ASCII ``x y z`` point lists to GeoParquet.
-
-Each line holds a longitude, a latitude, and a height in WGS84, separated by
-spaces. The handler writes the points as GeoParquet through geoparquet-io and
-keeps the height in a ``z`` column. geoparquet-io and pyarrow come with
-portolan-cli.
+Each line holds WGS84 longitude, latitude and height; the height goes in a ``z`` column.
 """
 
 from __future__ import annotations

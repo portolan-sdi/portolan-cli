@@ -1,8 +1,4 @@
-"""Integration tests for portolan readme recursive behavior.
-
-Tests that readme (recursive by default) regenerates all collection READMEs
-along with the catalog README. Use --no-recursive to limit scope.
-"""
+"""Integration tests for portolan readme recursive behavior."""
 
 from __future__ import annotations
 
@@ -159,9 +155,8 @@ class TestReadmeRecursive:
         # Generate all READMEs
         run_cli("readme", cwd=catalog_with_collections)
 
-        # Modify a collection to make its README stale. The alpha collection has
-        # a metadata.yaml title, which is the highest-precedence source for the
-        # README heading (#534), so mutate that to actually change the output.
+        # The metadata.yaml title is the highest-precedence README heading
+        # source, so change it to make the alpha README stale.
         meta_yaml = catalog_with_collections / "alpha" / ".portolan" / "metadata.yaml"
         meta_yaml.write_text("title: MODIFIED TITLE\n")
 

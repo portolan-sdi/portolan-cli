@@ -1,14 +1,5 @@
-"""Push under failure, against a real S3 API on moto.
-
-Each test builds the catalog with the real CLI, pushes it with the real CLI,
-and reads the bucket back with boto3. A test asserts what a reader of the
-bucket sees: the object set, the ETags, and the headers. It does not assert
-which push functions ran.
-
-``tests/integration/conftest.py`` holds the harness. A test that fails on
-``origin/main`` carries a strict xfail with its issue number. The fix for that
-issue removes the marker.
-"""
+"""Push under failure, against a real S3 API on moto, built and pushed with the real CLI.
+A test asserts what a reader of the bucket sees: objects, ETags, headers. conftest.py holds the harness."""
 
 from __future__ import annotations
 
@@ -34,9 +25,8 @@ pytestmark = [pytest.mark.integration]
 
 CONFLICT_MESSAGE = "Remote changed during push"
 
-# The media type of each suffix that a push uploads (#807). The values come
-# from the IANA registry, the STAC best practices for COG, and the PMTiles
-# specification.
+# The media type of each suffix that a push uploads, from the IANA registry,
+# the STAC best practices for COG, and the PMTiles specification.
 CONTENT_TYPES = {
     ".parquet": "application/vnd.apache.parquet",
     ".json": "application/json",
@@ -82,10 +72,7 @@ def _bytes_that_disagree_with_the_manifest(
     bucket: Bucket, collection: str, written: set[str]
 ) -> dict[str, str]:
     """Return each written Asset key whose bytes differ from the remote manifest.
-
-    The manifest is the remote ``<collection>/versions.json`` and its current
-    snapshot. The value is the sha256 of the object, or ``<missing>``.
-    """
+    The value is the sha256 of the object, or ``<missing>``."""
     body = bucket.client.get_object(
         Bucket=bucket.name, Key=bucket.key(f"{collection}/versions.json")
     )
@@ -143,10 +130,7 @@ def test_failed_second_push_keeps_first_push_objects(
     pushed: Path, bucket: Bucket, run_cli: RunCli, fault_store: PutFaults
 ) -> None:
     """A dropped connection on the second Asset put leaves push 1 readable.
-
-    Each key that push 2 wrote holds the bytes that the remote manifest
-    describes. A rollback that keeps the key with the bytes of push 2 fails.
-    """
+    Each key that push 2 wrote holds the bytes that the remote manifest describes."""
     after_first = bucket.keys()
     manifest = bucket.head(bucket.key("imagery/versions.json"))
     calls_before = len(fault_store.calls)
@@ -172,12 +156,8 @@ def test_failed_rollback_reports_the_key_it_could_not_restore(
     monkeypatch: pytest.MonkeyPatch,
     mode: tuple[str, ...],
 ) -> None:
-    """The restore of one scene fails during the rollback of a failed push.
-
-    The push exits 1 and names that scene, its backup key, and the reason in
-    its errors. The other written keys hold the bytes of push 1 again. The
-    backup of the scene stays, so the old bytes are not lost.
-    """
+    """A failed restore during a rollback exits 1 and names the scene, its backup key, and the reason.
+    The other keys hold the bytes of push 1 again, and the scene's backup stays."""
 
     after_first = bucket.keys()
     calls_before = len(fault_store.calls)
@@ -216,10 +196,7 @@ def test_conflict_deletes_nothing_of_the_other_writer(
     pushed: Path, bucket: Bucket, run_cli: RunCli, fault_store: PutFaults
 ) -> None:
     """A push that loses the versions.json race deletes no key.
-
-    Each key that the losing push overwrote holds the bytes that the other
-    writer's manifest describes (#965).
-    """
+    Each key that it overwrote holds the bytes that the other writer's manifest describes."""
     manifest_key = bucket.key("imagery/versions.json")
     before = bucket.keys()
     calls_before = len(fault_store.calls)
@@ -246,11 +223,7 @@ def test_root_versions_json_is_conditional(
     pushed: Path, bucket: Bucket, run_cli: RunCli, fault_store: PutFaults
 ) -> None:
     """Another writer's root versions.json survives a concurrent push.
-
-    The collection manifests use ``mode={"e_tag": ...}``. The root manifest
-    does not, so the push overwrites the other writer without a conflict. The
-    push must read the root ETag before its first upload.
-    """
+    The push must read the root ETag before its first upload and write under it."""
     root_key = bucket.key("versions.json")
     other: dict[str, str] = {}
 
@@ -405,12 +378,7 @@ def test_conflict_keeps_the_bytes_that_the_other_writer_wrote_later(
     pushed: Path, bucket: Bucket, run_cli: RunCli, fault_store: PutFaults
 ) -> None:
     """A push that loses the race restores no key that the other writer wrote after it.
-
-    The other writer writes a scene and its manifest between the uploads of
-    this push and its versions.json write. The scene then holds the bytes
-    that the winning manifest names. A restore from the backup puts the bytes
-    of version 1.0.0 back over them.
-    """
+    A restore from the backup would put version 1.0.0 back over the winner's scene bytes."""
     manifest_key = bucket.key("imagery/versions.json")
     scene_key = bucket.key("imagery/scene-a/rgb.tif")
     winner_bytes = b"bytes of the other writer"
@@ -430,12 +398,8 @@ def test_conflict_keeps_the_bytes_that_the_other_writer_wrote_later(
 def test_interrupted_push_restores_the_keys_and_drops_the_backups(
     pushed: Path, bucket: Bucket, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A push that stops on an interrupt after its uploads leaves push 1 readable.
-
-    The interrupt comes after the Assets and the STAC files upload, before the
-    versions.json write. The bucket then holds the keys and the bytes of push 1,
-    and no backup key.
-    """
+    """A push interrupted after its uploads, before the versions.json write, leaves push 1 readable.
+    The bucket then holds the keys and bytes of push 1, and no backup key."""
     import asyncio
 
     from portolan_cli.sync import push as push_module
@@ -458,12 +422,7 @@ def test_cancelled_backup_leaves_no_backup_key(
     pushed: Path, bucket: Bucket, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A push cancelled while it copies the backups deletes the copies it made.
-
-    The backup runs before the upload and its rollback. Python's asyncio.run
-    cancels the main task on SIGINT, so the cancellation reaches the backup
-    through its gather. Each later push uses a fresh backup directory, so a
-    copy that stays behind is never reclaimed.
-    """
+    asyncio.run cancels the main task on SIGINT. A later push never reclaims a stale backup dir."""
     import asyncio
 
     from portolan_cli.sync import push as push_module
@@ -476,9 +435,8 @@ def test_cancelled_backup_leaves_no_backup_key(
         copies.append(src)
         if len(copies) > 1:
             raise asyncio.CancelledError
-        # The first copy lands on the server even when the client cancels the
-        # call, as a request in flight does on a real store. A cleanup that
-        # deletes only the copies it saw finish misses it.
+        # The first copy lands even when the client cancels, as an in-flight request does
+        # on a real store. A cleanup of only the finished copies misses it.
         landed = asyncio.ensure_future(real_copy(store, src, dst, **kwargs))
         try:
             await asyncio.sleep(0.05)
@@ -498,12 +456,7 @@ def test_cancelled_backup_leaves_no_backup_key(
 def test_conflict_with_a_push_of_the_same_version_restores_nothing(
     pushed: Path, bucket: Bucket, run_cli: RunCli, fault_store: PutFaults
 ) -> None:
-    """Two pushes of one local version race. The loser keeps the bytes that both wrote.
-
-    The other writer publishes the local versions.json of this push, as a
-    second run of the same push does. Each written key then already holds
-    the bytes that the winning manifest names.
-    """
+    """Two pushes of one local version race. The loser keeps the bytes that both wrote."""
     manifest_key = bucket.key("imagery/versions.json")
     before = bucket.keys()
     calls_before = len(fault_store.calls)
@@ -537,11 +490,7 @@ def test_root_catalog_keeps_the_child_link_of_another_writer(
     scope: tuple[str, ...],
 ) -> None:
     """Another writer adds a child link to the root catalog.json during the push.
-
-    The push writes the root catalog.json under the ETag that it read before
-    its first upload. On a mismatch it merges the child links of the remote
-    copy, so both child links are in the bucket after the push.
-    """
+    On an ETag mismatch the push merges the remote child links, so both stay in the bucket."""
     catalog_key = bucket.key("catalog.json")
     other_link = {"rel": "child", "href": "./roads/collection.json", "type": "application/json"}
 
@@ -564,11 +513,7 @@ def test_root_catalog_keeps_a_collection_that_the_local_catalog_lacks(
     fault_catalog: Path, bucket: Bucket, run_cli: RunCli, tmp_path: Path
 ) -> None:
     """A second checkout that lacks a pushed collection keeps its child link.
-
-    The first checkout pushes buildings. The second checkout has no buildings
-    collection and pushes imagery. The remote root catalog.json then links
-    both collections.
-    """
+    The root catalog.json then links both buildings and imagery."""
     import shutil
 
     first = _push(run_cli, fault_catalog, bucket, "--collection", "buildings")
@@ -608,10 +553,7 @@ def test_root_readme_keeps_the_bytes_of_another_writer(
     pushed: Path, bucket: Bucket, run_cli: RunCli, fault_store: PutFaults
 ) -> None:
     """Another writer changes the root README.md during the push.
-
-    The README write is conditional on the ETag that the push read before its
-    first upload. On a mismatch the remote bytes stay and the push warns.
-    """
+    The README write is conditional on the ETag. On a mismatch the remote bytes stay and push warns."""
     readme_key = bucket.key("README.md")
     (pushed / "README.md").write_text("# Local edit\n", encoding="utf-8")
     other_bytes = b"# Other writer\n"
@@ -629,9 +571,8 @@ def test_root_readme_keeps_the_bytes_of_another_writer(
     assert f"Another writer changed {readme_key} during the push" in second.output
 
 
-# A copy source limit that the small test scenes exceed. S3 refuses a
-# CopyObject source above 5 GB. moto does not, so ``refuse_large_copies``
-# makes the copy refuse a source above this size.
+# S3 refuses a CopyObject source above 5 GB and moto does not, so
+# ``refuse_large_copies`` refuses a source above this smaller limit.
 SMALL_COPY_LIMIT = 16
 
 
@@ -662,11 +603,7 @@ def test_failed_push_restores_a_key_above_the_copy_limit(
     fault_store: PutFaults,
     refuse_large_copies: list[str],
 ) -> None:
-    """A failed push restores a scene that is too large for CopyObject.
-
-    The backup streams such a key through the client. The restore streams it
-    back. The bucket then holds the bytes that the remote manifest names.
-    """
+    """A failed push restores a scene too large for CopyObject by streaming it through the client."""
     after_first = bucket.keys()
     calls_before = len(fault_store.calls)
     # The streamed backups are puts of .tif keys too. The fault hits the
@@ -690,11 +627,7 @@ def test_conflict_loser_keeps_an_asset_with_the_bytes_the_winner_names(
     pushed: Path, bucket: Bucket, run_cli: RunCli, fault_store: PutFaults
 ) -> None:
     """Two pushes of different snapshots share one asset. The loser keeps that asset.
-
-    The winning manifest names the new bytes of scene-a, as this push does,
-    and the old bytes of scene-b. The loser restores scene-b only. A restore
-    of scene-a puts bytes back that the winning manifest does not name.
-    """
+    The loser restores only the scene whose old bytes the winning manifest names."""
     manifest_key = bucket.key("imagery/versions.json")
     shared_key = bucket.key("imagery/scene-a/rgb.tif")
     shared_sha = hashlib.sha256((pushed / bucket.relative(shared_key)).read_bytes()).hexdigest()
@@ -730,11 +663,7 @@ def test_clone_keeps_the_snapshot_it_downloaded(
     change_scenes: Callable[[Path], None],
 ) -> None:
     """A push that lands during a clone does not leave the clone with a newer manifest.
-
-    clone downloads the assets of one snapshot, then the STAC tree. Another
-    writer publishes a new version in between. The clone's versions.json must
-    describe the bytes the clone holds.
-    """
+    The clone's versions.json must describe the bytes the clone holds."""
     import asyncio
 
     from portolan_cli.sync import pull as pull_module
@@ -768,11 +697,7 @@ def test_clone_keeps_the_snapshot_it_downloaded(
 def test_clone_skips_an_object_that_no_document_names(
     fault_catalog: Path, bucket: Bucket, run_cli: RunCli, tmp_path: Path
 ) -> None:
-    """clone downloads the STAC tree and the objects it names, not every object.
-
-    A stale object of a removed asset stays under the collection prefix. The
-    clone does not hold it. It holds every other pushed object, byte for byte.
-    """
+    """clone downloads the STAC tree and the objects it names, not a stale removed asset."""
     first = _push(run_cli, fault_catalog, bucket)
     assert first.exit_code == 0, first.output
     stray = bucket.key("imagery/scene-a/removed.tif")

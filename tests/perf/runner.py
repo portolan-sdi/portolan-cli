@@ -1,30 +1,5 @@
-"""Run one ``portolan`` command in a child process and record its cost (#992).
-
-The scale gates, the nightly scenario job, and ``scripts/profile.py`` all run
-``portolan`` through this module, so each one counts the same work::
-
-    python -m tests.perf.runner --out result.json [--mem] -- add . --workers 1
-
-Before the command runs, the module installs these:
-
-- The network guard of ``tests/network_guard.py``. A scenario that reaches a
-  remote host records it under ``network`` in the result, and the gates fail.
-- A counting wrapper around ``duckdb.connect``. geoparquet-io calls the
-  function by attribute lookup, so the wrapper sees each connection. The
-  counter is ``duckdb.connects``. A query on DuckDB's module-level default
-  connection opens no connection and does not count.
-- A stub tile source for contextily, ``install_stub_tiles``. It returns one
-  fixed 256 px tile. The unit tests use the same stub. The thumbnail code
-  counts ``tiles.fetched`` for each tile that it asks contextily for.
-- A wrapper around ``pyarrow.parquet.ParquetFile`` that counts the footer
-  reads delegated to geoparquet-io. Core readers count their own opens.
-
-The command runs in this process with tracing on. The result file holds the
-exit code, the counters, the span tree, the wall time, and the peak RSS. It
-also holds ``sites``: for each counter, the number of ``count`` calls from
-each ``portolan_cli`` function. ``python -m tests.perf.gates --record`` prints
-them as the comments of the expected constants. The child process starts cold,
-so no cache of an earlier run changes a count.
+"""Run one ``portolan`` command in a child process and record its cost.
+It installs the network guard, the DuckDB, Parquet and tile counters, and writes counters, spans, wall time and peak RSS.
 """
 
 from __future__ import annotations
@@ -63,11 +38,7 @@ def _site(frame: FrameType | None) -> str:
 
 
 def _install_site_recorder(sites: dict[str, Counter[str]]) -> None:
-    """Record the calling function of each count.
-
-    It runs before any ``portolan_cli`` module imports ``count`` by name, so
-    every module binds the wrapper.
-    """
+    """Record the calling function of each count, before any module imports ``count``."""
     from portolan_core import trace
 
     count = trace.count
@@ -98,11 +69,8 @@ def _install_duckdb_counter() -> None:
 
 
 def _install_parquet_counter(patch: pytest.MonkeyPatch) -> None:
-    """Count geoparquet-io's PyArrow footer opens, which core counters cannot see.
-
-    A delegated conversion reads the source footer several times. Counting
-    only the explicit readers in portolan_cli leaves that work out of the
-    gates. Keep the class intact: footer consumers use isinstance checks.
+    """Count the PyArrow footer opens of geoparquet-io, which core counters cannot see.
+    Keep the class intact: footer consumers use isinstance checks.
     """
     import pyarrow.parquet as pq
 
@@ -143,12 +111,7 @@ STUB_TILE_RGBA = (201, 74, 203, 255)
 
 def install_stub_tiles(patch: pytest.MonkeyPatch) -> list[str]:
     """Serve every basemap tile as one fixed tile and record each tile URL.
-
-    The real basemap code runs: contextily picks the tiles and merges them,
-    and the thumbnail fetches them on its threads. Only the HTTP request in
-    ``thumbnail._get_tile`` is replaced, so the basemap code runs with no
-    network. Without the thumbnail extra the import of contextily raises
-    ``ImportError``.
+    Only the HTTP request in ``thumbnail._get_tile`` is replaced.
     """
     import contextily.tile  # noqa: F401 - the gate for the thumbnail extra
     import numpy as np
@@ -171,9 +134,8 @@ def install_stub_tiles(patch: pytest.MonkeyPatch) -> list[str]:
 
 
 def _peak_rss_mb() -> float | None:
-    # Linux keeps the ru_maxrss of the parent across fork and exec, so a child
-    # of a large bench process reports the parent peak. VmHWM belongs to the
-    # memory map of this program alone.
+    # Linux keeps the ru_maxrss of the parent across fork and exec.
+    # VmHWM belongs to this program alone.
     status = Path("/proc/self/status")
     if status.is_file():
         for line in status.read_text(encoding="utf-8").splitlines():

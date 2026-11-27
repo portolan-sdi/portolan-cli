@@ -1,10 +1,4 @@
-"""Commands that reach the emitting modules print their notices as on f7f8214 (#1133).
-
-``sync`` converts files in its check step. ``rm`` and ``stac-geoparquet``
-update the catalog index, which warns about a corrupted file. On f7f8214 each
-notice printed through ``portolan_cli.output``, also under ``--quiet``. Without
-a report scope the notice goes to the log, which ``--quiet`` hides.
-"""
+"""Commands that reach the emitting modules print their notices."""
 
 from __future__ import annotations
 

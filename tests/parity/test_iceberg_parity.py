@@ -1,7 +1,5 @@
-"""Command parity for the Iceberg plugin commands `version rollback` and `version prune`.
-
-The catalog uses the Iceberg backend with its default SQLite catalog, so no
-Docker service is needed. The tests need the `iceberg` extra.
+"""Command parity for the Iceberg commands `version rollback` and `version prune`.
+The default SQLite catalog needs no Docker; the tests need the `iceberg` extra.
 """
 
 from __future__ import annotations

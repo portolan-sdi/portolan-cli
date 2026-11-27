@@ -1,14 +1,4 @@
-"""Integration tests for FeatureServer metadata.yaml auto-seeding.
-
-Wave 3A: Verify that extraction automatically seeds .portolan/metadata.yaml
-from extracted ArcGIS service metadata.
-
-Tests verify:
-- metadata.yaml is created after extraction
-- Source URL is preserved from service
-- TODO markers exist for required human fields (contact.email, license)
-- Existing metadata.yaml files are NOT overwritten (overwrite=False)
-"""
+"""Integration tests for FeatureServer metadata.yaml auto-seeding."""
 
 from __future__ import annotations
 
@@ -39,11 +29,7 @@ def _create_extraction_mock(
     output_dir: Path,
     layer_name: str = "census_blocks",
 ) -> tuple[int, int, float]:
-    """Create mock extraction result and the parquet file.
-
-    ArcGISLayerSource.fetch writes the parquet file, so our mock must also
-    create it for downstream code (add_files) to work.
-    """
+    """Create mock extraction result and the parquet file."""
     layer_slug = layer_name
     collection_dir = output_dir / layer_slug
     parquet_path = collection_dir / f"{layer_slug}.parquet"
@@ -144,8 +130,8 @@ class TestFeatureServerMetadataSeeding:
         # contact.email has a TODO placeholder: ArcGIS exposes no email.
         assert metadata["contact"]["email"] == TODO_MARKER
 
-        # The license does not, because it can no longer be left for later: the
-        # extraction resolved it from --license before downloading (issue #686).
+        # The license does not: the extraction resolved it from --license
+        # before downloading.
         assert metadata["license"] == "CC-BY-4.0"
 
     @pytest.mark.integration

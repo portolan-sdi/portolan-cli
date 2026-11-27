@@ -1,10 +1,4 @@
-"""The sync commands print the lines that the sync library reports (#1133).
-
-The library prints nothing. Each command passes a report callback down to the
-store setup and the transfers. These tests pin the lines that a missed
-callback drops to the log: the endpoint line of an AWS profile, and the
-download lines of ``status``.
-"""
+"""The sync commands print the lines that the sync library reports."""
 
 from __future__ import annotations
 
@@ -72,7 +66,6 @@ def test_push_prints_the_endpoint_line(remote: MemoryStore, catalog: Path, run_c
 def test_status_prints_the_download_of_the_remote_versions(
     remote: MemoryStore, catalog: Path, run_cli: RunCli
 ) -> None:
-    """``status`` prints the download of each remote versions.json, as it did before #1133."""
     run_cli("push", REMOTE, "-c", "points", cwd=catalog)
 
     with patch.dict("os.environ", {"PORTOLAN_REMOTE": REMOTE}):

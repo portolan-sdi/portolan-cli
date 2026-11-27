@@ -1,25 +1,5 @@
-"""Seeded scenario inputs for the perf gates, the nightly job, and the profiler (#992).
-
-Each scenario builds its input under an empty directory from a size ``n`` and
-a seed. The same size and seed give the same bytes, and
-``test_determinism.py`` checks this with checksums. Vector files come from
-``tests/fixtures/realdata/open-buildings.parquet`` (1,000 polygons in one row
-group), copied and translated by a seeded offset. Raster files are small
-seeded GeoTIFFs.
-
-A scenario that needs a catalog first (``re-add-unchanged``, ``check-metadata``,
-``status``) builds it with ``portolan`` itself, through ``runner.py``, so the
-catalog is what the code under test writes today.
-
-Every scenario turns vector thumbnails off, except ``add-many-collections-thumbs``
-and ``thumbnail-large``. Those two draw the default basemap from the stub tile
-source in ``runner.py``. A raster scenario still writes the COG thumbnail,
-because ``conversion.cog.generate_thumbnail`` controls it and is on by
-default. PMTiles stay off, the default, so tippecanoe on the machine does not
-change a count.
-
-The module docstring of ``test_scale_invariance.py`` explains how the gates
-use the sizes.
+"""Seeded scenario inputs for the perf gates, the nightly job, and the profiler.
+The same size and seed give the same bytes; vector thumbnails and PMTiles stay off unless a scenario names them.
 """
 
 from __future__ import annotations
@@ -56,9 +36,7 @@ providers:
     url: "https://example.org"
 """
 
-# ---------------------------------------------------------------------------
 # Input writers
-# ---------------------------------------------------------------------------
 
 
 def seeded_rng(seed: int, salt: int) -> Any:
@@ -69,9 +47,7 @@ def seeded_rng(seed: int, salt: int) -> Any:
 
 def write_vector(path: Path, rows: int, rng: Any) -> None:
     """Write ``rows`` open-buildings polygons to ``path``, moved by one seeded offset.
-
-    Above 1,000 rows the source repeats on a 0.01 degree grid, so the copies
-    sit side by side.
+    Above 1,000 rows the source repeats on a 0.01 degree grid.
     """
     import numpy as np
     import pyarrow as pa
@@ -159,9 +135,7 @@ def write_raster(path: Path, rng: Any) -> None:
         dst.write(data)
 
 
-# ---------------------------------------------------------------------------
 # Catalog setup through the runner
-# ---------------------------------------------------------------------------
 
 
 def run_portolan(
@@ -222,9 +196,7 @@ def setup_add(root: Path) -> None:
     )
 
 
-# ---------------------------------------------------------------------------
 # Scenarios
-# ---------------------------------------------------------------------------
 
 
 #: History entries that ``re-add-unchanged`` puts in front of the real version.
@@ -233,11 +205,7 @@ HISTORY_VERSIONS = 10
 
 
 def pad_versions(root: Path, count: int) -> None:
-    """Give every collection ``count`` earlier versions with the same asset snapshot.
-
-    ``versions.json`` stores a full snapshot per version, so the history grows
-    as versions times assets, as on a catalog that saw many adds.
-    """
+    """Give every collection ``count`` earlier versions with the same asset snapshot."""
     for path in sorted(root.glob("*/versions.json")):
         data = json.loads(path.read_text(encoding="utf-8"))
         first = data["versions"][0]
@@ -270,10 +238,7 @@ def _setup_missing_raster_items(root: Path, history: int) -> None:
 @dataclass(frozen=True)
 class Scenario:
     """One fixed input and the ``portolan`` command that the gates measure.
-
-    ``inputs(root, n, seed)`` writes the data files at size ``n``.
-    ``setup(root, history)`` turns them into a catalog when the command needs
-    one. ``exit_code`` is the exit status the command has today.
+    ``exit_code`` is the exit status the command has today.
     """
 
     name: str
@@ -344,9 +309,8 @@ SCENARIOS: dict[str, Scenario] = {
         Scenario("add-large-vector", _large_vector, ADD),
         # S3: n raster items with history, then an add that changes nothing.
         Scenario("re-add-unchanged", _rasters, ADD, setup=_setup_re_add),
-        # S4: check --metadata on an unchanged catalog of n raster items, with
-        # thumbnails on, as PTL-VIZ-001 asks. add embeds the band statistics
-        # in each COG (#748), so check exits 0.
+        # S4: check --metadata on n unchanged raster items with thumbnails on.
+        # add embeds the band statistics in each COG, so check exits 0.
         Scenario(
             "check-metadata",
             _rasters,
@@ -360,9 +324,8 @@ SCENARIOS: dict[str, Scenario] = {
             _rasters,
             ("check", "--metadata", "--fix"),
             setup=_setup_missing_raster_items,
-            # Recreated item JSON may produce byte-different Parquet metadata,
-            # so a mirror can publish a version in only one of the two runs.
-            # Measure item repair itself; add-rasters covers mirror generation.
+            # Recreated item JSON can change the Parquet metadata, so mirrors stay off here.
+            # add-rasters covers mirror generation.
             config="parquet:\n  enabled: false\n",
         ),
         # check --fix converts n GeoJSON files to GeoParquet in one process.
@@ -373,7 +336,7 @@ SCENARIOS: dict[str, Scenario] = {
         ),
         # S6: status on an unchanged catalog.
         Scenario("status", _one_collection, ("status",), setup=_setup_add),
-        # S8: n small rasters, one item each (#775).
+        # S8: n small rasters, one item each.
         Scenario("add-rasters", _rasters, ADD),
         # One file of n polygons with a thumbnail and the stub basemap.
         Scenario("thumbnail-large", _large_vector, ADD, config=""),

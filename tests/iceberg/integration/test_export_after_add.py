@@ -1,8 +1,4 @@
-"""Integration tests for export after CLI add.
-
-Verifies that exported GeoParquet matches original data and excludes
-derived columns (geohash, bbox).
-"""
+"""Integration tests for export after CLI add."""
 
 from __future__ import annotations
 

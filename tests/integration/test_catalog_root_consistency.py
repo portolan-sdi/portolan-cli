@@ -1,9 +1,4 @@
-"""Integration tests for consistent catalog root detection across CLI commands.
-
-All CLI commands should use find_catalog_root() from catalog.py,
-which looks for .portolan/config.yaml as the single sentinel. This ensures
-consistent behavior where commands either all succeed or all fail.
-"""
+"""Integration tests for consistent catalog root detection across CLI commands."""
 
 from __future__ import annotations
 
@@ -18,13 +13,7 @@ from portolan_cli.cli import cli
 
 
 def setup_managed_catalog(path: Path) -> None:
-    """Create a fully managed Portolan catalog structure.
-
-    Per and:
-    - catalog.json at root (STAC standard)
-    - .portolan/config.yaml (sentinel file)
-    (Note: state.json removed per issue #290)
-    """
+    """Create a fully managed Portolan catalog structure."""
     # Create .portolan directory with sentinel files
     portolan_dir = path / ".portolan"
     portolan_dir.mkdir(parents=True)
@@ -63,10 +52,7 @@ class TestCatalogRootConsistency:
 
     @pytest.mark.integration
     def test_list_finds_catalog_from_subdirectory(self, runner: CliRunner, tmp_path: Path) -> None:
-        """list command finds catalog from nested subdirectory.
-
-        Note: Per issue #210, status was merged into list.
-        """
+        """list command finds catalog from nested subdirectory."""
         setup_managed_catalog(tmp_path)
 
         # Create nested subdirectory
@@ -82,12 +68,7 @@ class TestCatalogRootConsistency:
 
     @pytest.mark.integration
     def test_list_walks_up_to_find_catalog(self, runner: CliRunner, tmp_path: Path) -> None:
-        """list command walks up from subdirectory to find catalog root.
-
-        Git-style behavior: list uses find_catalog_root() to auto-detect
-        the catalog by walking up from cwd. This allows running list from
-        any subdirectory within a catalog.
-        """
+        """list command walks up from subdirectory to find catalog root."""
         setup_managed_catalog(tmp_path)
 
         # Create nested subdirectory
@@ -121,11 +102,7 @@ class TestCatalogRootConsistency:
 
     @pytest.mark.integration
     def test_unmanaged_stac_catalog_rejected(self, runner: CliRunner, tmp_path: Path) -> None:
-        """Commands fail gracefully for catalog.json-only directories (UNMANAGED_STAC).
-
-        Note: 'config list' fails without a managed catalog.
-        'list' now shows "No tracked items" with guidance per issue #210.
-        """
+        """Commands fail gracefully for catalog.json-only directories (UNMANAGED_STAC)."""
         setup_unmanaged_stac(tmp_path)
 
         # Create nested subdirectory
@@ -141,11 +118,7 @@ class TestCatalogRootConsistency:
 
     @pytest.mark.integration
     def test_error_message_suggests_init(self, runner: CliRunner, tmp_path: Path) -> None:
-        """Error message explicitly tells user to run 'portolan init'.
-
-        Note: 'config list' is used to test error handling as 'list' now
-        gracefully handles missing catalogs with helpful guidance per #210.
-        """
+        """Error message explicitly tells user to run 'portolan init'."""
         # Empty directory, no catalog
         nested_dir = tmp_path / "no-catalog"
         nested_dir.mkdir()
@@ -194,12 +167,7 @@ class TestCatalogRootConsistency:
     def test_all_commands_consistent_without_catalog(
         self, runner: CliRunner, tmp_path: Path
     ) -> None:
-        """Commands using find_catalog_root fail consistently when no catalog exists.
-
-        Git-style behavior: list, push, pull all use find_catalog_root() to
-        auto-detect catalog by walking up from cwd.
-        Note: 'status' was removed per issue #210 (merged into 'list').
-        """
+        """Commands using find_catalog_root fail consistently when no catalog exists."""
         nested_dir = tmp_path / "no-catalog" / "nested"
         nested_dir.mkdir(parents=True)
 
@@ -216,12 +184,7 @@ class TestCatalogRootConsistency:
 
     @pytest.mark.integration
     def test_all_commands_consistent_with_catalog(self, runner: CliRunner, tmp_path: Path) -> None:
-        """Commands using find_catalog_root succeed consistently when catalog exists.
-
-        Git-style behavior: list, push, pull all use find_catalog_root() to
-        auto-detect catalog by walking up from cwd.
-        Note: 'status' was removed per issue #210 (merged into 'list').
-        """
+        """Commands using find_catalog_root succeed consistently when catalog exists."""
         setup_managed_catalog(tmp_path)
 
         nested_dir = tmp_path / "collection"
@@ -286,20 +249,15 @@ class TestGitStyleCommandScoping:
 
     @pytest.mark.integration
     def test_push_finds_catalog_from_subdirectory(self, runner: CliRunner, tmp_path: Path) -> None:
-        """push command finds catalog from nested subdirectory.
-
-        Git-style behavior: push uses find_catalog_root() to auto-detect
-        the catalog by walking up from cwd.
-        """
+        """push command finds catalog from nested subdirectory."""
         setup_managed_catalog(tmp_path)
 
         # Create nested subdirectory
         nested_dir = tmp_path / "collection" / "item"
         nested_dir.mkdir(parents=True)
 
-        # Run push from nested directory - should find catalog but fail for other reason
-        # (missing destination). The key test is that it DOESN'T fail with
-        # "not a portolan catalog" error.
+        # push finds the catalog and fails on the missing destination,
+        # not with "not a portolan catalog".
         with runner.isolated_filesystem(temp_dir=nested_dir):
             result = runner.invoke(cli, ["push"])
 
@@ -324,11 +282,7 @@ class TestGitStyleCommandScoping:
 
     @pytest.mark.integration
     def test_pull_finds_catalog_from_subdirectory(self, runner: CliRunner, tmp_path: Path) -> None:
-        """pull command finds catalog from nested subdirectory.
-
-        Git-style behavior: pull uses find_catalog_root() to auto-detect
-        the catalog by walking up from cwd.
-        """
+        """pull command finds catalog from nested subdirectory."""
         setup_managed_catalog(tmp_path)
 
         # Create nested subdirectory

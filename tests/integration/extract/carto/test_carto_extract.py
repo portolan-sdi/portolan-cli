@@ -1,9 +1,4 @@
-"""Integration tests for Carto extraction auto-init.
-
-Exercises the real catalog auto-init pipeline (init_catalog → add_files →
-via-links → metadata seeding) using a real GeoParquet fixture, with only the
-network extraction mocked out.
-"""
+"""Integration tests for Carto extraction auto-init."""
 
 from __future__ import annotations
 
@@ -27,7 +22,7 @@ SQL_API_URL = "https://phl.carto.com/api/v2/sql"
 
 
 # Building the catalog directly skips the license resolution the driver does
-# before its download, so the license is passed in here (issue #686).
+# before its download, so the license is passed in here.
 TEST_LICENSE = ResolvedLicense(license_id="CC-BY-4.0", license_url=None)
 
 
@@ -94,14 +89,7 @@ def test_auto_init_builds_catalog_with_via_link_and_metadata(tmp_path: Path) -> 
 
 
 def test_auto_init_tracks_non_geo_table_as_tabular_collection(tmp_path: Path) -> None:
-    """A non-geo extracted Parquet becomes a tabular collection.
-
-    Auto-init must enable ``tabular.enabled``, otherwise add_files rejects a
-    geometry-less file. The collection carries no marker field: tabular status
-    is read off the asset itself. The docstring used to promise a
-    ``portolan:geospatial: false`` flag under a validator rule id that no
-    longer exists, which contradicted the assertion below (issue #654).
-    """
+    """Auto-init enables tabular, else add_files rejects a geometry-less file."""
     from portolan_core.config import get_setting
 
     collection_dir = tmp_path / "lookup"
@@ -125,7 +113,7 @@ def test_auto_init_tracks_non_geo_table_as_tabular_collection(tmp_path: Path) ->
     collection_json = tmp_path / "lookup" / "collection.json"
     assert collection_json.exists()
     coll = json.loads(collection_json.read_text())
-    # Tabular status is derived from asset content, not flagged (issue #654).
+    # Tabular status is derived from asset content, not flagged.
     assert "portolan:geospatial" not in coll
 
     # Provenance via-link still wired for the tabular collection.

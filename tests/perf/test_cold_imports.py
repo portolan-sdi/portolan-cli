@@ -1,9 +1,5 @@
-"""S7: the heavy modules that a help command loads in a cold process (#994).
-
-``portolan --help`` and the help of a command should load no geospatial
-stack. Today ``cli.py`` imports the whole add stack at the top, so each help
-command loads all of it. ``expected/imports.py`` records the set. Lane F
-moves the imports into the commands and empties it.
+"""S7: the heavy modules that a help command loads in a cold process.
+``expected/imports.py`` records the set.
 """
 
 from __future__ import annotations

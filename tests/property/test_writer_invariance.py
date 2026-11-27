@@ -1,11 +1,5 @@
-"""Invariance properties of the portolan-core catalog writer.
-
-``tests/unit/core/test_writer_plan.py`` and
-``tests/integration/core/test_writer_apply.py`` pin the writer on one golden
-catalog and on hand-picked bad keys. These properties generalize them over
-generated catalogs and generated keys. Each property cites the sentence of
-portolan-spec, or of a standard the spec builds on, that makes it a
-requirement. The spec quotes come from portolan-spec at commit d48bae0.
+"""Invariance properties of the portolan-core catalog writer over generated catalogs and keys.
+Each property cites portolan-spec at commit d48bae0, or a standard that the spec builds on.
 """
 
 from __future__ import annotations
@@ -140,9 +134,7 @@ def _parsed(plan: writer.WritePlan) -> list[tuple[str, str, Any]]:
 
 @given(catalog=catalogs())
 def test_equal_input_gives_an_equal_plan(catalog: Input) -> None:
-    """best-practices/git-backed-catalogs.md, Keep the tools and inputs:
-    "Generated output should be deterministic."
-
+    """best-practices/git-backed-catalogs.md: "Generated output should be deterministic".
     Two equal inputs built apart, not one object planned twice, give equal plans.
     """
     documents, documentation = catalog
@@ -155,15 +147,8 @@ def test_equal_input_gives_an_equal_plan(catalog: Input) -> None:
 def test_key_order_and_whitespace_in_the_input_do_not_change_the_catalog(
     catalog: Input, seed: int, indent: int | None
 ) -> None:
-    """RFC 8259, section 4: "An object is an unordered collection of zero or
-    more name/value pairs". Section 2: "Insignificant whitespace is allowed
-    before or after any of the six structural characters." core.md, Core
-    Structure, requires a valid STAC 1.1.0 catalog, and STAC objects are JSON.
-
-    The input passes through JSON text with shuffled keys and other
-    whitespace. Every written document is then the same JSON value, and the
-    operations keep their keys, order, and media types. The bytes may differ,
-    because the writer keeps the key order of its input on purpose.
+    """RFC 8259, section 4: "An object is an unordered collection of zero or more name/value pairs".
+    core.md requires a valid STAC 1.1.0 catalog, and STAC objects are JSON.
     """
     documents, documentation = catalog
     text = json.dumps(_shuffled(documents, random.Random(seed)), indent=indent)
@@ -175,14 +160,7 @@ def test_key_order_and_whitespace_in_the_input_do_not_change_the_catalog(
 
 @given(catalog=catalogs())
 def test_apply_twice_changes_no_byte_and_a_replan_is_a_fixed_point(catalog: Input) -> None:
-    """best-practices/git-backed-catalogs.md, Links and the publish step:
-    "one tree of bytes, checked by CI on a laptop or a runner, published
-    unchanged." And "TriMet's `tests/test_regen.py` rebuilds the catalog and
-    compares it with the committed version".
-
-    The sink holds exactly the planned bytes. A second apply leaves them
-    unchanged. A plan made from the written tree is the plan that wrote it.
-    """
+    """best-practices/git-backed-catalogs.md: "one tree of bytes, checked by CI on a laptop or a runner, published unchanged"."""
     plan = writer.plan_catalog(*catalog)
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
@@ -220,14 +198,8 @@ def unsafe_keys(draw: st.DrawFn) -> str:
     catalog=catalogs(), key=unsafe_keys(), place=st.sampled_from(["document", "prefix", "prior"])
 )
 def test_an_unsafe_key_is_always_refused(catalog: Input, key: str, place: str) -> None:
-    """core.md, Core Structure: "A Portolan catalog is a directory of STAC
-    metadata and cloud-native geospatial data." Nested Catalogs, Flat
-    Collections: "A nested collection's ID is its POSIX path from the catalog
-    root".
-
-    A key names a file inside that directory as a path from its root. An
-    absolute key, a parent segment, or a drive leaves the directory. The
-    planner refuses each one as a document key, a key prefix, or a prior key.
+    """core.md: "A Portolan catalog is a directory of STAC metadata and cloud-native geospatial data".
+    An absolute key, a parent segment or a drive leaves that directory, so the planner refuses it.
     """
     documents, documentation = catalog
     options: dict[str, Any] = {}

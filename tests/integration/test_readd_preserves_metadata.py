@@ -1,11 +1,4 @@
-"""Integration tests: a re-add preserves collection-specific metadata (issue #755).
-
-``portolan add`` regenerates ``collection.json`` on every run. It used to overwrite
-the collection title with the catalog root title, and it re-stamped the license and
-providers from metadata merged down the tree. A maintainer who fixed a collection by
-hand then lost the fix on the next add. These tests add a collection, edit it by hand,
-add again, and confirm the hand edits survive.
-"""
+"""Integration tests: a re-add preserves collection-specific metadata."""
 
 from __future__ import annotations
 

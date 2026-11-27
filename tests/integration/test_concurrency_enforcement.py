@@ -1,14 +1,4 @@
-"""Integration tests for concurrency enforcement (Issue #344).
-
-These tests verify that concurrency limits are ACTUALLY ENFORCED at runtime,
-not just passed through the API. They measure real in-flight operations.
-
-Unlike unit tests that verify parameters are passed correctly, these tests
-verify the runtime behavior:
-- Adaptive concurrency starts low and ramps up
-- max_connections cap is respected
-- Worker multiplication is accounted for
-"""
+"""Integration tests for concurrency enforcement."""
 
 from __future__ import annotations
 
@@ -20,12 +10,10 @@ from unittest.mock import patch
 
 import pytest
 
-# Remote URL for tests - set via env var (Issue #356: sensitive settings)
+# The remote is sensitive, so tests set it through an env var.
 TEST_REMOTE = "s3://test/"
 
-# =============================================================================
 # Adaptive Concurrency Runtime Tests
-# =============================================================================
 
 
 class TestAdaptiveConcurrencyRuntime:
@@ -34,11 +22,6 @@ class TestAdaptiveConcurrencyRuntime:
     @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_adaptive_starts_low_and_ramps_up(self) -> None:
-        """Verify adaptive mode starts with low concurrency and increases.
-
-        This test measures actual in-flight operations over time to verify
-        that the slow-start ramp-up is actually happening.
-        """
         from portolan_cli.async_utils import (
             AdaptiveConcurrencyManager,
             AsyncIOExecutor,
@@ -159,9 +142,8 @@ class TestMaxConnectionsEnforcement:
         """Verify adjustment math is correct for global limits."""
         from portolan_cli.async_utils import adjust_concurrency_for_max_connections
 
-        # Scenario: 4 workers, each wants 8 files x 4 chunks = 32 per worker
-        # Total would be 4 x 32 = 128 connections
-        # With max_connections=64, each worker gets budget of 16
+        # 4 workers x 8 files x 4 chunks = 128 connections wanted.
+        # With max_connections=64, each worker gets a budget of 16.
 
         workers = 4
         max_connections = 64
@@ -302,7 +284,7 @@ class TestCLIIntegration:
         runner = CliRunner()
 
         with runner.isolated_filesystem():
-            # Setup minimal catalog (remote via env var per Issue #356)
+            # Minimal catalog; the remote comes from the env var.
             Path(".portolan").mkdir()
             Path(".portolan/config.yaml").write_text("version: '1.0'\n", encoding="utf-8")
             Path("col1").mkdir()

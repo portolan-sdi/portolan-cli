@@ -1,8 +1,4 @@
-"""Integration tests for spatial columns through the full CLI flow.
-
-Verifies that `portolan add` with the iceberg backend adds geohash and
-bbox columns to the Iceberg table when the input has geometry.
-"""
+"""Integration tests for spatial columns through the full CLI flow."""
 
 from __future__ import annotations
 

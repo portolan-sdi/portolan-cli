@@ -1,18 +1,5 @@
 """Each AUTO rule fires on a catalog built to break it, and ``check --fix`` repairs it.
-
-``RULE_REMEDIATION`` marks a rule AUTO when ``--fix`` owns its repair. These
-properties hold that claim to account. For every AUTO rule id a breaker in
-``breakers.py`` edits a copy of a valid catalog. The property then asserts
-three things through the real CLI:
-
-1. ``check`` reports the rule as a defect. An INFO is a note, not a defect,
-   so a base that already emits an INFO for the rule still needs a new
-   finding.
-2. ``check --fix`` removes the defect.
-3. A second ``check --fix`` changes no byte in the tree.
-
-The completeness gate requires every AUTO rule id to have a breaker or a
-reason in ``UNBREAKABLE``.
+A second ``check --fix`` changes no byte; each AUTO rule needs a breaker or an ``UNBREAKABLE`` reason.
 """
 
 from __future__ import annotations

@@ -13,9 +13,7 @@ import pytest
 if TYPE_CHECKING:
     from pathlib import Path
 
-# =============================================================================
-# Task 7.7: Full Convert Workflow Integration Tests
-# =============================================================================
+# Full Convert Workflow Integration Tests
 
 
 @pytest.mark.integration
@@ -191,11 +189,7 @@ class TestConvertWorkflowIntegration:
 @pytest.mark.integration
 @pytest.mark.realdata
 class TestConvertWorkflowRealData:
-    """Integration tests using real-world data fixtures.
-
-    These tests use production data samples to verify conversion
-    handles real-world edge cases correctly.
-    """
+    """Integration tests using real-world data fixtures."""
 
     def test_convert_nwi_wetlands_complex_polygons(
         self,
@@ -264,9 +258,7 @@ class TestConvertWorkflowRealData:
         assert result.format_from == "COG"
 
 
-# =============================================================================
-# COG Settings Configuration Tests (Issue #279)
-# =============================================================================
+# COG Settings Configuration Tests
 
 
 @pytest.mark.integration
@@ -436,12 +428,7 @@ conversion:
     def test_lossy_compression_with_quality(
         self, tmp_path: Path, compression: str, tag: str
     ) -> None:
-        """conversion.cog.quality reaches the COG as the GTiff quality option of the codec.
-
-        The GTiff driver has no QUALITY option. It takes JPEG_QUALITY and
-        WEBP_LEVEL, and reports the value back in IMAGE_STRUCTURE. The source
-        is RGB, because the WebP codec refuses a single band.
-        """
+        """GTiff has no QUALITY option. The source is RGB, as WebP refuses one band."""
         import rasterio
 
         from portolan_cli.convert import ConversionStatus, convert_file
@@ -462,9 +449,7 @@ conversion:
             assert src.tags(ns="IMAGE_STRUCTURE")[tag] == "40"
 
 
-# =============================================================================
-# COG Defaults Derived From the Source Raster (Issue #690)
-# =============================================================================
+# COG Defaults Derived From the Source Raster
 
 
 def _write_raster(path: Path, *, dtype: str, count: int = 1) -> Path:

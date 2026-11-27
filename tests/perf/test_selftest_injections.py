@@ -23,7 +23,7 @@ def test_a_reopen_fault_targets_portolan_core() -> None:
 
 @pytest.mark.parametrize("name", REOPEN_FAULTS)
 def test_reopen_injections_compile_and_fail_the_open_gate(tmp_path: Path, name: str) -> None:
-    # The open gate reads both source folders (#1133).
+    # The open gate reads both source folders.
     roots = [tmp_path / root.relative_to(REPO) for root in SOURCE_ROOTS]
     for root in SOURCE_ROOTS:
         shutil.copytree(root, tmp_path / root.relative_to(REPO))

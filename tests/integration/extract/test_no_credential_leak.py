@@ -1,20 +1,4 @@
-"""No extract command lets a credential in its URL reach any output (#1133).
-
-Each case runs one command family against a recorded service, with a
-credential in the URL. The credential is the text ``SECRET``. The test runs
-the command and its library function. It then checks every place a
-credential could go:
-
-- the command stdout, stderr, and JSON envelope
-- each file that the run wrote
-- the repr and the ``to_dict()`` of the library result, and the repr of
-  the options and of the ArcGIS client
-- each ``portolan_cli`` log record at DEBUG
-- the text of a raised error
-
-The Codex reviews of #1133 found a credential in each of these places. This
-test covers all of them at once, so a new leak fails here.
-"""
+"""No extract command lets a credential in its URL reach any output."""
 
 from __future__ import annotations
 
@@ -58,11 +42,7 @@ _IMAGE_SERVICE = {
 
 @dataclass(frozen=True)
 class Case:
-    """One command run with a credential in its URL.
-
-    ``path`` holds the credential as a query parameter. ``userinfo`` puts
-    ``user:SECRET@`` in the URL for basic auth.
-    """
+    """One command run with a credential in its URL."""
 
     family: str
     scenario: str | dict[str, Any]

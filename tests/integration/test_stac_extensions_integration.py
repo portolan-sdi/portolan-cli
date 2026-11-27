@@ -1,10 +1,4 @@
-"""Integration tests for STAC extension support.
-
-Tests the full workflow integration of STAC extensions:
-- Table extension added to collections for vector data
-- Projection extension added to items (including proj:shape/transform for rasters)
-- Bbox transformation to WGS84 with antimeridian handling
-"""
+"""Integration tests for STAC extension support."""
 
 from __future__ import annotations
 
@@ -370,21 +364,11 @@ class TestEndToEndWorkflow:
 
 
 class TestRasterExtensionCompliance:
-    """Integration tests for raster extension compliance (Issue #336).
-
-    Verifies that:
-    1. Raster items declare the raster extension URL
-    2. Collections with raster items declare the raster extension URL
-    3. The bands array and raster:spatial_resolution are properly set
-    """
+    """Integration tests for raster extension compliance."""
 
     @pytest.mark.integration
     def test_raster_item_declares_raster_extension(self, fixtures_dir: Path) -> None:
-        """Raster items must declare raster extension when raster fields are present.
-
-        Issue #336: Items with raster:* fields and bands arrays didn't declare
-        the raster extension URL in stac_extensions.
-        """
+        """Raster items must declare raster extension when raster fields are present."""
         cog_path = fixtures_dir / "raster" / "valid" / "singleband.tif"
         metadata = extract_cog_metadata(cog_path)
 
@@ -405,7 +389,7 @@ class TestRasterExtensionCompliance:
             },
         )
 
-        # Add raster extension (this is what PR #337 fixes)
+        # Add the raster extension
         add_raster_extension(item, metadata)
 
         # Verify raster extension URL is declared
@@ -413,8 +397,8 @@ class TestRasterExtensionCompliance:
             f"Raster extension URL not in stac_extensions: {item.stac_extensions}"
         )
 
-        # raster:spatial_resolution stays on the item; bands live on the data
-        # asset per STAC v1.1.0 (issue #437), never on item.properties.
+        # raster:spatial_resolution stays on the item. Bands live on the data
+        # asset per STAC v1.1.0, never on item.properties.
         assert "raster:spatial_resolution" in item.properties, (
             "raster:spatial_resolution missing from item properties"
         )
@@ -423,11 +407,7 @@ class TestRasterExtensionCompliance:
 
     @pytest.mark.integration
     def test_collection_inherits_raster_extension_from_summaries(self) -> None:
-        """Collections must declare extensions used by their items.
-
-        Issue #336: Collections didn't declare extensions (raster, projection, vector)
-        that were declared by their child items.
-        """
+        """Collections must declare extensions used by their items."""
         # Create collection
         collection = create_collection(
             collection_id="raster-collection-test",
@@ -451,12 +431,7 @@ class TestRasterExtensionCompliance:
 
     @pytest.mark.integration
     def test_bands_key_alone_does_not_trigger_raster_extension(self) -> None:
-        """The core `bands` array does not declare the raster extension (issue #654).
-
-        Reverses issue #336: STAC v1.1.0 moved the unified `bands` array into
-        core, so band metadata (including `statistics`) validates without the
-        extension. Only `raster:`-prefixed fields still require it.
-        """
+        """The core `bands` array does not declare the raster extension."""
         from portolan_cli.stac import build_stac_extensions
 
         properties: dict[str, object] = {

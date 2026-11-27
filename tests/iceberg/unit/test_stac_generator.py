@@ -1,8 +1,4 @@
-"""Tests for STAC metadata generation from Iceberg tables (Phase 3 + 4).
-
-Phase 3: table:* fields (STAC Table Extension) from Iceberg schema.
-Phase 4: iceberg:* fields (STAC Iceberg Extension) from catalog/table state.
-"""
+"""Tests for STAC metadata generation from Iceberg tables (Phase 3 + 4)."""
 
 from __future__ import annotations
 
@@ -19,16 +15,12 @@ def _make_wkb_point(x: float, y: float) -> bytes:
     return struct.pack("<BIdd", 1, 1, x, y)
 
 
-# --- Row count from snapshot metadata (issue #436) ---
+# --- Row count from snapshot metadata ---
 
 
 @pytest.mark.unit
 def test_row_count_reads_from_snapshot_summary_without_materializing():
-    """row_count should come from the snapshot's total-records, not a table scan.
-
-    Materializing the table (table.scan().to_arrow()) is wasteful for the large
-    data Iceberg targets; the count must be read from O(1) snapshot metadata.
-    """
+    """row_count should come from the snapshot's total-records, not a table scan."""
     from portolan_cli.backends.iceberg.stac_generator import _get_row_count
 
     table = MagicMock()
@@ -53,11 +45,7 @@ def test_row_count_zero_for_empty_table():
 
 @pytest.mark.unit
 def test_row_count_falls_back_when_total_records_absent():
-    """row_count should fall back to a metadata count when total-records is missing.
-
-    Not every catalog/writer populates total-records; we must still produce a
-    count rather than crash, while avoiding a full materialization.
-    """
+    """row_count should fall back to a metadata count when total-records is missing."""
     from portolan_cli.backends.iceberg.stac_generator import _get_row_count
 
     table = MagicMock()
@@ -329,9 +317,8 @@ def test_iceberg_metadata_has_required_fields(iceberg_backend, iceberg_catalog, 
     assert "iceberg:table_id" in metadata
     assert "iceberg:format_version" in metadata
     assert "iceberg:current_snapshot_id" in metadata
-    # iceberg:partition_spec and iceberg:metadata_location are both optional.
-    # This table is unpartitioned and the warehouse is local, so the extension
-    # says to omit the first and the second names no fetchable document.
+    # Both fields are optional. The table is unpartitioned and the warehouse is
+    # local, so the extension says to omit both.
     assert "iceberg:partition_spec" not in metadata
 
 
@@ -406,10 +393,9 @@ def test_iceberg_format_version(iceberg_backend, iceberg_catalog, tmp_path):
 
 @pytest.mark.integration
 def test_iceberg_current_snapshot_id(iceberg_backend, iceberg_catalog, tmp_path):
-    """iceberg:current_snapshot_id should be a numeric string.
+    """iceberg:current_snapshot_id is a numeric string.
 
-    A string, because an Iceberg snapshot id is 64-bit and a JSON parser that
-    stores numbers as doubles rounds it above 2^53 (extension v1.1.0).
+    A JSON double rounds a 64-bit snapshot id above 2^53.
     """
     table_data = pa.table({"id": pa.array([1], type=pa.int64())})
     path = tmp_path / "data.parquet"
@@ -491,8 +477,7 @@ def test_collection_metadata_includes_table_fields(iceberg_backend, iceberg_cata
     assert "iceberg:catalog_type" in metadata
     assert "iceberg:table_id" in metadata
 
-    # stac_extensions and assets are no longer in the return dict --
-    # they are set via pystac APIs in on_post_add()
+    # stac_extensions and assets are set via pystac APIs in on_post_add()
     assert "stac_extensions" not in metadata
     assert "assets" not in metadata
 
@@ -554,7 +539,7 @@ def test_get_stac_metadata_from_backend(iceberg_backend, tmp_path):
 
     assert metadata["table:row_count"] == 3
     assert "iceberg:table_id" in metadata
-    # stac_extensions no longer in return dict (set via pystac API in on_post_add)
+    # stac_extensions is set via the pystac API in on_post_add()
     assert "stac_extensions" not in metadata
 
 
@@ -607,7 +592,7 @@ def test_generate_collection_metadata_excludes_assets(iceberg_backend, iceberg_c
 
 
 class TestExtensionShape:
-    """The fields must match the STAC Iceberg extension v1.1.0 (issue #883)."""
+    """The fields must match the STAC Iceberg extension v1.1.0."""
 
     @pytest.mark.unit
     def test_partition_fields_use_the_extension_keys(self) -> None:
@@ -655,7 +640,7 @@ class TestExtensionShape:
     def test_catalog_uri_holds_no_local_path_or_credential(
         self, uri: str, published: str | None
     ) -> None:
-        """#939: a local SQLite path names the machine that ran the command."""
+        """A local SQLite path names the machine that ran the command."""
         from unittest.mock import MagicMock
 
         from portolan_cli.backends.iceberg.stac_generator import generate_collection_metadata

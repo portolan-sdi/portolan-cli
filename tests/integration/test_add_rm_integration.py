@@ -1,11 +1,4 @@
-"""Integration tests for top-level add/rm commands.
-
-These tests exercise the full add/rm workflow with real file operations,
-verifying that format conversion, metadata extraction, STAC creation,
-and file management work end-to-end.
-
-Git-style implicit tracking
-"""
+"""Integration tests for top-level add/rm commands."""
 
 from __future__ import annotations
 
@@ -171,9 +164,7 @@ class TestAddIntegration:
         self, runner: CliRunner, initialized_catalog: Path, fixtures_dir: Path
     ) -> None:
         """add shapefile automatically includes sidecar files."""
-        # Use the WGS84 shapefile fixture (the projected variant now fail-fasts
-        # at add because conversion drops its CRS — covered in
-        # test_bbox_validation.py; this test is about sidecar handling).
+        # The projected variant fails fast at add (see test_bbox_validation.py).
         shapefile_dir = fixtures_dir / "scan" / "complete_shapefile_wgs84"
         if not shapefile_dir.exists():
             pytest.skip("Shapefile fixture not available")
@@ -235,15 +226,6 @@ class TestAddIntegration:
     def test_add_multiple_files_creates_snapshot_with_all_assets(
         self, runner: CliRunner, initialized_catalog: Path, valid_points_geojson: Path
     ) -> None:
-        """Adding a file captures all geo files in the same directory.
-
-        - When adding a file, ALL geo files in the directory are captured as assets
-        - Adding an already-tracked file is a no-op (is_current returns True)
-
-        Expected behavior:
-        - Add file A → version 1.0.0 with {A, B, converted parquet}
-        - Add file B → no-op (file already tracked in version 1.0.0)
-        """
         import json
 
         # Set up: create collection with two files in SAME directory
@@ -301,13 +283,7 @@ class TestAddIntegration:
 
 
 class TestAddItemIdOverrideIntegration:
-    """Integration tests for --item-id flag on 'portolan add' command.
-
-    Issue #136: Users should be able to override automatic item ID derivation.
-
-    --item-id only applies to raster data (item-level assets).
-    Vector data is collection-level and doesn't create items.
-    """
+    """Integration tests for --item-id flag on 'portolan add' command."""
 
     @pytest.mark.integration
     def test_add_with_item_id_creates_item_with_custom_id(
@@ -316,17 +292,9 @@ class TestAddItemIdOverrideIntegration:
         initialized_catalog: Path,
         valid_singleband_cog: Path,
     ) -> None:
-        """add --item-id creates STAC item with the custom ID.
-
-        Raster data = item-level asset (grandparent = collection).
-        For rasters, collection is the grandparent, item is the parent.
-        The --item-id flag overrides the default item ID (parent directory name).
-        """
         import json
 
-        # Set up: create structure for raster data
-        # Raster structure is collection/item_dir/data.tif
-        # imagery = collection, scene-001 = item directory
+        # Raster layout: collection/item_dir/data.tif (imagery/scene-001).
         collection_dir = initialized_catalog / "imagery"
         item_dir = collection_dir / "scene-001"
         item_dir.mkdir(parents=True)
@@ -628,12 +596,6 @@ class TestRmIntegration:
     def test_rm_untracks_a_file_deleted_from_disk(
         self, runner: CliRunner, initialized_catalog: Path, valid_points_geojson: Path
     ) -> None:
-        """rm untracks a tracked asset that is already gone from disk (#803).
-
-        Reproduces the issue: a tracked file is deleted by hand, status reports
-        it under "Deleted files", and rm --force must drop the phantom entry so
-        status reports clean afterwards.
-        """
         import json
 
         # Set up and track a file.
@@ -764,12 +726,6 @@ class TestOldCommandsRemoved:
 
     @pytest.mark.integration
     def test_dataset_command_group_no_longer_exists(self, runner: CliRunner) -> None:
-        """'portolan dataset' command group should not exist.
-
-        The entire `dataset` command group was deprecated in favor of
-        top-level commands: `portolan list`, `portolan info`, `portolan add`,
-        and `portolan rm`.
-        """
         result = runner.invoke(cli, ["dataset", "--help"])
 
         # Should fail because the command group doesn't exist
@@ -778,11 +734,7 @@ class TestOldCommandsRemoved:
 
 
 class TestLonePMTilesIsRefused:
-    """The spec has no PMTiles that stands alone as the data of a collection.
-
-    portolan-spec formats.md "PMTiles" makes it the visualization derivative
-    of the GeoParquet data asset. add registered a lone PMTiles as the data.
-    """
+    """The spec has no PMTiles that stands alone as the data of a collection."""
 
     _REASON = (
         "PMTiles is a visualization derivative. "

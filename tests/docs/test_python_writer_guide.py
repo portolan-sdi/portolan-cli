@@ -1,10 +1,4 @@
-"""Checks for the guide docs/guides/python-writer.md (#1133, #928).
-
-The guide takes all of its code from examples/python-writer/write_catalog.py
-and examples/python-writer/build_item.py through pymdownx.snippets sections.
-These checks run each section in guide order, validate the catalog that each
-script writes, and check that each name the guide shows exists.
-"""
+"""Check docs/guides/python-writer.md: run its snippet sections in order and validate the output."""
 
 from __future__ import annotations
 
@@ -151,7 +145,7 @@ def _wetlands(folder: Path) -> None:
 def test_the_builder_snippets_make_wgs84_items(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The Items carry a WGS84 bbox, not the EPSG:5070 bbox of the file (#928)."""
+    """The Items carry a WGS84 bbox, not the EPSG:5070 bbox of the file."""
     monkeypatch.chdir(tmp_path)
     _wetlands(tmp_path)
     namespace: dict[str, Any] = {}
@@ -173,7 +167,7 @@ def test_the_builder_snippets_make_wgs84_items(
 
 
 def test_the_builder_example_writes_a_catalog_that_check_accepts(tmp_path: Path) -> None:
-    """The script runs, and `portolan check` reports no error on what it writes (#928)."""
+    """The script runs, and ``portolan check`` reports no error on what it writes."""
     _wetlands(tmp_path)
     subprocess.run([sys.executable, str(BUILDER)], cwd=tmp_path, capture_output=True, check=True)
 

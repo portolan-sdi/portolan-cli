@@ -1,9 +1,5 @@
 """Command parity for `stac-geoparquet`: one collection, every collection, and a dry run.
-
-The catalog starts without the item mirror, because `add` writes no mirror when
-`parquet.enabled` is false. The harness removes the catalog that the command
-wrote before it runs the library call, so each test runs the command again on
-its own catalog to check what the command wrote.
+The harness removes the command catalog, so each test reruns the command to check its output.
 """
 
 from __future__ import annotations

@@ -1,8 +1,4 @@
-"""Integration tests for file:size population (Issue #501).
-
-Verifies that `portolan add` correctly populates file:size and file:checksum
-on STAC assets, and that collection/catalog aggregates are computed.
-"""
+"""Integration tests for file:size population."""
 
 from __future__ import annotations
 
@@ -136,7 +132,6 @@ class TestFileSizePopulation:
     def test_add_writes_no_portolan_fields_on_the_catalog(
         self, runner: CliRunner, initialized_catalog: Path, sample_parquet_in_catalog: Path
     ) -> None:
-        """The catalog-level rollup is gone too (issue #654)."""
         # Act
         result = runner.invoke(
             cli,

@@ -195,11 +195,7 @@ class TestHookEndToEnd:
 
 @pytest.mark.network
 class TestRealGitingestFetch:
-    """Tests that actually fetch from GitHub.
-
-    These are marked with @pytest.mark.network and skipped locally.
-    Run with: pytest -m network
-    """
+    """Tests that actually fetch from GitHub."""
 
     def test_fetch_docs_real_geoparquet_io(self) -> None:
         """Actually fetch geoparquet-io docs from GitHub."""

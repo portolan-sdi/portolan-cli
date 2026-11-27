@@ -1,9 +1,5 @@
 """The base catalogs and one breaker per AUTO rule id.
-
-Each base is built once per session through the real CLI, the way a user
-builds a catalog. Each breaker edits a copy of a base so that its rule fires.
-It draws from Hypothesis to choose which node, asset, or value to break, so
-the property holds for every choice and not for one hand-picked file.
+Each breaker draws from Hypothesis to choose which node, asset or value to break.
 """
 
 from __future__ import annotations
@@ -42,9 +38,7 @@ STRUCTURAL = ("root", "parent", "child", "item", "collection")
 PARTITION_FIELDS = ("partition:scheme", "partition:keys", "partition:glob")
 
 
-# ---------------------------------------------------------------------------
 # Bases
-# ---------------------------------------------------------------------------
 
 
 def build_core(root: Path, run: RunCli) -> None:
@@ -58,11 +52,7 @@ def build_core(root: Path, run: RunCli) -> None:
 
 
 def build_partitioned(root: Path, run: RunCli) -> None:
-    """A Hive-partitioned collection, after one ``check --fix``.
-
-    ``add`` leaves partition:glob for ``push`` (#914), so PTL-PRT-001 fires
-    on a fresh build. One ``--fix`` writes the glob from the disk layout.
-    """
+    """A Hive-partitioned collection after one ``check --fix``, which writes the partition:glob that ``add`` leaves to ``push``."""
     gen.build_partitioned(root, run)
     run("check", str(root), "--fix", expect=None)
 
@@ -73,9 +63,7 @@ BASES: dict[str, Callable[[Path, RunCli], None]] = {
 }
 
 
-# ---------------------------------------------------------------------------
 # Helpers
-# ---------------------------------------------------------------------------
 
 
 def _load(path: Path) -> dict[str, Any]:
@@ -169,11 +157,7 @@ def _roads_parquet(root: Path) -> Path:
 
 
 def _rewrite_points(path: Path, coords: list[tuple[float, float]], **write_options: Any) -> None:
-    """Rewrite the GeoParquet at ``path`` with one point row per coordinate pair.
-
-    The attribute columns repeat the original rows. The geometry, the
-    ``bbox`` covering column, and the ``geo`` bbox follow ``coords``.
-    """
+    """Rewrite the GeoParquet at ``path`` with one point row per coordinate pair in ``coords``."""
     table = pq.read_table(path)
     xs = [x for x, _ in coords]
     ys = [y for _, y in coords]
@@ -201,9 +185,7 @@ def _original_coords(path: Path) -> list[tuple[float, float]]:
     return coords
 
 
-# ---------------------------------------------------------------------------
 # files
-# ---------------------------------------------------------------------------
 
 
 @breaks("PTL-FIL-001")
@@ -225,9 +207,7 @@ def drop_readme_link(root: Path, data: DataObject) -> None:
     _edit(_choose(data, _containers(root)), _drop_links("describedby"))
 
 
-# ---------------------------------------------------------------------------
 # titles
-# ---------------------------------------------------------------------------
 
 
 @breaks("PTL-TTL-001")
@@ -250,9 +230,7 @@ def drop_link_title(root: Path, data: DataObject) -> None:
     _edit(path, lambda node: node["links"][index].pop("title"))
 
 
-# ---------------------------------------------------------------------------
 # links
-# ---------------------------------------------------------------------------
 
 
 def _required_rels(root: Path, path: Path) -> tuple[str, ...]:
@@ -311,9 +289,7 @@ def repoint_structural_link(root: Path, data: DataObject) -> None:
     _edit(item, mutate)
 
 
-# ---------------------------------------------------------------------------
 # bbox
-# ---------------------------------------------------------------------------
 
 
 @breaks("PTL-BBX-001")
@@ -333,9 +309,7 @@ def corrupt_bbox(root: Path, data: DataObject) -> None:
     _edit(path, mutate)
 
 
-# ---------------------------------------------------------------------------
 # assets
-# ---------------------------------------------------------------------------
 
 
 @breaks("PTL-AST-001")
@@ -362,9 +336,7 @@ def bare_checksum(root: Path, data: DataObject) -> None:
     _set_asset(path, key, "file:checksum", checksum.removeprefix("1220"))
 
 
-# ---------------------------------------------------------------------------
 # conformance
-# ---------------------------------------------------------------------------
 
 
 @breaks("PTL-CNF-001")
@@ -391,9 +363,7 @@ def misalign_schema_uri(root: Path, data: DataObject) -> None:
     _edit(_choose(data, _stac(root, "Collection")), mutate)
 
 
-# ---------------------------------------------------------------------------
 # visualization
-# ---------------------------------------------------------------------------
 
 
 @breaks("PTL-VIZ-001")
@@ -420,9 +390,7 @@ def mistype_style(root: Path, data: DataObject) -> None:
     _set_asset(root / "roads" / "collection.json", "styles/default", "type", wrong)
 
 
-# ---------------------------------------------------------------------------
 # partitions
-# ---------------------------------------------------------------------------
 
 
 @breaks("PTL-PRT-001", base="partitioned")
@@ -439,9 +407,7 @@ def drop_partition_field(root: Path, data: DataObject) -> None:
     _edit(root / "buildings" / "collection.json", mutate)
 
 
-# ---------------------------------------------------------------------------
 # item mirror
-# ---------------------------------------------------------------------------
 
 
 @breaks("PTL-MIR-001")
@@ -462,9 +428,7 @@ def misregister_mirror(root: Path, data: DataObject) -> None:
     _set_asset(root / "imagery" / "collection.json", "geoparquet-items", field, value)
 
 
-# ---------------------------------------------------------------------------
 # data pass
-# ---------------------------------------------------------------------------
 
 
 @breaks("PTL-DAT-001")

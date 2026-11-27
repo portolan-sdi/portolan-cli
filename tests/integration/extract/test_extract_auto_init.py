@@ -1,10 +1,4 @@
-"""Integration tests for extract arcgis auto-init feature.
-
-Tests that extraction automatically initializes a Portolan catalog
-and adds extracted files, unless --raw flag is specified.
-
-Uses REAL fixtures from tests/fixtures/ rather than mocks.
-"""
+"""Integration tests for extract arcgis auto-init feature."""
 
 from __future__ import annotations
 
@@ -52,7 +46,7 @@ def make_report(
 
 
 # Building the catalog directly skips the license resolution the driver does
-# before its download, so the license is passed in here (issue #686).
+# before its download, so the license is passed in here.
 TEST_LICENSE = ResolvedLicense(license_id="CC-BY-4.0", license_url=None)
 
 
@@ -92,11 +86,11 @@ class TestAutoInitCatalog:
         assert (output_dir / "catalog.json").exists(), "catalog.json should be created"
 
     def test_auto_init_uses_supplied_catalog_id(self, tmp_path: Path) -> None:
-        """extract --id names the catalog instead of the directory (issue #821)."""
+        """extract --id names the catalog instead of the directory."""
         import json
 
-        # A scratch directory name is exactly what produced the "publish" catalog
-        # in issue #821, so the derived id here differs from the supplied one.
+        # A scratch directory name derives an id like "publish",
+        # so the derived id here differs from the supplied one.
         output_dir = tmp_path / "publish"
         output_dir.mkdir()
 
@@ -168,12 +162,7 @@ class TestAutoInitCatalog:
         assert (output_dir / "layer_1" / "collection.json").exists()
 
     def test_second_extraction_adds_collection_to_existing_catalog(self, tmp_path: Path) -> None:
-        """A second extraction into an existing catalog adds a collection (issue #767).
-
-        Before the fix, the second catalog build raised
-        CatalogAlreadyExistsError after the data was already on disk, so the
-        second layer's collection.json was never written.
-        """
+        """A second extraction into an existing catalog adds a collection."""
         import json
 
         output_dir = tmp_path / "shared_catalog"
@@ -206,13 +195,7 @@ class TestAutoInitCatalog:
     def test_second_extraction_keeps_root_catalog_title_and_description(
         self, tmp_path: Path
     ) -> None:
-        """A second extraction from a different service keeps the root metadata (issue #832).
-
-        The #767 fix lets a second extraction add a collection to an existing
-        catalog. Before this fix, that second run also rewrote the root
-        catalog.json title and description with the new service's values. The
-        root metadata must survive the second extraction.
-        """
+        """A second extraction from a different service keeps the root metadata."""
         import json
 
         output_dir = tmp_path / "shared_catalog"
@@ -355,12 +338,7 @@ class TestExtractWithRawFlag:
 
 
 class TestMetadataPropagation:
-    """Tests for Issue #369: Propagate rich metadata to STAC files.
-
-    Verifies that extraction --auto mode populates catalog.json and
-    collection.json with meaningful metadata from services, not generic
-    placeholders like 'Collection: layer_name_abc123'.
-    """
+    """Extraction --auto puts service metadata in the STAC files, not placeholders."""
 
     def test_arcgis_service_description_propagates_to_catalog(self, tmp_path: Path) -> None:
         """ArcGIS service description populates catalog.json description field."""
@@ -435,7 +413,7 @@ class TestMetadataPropagation:
         catalog_json = json.loads((output_dir / "catalog.json").read_text())
         # Catalog should be created
         assert catalog_json.get("id") is not None
-        # Technical name should NOT appear in title (Issue #369)
+        # Technical name should NOT appear in title
         title = catalog_json.get("title")
         assert title is None or "bu_building_emprise_v2" not in title, (
             f"Technical name leaked into catalog title: {title}"

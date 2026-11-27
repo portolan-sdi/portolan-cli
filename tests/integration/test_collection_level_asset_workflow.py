@@ -1,12 +1,5 @@
-"""Integration tests for collection-level asset workflow (Issue #250, Issue #364).
-
-Tests the complete workflow of adding collection-level vector assets,
-verifying STAC metadata generation, and ensuring correct path structure.
-
-- Single vector files (GeoParquet, Shapefile, GeoPackage) are collection-level assets
-- No item.json created - asset goes directly in collection.json
-- items.parquet is NOT generated (no items to index)
-"""
+"""Integration tests for collection-level assets: a single vector file goes in collection.json.
+Such an add writes no item.json and no items.parquet."""
 
 from __future__ import annotations
 
@@ -25,7 +18,7 @@ if TYPE_CHECKING:
 
 
 def _assert_no_item_json(collection_dir: Path) -> None:
-    """Assert no item.json files exist in collection (Issue #364)."""
+    """Assert that the collection holds no item.json files."""
     item_json_files = [
         f
         for f in collection_dir.rglob("*.json")
@@ -78,21 +71,7 @@ class TestCollectionLevelAssetWorkflow:
     def test_end_to_end_collection_level_asset(
         self, fresh_catalog_no_versions, fixtures_dir, tmp_path
     ):
-        """Test complete workflow: add file → verify structure → verify metadata.
-
-        This integration test covers:
-        1. Adding a collection-level vector file (demographics/census.parquet)
-        2. Verifying no double-nested directories (demographics/demographics/)
-        3. Verifying versions.json has correct href (demographics/census.parquet)
-        4. Verifying collection.json has asset in "assets" field (Issue #364)
-        5. Verifying NO item.json exists (Issue #364)
-
-        Collection-level assets should be organized as:
-            demographics/
-                census.parquet # Asset at collection level
-                collection.json # Has assets.data pointing to census.parquet
-                versions.json
-        """
+        """Add a collection-level file, then check the paths, versions.json, and collection.json."""
         # Setup: Create collection directory
         collection_dir = fresh_catalog_no_versions / "demographics"
         collection_dir.mkdir()
@@ -118,7 +97,7 @@ class TestCollectionLevelAssetWorkflow:
         )
         assert target_file.exists(), "Asset file should exist at collection level"
 
-        # Verify: NO item.json exists (Issue #364)
+        # Verify: NO item.json exists
         _assert_no_item_json(collection_dir)
 
         # Verify: versions.json has correct href
@@ -131,11 +110,11 @@ class TestCollectionLevelAssetWorkflow:
         assert len(versions_data["versions"]) == 1, "Should have one version"
         version = versions_data["versions"][0]
 
-        # Asset key is collection-relative, href is catalog-relative (Issue #354)
+        # Asset key is collection-relative, href is catalog-relative
         assert "census.parquet" in version["assets"]
         assert version["assets"]["census.parquet"]["href"] == "demographics/census.parquet"
 
-        # Verify collection.json has asset (Issue #364)
+        # Verify collection.json has asset
         _assert_collection_assets(collection_dir, {"census": "./census.parquet"})
 
         # Verify: Result contains correct info
@@ -147,12 +126,7 @@ class TestCollectionLevelAssetWorkflow:
     def test_multiple_collection_level_assets_same_collection(
         self, fresh_catalog_no_versions, fixtures_dir
     ):
-        """Test adding multiple collection-level assets to same collection.
-
-        Verifies that multiple vector files in the same collection directory
-        are each tracked correctly without interference, and both appear
-        in collection.json assets (Issue #364).
-        """
+        """Two vector files in one collection both track and both appear in collection.json."""
         collection_dir = fresh_catalog_no_versions / "demographics"
         collection_dir.mkdir()
 
@@ -204,8 +178,7 @@ class TestCollectionLevelAssetWorkflow:
 
         # Verify NO item.json and correct collection.json assets
         _assert_no_item_json(collection_dir)
-        # The generated README.md (issue #654) is a describedby link, not an
-        # asset. The second add once registered it (issue #1041).
+        # The generated README.md is a describedby link, not an asset.
         _assert_collection_assets(
             collection_dir,
             {
@@ -218,14 +191,7 @@ class TestCollectionLevelAssetWorkflow:
         assert not (collection_dir / "items.parquet").exists()
 
     def test_mixed_collection_and_item_level_assets(self, fresh_catalog_no_versions, fixtures_dir):
-        """Test collection with both collection-level and item-level assets.
-
-        Verifies that a collection can have:
-        - Collection-level assets (demographics/census.parquet)
-        - Item-level assets (demographics/survey/responses.parquet)
-
-        And both are tracked correctly without path conflicts.
-        """
+        """One collection holds a collection-level asset and an item-level asset without conflict."""
         collection_dir = fresh_catalog_no_versions / "demographics"
         collection_dir.mkdir()
 
@@ -267,7 +233,7 @@ class TestCollectionLevelAssetWorkflow:
         for version in versions_data["versions"]:
             all_assets.update(version["assets"])
 
-        # Collection-level asset key is filename only (per Issue #354)
+        # Collection-level asset key is filename only
         assert "census.parquet" in all_assets, (
             "Collection-level asset key should be filename (collection-relative)"
         )
@@ -294,28 +260,15 @@ class TestCollectionLevelAssetWorkflow:
         )
 
 
-# =============================================================================
-# Issue #383: Non-geo parquet companions with collection-level geo files
-# =============================================================================
+# Non-geo parquet companions with collection-level geo files
 
 
 @pytest.mark.integration
 class TestCollectionLevelNonGeoCompanionWorkflow:
-    """Integration tests for issue #383: non-geo parquet companion tracking.
-
-    Bug: Non-geo parquet files fail to track when their companion geo file is
-    collection-level because `source_to_item_dir` doesn't include collection-level
-    sources.
-
-    Repro: User has data.parquet (geo) + stats.parquet (non-geo) in same dir.
-    When added as collection-level, stats.parquet should register as asset.
-    """
+    """A non-geo parquet beside a collection-level geo file registers as an asset."""
 
     def test_geo_plus_tabular_parquets_both_tracked(self, fresh_catalog_no_versions, fixtures_dir):
-        """Both geo and non-geo parquets in same dir are tracked as collection-level.
-
-        This is the primary repro case for issue #383.
-        """
+        """Both geo and non-geo parquets in one dir track as collection-level."""
         from portolan_cli.add import add_files
 
         # Set up collection directory
@@ -324,9 +277,7 @@ class TestCollectionLevelNonGeoCompanionWorkflow:
 
         # Use simple.parquet as geo fixture (it's a clean GeoParquet)
         geo_fixture = fixtures_dir / "simple.parquet"
-        # For non-geo, we use the lookup.parquet fixture but need to handle
-        # the case where it might be detected as geo. Instead, create a
-        # minimal parquet without geometry.
+        # lookup.parquet can be detected as geo, so create a minimal parquet without geometry.
         import pyarrow as pa
         import pyarrow.parquet as pq
 
@@ -377,13 +328,7 @@ class TestCollectionLevelNonGeoCompanionWorkflow:
         _assert_no_item_json(collection_dir)
 
     def test_nongeo_parquet_error_message_before_fix(self, fresh_catalog_no_versions, fixtures_dir):
-        """Verify the error message that issue #383 reported (sanity check).
-
-        Before fix: User would see "no geospatial file in same directory"
-        even when a geo file EXISTS in the same directory.
-
-        After fix: Both files track correctly, no error.
-        """
+        """A non-geo parquet beside a geo file gives no 'no geospatial file in same directory' error."""
         import pyarrow as pa
         import pyarrow.parquet as pq
 
@@ -419,11 +364,7 @@ class TestCollectionLevelNonGeoCompanionWorkflow:
         self, fresh_catalog_no_versions: Path, fixtures_dir: Path
     ) -> None:
         """A re-add tracks an edited CSV whose GeoParquet did not change.
-
-        Phase 1 skips the unchanged GeoParquet, so no prepared item names the
-        directory. Phase 3 must still find the geo file that versions.json
-        tracks there, and track the CSV as its companion.
-        """
+        Phase 3 finds the geo file that versions.json tracks, though no prepared item names the dir."""
         from portolan_cli.add import add_files
         from portolan_core.versions import read_versions
 
@@ -468,12 +409,7 @@ class TestCollectionLevelNonGeoCompanionWorkflow:
         self, fresh_catalog_no_versions: Path, fixtures_dir: Path
     ) -> None:
         """A CSV beside a raster item joins the item. Its directory is no collection.
-
-        Phase 1 infers ``imagery/scene`` as the collection of the CSV. When that
-        phase wrote the intermediate catalogs, ``imagery/catalog.json`` landed
-        next to ``imagery/collection.json``, and check reported PTL-LNK-002 and
-        PTL-LNK-006.
-        """
+        Check reports no PTL-LNK-002 or PTL-LNK-006 for ``imagery/catalog.json``."""
         from portolan_cli.add import add_files
 
         catalog = fresh_catalog_no_versions
@@ -507,11 +443,7 @@ class TestCollectionLevelNonGeoCompanionWorkflow:
     def test_a_failed_tabular_conversion_writes_no_collection(
         self, fresh_catalog_no_versions: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """A standalone CSV whose conversion fails is a failure and nothing more.
-
-        The plan registered the collection before the conversion ran. The add
-        then wrote an empty collection and an empty version 1.0.0.
-        """
+        """A standalone CSV whose conversion fails writes no collection and no version."""
         from portolan_cli.add import add_files
 
         catalog = fresh_catalog_no_versions
@@ -588,11 +520,7 @@ class _CrashError(Exception):
 def _crashed_add(
     tmp_path: Path, fixtures_dir: Path, patcher: pytest.MonkeyPatch
 ) -> tuple[Path, Path]:
-    """Run an add that raises after collection.json is on disk.
-
-    Returns:
-        The catalog root and the collection directory.
-    """
+    """Run an add that raises after collection.json is on disk. Return the root and collection dir."""
     from portolan_cli.add import add_files
 
     root = tmp_path / "catalog"
@@ -614,7 +542,7 @@ def _crashed_add(
 
 @pytest.mark.integration
 class TestOneAddIsOneVersion:
-    """One add writes one version per collection, with every side step in it (#995)."""
+    """One add writes one version per collection, with every side step in it."""
 
     def test_the_pmtiles_and_the_thumbnail_join_the_add_version(
         self, tmp_path: Path, fixtures_dir: Path, monkeypatch: pytest.MonkeyPatch
@@ -647,7 +575,6 @@ class TestOneAddIsOneVersion:
         _add_cli(root, collection_dir)
 
         # One write of the collection record and one of the catalog index.
-        # The thumbnail amended the record in a second write before (#995).
         assert [p for p in written if p.name == "versions.json"] == [
             collection_dir / "versions.json",
             root / "versions.json",
@@ -668,11 +595,8 @@ class TestOneAddIsOneVersion:
     def test_the_catalog_index_matches_each_current_version(
         self, tmp_path: Path, fixtures_dir: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """commit_run writes the index that the removed sync_catalog_index wrote.
-
-        The index entry of each collection summarizes its current version,
-        side steps included. A re-add that changes nothing leaves the index bytes.
-        """
+        """commit_run writes a catalog index entry that summarizes each current version.
+        A re-add that changes nothing leaves the index bytes."""
         from portolan_cli.catalog import CollectionSummary
         from portolan_core.versions import read_versions
 
@@ -744,12 +668,8 @@ class TestOneAddIsOneVersion:
     def test_an_add_after_a_crash_converges(
         self, tmp_path: Path, fixtures_dir: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """The crash leaves collection.json and the converted file with no version.
-
-        The next add replaces its own output, which carries the source
-        provenance record, and writes the version. versions.json and
-        collection.json then agree.
-        """
+        """After a crash, the next add replaces its own output and writes the version.
+        versions.json and collection.json then agree."""
         from portolan_cli.add import add_files
         from portolan_core.checksums import compute_checksum
         from portolan_core.versions import read_versions
@@ -773,13 +693,8 @@ class TestOneAddIsOneVersion:
 
 @pytest.mark.integration
 class TestTheBumpOfAnAdd:
-    """One add writes one version, and its number bumps the part that main bumped.
-
-    On main the geo files of an add went through finalize, which bumped the
-    patch. A companion went through ``publish_version``, which bumped the
-    minor. ``rm`` bumps the minor. One staged version takes the larger bump,
-    so it ends on the number that the chain of versions on main ended on.
-    """
+    """One add writes one version. Its number takes the larger bump of its steps.
+    Geo files bump the patch. Companions and ``rm`` bump the minor."""
 
     @staticmethod
     def _collection(catalog: Path, fixtures_dir: Path) -> tuple[Path, Path, Path]:

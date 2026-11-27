@@ -1,8 +1,4 @@
-"""Integration tests for metadata.yaml defaults in the add workflow.
-
-These tests verify that defaults from metadata.yaml are applied during
-`portolan add` when source files lack certain metadata.
-"""
+"""Integration tests for metadata.yaml defaults in the add workflow."""
 
 from __future__ import annotations
 
@@ -20,10 +16,7 @@ if TYPE_CHECKING:
 
 
 def _data_asset_bands(item: dict[str, Any]) -> list[dict[str, Any]]:
-    """Return the unified bands array from the item's data asset.
-
-    STAC v1.1.0 places ``bands`` on the data asset, not item.properties (#437).
-    """
+    """Return the unified bands array from the item's data asset."""
     bands: list[dict[str, Any]] = item["assets"]["data"].get("bands", [])
     return bands
 
@@ -230,7 +223,7 @@ class TestAddWithRasterNodataDefaults:
         with open(item_json, encoding="utf-8") as f:
             item = json.load(f)
 
-        # Check bands have nodata from defaults (bands live on the data asset, #437)
+        # Check bands have nodata from defaults (bands live on the data asset)
         bands = _data_asset_bands(item)
         assert "bands" not in item["properties"], "bands must not be on item.properties"
         assert len(bands) == 3, f"Expected 3 bands, got {len(bands)}"

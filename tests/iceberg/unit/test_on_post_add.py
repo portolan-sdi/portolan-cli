@@ -1,8 +1,4 @@
-"""Tests for IcebergBackend.on_post_add() hook.
-
-Moved from portolan-cli's test_remote_upload_on_add.py. The on_post_add hook
-combines STAC extension metadata update and remote STAC metadata upload.
-"""
+"""Tests for IcebergBackend.on_post_add() hook."""
 
 from __future__ import annotations
 
@@ -292,14 +288,7 @@ def test_on_post_add_no_duplicate_extensions(iceberg_backend, parquet_file, cata
 
 @pytest.mark.integration
 def test_on_post_add_leaves_the_data_asset_alone(iceberg_backend, parquet_file, catalog_with_stac):
-    """An asset already keyed "data" survives (issue #883).
-
-    The backend used to assign assets["data"] the warehouse directory, typed
-    application/x-iceberg. A generated catalog keys its GeoParquet asset by
-    filename, so there the assignment added a second asset carrying the same
-    "data" role. A collection that does use the "data" key, such as a
-    hand-authored one, lost it.
-    """
+    """An asset already keyed "data" survives."""
     catalog_root, item_dir, collection = catalog_with_stac
     collection.assets["data"] = pystac.Asset(
         href="./roads.parquet",
@@ -318,13 +307,7 @@ def test_on_post_add_leaves_the_data_asset_alone(iceberg_backend, parquet_file, 
 def test_on_post_add_writes_no_iceberg_asset_for_a_local_warehouse(
     iceberg_backend, parquet_file, catalog_with_stac
 ):
-    """A local warehouse gets no asset, because no reader can fetch the file.
-
-    The extension says to add the asset only when the metadata.json is a
-    document a reader can fetch. The default SQLite catalog writes a file://
-    location, which also carries the absolute path of the machine that ran the
-    command.
-    """
+    """A local warehouse gets no asset, because no reader can fetch the file."""
     catalog_root, item_dir, collection = catalog_with_stac
 
     _publish_and_run_post_add(iceberg_backend, parquet_file, catalog_root, item_dir, collection)
@@ -339,12 +322,7 @@ def test_on_post_add_writes_no_iceberg_asset_for_a_local_warehouse(
 def test_on_post_add_adds_the_iceberg_metadata_asset_when_fetchable(
     iceberg_backend, parquet_file, catalog_with_stac, monkeypatch
 ):
-    """An https metadata.json becomes its own asset, with the metadata role.
-
-    A reader opens the table from this file with no catalog service, which is
-    what the convention asks for. The role is "metadata" alone, because the
-    GeoParquet file keeps the data role.
-    """
+    """An https metadata.json becomes its own asset, with the metadata role."""
     from portolan_cli.backends.iceberg import stac_generator
 
     published = "https://data.example.org/warehouse/boundaries/metadata/v3.metadata.json"
@@ -392,12 +370,7 @@ def test_on_post_add_preserves_existing_assets(iceberg_backend, parquet_file, ca
 def test_on_post_add_keeps_fields_an_enrichment_hook_wrote(
     iceberg_backend, parquet_file, catalog_with_stac
 ):
-    """The hook merges into the JSON on disk and keeps plugin fields (#947).
-
-    The enrichment hooks write to collection.json and the item files before
-    the backend publishes. The in-memory collection never sees those fields.
-    A pystac save from memory would drop them from the files and the upload.
-    """
+    """The hook merges into the JSON on disk and keeps plugin fields."""
     import json
 
     catalog_root, item_dir, collection = catalog_with_stac
@@ -424,18 +397,7 @@ def test_on_post_add_keeps_fields_an_enrichment_hook_wrote(
 
 @pytest.mark.integration
 def test_on_post_add_keeps_the_structural_links(iceberg_backend, parquet_file, catalog_with_stac):
-    """The hook must leave ``root`` and ``parent`` alone (issue #940).
-
-    The hook used to call ``normalize_hrefs`` and ``save(SELF_CONTAINED)``.
-    pystac points ``root`` at the object it saves, so that made the collection
-    its own root and dropped ``parent``. ``portolan check`` then reported
-    PTL-LNK-001 and PTL-LNK-006 on every collection the backend wrote.
-
-    #958 replaced that save with ``_merge_into_collection_json``, which fixed it
-    as a side effect of keeping the fields an enrichment hook writes. This test
-    pins the links, so a later change to how the hook writes cannot bring the
-    finding back without failing here.
-    """
+    """The hook must leave ``root`` and ``parent`` alone."""
     import json
 
     catalog_root, item_dir, collection = catalog_with_stac
@@ -465,7 +427,7 @@ def test_on_post_add_keeps_the_structural_links(iceberg_backend, parquet_file, c
 def test_on_post_add_prints_each_upload_line(
     iceberg_backend, parquet_file, catalog_with_stac, capsys
 ):
-    """The hook passes a report to upload_file, so its upload lines print, as before #1133."""
+    """The hook passes a report to upload_file, so its upload lines print."""
     catalog_root, item_dir, collection = catalog_with_stac
     publish_boundaries(iceberg_backend, parquet_file)
     context = _make_context(catalog_root, item_dir, collection, remote="s3://bucket/catalog")

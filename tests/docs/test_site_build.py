@@ -1,10 +1,4 @@
-"""Tests for the built documentation site.
-
-Zensical builds this site. `zensical build --strict` reports a dead
-link and a dead anchor, and it stops the build. It does not report two
-other failures. A dropped plugin and an empty snippet include both
-produce a clean build and a wrong page. These tests close that gap.
-"""
+"""Check the built site for failures that ``zensical build --strict`` does not report."""
 
 from __future__ import annotations
 
@@ -57,18 +51,8 @@ def _copy_working_tree(dest: Path) -> None:
 
 @pytest.fixture(scope="session")
 def built_site(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    """Build the site once per xdist worker and return the output directory.
-
-    Each worker builds a copy of the working tree in its own temporary
-    directory. Under `-n 3` the workers shared `site/`, and one worker
-    deleted it while another read it. Zensical has no output flag. It
-    writes `site/` and `.cache/` under the project root, and it reads
-    snippets relative to the working directory. So only a copy keeps the
-    repository root clean. The `site/` that the docs job uploads stays as
-    the build step wrote it.
-
-    `zensical build --clean` clears the cache and keeps the output. A
-    fresh copy has no old output, so no page outlives its source.
+    """Build a copy of the tree once per xdist worker and return its output directory.
+    Zensical has no output flag, so workers that share ``site/`` delete it under each other.
     """
     root = tmp_path_factory.mktemp("site-build")
     _copy_working_tree(root)
@@ -122,11 +106,7 @@ def _first_prose_line(relative: str) -> str:
 
 
 def test_every_declared_plugin_survives_the_config_parse() -> None:
-    """Zensical keeps each plugin that mkdocs.yml declares.
-
-    `_convert_plugins` returns early for a name it does not support. The
-    drop is silent and the build still succeeds.
-    """
+    """Zensical drops an unsupported plugin silently and the build still succeeds."""
     from zensical.config import parse_config
 
     parsed = parse_config(str(PROJECT_ROOT / "mkdocs.yml"))
@@ -148,11 +128,7 @@ def test_the_mkdocstrings_handler_options_survive_the_config_parse() -> None:
 
 
 def test_the_python_reference_renders_real_signatures(built_site: Path) -> None:
-    """mkdocstrings runs under Zensical and emits object markup.
-
-    A configured handler is not a handler that ran. This page is the one
-    place the handler does real work.
-    """
+    """mkdocstrings runs under Zensical and emits object markup."""
     page = _page(built_site, "reference/python/index.html")
 
     assert "portolan_cli.Catalog" in page
@@ -162,11 +138,7 @@ def test_the_python_reference_renders_real_signatures(built_site: Path) -> None:
 
 
 def test_the_python_reference_renders_the_plugin_surface(built_site: Path) -> None:
-    """griffe follows the lazy portolan_cli.api names to their source objects.
-
-    The api module imports its names only under TYPE_CHECKING. An alias that
-    griffe cannot resolve fails the strict build or renders an empty entry.
-    """
+    """griffe follows the lazy portolan_cli.api names to their source objects."""
     page = _page(built_site, "reference/python/index.html")
 
     for anchor in (
@@ -197,11 +169,7 @@ def test_the_plugin_guide_includes_the_example_plugin(built_site: Path) -> None:
 
 
 def test_the_readme_include_renders_its_source(built_site: Path) -> None:
-    """docs/index.md includes README.md from outside docs_dir.
-
-    The include depends on `base_path: .`. An empty include produces a
-    page that builds and says nothing.
-    """
+    """docs/index.md includes README.md from outside docs_dir with ``base_path: .``."""
     page = _page(built_site, "index.html")
 
     assert html.escape(_first_prose_line("README.md"), quote=False) in page
@@ -218,11 +186,7 @@ def test_the_example_include_renders_its_source(built_site: Path) -> None:
 
 
 def test_the_changelog_symlink_reaches_the_built_site(built_site: Path) -> None:
-    """docs/changelog.md is a symlink to CHANGELOG.md.
-
-    Zensical walks the docs directory in Rust. A walker that skips a
-    symlink drops this page from the published site.
-    """
+    """docs/changelog.md is a symlink to CHANGELOG.md, and the walker must follow it."""
     page = _page(built_site, "changelog/index.html")
 
     # The template chrome alone is over 16 kB, so a size floor proves
@@ -237,22 +201,14 @@ def test_the_changelog_symlink_reaches_the_built_site(built_site: Path) -> None:
 
 
 def test_the_search_index_covers_every_page(built_site: Path) -> None:
-    """Zensical writes its search index to site/search.json.
-
-    The path and the shape both differ from the MkDocs search plugin.
-    MkDocs writes site/search/search_index.json with a `docs` key.
-    """
+    """Zensical writes its search index to site/search.json, not the MkDocs path."""
     index = json.loads((built_site / "search.json").read_text(encoding="utf-8"))
 
     assert len(index["items"]) >= 6
 
 
 def test_the_built_pages_carry_no_dark_mode(built_site: Path) -> None:
-    """The brand kit carries no dark theme and no toggle.
-
-    mkdocs.yml states light mode only. A palette toggle added by mistake
-    emits the slate scheme into the markup.
-    """
+    """The brand kit carries no dark theme and no toggle."""
     page = _page(built_site, "index.html")
 
     assert 'data-md-color-scheme="slate"' not in page
@@ -271,22 +227,14 @@ def _brand_tokens_the_stylesheet_reads() -> set[str]:
 
 
 def test_the_stylesheet_restates_no_brand_value() -> None:
-    """extra.css holds no hex value and no rgba() call.
-
-    The brand kit in portolan-ops is the one home for a color. A restated
-    value drifts from its source and nothing reports the drift.
-    """
+    """The brand kit in portolan-ops is the one home for a color."""
     found = LITERAL_COLOR.findall(SITE_STYLES.read_text(encoding="utf-8"))
 
     assert found == [], f"extra.css restates a color: {found}"
 
 
 def test_every_brand_token_the_stylesheet_reads_exists() -> None:
-    """Each brand token that extra.css reads exists in the synced file.
-
-    CSS resolves an undefined custom property to nothing. A rename in
-    portolan-ops therefore removes a color and the build stays green.
-    """
+    """CSS resolves an undefined custom property to nothing, so a rename drops a color."""
     missing = _brand_tokens_the_stylesheet_reads() - _declared_brand_tokens()
 
     assert missing == set(), f"The brand kit declares no {sorted(missing)}."
@@ -295,11 +243,6 @@ def test_every_brand_token_the_stylesheet_reads_exists() -> None:
 def test_the_pages_load_the_brand_tokens_before_the_overrides(
     built_site: Path,
 ) -> None:
-    """The brand stylesheet loads before extra.css.
-
-    `_brand-vars.css` declares the tokens and extra.css reads them. The
-    reverse order leaves the Material overrides unresolved.
-    """
     page = _page(built_site, "index.html")
 
     tokens = page.find("assets/stylesheets/_brand-vars.css")
@@ -311,11 +254,7 @@ def test_the_pages_load_the_brand_tokens_before_the_overrides(
 
 
 def test_the_pages_request_the_brand_typefaces(built_site: Path) -> None:
-    """The page requests Hanken Grotesk and JetBrains Mono.
-
-    Material fills an absent `theme.font` with Roboto. The site then
-    renders in a typeface that the brand kit does not name.
-    """
+    """Material fills an absent ``theme.font`` with Roboto."""
     page = _page(built_site, "index.html")
 
     assert "Hanken+Grotesk" in page
@@ -324,11 +263,7 @@ def test_the_pages_request_the_brand_typefaces(built_site: Path) -> None:
 
 
 def test_the_mark_and_the_favicon_come_from_the_sync(built_site: Path) -> None:
-    """The header mark and the favicon point at the synced files.
-
-    The header is a solid blue band, so the mark on it is cream. The
-    favicon sits on a browser tab, so it is blue.
-    """
+    """The header band is blue, so its mark is cream; the favicon is blue."""
     page = _page(built_site, "index.html")
 
     assert "assets/images/portolan-logomark-fcfcfa.svg" in page

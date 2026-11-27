@@ -1,8 +1,4 @@
-"""Integration tests for spatial partitioning in IcebergBackend (Phase 2).
-
-Tests that publish() adds geohash and bbox columns when the data
-contains a geometry column, and creates partitioned Iceberg tables.
-"""
+"""Integration tests for spatial partitioning in IcebergBackend (Phase 2)."""
 
 from __future__ import annotations
 
@@ -51,10 +47,8 @@ def test_publish_adds_geohash_column(iceberg_backend, iceberg_catalog, tmp_path)
     table = iceberg_catalog.load_table("portolake.places")
     field_names = {f.name for f in table.schema().fields}
 
-    # Should have a geohash column (precision depends on row count, but for <100K rows
-    # the plan says no partitioning. However, for geo data we always add geohash for
-    # spatial query support -- so this tests that geohash is added when geometry exists)
-    # For small data, we still add the column but don't partition by it.
+    # Geo data always gets a geohash column for spatial queries.
+    # Small data gets the column but no partitioning by it.
     has_geohash = any(name.startswith("geohash_") for name in field_names)
     assert has_geohash, f"Expected geohash column, got fields: {field_names}"
 
@@ -245,7 +239,7 @@ def test_publish_geohash_values_queryable(iceberg_backend, iceberg_catalog, tmp_
 @pytest.mark.integration
 @pytest.mark.realdata
 def test_publish_keeps_rows_without_geometry(iceberg_backend, iceberg_catalog):
-    """Issue #961: 25 of the 501 affordable_housing records have no location."""
+    """25 of the 501 affordable_housing records have no location."""
     from pathlib import Path
 
     source = (

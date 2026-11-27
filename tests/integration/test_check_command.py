@@ -1,8 +1,4 @@
-"""Integration tests for the check command with --fix flag.
-
-These tests verify the check command correctly identifies files needing
-conversion and the --fix flag properly converts them using the convert module.
-"""
+"""Integration tests for the check command with --fix flag."""
 
 from __future__ import annotations
 
@@ -27,9 +23,7 @@ def runner() -> CliRunner:
     return CliRunner()
 
 
-# =============================================================================
-# Task 6.2: Check Command Detects Convertible Files
-# =============================================================================
+# Check detects convertible files
 
 
 @pytest.mark.integration
@@ -83,9 +77,7 @@ class TestCheckCommandDetection:
         )
 
 
-# =============================================================================
-# Task 6.3: Check --fix Converts and Validates
-# =============================================================================
+# Check --fix converts and validates
 
 
 @pytest.mark.integration
@@ -158,9 +150,7 @@ class TestCheckFixConversion:
         )
 
 
-# =============================================================================
-# Task 6.5: Check --fix --dry-run
-# =============================================================================
+# Check --fix --dry-run
 
 
 @pytest.mark.integration
@@ -208,9 +198,7 @@ class TestCheckFixDryRun:
         assert not (input_dir / "points.parquet").exists()
 
 
-# =============================================================================
-# Task 6.6: Partial Failure Handling
-# =============================================================================
+# Partial failure handling
 
 
 # check --fix converts two files in spawned workers. A worker draws the
@@ -277,22 +265,12 @@ class TestCheckFixPartialFailure:
         assert "failed" in output_lower or "success" in output_lower or "error" in output_lower
 
 
-# =============================================================================
-# Task: UNSUPPORTED Files Handling
-# =============================================================================
+# UNSUPPORTED files handling
 
 
 @pytest.mark.integration
 class TestCheckFixUnsupportedFiles:
-    """Tests for check --fix handling files that aren't in geospatial extensions.
-
-    Note: The check command only scans for files with recognized geospatial extensions
-    (e.g., .geojson, .shp, .tif). Files with unsupported extensions like .nc or .h5
-    are simply not scanned at all - they're ignored, not counted as "unsupported".
-
-    The UNSUPPORTED status is for files that ARE scanned (have a recognized extension)
-    but can't be converted (e.g., a .json file that isn't GeoJSON).
-    """
+    """Tests for check --fix handling files that aren't in geospatial extensions."""
 
     def test_unrecognized_extensions_are_ignored(
         self,
@@ -348,15 +326,12 @@ class TestCheckFixUnsupportedFiles:
 
         result = runner.invoke(cli, ["check", str(input_dir), "--fix", "--dry-run", "--json"])
 
-        # Note: .json files may or may not be scanned depending on extensions config
-        # If scanned and not GeoJSON, they would be UNSUPPORTED
-        # This test documents expected behavior
+        # .json files may or may not be scanned, depending on the extensions config.
+        # A scanned .json file that is not GeoJSON is UNSUPPORTED.
         assert result.exit_code == 0
 
 
-# =============================================================================
-# Task 6.7, 6.8: CLI Output
-# =============================================================================
+# CLI output
 
 
 @pytest.mark.integration
@@ -387,9 +362,7 @@ class TestCheckOutput:
         assert "data" in envelope
 
 
-# =============================================================================
-# Issue #99: --metadata and --geo-assets Flags
-# =============================================================================
+# --metadata and --geo-assets flags
 
 
 @pytest.fixture
@@ -399,11 +372,7 @@ def catalog_with_files(
     valid_points_parquet: Path,
     tmp_path: Path,
 ) -> Path:
-    """Create a Portolan catalog with both GeoJSON and GeoParquet files.
-
-    This creates a fully initialized catalog for testing metadata validation
-    alongside geo-assets checking.
-    """
+    """Create a Portolan catalog with both GeoJSON and GeoParquet files."""
     import shutil
 
     # Create the data directory
@@ -700,21 +669,12 @@ class TestCheckBackwardCompatibility:
         assert (input_dir / "points.parquet").exists()
 
 
-# =============================================================================
-# Test: Check --metadata --fix Flag
-# =============================================================================
+# Check --metadata --fix flag
 
 
 @pytest.mark.integration
 class TestCheckMetadataFixFlag:
-    """Tests for check --metadata --fix flag combination.
-
-    Note: These tests verify that --metadata --fix flag is accepted and runs
-    without errors. Full end-to-end metadata fixing is tested in
-    test_metadata_fix.py (unit tests) since fix_metadata() only operates on
-    files that scan_catalog_metadata() reports, which typically requires
-    versions.json or existing STAC items.
-    """
+    """Tests for check --metadata --fix flag combination."""
 
     def test_metadata_fix_flag_accepted(
         self,
@@ -733,8 +693,7 @@ class TestCheckMetadataFixFlag:
                     "type": "Catalog",
                     "stac_version": "1.0.0",
                     "id": "test-catalog",
-                    # Title present so the Issue #502 title-repair is a no-op and
-                    # this test stays focused on the scanner's empty report.
+                    # The title is present, so the title repair is a no-op.
                     "title": "Test Catalog",
                     "description": "Test",
                     # AGENTS.md link present so the PTL-FIL-002 agents fixer is a
@@ -753,11 +712,8 @@ class TestCheckMetadataFixFlag:
             ["check", str(catalog_dir), "--metadata", "--fix", "--json"],
         )
 
-        # Structurally reports zero scanner results — the
-        # manifest-driven scanner emits an empty MetadataReport for a catalog
-        # with no collections, so the FixReport derived from it carries zero
-        # results and zero skipped items. (The exit code reflects the post-fix
-        # re-check, and this hand-built catalog does not conform.)
+        # The scanner emits an empty report for a catalog with no collections.
+        # The exit code reflects the post-fix re-check, and this catalog does not conform.
         payload = json.loads(result.output)
         metadata_fix = payload.get("data", {}).get("fix", {}).get("metadata_fix")
         assert metadata_fix is not None, (
@@ -773,12 +729,7 @@ class TestCheckMetadataFixFlag:
         runner: CliRunner,
         tmp_path: Path,
     ) -> None:
-        """check --metadata --fix declares the profile URI (issue #654).
-
-        End-to-end through the CLI: catalog and collection gain the versioned
-        Portolan schema URI, and the retired ``portolan:geospatial`` flag is not
-        written back onto a tabular collection.
-        """
+        """check --metadata --fix declares the profile URI."""
         import pyarrow as pa
         import pyarrow.parquet as pq
 
@@ -863,9 +814,8 @@ class TestCheckMetadataFixFlag:
             ["check", str(catalog_dir), "--metadata", "--fix", "--dry-run"],
         )
 
-        # A dry run writes nothing, so the catalog keeps its pre-existing
-        # defects and the re-check exits 1. The guard is that nothing was
-        # written: no README.md, no schema URI stamped on catalog.json.
+        # A dry run writes nothing, so the pre-existing defects remain and the
+        # re-check exits 1. No README.md and no schema URI on catalog.json.
         assert not (catalog_dir / "README.md").exists()
         assert "stac_extensions" not in json.loads((catalog_dir / "catalog.json").read_text())
         assert result.exit_code == 1
@@ -899,10 +849,8 @@ class TestCheckMetadataFixFlag:
             ["check", str(catalog_dir), "--metadata", "--fix", "--json"],
         )
 
-        # One envelope carries both halves: what --fix did, and the re-check
-        # over the result. The catalog is hand-built with stac_version 1.0.0,
-        # so it breaks the STAC 1.1.0 schema (PTL-STR-001). The refresh cannot
-        # use a schema-invalid document, so it fails and exits 1.
+        # One envelope carries the --fix result and the re-check. stac_version 1.0.0
+        # breaks the STAC 1.1.0 schema (PTL-STR-001), so the refresh fails and exits 1.
         try:
             output = json.loads(result.output)
         except json.JSONDecodeError:

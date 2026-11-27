@@ -1,8 +1,4 @@
-"""E2E tests for S3 storage verification via RustFS.
-
-Verifies that Iceberg data and metadata files are correctly stored
-in RustFS S3-compatible storage after publishing through the REST catalog.
-"""
+"""E2E tests for S3 storage verification via RustFS."""
 
 from __future__ import annotations
 

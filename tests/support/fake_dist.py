@@ -1,9 +1,5 @@
-"""Write fake installed distributions for entry point tests (#947).
-
-``importlib.metadata`` finds a distribution through a ``*.dist-info``
-directory on ``sys.path``. A test puts such a directory, plus the modules its
-entry points name, in a temporary directory and adds it to ``PYTHONPATH`` of a
-subprocess.
+"""Write fake installed distributions for entry point tests.
+A test adds the ``*.dist-info`` directory to ``PYTHONPATH`` of a subprocess.
 """
 
 from __future__ import annotations
@@ -20,14 +16,7 @@ def write_fake_dist(
     entry_points: dict[str, dict[str, str]],
     modules: dict[str, str] | None = None,
 ) -> None:
-    """Write ``<name>-0.1.dist-info`` and the given modules into ``site``.
-
-    Args:
-        site: Directory a subprocess will have on ``sys.path``.
-        name: Distribution name.
-        entry_points: Group name to ``{entry point name: object reference}``.
-        modules: Module file name stem to source text.
-    """
+    """Write ``<name>-0.1.dist-info`` and the given modules into ``site``."""
     dist_info = site / f"{name.replace('-', '_')}-0.1.dist-info"
     dist_info.mkdir(parents=True)
     (dist_info / "METADATA").write_text(

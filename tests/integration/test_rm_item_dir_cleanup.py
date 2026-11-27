@@ -1,12 +1,4 @@
-"""Regression tests for issue #602: ``rm`` must delete the item directory.
-
-``_remove_one_file`` used to locate the STAC item directory from the file
-*stem* (``catalog/coll/<stem>``), but ``add`` derives the item id from the
-file's *parent directory* name (a Hive partition ``key=value/`` or a nested
-item dir). The stem only matches in the degenerate case, so real item/partition
-directories — and their ``item.json`` sidecars — were orphaned on disk after a
-``rm`` that only unlinked the data file.
-"""
+"""``rm`` deletes the item directory."""
 
 from __future__ import annotations
 
@@ -116,7 +108,7 @@ class TestRmItemDirCleanup:
         )
         assert add_result.exit_code == 0, add_result.output
         assert item_dir.is_dir(), "precondition: item dir created by add"
-        # item dir name differs from the file stem — the crux of #602.
+        # The item dir name differs from the file stem.
         assert item_dir.name != raster.stem
 
         rm_result = runner.invoke(
@@ -133,12 +125,6 @@ class TestRmItemDirCleanup:
     def test_rm_nested_collection_untracks_asset(
         self, runner: CliRunner, initialized_catalog: Path
     ) -> None:
-        """rm of an asset in a collection under a subcatalog untracks it (#723).
-
-        The transcript in the issue: ``rm`` reported success and deleted the file,
-        but ``climate/hittekaart/versions.json`` still listed the asset because
-        the removal never reached the collection's own versions.json.
-        """
         import json
 
         collection_dir = initialized_catalog / "climate" / "hittekaart"
@@ -167,7 +153,7 @@ class TestRmItemDirCleanup:
         after = json.loads(versions_path.read_text())
         assert len(after["versions"]) == len(before["versions"]) + 1, "no version published"
         assert "data.parquet" not in after["versions"][-1]["assets"], "phantom entry (#723)"
-        # The flattened path the backend used to write to must not appear.
+        # No flattened collection path appears at the catalog root.
         assert not (initialized_catalog / "hittekaart").exists()
 
     @pytest.mark.integration

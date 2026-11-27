@@ -1,7 +1,4 @@
-"""Integration tests for clone command git-style ergonomics (Issue #146).
-
-These tests verify the CLI command works end-to-end with mocked S3.
-"""
+"""Integration tests for clone command git-style ergonomics."""
 
 from __future__ import annotations
 

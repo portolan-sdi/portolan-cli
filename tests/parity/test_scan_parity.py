@@ -25,12 +25,7 @@ pytestmark = pytest.mark.integration
 def raw_catalog(
     build_conformant_catalog: Callable[..., Path], valid_points_geojson: Path
 ) -> Callable[[Path], None]:
-    """Build a catalog with untracked GeoJSON files.
-
-    `points/my points.geojson` has a space in its name, so `--fix` renames it.
-    `flood/flood_rp10.geojson` and `flood/flood_rp50.geojson` share a
-    return-period marker, so `--suggest-collections` groups them.
-    """
+    """Build a catalog with untracked GeoJSON: one name with a space, two return-period files."""
 
     def build(root: Path) -> None:
         build_conformant_catalog(root)
@@ -76,7 +71,7 @@ def test_scan_fix_with_suggestions(
 
     (outcome,) = outcomes
     suggestions = [s.to_dict() for s in outcome.result.collection_suggestions]
-    # The suggestion holds str(Path), as the command output did before #1133.
+    # The suggestion holds str(Path).
     flood = [str(Path("flood") / name) for name in ("flood_rp10.geojson", "flood_rp50.geojson")]
     # The return-period marker and the shared prefix each suggest the group.
     assert [(s["suggested_name"], sorted(s["files"])) for s in suggestions] == [

@@ -1,4 +1,4 @@
-"""Apply a portolan-core write plan to real sinks, then validate the result (#1133)."""
+"""Apply a portolan-core write plan to real sinks, then validate the result."""
 
 from __future__ import annotations
 

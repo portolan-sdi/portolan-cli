@@ -1,14 +1,6 @@
-"""Versioning stress tests for issue #339.
+"""Versioning stress tests: add and push fill collection- and catalog-level versions.json.
 
-Tests the full add → push pipeline and verifies that versions.json is
-populated correctly at the collection level (not catalog level).
-
-See:
-- tests/specs/versioning_stress.md for human test specification
-- for versions.json as single source of truth
-- Issue #339 for the original bug report
-
-Note: remote is a sensitive setting and must be set via env var (Issue #356).
+The spec is tests/specs/versioning_stress.md. The remote is sensitive, so tests set it by env var.
 """
 
 from __future__ import annotations
@@ -29,13 +21,11 @@ if TYPE_CHECKING:
     from collections.abc import Generator
     from pathlib import Path
 
-# Remote URL for tests - set via env var (Issue #356: sensitive settings)
+# Remote URL for tests, set via env var because the remote is a sensitive setting.
 TEST_REMOTE = "s3://fake-bucket/catalog"
 
 
-# =============================================================================
 # Test Fixtures
-# =============================================================================
 
 
 @pytest.fixture
@@ -103,21 +93,16 @@ def catalog_with_many_files(initialized_catalog: Path) -> tuple[Path, Path]:
     return initialized_catalog, collection_dir
 
 
-# =============================================================================
 # Moto Server Fixtures (for S3 integration tests)
-# =============================================================================
 
 # NOTE: moto/boto3 imports moved into fixtures to avoid skipping non-network tests
 
 
 @pytest.fixture(scope="module")
 def moto_server() -> Generator[str, None, None]:
-    """Start a moto server that provides a real HTTP endpoint.
+    """Start a moto server with a real HTTP endpoint, which obstore needs.
 
-    Necessary because obstore (Rust-based S3 client) makes direct
-    HTTP calls and doesn't integrate with boto3's patching mechanism.
-
-    Note: Uses importorskip so only network tests are skipped if moto unavailable.
+    importorskip skips only the tests that use it when moto is missing.
     """
     pytest.importorskip("moto")
     from moto.server import ThreadedMotoServer
@@ -147,9 +132,7 @@ def s3_bucket(moto_server: str) -> tuple[str, str]:
     return bucket_name, moto_server
 
 
-# =============================================================================
 # TestAddPopulatesVersions
-# =============================================================================
 
 
 @pytest.fixture(scope="module")
@@ -158,10 +141,7 @@ def single_file_add_versions(
 ) -> dict[str, Any]:
     """Run one `add` of one file and return the parsed versions.json.
 
-    The `add` conversion dominates this module's runtime. The four tests in
-    TestAddPopulatesVersions assert different keys of the same result and do
-    not change it, so one CLI invocation serves all of them. The CI runner
-    uses `--dist loadscope`, which keeps the module on one xdist worker.
+    The tests that read it do not change it, so one slow conversion serves them all.
     """
     catalog_root = tmp_path_factory.mktemp("single-add-catalog")
     result = CliRunner().invoke(
@@ -228,12 +208,7 @@ class TestAddPopulatesVersions:
     def test_add_100_files_accumulates(
         self, catalog_with_many_files: tuple[Path, Path], runner: CliRunner
     ) -> None:
-        """Scale test: many files in one add (Issue #339 scenario).
-
-        Marked slow: 100 conversions cost the most worker time in the PR test
-        job. The nightly slow tier runs it. The 10-file test below keeps the
-        accumulation path covered on every PR.
-        """
+        """Slow: 100 conversions; the 10-file test below covers PR runs."""
         catalog_root, collection_dir = catalog_with_many_files
 
         result = runner.invoke(
@@ -252,7 +227,7 @@ class TestAddPopulatesVersions:
 
     @pytest.mark.integration
     def test_add_10_files_accumulates(self, initialized_catalog: Path, runner: CliRunner) -> None:
-        """PR-lane smoke test for multi-file accumulation (Issue #339 scenario)."""
+        """PR smoke test for multi-file accumulation."""
         collection_dir = initialized_catalog / "scale-smoke"
         collection_dir.mkdir()
         for i in range(10):
@@ -274,23 +249,16 @@ class TestAddPopulatesVersions:
         assert asset_count >= 10, f"Only {asset_count} assets tracked, expected >= 10"
 
 
-# =============================================================================
-# TestCatalogLevelVersioning (fixes #339)
-# =============================================================================
+# TestCatalogLevelVersioning
 
 
 class TestCatalogLevelVersioning:
-    """Verify catalog-level versions.json IS updated by add.
-
-    Issue #339 reported that catalog-level versions.json showed empty collections
-    after add. This was a real bug, not user confusion. These tests verify the fix.
-    """
+    """Verify catalog-level versions.json IS updated by add."""
 
     @pytest.mark.integration
     def test_add_updates_catalog_level_versions(
         self, initialized_catalog: Path, runner: CliRunner
     ) -> None:
-        """Catalog-level versions.json IS updated after add (fixes #339)."""
         catalog_versions_path = initialized_catalog / "versions.json"
 
         # Record state before add
@@ -308,7 +276,7 @@ class TestCatalogLevelVersioning:
         )
         assert result.exit_code == 0, f"Add failed: {result.output}"
 
-        # Verify catalog-level versions.json WAS updated (the #339 fix!)
+        # Verify catalog-level versions.json WAS updated
         catalog_after = json.loads(catalog_versions_path.read_text())
         collections = catalog_after.get("collections", {})
         assert "test-collection" in collections, (
@@ -420,9 +388,7 @@ class TestCatalogLevelVersioning:
         assert updated_after != updated_before, "updated timestamp should change"
 
 
-# =============================================================================
 # TestAddThenPushSeesFiles
-# =============================================================================
 
 
 class TestAddThenPushSeesFiles:
@@ -446,7 +412,7 @@ class TestAddThenPushSeesFiles:
         config_path = catalog_root / ".portolan" / "config.yaml"
         config_path.write_text("catalog_id: stress-test-catalog\n")
 
-        # Push dry-run to see what would be uploaded (remote via env var per Issue #356)
+        # Push dry-run to see what would be uploaded (remote via env var)
         with patch.dict(os.environ, {"PORTOLAN_REMOTE": TEST_REMOTE}):
             result = runner.invoke(
                 cli,
@@ -454,9 +420,9 @@ class TestAddThenPushSeesFiles:
             )
         assert result.exit_code == 0, f"Push dry-run failed: {result.output}"
 
-        # Dry-run output shows "Would upload up to N asset file(s)" - verify N > 0
-        # The summary shows "0 file(s)" because nothing was actually pushed (dry-run)
+        # The dry-run summary says "0 file(s)"; the preview gives the real count.
         assert "would upload" in result.output.lower(), f"No upload preview: {result.output}"
+
         # Verify actual assets are listed (not "Would upload up to 0 asset file(s)")
         assert "would upload up to 0 asset" not in result.output.lower(), (
             f"Push reports 0 assets to upload: {result.output}"
@@ -478,7 +444,7 @@ class TestAddThenPushSeesFiles:
         config_path = catalog_root / ".portolan" / "config.yaml"
         config_path.write_text("catalog_id: stress-test-catalog\n")
 
-        # Push dry-run (remote via env var per Issue #356)
+        # Push dry-run (remote via env var)
         with patch.dict(os.environ, {"PORTOLAN_REMOTE": TEST_REMOTE}):
             result = runner.invoke(
                 cli,
@@ -502,7 +468,7 @@ class TestAddThenPushSeesFiles:
         config_path = catalog_with_multiple_versions / ".portolan" / "config.yaml"
         config_path.write_text("catalog_id: test-catalog\n")
 
-        # Push dry-run (remote via env var per Issue #356)
+        # Push dry-run (remote via env var)
         with patch.dict(os.environ, {"PORTOLAN_REMOTE": TEST_REMOTE}):
             result = runner.invoke(
                 cli,
@@ -517,9 +483,7 @@ class TestAddThenPushSeesFiles:
         ), f"Expected parquet files not in output: {result.output}"
 
 
-# =============================================================================
 # TestSnapshotModelAccumulation
-# =============================================================================
 
 
 class TestSnapshotModelAccumulation:
@@ -529,12 +493,7 @@ class TestSnapshotModelAccumulation:
     def test_second_add_preserves_first_assets(
         self, initialized_catalog: Path, runner: CliRunner
     ) -> None:
-        """v2 contains v1's assets (versions.py:357-368).
-
-        Note: Portolan may merge sequential adds into one version if run quickly.
-        This test verifies the snapshot model by checking the final version
-        contains all assets from previous adds.
-        """
+        """The final version holds every earlier asset; quick adds may merge versions."""
         collection_dir = initialized_catalog / "accum-test"
         collection_dir.mkdir()
 
@@ -598,11 +557,7 @@ class TestSnapshotModelAccumulation:
     def test_changes_field_tracks_additions(
         self, initialized_catalog: Path, runner: CliRunner
     ) -> None:
-        """changes[] tracks what was added in each version.
-
-        Note: Portolan may merge sequential adds into one version if run quickly.
-        This test verifies that changes[] contains the newly added files.
-        """
+        """changes[] holds the newly added files; quick adds may merge versions."""
         collection_dir = initialized_catalog / "delta-test"
         collection_dir.mkdir()
 
@@ -660,9 +615,7 @@ class TestSnapshotModelAccumulation:
         )
 
 
-# =============================================================================
 # TestPushPullDivergence (implemented with moto)
-# =============================================================================
 
 
 class TestPushPullDivergence:
@@ -692,11 +645,11 @@ class TestPushPullDivergence:
         )
         assert result.exit_code == 0, f"Add failed: {result.output}"
 
-        # Configure catalog (remote set via env var per Issue #356)
+        # Configure catalog (remote set via env var)
         config_path = initialized_catalog / ".portolan" / "config.yaml"
         config_path.write_text("catalog_id: push-test-catalog\n")
 
-        # Set AWS env vars for obstore (remote via env var per Issue #356)
+        # Set AWS env vars for obstore (remote via env var)
         env_backup = os.environ.copy()
         os.environ["PORTOLAN_REMOTE"] = f"s3://{bucket_name}/catalog"
         os.environ["AWS_ACCESS_KEY_ID"] = "testing"
@@ -772,7 +725,7 @@ class TestPushPullDivergence:
         collection_dir = initialized_catalog / "test-collection"
         collection_dir.mkdir()
 
-        # Configure catalog (remote set via env var per Issue #356)
+        # Configure catalog (remote set via env var)
         config_path = initialized_catalog / ".portolan" / "config.yaml"
         config_path.write_text("catalog_id: test-catalog\n")
 
@@ -915,7 +868,7 @@ class TestPushPullDivergence:
         }
         (collection_dir / "versions.json").write_text(json.dumps(local_versions))
 
-        # Configure catalog (remote set via env var per Issue #356)
+        # Configure catalog (remote set via env var)
         config_path = initialized_catalog / ".portolan" / "config.yaml"
         config_path.write_text("catalog_id: test-catalog\n")
 
@@ -939,9 +892,7 @@ class TestPushPullDivergence:
             os.environ.update(env_backup)
 
 
-# =============================================================================
 # TestCorruptionRecovery
-# =============================================================================
 
 
 class TestCorruptionRecovery:
@@ -1064,9 +1015,7 @@ class TestCorruptionRecovery:
             )
 
 
-# =============================================================================
 # TestCatalogVersionsEdgeCases (new tests from adversarial review)
-# =============================================================================
 
 
 class TestCatalogVersionsEdgeCases:
@@ -1074,11 +1023,7 @@ class TestCatalogVersionsEdgeCases:
 
     @pytest.mark.integration
     def test_iceberg_backend_no_versions_json(self, tmp_path: Path) -> None:
-        """update_catalog_index silently returns when no versions.json exists.
-
-        This handles Iceberg backend or other storage backends that don't use
-        file-based versioning.
-        """
+        """update_catalog_index returns quietly without versions.json, as on Iceberg."""
         from portolan_cli.catalog import CollectionSummary, update_catalog_index
 
         # Create catalog without versions.json (simulates Iceberg backend)
@@ -1127,11 +1072,7 @@ class TestCatalogVersionsEdgeCases:
 
     @pytest.mark.integration
     def test_concurrent_updates_preserve_all_collections(self, tmp_path: Path) -> None:
-        """File locking prevents lost updates from concurrent writes.
-
-        Simulates two processes updating different collections simultaneously.
-        Both collections should be preserved in final state.
-        """
+        """File locking keeps both collections when two writers update at once."""
         import threading
 
         from portolan_cli.catalog import CollectionSummary, update_catalog_index
@@ -1189,24 +1130,16 @@ class TestCatalogVersionsEdgeCases:
             )
 
 
-# =============================================================================
-# TestScaleAt1000Files (PR #339 original scale)
-# =============================================================================
+# TestScaleAt1000Files
 
 
 @pytest.fixture(scope="module")
 def scale_1000_add(
     tmp_path_factory: pytest.TempPathFactory,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Run one `add` of 1000 files and return the parsed versions.json pair.
+    """Run one `add` of 1000 files with default settings; return (collection, catalog) versions.
 
-    The first item is the collection-level versions.json. The second item is
-    the catalog-level versions.json. The two tests in TestScaleAt1000Files
-    only read the result. One CLI invocation serves both of them.
-
-    The catalog keeps the default conversion settings, the Hilbert sort and
-    the bbox covering column included. SCALE_1000_TIMEOUT_S gives the
-    measured times. The scale gate in tests/perf counts the work per file.
+    The tests only read the result, so one CLI invocation serves both.
     """
     catalog_root = tmp_path_factory.mktemp("scale-1000")
     result = CliRunner().invoke(
@@ -1234,32 +1167,15 @@ def scale_1000_add(
     return collection_versions, catalog_versions
 
 
-# Timeout for the 1000-file scale tests. The nightly Slow Tests job runs with a
-# global --timeout=300. The 1000-file add takes longer than 300 s. The shared
-# add runs in the setup of the first test, and that test's timeout covers it.
-#
-# Measured on 2026-10-27 with the default settings (Hilbert sort and bbox
-# column on), geoparquet-io 1.7.0, on a shared 64-core dev machine: the setup
-# took 336.5 s, about 337 ms for each one-point file. geoparquet-io opens 5
-# DuckDB connections for each file (convert, geometry repair, bbox, sort,
-# write), each with the spatial extension, at about 33 ms each. It offers no
-# way to reuse one connection, so the cost per file did not move.
-#
-# The nightly runner took 2.9x to 4.4x the dev machine time in October 2026.
-# 337 s x 4.4 is 1483 s. 1800 s holds that and stops a hung test before the
-# 50 minute job limit. tests/perf counts the work per file, so a new cost
-# fails that gate first.
+# The 1000-file add takes about 340 s on a dev machine and up to 4.4x that on the
+# nightly runner, past the global 300 s; 1800 s still ends before the 50-minute job limit.
 SCALE_1000_TIMEOUT_S = 1800
 
 
 @pytest.mark.slow
 @pytest.mark.integration
 class TestScaleAt1000Files:
-    """Test at scale matching original issue #339 (1900 files).
-
-    Uses 1000 files as a compromise between coverage and test speed.
-    Marked slow - skipped in normal CI, run in nightly.
-    """
+    """Scale test with 1000 files, run only in the nightly slow tier."""
 
     @pytest.mark.integration
     @pytest.mark.slow
@@ -1267,7 +1183,6 @@ class TestScaleAt1000Files:
     def test_add_1000_files_populates_versions(
         self, scale_1000_add: tuple[dict[str, Any], dict[str, Any]]
     ) -> None:
-        """1000 files all appear in versions.json (Issue #339 scenario)."""
         versions_data, _ = scale_1000_add
 
         latest = versions_data["versions"][-1]
@@ -1294,9 +1209,7 @@ class TestScaleAt1000Files:
         )
 
 
-# =============================================================================
 # TestPushUsesCatalogVersions
-# =============================================================================
 
 
 class TestPushUsesCatalogVersions:
@@ -1336,7 +1249,7 @@ class TestPushUsesCatalogVersions:
         config_path = initialized_catalog / ".portolan" / "config.yaml"
         config_path.write_text("catalog_id: push-summary-test\n")
 
-        # Dry-run push and verify count matches (remote via env var per Issue #356)
+        # Dry-run push and verify count matches (remote via env var)
         import re
 
         with patch.dict(os.environ, {"PORTOLAN_REMOTE": TEST_REMOTE}):
@@ -1345,9 +1258,7 @@ class TestPushUsesCatalogVersions:
                 ["push", "--catalog", str(initialized_catalog), "--dry-run"],
             )
 
-        # Output should show files would be uploaded (dry-run preview)
-        # Note: dry-run summary shows "0 file(s)" because nothing was actually pushed,
-        # but the preview should show "would upload up to N asset file(s)" where N > 0
+        # The dry-run summary says "0 file(s)"; the preview gives the real count.
         match = re.search(r"would upload up to (\d+) asset", push_result.output.lower())
         assert match is not None, f"No 'would upload' preview in output: {push_result.output}"
 

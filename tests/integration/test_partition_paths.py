@@ -1,19 +1,4 @@
-"""Integration tests for spatial partitioning path handling.
-
-Per Issue #349/#399: Partitioned GeoParquet files should:
-1. Use Hive-style directory names (kdtree_cell=XXXX/)
-2. Have versions.json paths match actual filesystem structure
-3. Have glob patterns that work with DuckDB/PyArrow
-
-These tests verify the fix for the path mismatch bug where:
-- versions.json recorded "data_XXXX/XXXX.parquet"
-- But actual files were "kdtree_cell=XXXX/XXXX.parquet"
-
-The tests are module-level functions, not class methods, on purpose.
-`--dist loadscope` groups class methods per class, so two classes land on two
-xdist workers and each worker builds the module-scoped catalog again. Module-
-level functions group per module, so one worker builds the catalog one time.
-"""
+"""Integration tests for spatial partitioning path handling."""
 
 from __future__ import annotations
 
@@ -43,14 +28,7 @@ partitioning.threshold_gb: {threshold_gb}
 
 @pytest.fixture(scope="module")
 def partitioned_catalog(tmp_path_factory: pytest.TempPathFactory) -> tuple[Path, Path]:
-    """Initialize a catalog, write 100k points, and run one partitioning `add`.
-
-    The build partitions the data into 512+ Hive directories and costs tens of
-    seconds. Every test in this module reads the result and does not change it,
-    so the fixture is module-scoped and the build runs one time.
-
-    Returns (catalog_root, collection_dir).
-    """
+    """Initialize a catalog, write 100k points, and run one partitioning `add`."""
     import geopandas
     import numpy as np
 
@@ -63,10 +41,8 @@ def partitioned_catalog(tmp_path_factory: pytest.TempPathFactory) -> tuple[Path,
     collection_dir = catalog_root / "points"
     collection_dir.mkdir()
 
-    # 100k points exceeds the partitioning minimum
-    # (512 partitions * 100 rows = 51,200). Vectorized construction with
-    # points_from_xy: a Python loop of shapely Point objects took tens of
-    # seconds per build.
+    # 100k points exceeds the partitioning minimum (512 partitions * 100 rows).
+    # points_from_xy is vectorized; a loop of shapely Points takes tens of seconds.
     n = 100_000
     rng = np.random.default_rng(42)
     gdf = geopandas.GeoDataFrame(
@@ -215,11 +191,6 @@ def test_duckdb_can_read_via_glob(partitioned_catalog: tuple[Path, Path]) -> Non
 def test_push_dryrun_shows_correct_glob_url(
     partitioned_catalog: tuple[Path, Path],
 ) -> None:
-    """The pushed collection.json carries a partition:glob under the destination URL.
-
-    The push goes through setup_store, so the glob comes from the destination
-    and not from the bare key prefix (#761).
-    """
     catalog_root, _collection_dir = partitioned_catalog
 
     from portolan_cli.sync.push import push
@@ -247,7 +218,6 @@ def test_push_dryrun_shows_correct_glob_url(
 def test_partitioned_collection_gets_a_thumbnail(
     partitioned_catalog: tuple[Path, Path],
 ) -> None:
-    """Issue #1038: the render read a partition as a hive dataset and failed."""
     _catalog_root, collection_dir = partitioned_catalog
 
     assets = json.loads((collection_dir / "collection.json").read_text())["assets"]

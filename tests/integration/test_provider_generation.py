@@ -1,11 +1,4 @@
-"""Generated collections declare providers and their derived provenance (issue #684).
-
-``init`` + ``add`` used to emit collections with no ``providers`` array, so every
-generated catalog failed PTL-PRV-001 against its own ``portolan check``. These
-tests build real catalogs both ways the spec recognises — official, where the
-producer also hosts, and mirror, where they differ — and assert that rashid finds
-nothing to report in either the provider or the provenance rule family.
-"""
+"""Generated collections declare providers and their derived provenance."""
 
 from __future__ import annotations
 

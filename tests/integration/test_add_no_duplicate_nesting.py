@@ -1,13 +1,4 @@
-"""Integration tests for preventing duplicate directory nesting in add command.
-
-Tests that `portolan add collection/item_dir/FILE.tif` does NOT create
-an additional `collection/item_dir/FILE/` subdirectory for the STAC item.
-
-Uses real COG fixtures to exercise the full add pipeline including
-metadata extraction and STAC item creation.
-
-Related issue: portolan add creates duplicate nested subdirectories
-"""
+"""Integration tests for preventing duplicate directory nesting in add command."""
 
 from __future__ import annotations
 
@@ -43,16 +34,6 @@ class TestNoDuplicateNestingIntegration:
     def test_add_cog_does_not_create_stem_subdirectory(
         self, runner: CliRunner, cog_fixture: Path
     ) -> None:
-        """Adding a COG file should not create a subdirectory named after the file stem.
-
-        Given: catalog/collection/item_dir/FILE.tif (real COG)
-        After add:
-          - STAC item metadata should be in item_dir, NOT in item_dir/FILE/
-          - NO new directory catalog/collection/item_dir/FILE/ should be created
-
-        This tests the bug where adding 26453E204934N.tif created a
-        26453E204934N/ subdirectory.
-        """
         with runner.isolated_filesystem():
             # Create catalog structure
             Path("catalog.json").write_text(
@@ -105,13 +86,6 @@ class TestNoDuplicateNestingIntegration:
     def test_add_cog_item_json_not_in_nested_dir(
         self, runner: CliRunner, cog_fixture: Path
     ) -> None:
-        """STAC item JSON should NOT be in a nested subdirectory named after the file.
-
-        The item JSON should be at:
-          collection/item_dir/{item_id}.json or collection/item_dir/item.json
-        NOT at:
-          collection/item_dir/{file_stem}/{file_stem}.json
-        """
         with runner.isolated_filesystem():
             Path("catalog.json").write_text(
                 json.dumps(
@@ -155,15 +129,6 @@ class TestNoDuplicateNestingIntegration:
 
     @pytest.mark.integration
     def test_add_preserves_flat_item_structure(self, runner: CliRunner, cog_fixture: Path) -> None:
-        """Adding a file should preserve the flat item directory structure.
-
-        The item directory (parent of the file) should contain:
-        - The original data file
-        - STAC item metadata JSON
-        - Possibly converted files
-
-        NOT a nested subdirectory named after the data file.
-        """
         with runner.isolated_filesystem():
             Path("catalog.json").write_text(
                 json.dumps(

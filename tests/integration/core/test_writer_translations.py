@@ -1,21 +1,4 @@
-"""The portolan-core writer on a catalog with an alternate-language tree (#1133).
-
-The expected links come from portolan-spec ``specs/portolan/core.md``,
-"Alternate-Language Trees", and ``specs/best-practices/multilingual-catalogs.md``:
-
-- The root links to the translated root with an ``alternate`` link of type
-  ``application/json``. That link is the caller's, so it passes through.
-- "A catalog MUST NOT link to a translated root with ``child`` or ``item``."
-  So the root has a ``child`` link to ``boundaries`` only, not to ``en``.
-- "Each language tree has its own root catalog. That root has no ``parent``
-  link. Every ``root`` link in the tree points to that root catalog." So
-  ``en/catalog.json`` has a ``root`` link to itself and no ``parent`` link, and
-  ``en/boundaries/collection.json`` has ``root`` and ``parent`` links to
-  ``en/catalog.json``.
-- "Data assets remain in the source tree, and translated metadata refers to
-  them with relative hrefs." So the English collection points at
-  ``../../boundaries/boundaries.parquet``.
-"""
+"""The portolan-core writer on a catalog with an alternate-language tree."""
 
 from __future__ import annotations
 

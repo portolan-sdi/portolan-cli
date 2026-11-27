@@ -1,10 +1,4 @@
-"""End-to-end Bands rendering on a real 4-band COG (issue #713).
-
-`portolan add` writes the unified ``bands`` array onto the item's data asset.
-`portolan readme` has to walk the collection's ``rel="item"`` links to reach it.
-This test drives both commands over ``tests/fixtures/realdata/rapidai4eo-sample.tif``
-and asserts the generated README carries a row per band.
-"""
+"""End-to-end Bands rendering on a real 4-band COG."""
 
 from __future__ import annotations
 
@@ -56,7 +50,6 @@ class TestReadmeBandsRealData:
     def test_readme_has_a_bands_section(
         self, raster_catalog: Path, rapidai4eo_path: Path, run_cli: RunCli
     ) -> None:
-        """Before #713 this heading never appeared for any raster collection."""
         readme = _add_and_render(raster_catalog, rapidai4eo_path, run_cli)
         assert "## Bands" in readme
 

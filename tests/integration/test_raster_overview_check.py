@@ -1,20 +1,4 @@
-"""A raster collection with an overview COG and no style passes `check` (issue #1141).
-
-The spec asks a collection of two or more rasters that together cover an area
-much larger than any one item to provide an overview COG, as a collection-level
-asset with the ``visual`` and ``overview`` roles (PORTO-FMT-067). The same spec
-says a display-ready COG is self-rendering and needs no separate style file
-(PORTO-CORE-067).
-
-rashid 0.3.x and older read the overview as a visualization derivative and
-asked for a ``style`` asset, so `check --fix --metadata` failed with
-PTL-VIZ-002. A pipeline that follows the spec could not pass the gate. rashid
-0.4.0 exempts the COG overview.
-
-The catalog comes from the real `init` + `add` path, with four tiles cut from
-the real rapidai4eo scene, and the overview is an 8-bit RGB COG of the whole
-scene.
-"""
+"""A raster collection with an overview COG and no style passes `check`."""
 
 from __future__ import annotations
 
