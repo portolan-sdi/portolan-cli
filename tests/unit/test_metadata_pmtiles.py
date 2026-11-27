@@ -1,8 +1,4 @@
-"""Tests for PMTiles metadata extraction.
-
-Tests the PMTilesMetadata dataclass and extract_pmtiles_metadata() function.
-PMTiles store bounds in WGS84 (4326) but tiles are Web Mercator (3857).
-"""
+"""Tests for PMTiles metadata extraction."""
 
 from __future__ import annotations
 
@@ -58,7 +54,7 @@ class TestPMTilesMetadata:
         props = meta.to_stac_properties()
 
         # The internal 3857 tile CRS is a visualization artifact and never
-        # surfaces as a projection field (#488, #654)
+        # surfaces as a projection field.
         assert "proj:epsg" not in props
         assert "proj:code" not in props
         # Zoom levels should be included

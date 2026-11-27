@@ -1,13 +1,4 @@
-"""Unit tests for schema extraction from GeoParquet and COG files.
-
-User Story 2: Add Data with Collection Metadata
-
-Tests cover:
-- SchemaModel extraction from GeoParquet
-- SchemaModel extraction from COG
-- Handling missing CRS (warning, not error)
-- Column and band metadata
-"""
+"""Unit tests for schema extraction from GeoParquet and COG files."""
 
 from __future__ import annotations
 

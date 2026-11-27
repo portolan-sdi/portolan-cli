@@ -1,8 +1,4 @@
-"""Tests for metadata file syncing in push (Issue #426).
-
-Portolan push should sync ALL catalog files to remote, not just versioned assets.
-This includes style.json, thumbnails, collection.json updates, etc.
-"""
+"""Tests for metadata file syncing in push."""
 
 from __future__ import annotations
 
@@ -23,33 +19,12 @@ if TYPE_CHECKING:
     from portolan_cli.sync.report import Report
 
 
-# =============================================================================
 # Fixtures
-# =============================================================================
 
 
 @pytest.fixture
 def catalog_with_metadata(tmp_path: Path) -> Path:
-    """Create a catalog with various metadata files for testing.
-
-    Structure:
-        catalog_root/
-        ├── catalog.json
-        ├── README.md
-        ├── .portolan/
-        │   └── config.yaml
-        ├── .env
-        ├── collection1/
-        │   ├── collection.json
-        │   ├── README.md
-        │   ├── style.json
-        │   ├── collection1.thumb.png
-        │   ├── versions.json
-        │   └── .portolan/
-        │       └── metadata.yaml
-        └── __pycache__/
-            └── cache.pyc
-    """
+    """Create a catalog with various metadata files for testing."""
     catalog_root = tmp_path / "catalog"
     catalog_root.mkdir()
 
@@ -119,9 +94,7 @@ def catalog_with_metadata(tmp_path: Path) -> Path:
     return catalog_root
 
 
-# =============================================================================
 # Tests for _discover_catalog_files
-# =============================================================================
 
 
 class TestDiscoverCatalogFiles:
@@ -294,11 +267,6 @@ class TestDiscoverCatalogFiles:
 
     @pytest.mark.unit
     def test_security_patterns_always_enforced(self, catalog_with_metadata: Path) -> None:
-        """Security patterns (.env, .git/, .portolan/) are ALWAYS enforced.
-
-        Even when additional_exclude_patterns is provided, security-critical
-        patterns must still be applied to prevent accidental secret upload.
-        """
         from portolan_cli.sync.push import _discover_catalog_files
 
         # Add a .git directory with a config file
@@ -363,11 +331,6 @@ class TestDiscoverCatalogFiles:
 
     @pytest.mark.unit
     def test_include_catalog_root_files(self, catalog_with_metadata: Path) -> None:
-        """When include_catalog_root=True, include root-level metadata.
-
-        Note: catalog.json and README.md are NOT included because they're
-        handled separately by _push_all_upload_root_files for atomicity.
-        """
         from portolan_cli.sync.push import _discover_catalog_files
 
         files = _discover_catalog_files(
@@ -388,9 +351,7 @@ class TestDiscoverCatalogFiles:
         assert len(readme) == 0
 
 
-# =============================================================================
 # Tests for config integration
-# =============================================================================
 
 
 class TestPushExcludeConfig:
@@ -433,9 +394,7 @@ push:
         assert "temp/" in patterns
 
 
-# =============================================================================
 # Tests for metadata sync in push flow
-# =============================================================================
 
 
 class TestPushMetadataSync:
@@ -503,9 +462,7 @@ class TestPushMetadataSync:
         assert "collection1.thumb.png" in names
 
 
-# =============================================================================
 # Tests for push_all_collections metadata sync
-# =============================================================================
 
 
 class TestPushAllMetadataSync:
@@ -561,11 +518,7 @@ class TestPushAllMetadataSync:
 
 
 class TestPushCatalogLogo:
-    """The `_assets/` logo directory must reach the remote (PORTO-CORE-077).
-
-    Root discovery skips directories, so before this the image the `rel="icon"`
-    link points at was never uploaded and the published link 404'd.
-    """
+    """The `_assets/` logo directory must reach the remote (PORTO-CORE-077)."""
 
     @pytest.mark.unit
     def test_root_discovery_includes_assets_directory(self, catalog_with_metadata: Path) -> None:
@@ -618,9 +571,7 @@ class TestPushCatalogLogo:
         assert logo.attributes["Content-Type"] == "image/png"
 
 
-# =============================================================================
 # Tests for security patterns
-# =============================================================================
 
 
 class TestSecurityExcludePatterns:
@@ -658,9 +609,7 @@ class TestSecurityExcludePatterns:
         assert "*.custom" in patterns
 
 
-# =============================================================================
 # Tests for PushResult metadata_errors field
-# =============================================================================
 
 
 class TestPushResultMetadataErrors:
@@ -696,20 +645,11 @@ class TestPushResultMetadataErrors:
         assert result.has_metadata_errors is False
 
 
-# =============================================================================
 # Tests for upload ordering (integration)
-# =============================================================================
 
 
 class TestUploadOrdering:
-    """Tests for upload ordering verification.
-
-    Manifest-last atomicity requires:
-    1. Assets first
-    2. STAC files
-    3. Metadata files
-    4. versions.json LAST
-    """
+    """Tests for upload ordering verification."""
 
     @pytest.mark.unit
     def test_upload_metadata_files_uses_posix_paths(self, catalog_with_metadata: Path) -> None:
@@ -742,9 +682,7 @@ class TestUploadOrdering:
             assert key.startswith("prefix/collection1/"), f"Key should have correct prefix: {key}"
 
 
-# =============================================================================
 # Tests for _discover_catalog_files with collection=None
-# =============================================================================
 
 
 class TestDiscoverRootOnlyFiles:
@@ -783,18 +721,11 @@ class TestDiscoverRootOnlyFiles:
         assert len(files) == 0
 
 
-# =============================================================================
-# Tests for metadata sync when no version changes (Issue #816)
-# =============================================================================
+# Tests for metadata sync when no version changes
 
 
 class TestPushNoVersionChangeMetadataSync:
-    """A push with no version bump must still sync non-versioned metadata (#816).
-
-    An edited AGENTS.md changes no data asset, so it bumps no version. Before the
-    fix, push saw an empty version diff, printed "Nothing to push", and left the
-    remote agent guide stale.
-    """
+    """A push with no version bump must still sync non-versioned metadata."""
 
     @pytest.mark.unit
     def test_agents_md_syncs_without_version_bump(self, catalog_with_metadata: Path) -> None:

@@ -1,15 +1,4 @@
-"""Unit tests for non-geo tabular data support (Issue #432).
-
-Tests the classification, configuration, and handling of tabular data
-(CSV, TSV, XLSX, plain Parquet) as collection-level assets.
-
-Design decisions tested:
-- GeoParquet vs plain Parquet detection via metadata peeking
-- tabular.enabled config (default: false)
-- tabular.convert config (default: true)
-- Error with hint when tabular.enabled is false
-- XLSX/XLS basic support (single sheet)
-"""
+"""Unit tests for non-geo tabular data support."""
 
 from __future__ import annotations
 
@@ -72,12 +61,6 @@ class TestParquetClassification:
         assert "tabular" in message.lower() or "parquet" in message.lower()
 
     def test_parquet_with_geometry_column_but_no_geo_metadata(self, tmp_path: Path) -> None:
-        """Parquet with geometry column but no geo metadata should be TABULAR_DATA.
-
-        This is an edge case where someone wrote a Parquet file with a geometry
-        column but didn't include GeoParquet metadata. We classify based on
-        metadata, not column names, to be consistent and fast.
-        """
         parquet_file = tmp_path / "maybe_geo.parquet"
 
         # Create a Parquet with a geometry-like column but NO geo metadata
@@ -247,13 +230,6 @@ class TestTabularEnabledCheck:
     """Tests for tabular.enabled config enforcement in add workflow."""
 
     def test_tabular_disabled_standalone_parquet_fails_with_hint(self, tmp_path: Path) -> None:
-        """When tabular.enabled=false, standalone tabular files should fail with hint.
-
-        This tests the core Issue #432 requirement: when a user tries to add a
-        plain Parquet file (no geo metadata) without a companion geo file,
-        and tabular.enabled is false (default), they should get a clear error
-        message telling them how to enable tabular support.
-        """
         from portolan_cli.add import add_files
 
         # Create catalog structure
@@ -287,12 +263,6 @@ class TestTabularEnabledCheck:
         assert "enabled" in failure.error.lower() or "config" in failure.error.lower()
 
     def test_tabular_enabled_standalone_parquet_succeeds(self, tmp_path: Path) -> None:
-        """When tabular.enabled=true, standalone tabular files should be tracked.
-
-        This tests that when users opt-in to tabular support, plain Parquet
-        files are tracked as collection-level assets even without a companion
-        geo file.
-        """
         from portolan_cli.add import add_files
 
         # Create catalog structure
@@ -322,9 +292,8 @@ class TestTabularEnabledCheck:
         # Should have no failures
         assert len(failures) == 0
 
-        # A standalone tabular file is its own collection-level data asset on
-        # the single-file collection pattern, so it reports as added rather
-        # than as a no-op (issue #712).
+        # A standalone tabular file is its own collection-level data asset on the single-file
+        # collection pattern, so it reports as added rather than as a no-op.
         assert parquet_file not in skipped
         assert [i.item_id for i in added] == ["census"]
 
@@ -339,14 +308,6 @@ class TestTabularEnabledCheck:
         assert len(collection_data["assets"]) > 0, "Should have at least one asset"
 
     def test_tabular_add_repairs_agents_md_across_the_tree(self, tmp_path: Path) -> None:
-        """The tabular path owes the same tree-wide AGENTS.md repair as ``finalize_items``.
-
-        A tabular-only add never reaches ``finalize_items``, which calls
-        ``ensure_agents_md_tree``. Repairing only the collection it just wrote
-        left a pre-existing root catalog without its AGENTS.md and
-        ``rel="agents"`` link (issue #654) — the same catalog a geo
-        add would have fixed.
-        """
         import json as json_mod
 
         from portolan_cli.add import add_files
@@ -373,14 +334,6 @@ class TestTabularEnabledCheck:
     def test_nested_tabular_collection_sidecar_placed_next_to_collection_json(
         self, tmp_path: Path
     ) -> None:
-        """Nested tabular collection id must write versions.json beside collection.json.
-
-        Regression for issue #650 (defect 1): a collection id containing a '/'
-        (e.g. "group/mytable") wrote its own versions.json to the catalog root
-        under the bare last segment ("mytable/") instead of next to its
-        collection.json. Item-level and geo collection-level assets were fine;
-        only the deferred tabular path hit the backend's _versions_path bug.
-        """
         from portolan_cli.add import add_files
 
         catalog_root = tmp_path / "catalog"
@@ -409,12 +362,6 @@ class TestTabularEnabledCheck:
         )
 
     def test_tabular_collection_recorded_in_catalog_level_versions(self, tmp_path: Path) -> None:
-        """Tabular collection-level assets must be indexed in catalog versions.json.
-
-        Regression for issue #650 (defect 2): the deferred tabular path published
-        the collection-level versions.json but never mirrored the collection into
-        the catalog-level versions.json 'collections' map, leaving it empty.
-        """
         from portolan_cli.add import add_files
 
         catalog_root = tmp_path / "catalog"
@@ -456,14 +403,6 @@ class TestTabularEnabledCheck:
         assert entry["asset_count"] == 1
 
     def test_tabular_companion_asset_works_regardless_of_config(self, tmp_path: Path) -> None:
-        """Tabular files WITH a companion geo file work regardless of tabular.enabled.
-
-        This tests the behavior: when a tabular file is in the same
-        directory as a geo file, it's tracked as a companion asset. This should
-        work whether tabular.enabled is true or false.
-
-        Note: This requires geopandas for creating valid GeoParquet test data.
-        """
         geopandas = pytest.importorskip("geopandas")
         pytest.importorskip("shapely")
         from shapely.geometry import Point
@@ -510,12 +449,7 @@ class TestTabularEnabledCheck:
 
 @pytest.mark.unit
 class TestGpioRoutingForTabular:
-    """Tests for routing tabular files through geoparquet-io (Issue #432).
-
-    When tabular.convert=true, CSV/TSV files should be converted to Parquet
-    using gpio.convert().write() — the same pipeline as geo files but without
-    geometry operations.
-    """
+    """Tests for routing tabular files through geoparquet-io."""
 
     def test_csv_converted_to_parquet_via_gpio(self, tmp_path: Path) -> None:
         """CSV files should be converted to Parquet when tabular.convert=true.
@@ -615,18 +549,9 @@ class TestGpioRoutingForTabular:
 
 @pytest.mark.unit
 class TestAoiInheritance:
-    """Tests for AOI inheritance in tabular collections (Issue #432).
-
-    Tabular collections should inherit their spatial extent from sibling
-    geo collections, not use a hardcoded global bbox placeholder.
-    """
+    """Tests for AOI inheritance in tabular collections."""
 
     def test_tabular_collection_inherits_bbox_from_sibling(self, tmp_path: Path) -> None:
-        """Tabular collection should inherit bbox from sibling geo collection.
-
-        When a tabular-only collection is created, it should scan sibling
-        collections for their spatial extents and use the union.
-        """
         from portolan_cli.add import add_files
 
         # Create catalog structure
@@ -757,9 +682,7 @@ class TestAoiInheritance:
         collection_data = json.loads(tabular_collection.read_text())
         bbox = collection_data["extent"]["spatial"]["bbox"][0]
 
-        # Should be union: min(west), min(south), max(east), max(north)
-        # Union of [-75.5, 39.5, -75.0, 40.0] and [-75.2, 39.8, -74.5, 40.5]
-        # = [-75.5, 39.5, -74.5, 40.5]
+        # The union of the two bboxes is [-75.5, 39.5, -74.5, 40.5].
         expected_union = [-75.5, 39.5, -74.5, 40.5]
         assert bbox == expected_union, f"Expected union bbox {expected_union}, got {bbox}"
 
@@ -908,18 +831,9 @@ class TestAoiInheritance:
 
 @pytest.mark.unit
 class TestTabularConversionIntegration:
-    """Integration tests for tabular conversion via add_files() workflow.
-
-    These tests verify that the convert_tabular() function is actually called
-    by the main workflow when tabular.enabled=true and tabular.convert=true.
-    """
+    """Integration tests for tabular conversion via add_files() workflow."""
 
     def test_csv_converted_to_parquet_in_workflow(self, tmp_path: Path) -> None:
-        """CSV file should be converted to Parquet when added with tabular.convert=true.
-
-        This is the critical integration test that verifies convert_tabular() is
-        actually wired into the workflow, not just defined.
-        """
         from portolan_cli.add import add_files
 
         # Create catalog structure
@@ -946,8 +860,8 @@ class TestTabularConversionIntegration:
 
         assert len(failures) == 0, f"Expected no failures, got {failures}"
 
-        # The converted Parquet is the primary asset and reports as added, with
-        # the CSV retained alongside it as the source (issue #712).
+        # The converted Parquet is the primary asset and reports as added, with the CSV retained
+        # alongside it as the source.
         assert csv_file not in skipped
         assert [i.item_id for i in added] == ["records"]
         assert "records.csv" in added[0].asset_paths
@@ -968,7 +882,7 @@ class TestTabularConversionIntegration:
         assert any("records.parquet" in href for href in asset_hrefs), (
             f"Collection should reference Parquet file, got {asset_hrefs}"
         )
-        # Issue #960: the converted CSV is the source of the Parquet, not data.
+        # The converted CSV is the source of the Parquet, not data.
         roles = {a["href"]: a["roles"] for a in collection_data["assets"].values()}
         assert roles["./records.csv"] == ["source"]
         assert roles["./records.parquet"] == ["data"]
@@ -1346,9 +1260,8 @@ class TestGetSiblingCollectionBboxes:
 
         result = _get_sibling_collection_bboxes(tmp_path)
         assert len(result) == 1
-        # 3D bbox [west, south, min_z, east, north, max_z] collapses to 2D
-        # [west, south, east, north] by selecting indices 0, 1, 3, 4 - min_z
-        # (0.0) and max_z (100.0) are dropped, not sliced into the east slot.
+        # A 3D bbox keeps indices 0, 1, 3, 4: min_z and max_z are dropped, not
+        # sliced into the east slot.
         assert result[0] == [-75.0, 39.0, -74.0, 40.0]
 
 
@@ -1436,14 +1349,9 @@ extent:
 
 @pytest.mark.unit
 class TestTabularCollectionEmission:
-    """A tabular collection carries no portolan: fields (issue #654).
-
-    Tabular status is derived from asset content, so the collection Portolan
-    writes declares the profile schema URI and nothing from a private namespace.
-    """
+    """A tabular collection carries no portolan: fields."""
 
     def test_tabular_collection_omits_the_geospatial_flag(self, tmp_path: Path) -> None:
-        """Tabular collections are no longer flagged portolan:geospatial: false."""
         from portolan_cli.add import add_files
 
         # Create catalog structure
@@ -1470,7 +1378,7 @@ class TestTabularCollectionEmission:
             catalog_root=catalog_root,
         )
 
-        # Standalone tabular files report as added, not skipped (issue #712)
+        # Standalone tabular files report as added, not skipped
         assert len(failures) == 0
         assert parquet_file not in skipped
         assert [i.item_id for i in added] == ["census"]

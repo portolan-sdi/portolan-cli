@@ -150,11 +150,6 @@ class TestClassifyFile:
         assert skip_type == SkipReasonType.JUNK_FILE
 
     def test_pycache_uppercase_classified_as_junk(self, tmp_path: Path) -> None:
-        """__PYCACHE__ (uppercase) files are classified as JUNK.
-
-        Windows/macOS filesystems are case-insensitive, so __PYCACHE__
-        should be treated the same as __pycache__.
-        """
         pycache = tmp_path / "__PYCACHE__"
         pycache.mkdir()
         test_path = pycache / "module.cpython-312.pyc"
@@ -164,11 +159,6 @@ class TestClassifyFile:
         assert skip_type == SkipReasonType.JUNK_FILE
 
     def test_git_uppercase_classified_as_junk(self, tmp_path: Path) -> None:
-        """.GIT (uppercase) directories are classified as JUNK.
-
-        Windows/macOS filesystems are case-insensitive, so .GIT
-        should be treated the same as .git.
-        """
         git_dir = tmp_path / ".GIT"
         git_dir.mkdir()
         test_path = git_dir / "config"
@@ -178,13 +168,6 @@ class TestClassifyFile:
         assert skip_type == SkipReasonType.JUNK_FILE
 
     def test_pmtiles_classified_as_geo_asset(self, tmp_path: Path) -> None:
-        """.pmtiles files are classified as GEO_ASSET, not VISUALIZATION.
-
-        Regression test for issue #198: PMTiles (.pmtiles) is a cloud-native
-        format listed in CLOUD_NATIVE_EXTENSIONS in formats.py. It should be
-        accepted during 'portolan add' like FlatGeobuf (.fgb), not rejected
-        as a visualization-only format.
-        """
         test_path = tmp_path / "tiles.pmtiles"
         test_path.write_bytes(b"\x00")
         category, skip_type, skip_msg = classify_file(test_path)
@@ -193,33 +176,16 @@ class TestClassifyFile:
         assert skip_msg is None
 
     def test_pmtiles_in_geo_asset_extensions(self) -> None:
-        """.pmtiles must be listed in GEO_ASSET_EXTENSIONS.
-
-        Regression test for issue #198: PMTiles was missing from
-        GEO_ASSET_EXTENSIONS, causing scan to classify .pmtiles files as
-        VISUALIZATION and skip them instead of treating them as primary assets.
-        """
         from portolan_cli.scan.classify import GEO_ASSET_EXTENSIONS
 
         assert ".pmtiles" in GEO_ASSET_EXTENSIONS
 
     def test_pmtiles_not_in_viz_extensions(self) -> None:
-        """.pmtiles must NOT be listed in VIZ_EXTENSIONS.
-
-        Regression test for issue #198: PMTiles was incorrectly placed in
-        VIZ_EXTENSIONS alongside .mbtiles. PMTiles is a primary cloud-native
-        geospatial format, not a visualization-only derivative.
-        """
         from portolan_cli.scan.classify import VIZ_EXTENSIONS
 
         assert ".pmtiles" not in VIZ_EXTENSIONS
 
     def test_mbtiles_still_classified_as_visualization(self, tmp_path: Path) -> None:
-        """.mbtiles files remain classified as VISUALIZATION.
-
-        MBTiles is a visualization-only derivative format and should remain
-        in VIZ_EXTENSIONS. This guards against over-correcting the PMTiles fix.
-        """
         test_path = tmp_path / "tiles.mbtiles"
         test_path.write_bytes(b"\x00")
         category, skip_type, _skip_msg = classify_file(test_path)
@@ -237,20 +203,9 @@ class TestClassifyFile:
         assert skip_msg is None
 
     def test_parquet_not_in_geo_asset_extensions(self) -> None:
-        """.parquet requires metadata peeking, so not in GEO_ASSET_EXTENSIONS.
-
-        Per Issue #432, we need to peek at Parquet metadata to distinguish
-        GeoParquet (has geo metadata) from plain Parquet (tabular data).
-        This supersedes issue #74's simple extension-based classification.
-        """
         assert ".parquet" not in GEO_ASSET_EXTENSIONS
 
     def test_parquet_without_geo_metadata_classified_as_tabular(self, tmp_path: Path) -> None:
-        """Plain Parquet (no geo metadata) classified as TABULAR_DATA.
-
-        Per Issue #432: Parquet files without GeoParquet metadata should be
-        classified as tabular data, not geo assets. This supersedes issue #74.
-        """
         test_path = tmp_path / "data.parquet"
         test_path.write_bytes(b"PAR1")  # Invalid parquet = no geo metadata
         category, skip_type, _skip_msg = classify_file(test_path)
@@ -365,26 +320,13 @@ class TestClassifyFileEdgeCases:
         assert skip_type == SkipReasonType.NOT_GEOSPATIAL
 
     def test_image_stat_oserror_defaults_to_zero_size(self, tmp_path: Path) -> None:
-        """classify_file handles OSError when stat fails.
-
-        This tests the code path in scan_classify.py lines 295-296.
-        We simulate a scenario where a file exists but cannot be stat'd.
-        """
-
         test_path = tmp_path / "image.png"
         test_path.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 100)
 
-        # Delete the file after getting the path - next stat will fail
-        # But classify_file should handle this gracefully
-        # Actually, let's test with a nonexistent file reference
         nonexistent = tmp_path / "nonexistent_image.png"
 
-        # Try to classify a nonexistent image file
-        # The classify_file should handle OSError and default to size 0
-        # which would make it a thumbnail
-        # stat() fails on a missing file, so the size falls back to 0. An image
-        # under the thumbnail threshold is a thumbnail, so the call returns a
-        # classification instead of raising.
+        # stat() fails on a missing file, so the size falls back to 0 and the
+        # image classifies as a thumbnail instead of raising.
         category, skip_type, skip_msg = classify_file(nonexistent)
 
         assert category == FileCategory.THUMBNAIL

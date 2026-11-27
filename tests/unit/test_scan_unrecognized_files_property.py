@@ -1,8 +1,4 @@
-"""Property-based tests for unrecognized file listing in scan output.
-
-Uses hypothesis to generate various file extensions and verify that
-unrecognized files are properly listed in output.
-"""
+"""Property-based tests for unrecognized file listing in scan output."""
 
 from __future__ import annotations
 
@@ -15,10 +11,8 @@ from hypothesis import strategies as st
 
 from portolan_cli.scan.classify import FileCategory, SkipReasonType, classify_file
 
-# Strategy for generating unknown file extensions
-# Use ASCII alphanumeric only - cross-platform safe for filenames
-# (Unicode characters can cause "Illegal byte sequence" on macOS and
-# "Invalid argument" on Windows for control characters and surrogates)
+# ASCII alphanumeric only: other characters can fail as filenames on macOS
+# ("Illegal byte sequence") and Windows ("Invalid argument").
 unknown_extensions = st.text(
     alphabet="abcdefghijklmnopqrstuvwxyz0123456789",
     min_size=1,
@@ -37,9 +31,7 @@ class TestUnrecognizedFileClassification:
 
         Tests that the classification system is robust to arbitrary extensions.
         """
-        # Skip common extensions that might be generated
-        # These are either known formats or known non-data files
-        # Import GEO_ASSET_EXTENSIONS to ensure we skip all valid geo formats
+        # Skip the known formats and the known non-data files.
         from portolan_cli.scan.classify import GEO_ASSET_EXTENSIONS
 
         skip_exts = {
@@ -68,9 +60,8 @@ class TestUnrecognizedFileClassification:
             # Classify the file
             category, skip_reason, skip_message = classify_file(test_file)
 
-            # Should be classified as UNKNOWN (unless it matches something by chance)
-            # GEO_ASSET files are primary data - they have no skip_reason
-            # (they're not skipped, they're processed)
+            # GEO_ASSET files are primary data, which is processed and has no
+            # skip_reason.
             if category is FileCategory.UNKNOWN:
                 assert skip_reason is SkipReasonType.UNKNOWN_FORMAT
                 assert skip_message == f"Unknown file extension: {ext}"

@@ -1,9 +1,4 @@
-"""Tests for the collection fields derived from the members (issues #801, #852, #1023).
-
-``derive_collection_fields`` is pure: the members and metadata.yaml go in, the
-extent and summaries come out. The stored collection is never an input, so a
-wrong stored value cannot survive a rebuild.
-"""
+"""Tests for the collection fields derived from the members."""
 
 from __future__ import annotations
 
@@ -25,8 +20,8 @@ from portolan_core.errors import InvalidBboxError
 
 pytestmark = pytest.mark.unit
 
-# The asset transform and shape of the CARTO valencia-2024 flood collection
-# (issue #1023). A north-up GeoTransform holds two zeros.
+# The asset transform and shape of the CARTO valencia-2024 flood collection. A north-up GeoTransform
+# holds two zeros.
 VALENCIA_TRANSFORM = [697917.4537159235, 20.0, 0.0, 4390253.961476656, 0.0, -20.0]
 
 
@@ -42,7 +37,7 @@ class TestBuildSpatialExtent:
         assert extent.bboxes == [[0.0, 0.0, 3.0, 3.0]]
 
     def test_a_fiji_item_gives_envelope_and_two_parts(self) -> None:
-        """Issue #852: a crossing member writes three bboxes, never two."""
+        """A crossing member writes three bboxes, never two."""
         extent = build_spatial_extent([[-74.0, 40.0, -73.0, 41.0], [177.0, -20.0, -175.0, -15.0]])
         assert extent.bboxes == [
             [-180.0, -20.0, 180.0, 41.0],
@@ -66,7 +61,7 @@ class TestBuildSpatialExtent:
 
 
 class TestDeriveExtent:
-    """The extent is the union of the members, never of the stored value (#801)."""
+    """The extent is the union of the members, never of the stored value."""
 
     def test_extent_is_the_union_of_the_members(self) -> None:
         fields = derive_collection_fields(
@@ -80,7 +75,7 @@ class TestDeriveExtent:
         assert fields.spatial.bboxes == [[-7.1, 37.9, 20.1, 50.1]]
 
     def test_applying_the_fields_shrinks_a_widened_extent(self) -> None:
-        """The SITEX case of #801: an absurd stored extent is replaced."""
+        """The SITEX case: an absurd stored extent is replaced."""
         collection = create_collection(
             collection_id="montes", description="d", bbox=[-20.0, 30.0, 10.0, 50.0]
         )
@@ -145,7 +140,7 @@ class TestDeriveTemporal:
 
 
 class TestSummaries:
-    """Summaries keep list values whole, and skip per-item grids (#1023)."""
+    """Summaries keep list values whole, and skip per-item grids."""
 
     def test_transform_and_square_shape_are_not_flattened(self) -> None:
         """On main the summary was the five distinct numbers of the transform."""
@@ -212,7 +207,7 @@ class TestSummaries:
         }
 
     def test_a_stored_grid_summary_is_dropped(self) -> None:
-        """A catalog from an older release stores the flattened transform (#1023)."""
+        """A catalog from an older release stores the flattened transform."""
         data: dict[str, object] = {
             "summaries": {
                 "proj:transform": [364800.0, 3.0, 0.0, 4824000.0, -3.0],

@@ -100,12 +100,6 @@ class TestCreateItemDatetime:
         assert "start_datetime" not in item.properties
 
     def test_create_item_with_none_datetime_uses_the_sentinel_range(self) -> None:
-        """Should use the open interval when datetime is None, with no marker field.
-
-        The provisional handling stayed; ``portolan:datetime_provisional`` did
-        not (issue #654). The sentinel range is what says "temporal extent
-        unknown", and it is spec-defined.
-        """
         from portolan_cli.stac import create_item
 
         item = create_item(

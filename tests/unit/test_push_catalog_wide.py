@@ -1,8 +1,4 @@
-"""Tests for catalog-wide push functionality (issue #224).
-
-This module tests the ability to push all collections at once without
-specifying --collection flag.
-"""
+"""Tests for catalog-wide push functionality."""
 
 from __future__ import annotations
 
@@ -146,8 +142,7 @@ class TestPushAllCollections:
         assert result.total_files_uploaded == 5
         assert result.total_versions_pushed == 1
 
-        # Verify push_async was called with expected arguments
-        # Note: concurrency and chunk_concurrency use defaults (8 and 4 per Issue #344)
+        # concurrency and chunk_concurrency use the defaults (8 and 4).
         mock_push.assert_called_once()
         call_kwargs = mock_push.call_args.kwargs
         assert call_kwargs["catalog_root"] == tmp_path
@@ -349,13 +344,6 @@ class TestPushAllCollections:
         tmp_path: Path,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        """Dry-run per-collection and summary counts use the would-push estimate.
-
-        Regression for Issue #804. A dry-run does no remote check, so push()
-        returns files_uploaded=0 and versions_pushed=0. The catalog-wide report
-        must show the local upper-bound estimate instead of 0/0, which otherwise
-        contradicts the "Would push up to N" line and misleads an operator.
-        """
         _setup_valid_catalog(tmp_path)
 
         (tmp_path / "col1").mkdir()
@@ -403,12 +391,6 @@ class TestCatalogWideDryRunJson:
     def test_dry_run_json_reports_zero_uploaded(
         self, mock_push_all: MagicMock, tmp_path: Path
     ) -> None:
-        """A dry-run uploads nothing, so the JSON envelope reports 0 uploaded.
-
-        Regression for Issue #833. The estimate belongs in the would-push fields.
-        The total_files_uploaded and total_versions_pushed fields stay at 0. An
-        agent that reads total_files_uploaded must not see the estimate there.
-        """
         _setup_valid_catalog(tmp_path)
 
         mock_push_all.return_value = PushAllResult(

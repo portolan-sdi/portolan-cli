@@ -1,8 +1,4 @@
-"""Tests for S3-compatible endpoint settings.
-
-The settings are environment-only because catalog configuration files are
-published with the catalog.
-"""
+"""Tests for S3-compatible endpoint settings."""
 
 from __future__ import annotations
 

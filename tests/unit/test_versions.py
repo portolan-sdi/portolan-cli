@@ -1,8 +1,4 @@
-"""Unit tests for versions.json read/write/update operations.
-
-Tests the versions module which manages the versions.json file that serves as
-the single source of truth for collection versioning.
-"""
+"""Unit tests for versions.json read/write/update operations."""
 
 from __future__ import annotations
 
@@ -236,11 +232,6 @@ class TestWriteVersions:
 
     @pytest.mark.unit
     def test_freshness_heuristic_fields_roundtrip(self, tmp_path: Path) -> None:
-        """#512: feature_count + schema_fingerprint survive write→read.
-
-        These per-asset freshness heuristics let a touched-but-identical
-        asset read FRESH instead of a spurious STALE/BREAKING.
-        """
         asset = Asset(
             sha256="fp",
             size_bytes=512,
@@ -415,9 +406,7 @@ class TestAddVersion:
         assert len(updated.versions) == 1
 
 
-# =============================================================================
-# Phase 5: Source Tracking Tests
-# =============================================================================
+# Source Tracking Tests
 
 
 class TestAssetSourceTracking:
@@ -696,9 +685,7 @@ class TestAddVersionSourceTracking:
         assert asset.source_mtime == 1708372800.0
 
 
-# =============================================================================
-# Phase 6: Schema Fingerprint Tests (CRITICAL #1 - )
-# =============================================================================
+# Schema Fingerprint Tests
 
 
 class TestSchemaFingerprintInVersion:
@@ -732,7 +719,7 @@ class TestSchemaFingerprintInVersion:
 
     @pytest.mark.unit
     def test_version_accepts_message(self) -> None:
-        """Version dataclass accepts optional message field (MAJOR #6)."""
+        """Version dataclass accepts optional message field."""
         asset = Asset(sha256="abc123", size_bytes=1024, href="data.parquet")
         version = _one_asset_version(
             "data.parquet", asset, message="Data update, no schema changes"
@@ -769,7 +756,7 @@ class TestSchemaFingerprintSerialization:
 
     @pytest.mark.unit
     def test_serialize_includes_message_when_present(self, tmp_path: Path) -> None:
-        """write_versions includes message in JSON when present (MAJOR #6)."""
+        """write_versions includes message in JSON when present."""
         asset = Asset(sha256="abc123", size_bytes=1024, href="data.parquet")
         version = _one_asset_version("data.parquet", asset, message="Data update")
         vf = _versions_file(version)
@@ -863,7 +850,7 @@ class TestAddVersionWithSchema:
 
     @pytest.mark.unit
     def test_add_version_accepts_message(self) -> None:
-        """add_version accepts optional message parameter (MAJOR #6)."""
+        """add_version accepts optional message parameter."""
         vf = VersionsFile(spec_version="1.0.0", current_version=None, versions=[])
         assets = {"data.parquet": Asset(sha256="abc123", size_bytes=1024, href="data.parquet")}
 
@@ -878,13 +865,11 @@ class TestAddVersionWithSchema:
         assert updated.versions[0].message == "Initial import"
 
 
-# =============================================================================
-# Phase 7: Atomic Write Tests (CRITICAL #2)
-# =============================================================================
+# Atomic Write Tests
 
 
 class TestAtomicWrite:
-    """Tests for atomic write operations (CRITICAL #2 - TOCTOU race condition)."""
+    """Tests for atomic write operations."""
 
     @pytest.mark.integration
     def test_write_versions_is_atomic(self, tmp_path: Path) -> None:
@@ -908,16 +893,12 @@ class TestAtomicWrite:
         write_versions(versions_path, vf)
         original_content = versions_path.read_text()
 
-        # If write_versions is truly atomic, the original file should be
-        # unchanged if we read it immediately after a failed write
-        # (This is hard to test without mocking - we'll verify atomic pattern is used)
+        # An atomic write leaves the original file unchanged after a failed write.
         assert versions_path.exists()
         assert versions_path.read_text() == original_content
 
 
-# =============================================================================
-# Phase 8: Version Parsing Tests (CRITICAL #3, MAJOR #4)
-# =============================================================================
+# Version Parsing Tests
 
 
 class TestVersionParsing:
@@ -934,7 +915,7 @@ class TestVersionParsing:
 
     @pytest.mark.unit
     def test_parse_prerelease_version(self) -> None:
-        """parse_version handles semver pre-release (CRITICAL #3)."""
+        """parse_version handles semver pre-release."""
         from portolan_core.versions import parse_version
 
         # Pre-release versions should be parsed, returning base version
@@ -965,7 +946,7 @@ class TestVersionParsing:
 
     @pytest.mark.unit
     def test_parse_large_version_numbers(self) -> None:
-        """parse_version handles large version numbers without overflow (MAJOR #4)."""
+        """parse_version handles large version numbers without overflow."""
         from portolan_core.versions import parse_version
 
         # Should not raise integer overflow
@@ -985,7 +966,7 @@ class TestVersionParsing:
 
     @pytest.mark.unit
     def test_parse_version_handles_non_numeric(self) -> None:
-        """parse_version handles non-numeric parts gracefully (MAJOR #4)."""
+        """parse_version handles non-numeric parts gracefully."""
         from portolan_core.versions import parse_version
 
         # Should not raise ValueError or overflow
@@ -993,9 +974,7 @@ class TestVersionParsing:
         assert parse_version("1.2.x") == (0, 0, 0)
 
 
-# =============================================================================
-# Phase 9: Edge Case Tests (MAJOR #7, misc)
-# =============================================================================
+# Edge Case Tests
 
 
 class TestEdgeCases:
@@ -1003,7 +982,7 @@ class TestEdgeCases:
 
     @pytest.mark.unit
     def test_add_version_with_empty_assets(self) -> None:
-        """add_version handles empty assets dict (MAJOR #7)."""
+        """add_version handles empty assets dict."""
         vf = VersionsFile(spec_version="1.0.0", current_version=None, versions=[])
 
         # Should not raise - empty assets is valid (e.g., metadata-only version)
@@ -1121,20 +1100,10 @@ class TestCorruptedVersionsJson:
 
 
 class TestSnapshotModel:
-    """Tests for the snapshot versioning model (issues #141, #147).
-
-    Each version should contain ALL assets at that point in time,
-    not just the newly-added ones. This is.
-    """
+    """Tests for the snapshot versioning model."""
 
     @pytest.mark.unit
     def test_add_multiple_files_accumulates_assets(self) -> None:
-        """Adding files incrementally accumulates assets in each version.
-
-        Version 1.0.0: {A}
-        Version 1.0.1: {A, B}  <- B added, A preserved
-        Version 1.0.2: {A, B, C}  <- C added, A and B preserved
-        """
         vf = VersionsFile(spec_version="1.0.0", current_version=None, versions=[])
 
         # Add first file
@@ -1230,11 +1199,6 @@ class TestSnapshotModel:
 
     @pytest.mark.unit
     def test_readding_unchanged_asset_is_idempotent(self) -> None:
-        """Re-adding an unchanged asset should not create a new version.
-
-        This is a regression test for idempotency: calling add_version with
-        an asset that already exists with the same checksum should be a no-op.
-        """
         vf = VersionsFile(spec_version="1.0.0", current_version=None, versions=[])
 
         # Add initial file
@@ -1255,7 +1219,7 @@ class TestSnapshotModel:
 
     @pytest.mark.unit
     def test_add_version_with_100_assets(self) -> None:
-        """Scale: many assets per version (issue #339 scenario)."""
+        """Scale: many assets per version."""
         vf = VersionsFile(spec_version="1.0.0", current_version=None, versions=[])
 
         # Create 100 assets with valid SHA256 hashes
@@ -1395,11 +1359,6 @@ class TestTrackGeneratedAssets:
     def test_a_resolved_item_file_keeps_its_item_key_under_a_symlinked_root(
         self, tmp_path: Path
     ) -> None:
-        """Issue #1053: the collection thumbnail step passes a resolved item path.
-
-        A catalog reached through a symlink gave the bare name as key, the
-        second key at the collection root, and no href at all.
-        """
         from portolan_core.versions import track_generated_assets
 
         thumb = tmp_path / "real" / "imagery" / "scene" / "scene.thumb.jpg"

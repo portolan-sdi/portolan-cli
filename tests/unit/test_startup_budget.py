@@ -1,8 +1,4 @@
-"""Startup budget: plugins cost nothing until an operation uses them (#947).
-
-Each check runs in a fresh interpreter, because the test session has already
-imported most of the package.
-"""
+"""Startup budget: plugins cost nothing until an operation uses them."""
 
 from __future__ import annotations
 
@@ -81,11 +77,6 @@ def test_help_imports_no_plugin_module(tmp_path: Path) -> None:
 
 
 def test_api_import_loads_no_heavy_dependency() -> None:
-    """`import portolan_cli.api` loads no Click and no geospatial library.
-
-    A plugin imports the API at module level, so its cost lands on every
-    hook call that loads the plugin.
-    """
     heavy = ["click", "rasterio", "pyarrow", "pyiceberg", "pystac", "geopandas"]
     code = (
         f"import sys, portolan_cli.api\nprint(sorted(m for m in {heavy!r} if m in sys.modules))\n"
@@ -95,12 +86,6 @@ def test_api_import_loads_no_heavy_dependency() -> None:
 
 
 def test_metadata_package_import_loads_no_heavy_dependency() -> None:
-    """`import portolan_cli.metadata` loads no format extractor (#994).
-
-    Python runs the package `__init__` before any submodule, so an eager
-    re-export there loads rasterio and pyogrio for `metadata.models` too.
-    `tests/perf/test_cold_imports.py` checks the help commands themselves.
-    """
     code = (
         "import sys, portolan_cli.metadata.models\n"
         f"print(sorted(m for m in {list(HEAVY_MODULES)!r} if m in sys.modules))\n"
@@ -110,13 +95,6 @@ def test_metadata_package_import_loads_no_heavy_dependency() -> None:
 
 
 def test_validation_import_loads_no_heavy_dependency() -> None:
-    """`import portolan_cli.validation` loads no format extractor (#994).
-
-    `portolan check` imports the package before it reads a file. Its chain
-    runs through `validation.fixers`, `metadata.fix`, and `metadata.update`.
-    A module-level rasterio import on that chain loads rasterio and boto3
-    for every check, also when the catalog holds no raster.
-    """
     code = (
         "import sys, portolan_cli.validation\n"
         f"print(sorted(m for m in {list(HEAVY_MODULES)!r} if m in sys.modules))\n"
@@ -153,11 +131,6 @@ print("HTTP_CLIENTS", sorted(m for m in ("httpx", "requests") if m in sys.module
 
 
 def test_extract_help_imports_no_extractor_command() -> None:
-    """`portolan extract --help` shows each summary and loads no source package.
-
-    An extractor imports its command and its HTTP client inside
-    `cli_command()`, so the help must not call it.
-    """
     output = _run(_EXTRACT_HELP_PROBE)
 
     assert "OGC Web Feature Service layers." in output

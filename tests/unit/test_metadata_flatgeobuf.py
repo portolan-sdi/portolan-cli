@@ -1,8 +1,4 @@
-"""Tests for FlatGeobuf metadata extraction.
-
-Tests the FlatGeobufMetadata dataclass and extract_flatgeobuf_metadata() function.
-FlatGeobuf files contain CRS, bounds, schema, and feature count in their header.
-"""
+"""Tests for FlatGeobuf metadata extraction."""
 
 from __future__ import annotations
 

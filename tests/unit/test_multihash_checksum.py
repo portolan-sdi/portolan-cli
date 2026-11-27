@@ -1,8 +1,4 @@
-"""Unit tests for multihash encoding of ``file:checksum`` (issue #654).
-
-The STAC file extension defines ``file:checksum`` as a hex-encoded multihash,
-not a bare digest; rashid's PTL-AST-004 rejects anything else.
-"""
+"""Unit tests for multihash encoding of ``file:checksum``."""
 
 from __future__ import annotations
 
@@ -44,11 +40,7 @@ class TestMultihashSha256:
 
 
 class TestFileFields:
-    """The paired ``file:size``/``file:checksum`` fields the file extension defines.
-
-    Four call sites used to inline the same two lines. These cover the shared
-    helpers they now share.
-    """
+    """The paired ``file:size``/``file:checksum`` fields the file extension defines."""
 
     def test_reads_both_fields_from_a_file(self, tmp_path: Path) -> None:
         payload = b"portolan file fields"

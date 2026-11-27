@@ -1,14 +1,4 @@
-"""Unit tests for pull module.
-
-Tests for pulling updates from remote cloud storage catalogs.
-These tests mock network calls and test pull logic in isolation.
-
-Test categories:
-- PullResult dataclass
-- Uncommitted change detection
-- Version diffing (local vs remote)
-- Pull operation with force/dry-run modes
-"""
+"""Unit tests for pull module."""
 
 from __future__ import annotations
 
@@ -24,9 +14,7 @@ import pytest
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-# =============================================================================
 # Test Fixtures
-# =============================================================================
 
 
 def _initial_version_entry() -> dict[str, Any]:
@@ -57,7 +45,6 @@ def _initial_versions_data() -> dict[str, Any]:
 
 
 def _data_version(version: str, *, day: int, sha256: str, size_bytes: int) -> Any:
-    """Return a Version from January 2024 with one data.parquet asset."""
     from portolan_core.versions import Asset, Version
 
     return Version(
@@ -190,9 +177,7 @@ def remote_versions_data() -> dict[str, Any]:
     }
 
 
-# =============================================================================
 # Malformed Fixtures for Error Path Testing
-# =============================================================================
 
 
 @pytest.fixture
@@ -273,9 +258,7 @@ def remote_versions_data_wrong_asset_types() -> dict[str, Any]:
     }
 
 
-# =============================================================================
 # PullResult Tests
-# =============================================================================
 
 
 class TestPullResult:
@@ -338,9 +321,7 @@ class TestPullResult:
         assert result.up_to_date is True
 
 
-# =============================================================================
 # Uncommitted Change Detection Tests
-# =============================================================================
 
 
 class TestUncommittedChangeDetection:
@@ -589,9 +570,7 @@ class TestUncommittedChangeDetection:
         assert "new_data.parquet" not in changes
 
 
-# =============================================================================
 # Version Diffing Tests
-# =============================================================================
 
 
 class TestVersionDiffing:
@@ -681,9 +660,7 @@ class TestVersionDiffing:
         assert set(diff.files_to_download) == {"data.parquet", "metadata.json"}
 
 
-# =============================================================================
 # Pull Operation Tests
-# =============================================================================
 
 
 class TestPullOperation:
@@ -749,12 +726,6 @@ class TestPullOperation:
     def test_pull_dry_run_no_downloads(
         self, catalog_with_versions: Path, remote_versions_data: dict
     ) -> None:
-        """Pull --dry-run should not download anything and make no network calls.
-
-        Bug #137: dry-run must return early before ANY network I/O, including
-        fetch_remote_versions. This test verifies neither the remote fetch
-        nor the download step is invoked.
-        """
         from portolan_cli.sync.pull import pull
 
         with (
@@ -823,9 +794,7 @@ class TestPullOperation:
         assert updated_versions["current_version"] == "1.1.0"
 
 
-# =============================================================================
 # Remote Fetch Tests
-# =============================================================================
 
 
 class TestRemoteFetch:
@@ -879,9 +848,7 @@ class TestRemoteFetch:
                 )
 
 
-# =============================================================================
 # Edge Cases and Error Handling
-# =============================================================================
 
 
 class TestErrorHandling:
@@ -948,9 +915,7 @@ class TestErrorHandling:
         assert result.success is True
 
 
-# =============================================================================
 # Security Tests - Path Traversal
-# =============================================================================
 
 
 class TestPathTraversalProtection:
@@ -1038,9 +1003,7 @@ class TestPathTraversalProtection:
         assert failed == 0
 
 
-# =============================================================================
 # Data Integrity Tests - Local Ahead Detection
-# =============================================================================
 
 
 class TestLocalAheadDetection:
@@ -1109,9 +1072,7 @@ class TestLocalAheadDetection:
         assert diff.is_diverged is True
 
 
-# =============================================================================
 # Progress Reporting Tests
-# =============================================================================
 
 
 class TestProgressReporting:
@@ -1186,14 +1147,10 @@ class TestProgressReporting:
         assert lines == [("info", "[DRY RUN] Would download (1/1): data.parquet")]
 
 
-# =============================================================================
 # Error Path Tests with Malformed Data
-# =============================================================================
 
 
-# =============================================================================
 # Sync State Conflict Tests
-# =============================================================================
 
 
 class TestSyncStateConflicts:
@@ -1276,9 +1233,7 @@ class TestSyncStateConflicts:
         assert result is None
 
 
-# =============================================================================
 # Uncommitted Conflicts Tests
-# =============================================================================
 
 
 class TestUncommittedConflicts:
@@ -1357,9 +1312,7 @@ class TestUncommittedConflicts:
         assert result is None
 
 
-# =============================================================================
 # Download Assets Tests
-# =============================================================================
 
 
 class TestDownloadAssetsErrorHandling:
@@ -1431,9 +1384,7 @@ class TestDownloadAssetsErrorHandling:
         assert failed == 1
 
 
-# =============================================================================
 # Path Validation Tests (Additional)
-# =============================================================================
 
 
 class TestValidateSafePathEdgeCases:
@@ -1457,9 +1408,7 @@ class TestValidateSafePathEdgeCases:
             _validate_safe_path(tmp_path, "subdir/../../etc/passwd")
 
 
-# =============================================================================
 # Fetch Remote Versions Error Handling
-# =============================================================================
 
 
 class TestFetchRemoteVersionsErrors:
@@ -1483,9 +1432,7 @@ class TestFetchRemoteVersionsErrors:
                 )
 
 
-# =============================================================================
 # Pull Function Error Handling
-# =============================================================================
 
 
 class TestPullFunctionErrors:
@@ -1548,9 +1495,7 @@ class TestMalformedDataHandling:
                 versions=[],
             )
 
-            # Local versions.json is malformed (missing "versions" key)
-            # This should either raise an error or handle gracefully
-            # depending on whether it parses local versions
+            # The local versions.json has no "versions" key.
             error: Exception | None = None
             try:
                 result = pull(
@@ -1623,29 +1568,16 @@ class TestMalformedDataHandling:
                 )
 
 
-# =============================================================================
 # Dry-Run Network Isolation Tests
-# =============================================================================
 
 
 class TestDryRunNetworkIsolation:
-    """Tests that dry-run mode never makes network calls.
-
-    Bug #137: --dry-run was still calling fetch_remote_versions,
-    making real network connections. These tests assert the fix:
-    dry_run=True must return early BEFORE any network I/O.
-    """
+    """Tests that dry-run mode never makes network calls."""
 
     @pytest.mark.unit
     def test_pull_dry_run_never_calls_fetch_remote_versions(
         self, catalog_with_versions: Path
     ) -> None:
-        """pull(dry_run=True) must not call fetch_remote_versions at all.
-
-        This is the core regression test for bug #137. The previous behaviour
-        called fetch_remote_versions unconditionally, which triggered a real
-        network connection even when the user passed --dry-run.
-        """
         from portolan_cli.sync.pull import pull
 
         with patch("portolan_cli.sync.pull._fetch_remote_versions_async") as mock_fetch:
@@ -1728,11 +1660,6 @@ class TestDryRunNetworkIsolation:
     def test_pull_dry_run_on_fresh_catalog_without_versions_json(
         self, fresh_catalog_no_versions: Path
     ) -> None:
-        """M2: pull(dry_run=True) should work on fresh catalog without versions.json.
-
-        This tests the edge case where a user runs `portolan pull --dry-run`
-        on a catalog that has never been versioned before (no versions.json).
-        """
         from portolan_cli.sync.pull import pull
 
         with patch("portolan_cli.sync.pull._fetch_remote_versions_async") as mock_fetch:
@@ -1755,7 +1682,7 @@ class TestDryRunNetworkIsolation:
 
 
 class TestPopulateMissingFileSizes:
-    """Tests for _populate_missing_file_sizes (Issue #501)."""
+    """Tests for _populate_missing_file_sizes."""
 
     @pytest.mark.unit
     def test_populate_missing_file_sizes_collection_assets(self, tmp_path: Path) -> None:

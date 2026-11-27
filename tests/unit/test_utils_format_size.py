@@ -1,9 +1,4 @@
-"""`format_size` lives in utils, so the library can name a file size.
-
-It used to live in `cli.py`. The in-place GeoParquet rewrite reports the size
-of the file it is about to read and write, and a library module must not import
-the CLI layer (issue #805). Moving it keeps the import contract intact.
-"""
+"""`format_size` lives in utils, so the library can name a file size."""
 
 from __future__ import annotations
 

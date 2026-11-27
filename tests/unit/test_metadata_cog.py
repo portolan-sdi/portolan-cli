@@ -1,14 +1,4 @@
-"""Tests for COG metadata extraction.
-
-Assertions here pin exact values rather than "is not None". The fixtures are
-committed and their georeferencing is fixed, so every extracted field has one
-correct answer:
-
-- ``raster/valid/singleband.tif``   64x64, 1 band uint8, EPSG:4326, no nodata
-- ``raster/valid/nodata.tif``       same, nodata 255
-- ``raster/valid/float32.tif``      same, float32
-- ``realdata/rapidai4eo-sample.tif`` 200x200, 4 bands int16, EPSG:32633, 3 m
-"""
+"""Tests for COG metadata extraction."""
 
 from __future__ import annotations
 
@@ -25,12 +15,7 @@ if TYPE_CHECKING:
 
 
 def bands_of(schema: SchemaModel) -> list[BandSchema]:
-    """Return a COG schema's columns, asserting each one is a BandSchema.
-
-    `SchemaModel.columns` is a union covering vector and raster schemas, so a
-    raster assertion has to narrow it. Doing that here keeps the narrowing (and
-    the check that COG extraction really produces bands) in one place.
-    """
+    """Return a COG schema's columns, asserting each one is a BandSchema."""
     assert all(isinstance(column, BandSchema) for column in schema.columns)
     return [column for column in schema.columns if isinstance(column, BandSchema)]
 
@@ -116,12 +101,6 @@ class TestExtractCOGMetadata:
 
     @pytest.mark.unit
     def test_nodatavals_keeps_per_band_none_slots(self, valid_singleband_cog: Path) -> None:
-        """An all-None nodatavals tuple survives; only an empty tuple becomes None.
-
-        rasterio always returns one slot per band, so a raster with no nodata
-        yields ``(None,)`` rather than ``None``. Consumers must read the slots,
-        not test the tuple for truthiness.
-        """
         metadata = extract_cog_metadata(valid_singleband_cog)
         assert metadata.nodatavals == (None,)
 
@@ -447,11 +426,6 @@ class TestCOGMetadataEdgeCases:
 
     @pytest.mark.unit
     def test_extract_crs_wkt_fallback(self, tmp_path: Path) -> None:
-        """Falls back to WKT when no EPSG code is available.
-
-        The CRS below is a Mercator with a non-standard central meridian, so no
-        EPSG code matches it and ``to_epsg()`` returns None.
-        """
         import numpy as np
         import rasterio
         from rasterio.crs import CRS

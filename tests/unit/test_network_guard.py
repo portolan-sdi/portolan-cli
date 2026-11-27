@@ -1,10 +1,4 @@
-"""The autouse network guard in tests/conftest.py.
-
-A test without the network marker must not reach a remote host. Python clients
-go through ``socket.connect``, which the guard replaces. Rust and C clients
-(obstore, GDAL) do not, so the guard also points the proxy variables at a dead
-port on the loopback interface.
-"""
+"""The autouse network guard in tests/conftest.py."""
 
 from __future__ import annotations
 

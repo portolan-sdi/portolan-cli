@@ -1,13 +1,4 @@
-"""Unit tests for STAC extension foundation (Issue #272).
-
-Tests the STAC extension support including:
-- STAC version 1.1.0
-- stac_extensions array population
-- Table extension for GeoParquet
-- Projection extension fields (including raster-specific: proj:shape, proj:transform)
-- Bbox WGS84 transformation with antimeridian handling
-- Per-band nodata for COGs
-"""
+"""Unit tests for STAC extension foundation."""
 
 from __future__ import annotations
 
@@ -310,7 +301,7 @@ class TestProjectionExtension:
     @pytest.mark.unit
     @pytest.mark.parametrize("crs_id", [("EPSG", 999999), ("MYORG", 1)])
     def test_add_projection_extension_checks_the_projjson_id(self, crs_id: tuple[str, int]) -> None:
-        """An id that pyproj cannot resolve gives way to the EPSG match of the definition (#928)."""
+        """An id that pyproj cannot resolve gives way to the EPSG match of the definition."""
         from pyproj import CRS
 
         from portolan_cli.stac import add_projection_extension, create_item
@@ -334,7 +325,7 @@ class TestProjectionExtension:
 
     @pytest.mark.unit
     def test_add_projection_extension_writes_projjson_for_a_custom_crs(self) -> None:
-        """A CRS with no code to name goes in proj:projjson, with no proj:code (#928)."""
+        """A CRS with no code to name goes in proj:projjson, with no proj:code."""
         from pyproj import CRS
 
         from portolan_cli.stac import add_projection_extension, create_item
@@ -362,7 +353,7 @@ class TestProjectionExtension:
 
     @pytest.mark.unit
     def test_add_projection_extension_replaces_the_other_crs_field(self) -> None:
-        """A second call keeps one CRS field, so the Item names one CRS (#928)."""
+        """A second call keeps one CRS field, so the Item names one CRS."""
         from pyproj import CRS
 
         from portolan_cli.stac import add_projection_extension, create_item
@@ -492,7 +483,7 @@ class TestBboxWgs84Transformation:
 
     @pytest.mark.unit
     def test_transform_bbox_to_wgs84_handles_none_crs(self) -> None:
-        """None CRS passes lon/lat-range bboxes through; out-of-range raises (#785)."""
+        """None CRS passes lon/lat-range bboxes through; out-of-range raises."""
         from portolan_cli.crs import transform_bbox_to_wgs84
         from portolan_core.errors import CRSMismatchError
 
@@ -518,7 +509,7 @@ class TestBboxWgs84Transformation:
 
     @pytest.mark.unit
     def test_transform_bbox_to_wgs84_rejects_an_unreadable_crs(self) -> None:
-        """An unreadable CRS raises, so a native bbox never passes as WGS84 (#928)."""
+        """An unreadable CRS raises, so a native bbox never passes as WGS84."""
         from portolan_cli.crs import transform_bbox_to_wgs84
         from portolan_core.errors import CRSTransformError
 
@@ -532,7 +523,7 @@ class TestBboxWgs84Transformation:
     def test_transform_bbox_to_wgs84_rejects_a_failed_transform(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """A transform that fails raises instead of returning the native bbox (#928)."""
+        """A transform that fails raises instead of returning the native bbox."""
         from pyproj.exceptions import ProjError
 
         from portolan_cli import crs
@@ -675,7 +666,7 @@ class TestPerBandNodata:
 
 
 class TestStacVersionInModels:
-    """Tests for STAC version consistency in model classes (Issue #305)."""
+    """Tests for STAC version consistency in model classes."""
 
     @pytest.mark.unit
     def test_item_model_uses_stac_version_constant(self) -> None:
@@ -731,7 +722,7 @@ class TestStacVersionInModels:
 
 
 class TestTableExtensionAggregation:
-    """Tests for Table extension aggregation in finalize_items (Issue #304)."""
+    """Tests for Table extension aggregation in finalize_items."""
 
     @pytest.mark.unit
     def test_aggregate_table_metadata_sums_row_counts(self) -> None:
@@ -1022,7 +1013,7 @@ class TestTableExtensionAggregation:
                 "The collection lists every type."
             )
 
-        # Every type is kept, in first-seen order (issue #1010)
+        # Every type is kept, in first-seen order
         assert aggregated.geometry_type == ["Point", "Polygon"]
 
     @pytest.mark.unit
@@ -1093,21 +1084,10 @@ class TestTableExtensionAggregation:
 
 
 class TestRasterExtension:
-    """Tests for Raster extension compliance (Issue #336).
-
-    The raster extension should be declared when:
-    1. Properties contain raster:* fields (e.g., raster:spatial_resolution)
-    2. Properties contain a top-level 'bands' array (STAC v1.1.0 unified bands)
-    """
+    """Tests for Raster extension compliance."""
 
     @pytest.mark.unit
     def test_build_stac_extensions_ignores_core_bands_key(self) -> None:
-        """A bare 'bands' array does not declare the raster extension (issue #654).
-
-        STAC v1.1.0 promoted the unified `bands` array (and its `statistics`)
-        into the core schema, so declaring the raster extension for it claims
-        conformance the object does not need.
-        """
         from portolan_cli.stac import EXTENSION_URLS, build_stac_extensions
 
         properties: dict[str, Any] = {
@@ -1156,11 +1136,6 @@ class TestRasterExtension:
 
     @pytest.mark.unit
     def test_add_raster_extension_sets_bands_on_data_asset(self) -> None:
-        """add_raster_extension attaches the unified bands array to the data asset.
-
-        STAC v1.1.0 makes ``bands`` an asset-level field; it must not appear on
-        ``item.properties`` (issue #437).
-        """
         import pystac
 
         from portolan_cli.stac import add_raster_extension, create_item
@@ -1238,14 +1213,6 @@ class TestRasterExtension:
 
     @pytest.mark.unit
     def test_add_raster_extension_not_declared_without_raster_field(self) -> None:
-        """No raster: field written -> no raster extension declared (issue #654).
-
-        Raster v2.0.0 requires a declared item to carry at least one
-        ``raster:``-prefixed field in properties, bands, or an asset. The
-        CLI's generated bands carry only core fields (name/data_type/nodata),
-        so a COG with no computable resolution must not declare the extension
-        or it fails v2.0.0 validation.
-        """
         from portolan_cli.stac import EXTENSION_URLS, add_raster_extension, create_item
 
         item = create_item(item_id="test-no-raster-field", bbox=[0, 0, 1, 1])
@@ -1313,13 +1280,7 @@ class TestRasterExtension:
 
 
 class TestExtensionRegistryVersions:
-    """Anti-drift gate for EXTENSION_URLS (issue #654).
-
-    The normative registry is the extension table in portolan-spec
-    ``stac/README.md``. The raster entry sat a major version behind that
-    table unnoticed because nothing pinned the mapping. When the spec
-    registry moves, update EXTENSION_URLS and this test in the same change.
-    """
+    """Anti-drift gate for EXTENSION_URLS."""
 
     @pytest.mark.unit
     def test_extension_urls_match_spec_registry(self) -> None:

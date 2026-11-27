@@ -1,9 +1,4 @@
-"""Unit tests for the Portolan profile schema URI declaration (issue #654).
-
-rashid's PTL-CNF-001 makes the versioned profile URI a MUST on every catalog
-and collection, and PTL-CNF-002 flags an object whose URI differs from the
-root's. ``ensure_portolan_schema_uri`` is the single writer that satisfies both.
-"""
+"""Unit tests for the Portolan profile schema URI declaration."""
 
 from __future__ import annotations
 
@@ -39,9 +34,8 @@ class TestSchemaUriConstant:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """v0.10.0 is newer than v0.9.0. A string sort put v0.9.0 last."""
-        # rashid has no public hook to fake a wheel, so this patches the private
-        # function behind newest_profile_version. If rashid renames it, this test
-        # fails loudly, and the fix is to update the target here.
+        # rashid has no public hook to fake a wheel, so this patches the private function behind
+        # newest_profile_version.
         monkeypatch.setattr(
             "rashid_core._profile.bundled_profile_versions", lambda: ("v0.9.0", "v0.10.0")
         )
@@ -100,7 +94,7 @@ class TestEnsurePortolanSchemaUri:
         assert doc["stac_extensions"] == [PORTOLAN_SCHEMA_URI]
 
     def test_keeps_a_newer_profile_version(self) -> None:
-        """A re-add must not stamp the bundled version over a newer release (issue #755)."""
+        """A re-add must not stamp the bundled version over a newer release."""
         newer = _bumped_minor(PORTOLAN_SCHEMA_URI)
         doc: dict[str, object] = {"stac_extensions": [newer]}
 

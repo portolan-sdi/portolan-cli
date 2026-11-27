@@ -1,16 +1,4 @@
-"""Unit tests for async push functionality.
-
-Tests for push_async() with concurrent uploads, rate limiting, and circuit breaker.
-
-Following TDD: these tests are written FIRST, before implementation.
-
-Test categories:
-- Concurrent upload behavior
-- Concurrency limit enforcement
-- Rate limit handling
-- Circuit breaker on cascading failures
-- Property-based tests for data integrity
-"""
+"""Unit tests for async push functionality."""
 
 from __future__ import annotations
 
@@ -38,9 +26,7 @@ if TYPE_CHECKING:
 
     from obstore.store import MemoryStore
 
-# =============================================================================
 # Test fixtures
-# =============================================================================
 
 
 # push uploads collection.json as it is, so the fixtures need no more fields.
@@ -49,11 +35,7 @@ _COLLECTION_JSON = json.dumps({"type": "Collection", "id": "test", "links": []})
 
 @pytest.fixture
 def async_catalog(tmp_path: Path) -> Path:
-    """Create a local catalog with versions.json for async push testing.
-
-    Includes required STAC metadata files (collection.json, item STAC).
-    Multiple assets to test concurrent upload behavior.
-    """
+    """Create a local catalog with versions.json for async push testing."""
     catalog_dir = tmp_path / "catalog"
     catalog_dir.mkdir()
 
@@ -207,9 +189,7 @@ def many_files_catalog(tmp_path: Path) -> Path:
     return catalog_dir
 
 
-# =============================================================================
 # AsyncIOExecutor Unit Tests
-# =============================================================================
 
 
 @pytest.mark.unit
@@ -318,9 +298,7 @@ class TestAsyncIOExecutor:
         assert results == []
 
 
-# =============================================================================
 # Circuit Breaker Tests
-# =============================================================================
 
 
 @pytest.mark.unit
@@ -381,9 +359,7 @@ class TestCircuitBreaker:
         assert fail_count >= 3
 
 
-# =============================================================================
 # AsyncProgressReporter Tests
-# =============================================================================
 
 
 @pytest.mark.unit
@@ -427,9 +403,7 @@ class TestAsyncProgressReporter:
         assert reporter.files_completed == 1
 
 
-# =============================================================================
-# push_async() Integration Tests
-# =============================================================================
+# push_async Integration Tests
 
 
 @pytest.fixture
@@ -479,11 +453,6 @@ class TestPushAsyncConcurrency:
     async def test_push_async_handles_rate_limit(
         self, async_catalog: Path, remote: MemoryStore, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Two rate-limited uploads abort the push and roll back the others.
-
-        The remote is empty before the push, so every key it wrote is a key it
-        created, and rollback deletes each one (#965).
-        """
         from portolan_cli.sync.push import push_async
 
         async def rate_limit_first_two(_key: str) -> None:
@@ -508,7 +477,7 @@ class TestPushAsyncConcurrency:
     async def test_push_async_rollback_keeps_keys_that_existed(
         self, async_catalog: Path, remote: MemoryStore, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Issue #965: an overwritten key survives the rollback with its old bytes."""
+        """An overwritten key survives the rollback with its old bytes."""
         from portolan_cli.sync.push import push_async
 
         obs.put(remote, "catalog/test/data/file0.parquet", b"live bytes")
@@ -552,9 +521,7 @@ class TestPushAsyncConcurrency:
         assert stored_keys(remote) == set()
 
 
-# =============================================================================
 # Property-Based Tests with Hypothesis
-# =============================================================================
 
 
 @pytest.mark.unit
@@ -618,9 +585,7 @@ class TestPushAsyncPropertyBased:
         assert max_concurrent <= concurrency
 
 
-# =============================================================================
-# PushVersionDiff Rename Tests (Consolidation item from design doc)
-# =============================================================================
+# PushVersionDiff Rename Tests
 
 
 @pytest.mark.unit
@@ -660,21 +625,15 @@ class TestPushVersionDiffRename:
         assert diff_conflict.has_conflict
 
 
-# =============================================================================
 # Default Concurrency Tests
-# =============================================================================
 
 
 @pytest.mark.unit
 class TestDefaultConcurrency:
-    """Tests for get_default_concurrency().
-
-    Note: Default changed from 50 to 8 in Issue #344 to prevent
-    overwhelming home networks. 8 files × 4 chunks = 32 connections.
-    """
+    """Tests for get_default_concurrency()."""
 
     def test_default_concurrency_returns_8(self) -> None:
-        """Default concurrency should be 8 (Issue #344: lowered from 50)."""
+        """Default concurrency should be 8."""
         assert get_default_concurrency() == 8
 
     def test_default_concurrency_is_positive(self) -> None:

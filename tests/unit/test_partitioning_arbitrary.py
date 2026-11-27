@@ -1,12 +1,4 @@
-"""Tests for arbitrary Hive partition column support (Issue #443).
-
-Tests the ability to:
-- Detect and handle arbitrary partition column names (not just kdtree/h3/s2/quadkey/a5)
-- Generate glob patterns for arbitrary column names
-- Support multi-level Hive partitions
-- Validate schema consistency across partitions
-- Configure partition columns via config.yaml
-"""
+"""Tests for arbitrary Hive partition column support."""
 
 from __future__ import annotations
 
@@ -265,7 +257,7 @@ class TestPartitionConfigSupport:
     def test_config_set_rejects_partition_keys_that_no_reader_reads(
         self, tmp_path: Path, key: str
     ) -> None:
-        """No code reads these keys from the config, so `config set` rejects them (#1020)."""
+        """No code reads these keys from the config, so `config set` rejects them."""
         from portolan_core.config import set_setting
         from portolan_core.errors import ConfigError
 

@@ -1,14 +1,4 @@
-"""Regression tests for standalone tabular add reporting (issue #712).
-
-A first, successful add of a standalone tabular file reported it as already
-tracked and unchanged, because the deferred phase of `add` appended it to
-`skipped` rather than `added`. The add itself worked, only the reporting lied.
-
-The spec puts a tabular collection on "the single-file collection pattern, no
-item directory or item JSON" (portolan-spec `specs/portolan/formats.md`,
-Tabular). A single-file *geo* collection asset already reports through `added`
-despite writing no item JSON, so tabular follows the same path.
-"""
+"""Regression tests for standalone tabular add reporting."""
 
 from __future__ import annotations
 
@@ -86,11 +76,6 @@ def test_genuine_no_op_still_reports_unchanged(tmp_path: Path) -> None:
 
 
 def test_a_companion_that_meets_an_asset_key_collision_is_a_skip(tmp_path: Path) -> None:
-    """The rescan of the item raised the collision, and add reported a failure.
-
-    A single file reports the same collision as a skip. The copy goes again,
-    so the item directory and the item JSON stay as they were.
-    """
     from portolan_cli.add import _DeferredPlan, _write_deferred
     from portolan_cli.stac import MergeStrategy
     from portolan_core.run_state import RunState

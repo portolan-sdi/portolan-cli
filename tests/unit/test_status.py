@@ -1,8 +1,4 @@
-"""Unit tests for portolan status command.
-
-Tests the status module which shows local vs remote version state,
-modified files, and untracked files (Issue #389).
-"""
+"""Unit tests for portolan status command."""
 
 from __future__ import annotations
 
@@ -28,12 +24,7 @@ def _create_versions_file(
     version: str = "1.0.0",
     assets: dict[str, tuple[str, int]] | None = None,
 ) -> VersionsFile:
-    """Create a VersionsFile for testing.
-
-    Args:
-        version: Version string.
-        assets: Dict of filename -> (content_for_hash, size_bytes).
-    """
+    """Create a VersionsFile for testing."""
     if assets is None:
         assets = {"data.parquet": ("content1", 1024)}
 
@@ -481,11 +472,7 @@ class TestCollectionStatus:
 
 
 class TestRemoteVersionFetcher:
-    """The caller passes the remote reader in (issue #944).
-
-    status.py must not import sync.pull, which loads Click and the write
-    modules. The CLI passes ``sync.pull.fetch_remote_versions``.
-    """
+    """The caller passes the remote reader in."""
 
     @staticmethod
     def _remote(version: str) -> VersionsFile:

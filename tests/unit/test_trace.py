@@ -1,4 +1,4 @@
-"""Unit tests for the tracing module (spans and counters, issue #991)."""
+"""Unit tests for the tracing module (spans and counters)."""
 
 from __future__ import annotations
 
@@ -107,11 +107,6 @@ class TestSpans:
         assert outer["mem_growth_mb"] >= inner["mem_growth_mb"]
 
     def test_mem_growth_leaves_out_memory_held_before_the_span(self) -> None:
-        """Memory held at span entry is not the span's own cost.
-
-        A module imported before the span and one imported inside the
-        previous span must give the same number for the span.
-        """
         trace.enable(mem=True)
         held = bytearray(8 * _MIB)
         with trace.span("alloc"):
@@ -142,12 +137,6 @@ class TestSpans:
         assert 1.9 <= child["mem_growth_mb"] <= 2.5
 
     def test_mem_growth_keeps_a_peak_when_another_thread_opens_a_span(self) -> None:
-        """A span that opens in one thread does not erase the peak of an open span in another.
-
-        tracemalloc has one peak per process, and each span entry resets it.
-        The span in the first thread reaches its peak before the span in the
-        second thread opens, so only a fold into every open span keeps it.
-        """
         trace.enable(mem=True)
         freed = threading.Event()
         second_open = threading.Event()
@@ -189,7 +178,7 @@ class TestCounters:
         assert all(v == 0 for v in trace.counters().values())
 
     def test_known_counters_name_every_write_choke_point(self) -> None:
-        """The perf gates in tests/perf read these names (#992)."""
+        """The perf gates in tests/perf read these names."""
         assert trace.KNOWN_COUNTERS == (
             "checksum.files",
             "checksum.bytes",

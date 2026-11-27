@@ -1,11 +1,4 @@
-"""Tests for documentation maintenance scripts.
-
-These tests verify that the scripts in scripts/ work correctly:
-- generate_agents_md_sections.py: Generates the test-marker and command-surface sections.
-- generate_skill_md.py: Generates CLI commands, Python API sections
-- validate_agents_md.py: Validates AGENTS.md references
-- validate_skill_md.py: Validates SKILL.md structure
-"""
+"""Tests for documentation maintenance scripts."""
 
 from __future__ import annotations
 

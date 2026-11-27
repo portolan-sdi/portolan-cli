@@ -1,7 +1,4 @@
-"""Unit tests for vector style generation (Issue #13).
-
-Tests style generation for PMTiles assets and render extension for rasters.
-"""
+"""Unit tests for vector style generation."""
 
 from __future__ import annotations
 
@@ -13,9 +10,7 @@ import pytest
 if TYPE_CHECKING:
     from portolan_cli.viz.style import StyleInfo
 
-# =============================================================================
-# Phase 1: VectorStyleConfig Tests
-# =============================================================================
+# VectorStyleConfig Tests
 
 
 class TestVectorStyleConfig:
@@ -61,14 +56,10 @@ class TestVectorStyleConfig:
             config.point_color = "#ff0000"  # type: ignore[misc]
 
 
-# =============================================================================
-# Phase 2: Style Building Tests
-# =============================================================================
+# Style Building Tests
 
 
-# =============================================================================
-# Phase 3: Raster Style Tests
-# =============================================================================
+# Raster Style Tests
 
 
 class TestBuildRasterStyle:
@@ -115,9 +106,7 @@ class TestBuildRasterStyle:
         assert style["render:colormap_name"] == "terrain"
 
 
-# =============================================================================
-# Phase 4: Config Loading Tests
-# =============================================================================
+# Config Loading Tests
 
 
 class TestGetStyleConfig:
@@ -182,14 +171,10 @@ styles:
         assert config.rescale_max == 1000
 
 
-# =============================================================================
-# Phase 5: STAC Asset Property Tests
-# =============================================================================
+# STAC Asset Property Tests
 
 
-# =============================================================================
-# Phase 5: Style Discovery Tests
-# =============================================================================
+# Style Discovery Tests
 
 
 class TestDiscoverStyles:
@@ -323,7 +308,7 @@ class TestDiscoverStyles:
 
 
 class TestSelectDefaultStyleKey:
-    """Which style asset carries the `default` role (issue #739)."""
+    """Which style asset carries the `default` role."""
 
     @staticmethod
     def _style_info(key: str) -> StyleInfo:
@@ -424,9 +409,7 @@ class TestSelectDefaultStyleKey:
         assert select_default_style_key(styles, assets) == "styles/alpha"
 
 
-# =============================================================================
-# Phase 6: Style Fixture Tests
-# =============================================================================
+# Style Fixture Tests
 
 
 class TestStyleFixtures:
@@ -547,9 +530,7 @@ class TestStyleFixtures:
         assert "layers" not in style
 
 
-# =============================================================================
-# Phase 7: Full Style Building Tests
-# =============================================================================
+# Full Style Building Tests
 
 
 class TestBuildFullStyle:
@@ -673,9 +654,7 @@ class TestBuildFullStyle:
         assert deserialized == style
 
 
-# =============================================================================
-# Phase 8: Style File Writing Tests
-# =============================================================================
+# Style File Writing Tests
 
 
 class TestWriteStyleFile:
@@ -766,9 +745,7 @@ class TestWriteStyleFile:
             write_style_file(tmp_path / "styles", "..", {"version": 8})
 
 
-# =============================================================================
-# Phase 9: Default Style Writing Tests
-# =============================================================================
+# Default Style Writing Tests
 
 
 class TestWriteDefaultStyle:
@@ -858,9 +835,7 @@ class TestWriteDefaultStyle:
         assert written == original_content
 
 
-# =============================================================================
-# Phase 10: Style Registration Tests
-# =============================================================================
+# Style Registration Tests
 
 
 def _two_unmarked_styles(collection_dir: Path) -> None:
@@ -926,7 +901,7 @@ class TestRegisterStyleAssets:
 
     @pytest.mark.unit
     def test_lone_style_is_the_default(self, tmp_path: Path) -> None:
-        """A collection's only style carries the default role too (issue #739)."""
+        """A collection's only style carries the default role too."""
         import json
 
         from portolan_cli.viz.style import discover_styles, register_style_assets
@@ -945,7 +920,7 @@ class TestRegisterStyleAssets:
 
     @pytest.mark.unit
     def test_marked_default_survives_regeneration(self, tmp_path: Path) -> None:
-        """A publisher's default choice outlives a re-run (issue #739)."""
+        """A publisher's default choice outlives a re-run."""
         import json
 
         from portolan_cli.viz.style import discover_styles, register_style_assets
@@ -1194,7 +1169,6 @@ class TestRegisterStyleAssets:
 
     @pytest.mark.unit
     def test_removes_stale_style_assets(self, tmp_path: Path) -> None:
-        """Removes style assets that no longer have files on disk."""
         import json
 
         from portolan_cli.viz.style import register_style_assets
@@ -1237,7 +1211,7 @@ class TestRegisterStyleAssets:
 
     @pytest.mark.unit
     def test_strips_the_removed_manifest(self, tmp_path: Path) -> None:
-        """Registering styles migrates a collection off portolan:styles (issue #739)."""
+        """Registering styles migrates a collection off portolan:styles."""
         import json
 
         from portolan_cli.viz.style import discover_styles, register_style_assets
@@ -1268,9 +1242,7 @@ class TestRegisterStyleAssets:
         assert updated["assets"]["styles/default"]["roles"] == ["style", "default"]
 
 
-# =============================================================================
-# Phase 11: Legend Discovery Tests (Issue #498)
-# =============================================================================
+# Legend Discovery Tests
 
 
 class TestLegendInfo:
@@ -1418,8 +1390,7 @@ class TestRegisterLegendAssets:
         assert source_asset["title"] == "source Legend"
         assert source_asset["href"] == "./legends/source.png"
 
-        # The manifest array is gone (issue #654): a client filters assets on
-        # the 'legend' role instead.
+        # The manifest array is gone: a client filters assets on the 'legend' role instead.
         assert "portolan:legends" not in updated
 
     @pytest.mark.unit
@@ -1457,7 +1428,6 @@ class TestRegisterLegendAssets:
 
     @pytest.mark.unit
     def test_removes_stale_legend_assets(self, tmp_path: Path) -> None:
-        """Removes legend assets that no longer have files on disk."""
         import json
 
         from portolan_cli.viz.style import LegendInfo, register_legend_assets
@@ -1500,7 +1470,7 @@ class TestRegisterLegendAssets:
 
 
 class TestPmtilesSourceUrl:
-    """pmtiles_source_url and zoom range on generated sources (issue #756)."""
+    """pmtiles_source_url and zoom range on generated sources."""
 
     @pytest.mark.unit
     def test_prefixes_bare_paths(self) -> None:
@@ -1545,7 +1515,7 @@ class TestPmtilesSourceUrl:
 
 
 class TestCompleteStyleSources:
-    """complete_style_sources repairs unloadable style sources (issue #756)."""
+    """complete_style_sources repairs unloadable style sources."""
 
     def _write(self, path: Path, style: dict) -> None:
         import json

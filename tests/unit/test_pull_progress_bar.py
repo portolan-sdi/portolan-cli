@@ -1,9 +1,4 @@
-"""The pull library draws a progress bar only when the caller asks for it.
-
-A ``report`` callback carries messages only. ``show_progress`` alone turns the
-bar on. Both streams look like a terminal here, so the bar would draw if the
-library chose to draw it.
-"""
+"""The pull library draws a progress bar only when the caller asks for it."""
 
 from __future__ import annotations
 
@@ -29,11 +24,7 @@ ASSETS: dict[str, dict[str, str | int]] = {
 async def _download_on_a_terminal(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, **kwargs: Any
 ) -> tuple[int, int]:
-    """Download ``ASSETS`` with a fake transfer while stdout and stderr report a terminal.
-
-    The patch runs inside the test call. pytest swaps the capture streams
-    between the setup and the call, so a fixture would patch the wrong object.
-    """
+    """Download ``ASSETS`` with a fake transfer while stdout and stderr report a terminal."""
     monkeypatch.setattr(sys.stdout, "isatty", lambda: True, raising=False)
     monkeypatch.setattr(sys.stderr, "isatty", lambda: True, raising=False)
 

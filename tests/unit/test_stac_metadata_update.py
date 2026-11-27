@@ -1,11 +1,4 @@
-"""Unit tests for STAC metadata update functions.
-
-Tests update_stac_metadata which patches title/description in
-catalog.json and collection.json files after initial creation.
-
-Per Issue #369: Extraction --auto mode should propagate rich metadata
-from WFS/ArcGIS services to STAC files, not leave generic placeholders.
-"""
+"""Unit tests for STAC metadata update functions."""
 
 from __future__ import annotations
 

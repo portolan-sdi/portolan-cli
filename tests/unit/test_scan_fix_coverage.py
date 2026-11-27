@@ -1,12 +1,4 @@
-"""Unit tests for portolan_cli/scan_fix.py.
-
-Tests fix mode implementations including:
-- Filename sanitization
-- Windows reserved name handling
-- Path length checks
-- Character transliteration
-- Fix proposals
-"""
+"""Unit tests for portolan_cli/scan_fix.py."""
 
 from __future__ import annotations
 
@@ -31,9 +23,7 @@ from portolan_cli.scan.fix import (
 if TYPE_CHECKING:
     from pathlib import Path
 
-# =============================================================================
 # Transliteration Tests
-# =============================================================================
 
 
 @pytest.mark.unit
@@ -73,17 +63,15 @@ class TestTransliterateToAscii:
         assert _transliterate_to_ascii("") == ""
 
 
-# =============================================================================
 # Filename Sanitization Tests
-# =============================================================================
 
 
 @pytest.mark.unit
 class TestSanitizeFilename:
-    """Tests for _sanitize_filename function (issue #208: dashes + lowercase)."""
+    """Tests for _sanitize_filename function (dashes + lowercase)."""
 
     def test_spaces_replaced_with_dashes(self) -> None:
-        """Spaces should be replaced with dashes (issue #208)."""
+        """Spaces should be replaced with dashes."""
         result = _sanitize_filename("file name.txt")
         assert " " not in result
         assert "-" in result
@@ -114,13 +102,13 @@ class TestSanitizeFilename:
         assert "donnees" in result
 
     def test_consecutive_dashes_collapsed(self) -> None:
-        """Multiple consecutive dashes should be collapsed (issue #208)."""
+        """Multiple consecutive dashes should be collapsed."""
         result = _sanitize_filename("file   name.txt")  # Multiple spaces
         assert "---" not in result
         assert "--" not in result
 
     def test_leading_trailing_dashes_removed(self) -> None:
-        """Leading and trailing dashes should be removed (issue #208)."""
+        """Leading and trailing dashes should be removed."""
         result = _sanitize_filename(" file .txt")
         stem = result.rsplit(".", 1)[0]
         assert not stem.startswith("-")
@@ -152,9 +140,7 @@ class TestSanitizeFilename:
         assert result == "valid_filename.txt"
 
 
-# =============================================================================
 # Windows Reserved Name Tests
-# =============================================================================
 
 
 @pytest.mark.unit
@@ -191,9 +177,7 @@ class TestWindowsReservedNames:
         assert _is_windows_reserved("null") is False  # 'null' != 'nul'
 
 
-# =============================================================================
 # Needs Rename Tests
-# =============================================================================
 
 
 @pytest.mark.unit
@@ -233,9 +217,7 @@ class TestNeedsRename:
         assert _needs_rename(path) is True
 
 
-# =============================================================================
 # Hash Computation Tests
-# =============================================================================
 
 
 @pytest.mark.unit
@@ -273,9 +255,7 @@ class TestComputeShortHash:
         assert all(c in "0123456789abcdef" for c in result)
 
 
-# =============================================================================
 # Case-Only Rename Tests
-# =============================================================================
 
 
 @pytest.mark.unit
@@ -297,9 +277,8 @@ class TestIsCaseOnlyRename:
         target = tmp_path / "testfile.txt"
         # If the file exists (on case-insensitive), samefile returns True
         result = _is_case_only_rename(source, target)
-        # Result depends on filesystem case-sensitivity
-        # On Linux (case-sensitive): False (different files)
-        # On macOS/Windows (case-insensitive): True (same file)
+        # The result depends on file system case sensitivity: False on Linux, True on
+        # macOS and Windows.
         assert isinstance(result, bool)
 
     def test_different_files_not_case_only(self, tmp_path: Path) -> None:
@@ -311,9 +290,7 @@ class TestIsCaseOnlyRename:
         assert _is_case_only_rename(source, target) is False
 
 
-# =============================================================================
 # ProposedFix Tests
-# =============================================================================
 
 
 @pytest.mark.unit
@@ -369,9 +346,7 @@ class TestProposedFix:
             assert result["category"] == category.value
 
 
-# =============================================================================
 # Hypothesis Property-Based Tests
-# =============================================================================
 
 
 @pytest.mark.unit

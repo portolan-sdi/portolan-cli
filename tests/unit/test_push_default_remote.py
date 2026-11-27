@@ -1,16 +1,4 @@
-"""Tests for push command using configured remote as default destination.
-
-GitHub Issue #143: portolan push should use configured remote as default.
-
-These tests verify:
-1. Push uses configured remote when no destination provided
-2. Explicit destination overrides configured remote
-3. Clear error message when neither provided
-4. Config hierarchy (CLI > env > collection > catalog) is respected
-5. Pull command parity (if pull has similar behavior)
-
-Following TDD: tests written FIRST before implementation.
-"""
+"""Tests for push command using configured remote as default destination."""
 
 from __future__ import annotations
 
@@ -31,9 +19,7 @@ from portolan_cli.cli import cli
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-# =============================================================================
 # Test helpers
-# =============================================================================
 
 
 def _write_catalog(
@@ -104,9 +90,7 @@ def _invoke(
     )
 
 
-# =============================================================================
 # Test fixtures
-# =============================================================================
 
 
 @pytest.fixture
@@ -117,7 +101,7 @@ def runner() -> CliRunner:
 
 @pytest.fixture
 def catalog_with_remote_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Create a catalog with remote configured via env var (Issue #356: sensitive settings)."""
+    """Create a catalog with remote configured via env var (sensitive settings)."""
     catalog_dir = tmp_path / "catalog"
     _write_catalog(
         catalog_dir,
@@ -136,7 +120,7 @@ def catalog_with_remote_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
         ],
     )
 
-    # Set remote via env var (Issue #356: sensitive settings via env vars only)
+    # Set remote via env var (sensitive settings via env vars only)
     monkeypatch.setenv("PORTOLAN_REMOTE", "s3://configured-bucket/catalog")
 
     return catalog_dir
@@ -156,9 +140,7 @@ def catalog_without_remote_config(tmp_path: Path) -> Path:
     return catalog_dir
 
 
-# =============================================================================
 # Unit tests - Push uses configured remote
-# =============================================================================
 
 
 class TestPushDefaultRemote:
@@ -312,9 +294,7 @@ class TestPushDefaultRemoteDryRun:
             assert call_kwargs["destination"] == "s3://configured-bucket/catalog"
 
 
-# =============================================================================
 # Property-based tests (Hypothesis)
-# =============================================================================
 
 
 class TestPushDefaultRemoteInvariants:
@@ -322,12 +302,7 @@ class TestPushDefaultRemoteInvariants:
 
     @pytest.fixture(autouse=True)
     def credentials_ok(self) -> Iterator[None]:
-        """Skip the credential lookup, which these tests do not cover.
-
-        The first lookup in a process builds a botocore session. Under a full
-        xdist run that took 466 ms and broke the 200 ms Hypothesis deadline on
-        the first example only (FlakyFailure).
-        """
+        """Skip the credential lookup, which these tests do not cover."""
         with patch("portolan_cli.sync.upload.check_credentials", return_value=(True, "")):
             yield
 
@@ -344,7 +319,7 @@ class TestPushDefaultRemoteInvariants:
     )
     def test_configured_remote_used_when_no_arg(self, remote_url: str, tmp_path: Path) -> None:
         """Any valid remote URL via env var should be used when no arg provided."""
-        # Set up catalog (no sensitive settings in config.yaml per Issue #356)
+        # Set up catalog (no sensitive settings in config.yaml)
         catalog_dir = tmp_path / "catalog"
         _write_catalog(
             catalog_dir,
@@ -357,7 +332,7 @@ class TestPushDefaultRemoteInvariants:
         runner = CliRunner()
 
         with _patched_push() as mock_push:
-            # Use env var for remote (Issue #356)
+            # Use env var for remote
             with patch.dict(os.environ, {"PORTOLAN_REMOTE": remote_url}):
                 result = runner.invoke(
                     cli,
@@ -387,7 +362,7 @@ class TestPushDefaultRemoteInvariants:
         self, explicit_url: str, env_url: str, tmp_path: Path
     ) -> None:
         """Explicit destination should always override env var, regardless of values."""
-        # Set up catalog (no sensitive settings in config.yaml per Issue #356)
+        # Set up catalog (no sensitive settings in config.yaml)
         catalog_dir = tmp_path / "catalog"
         _write_catalog(
             catalog_dir,
@@ -400,7 +375,7 @@ class TestPushDefaultRemoteInvariants:
         runner = CliRunner()
 
         with _patched_push() as mock_push:
-            # Use env var for remote (Issue #356)
+            # Use env var for remote
             with patch.dict(os.environ, {"PORTOLAN_REMOTE": env_url}):
                 result = runner.invoke(
                     cli,
@@ -421,9 +396,7 @@ class TestPushDefaultRemoteInvariants:
             assert call_kwargs["destination"] != env_url or explicit_url == env_url
 
 
-# =============================================================================
 # Integration tests - Full workflow
-# =============================================================================
 
 
 class TestPushDefaultRemoteIntegration:
@@ -452,7 +425,7 @@ class TestPushDefaultRemoteIntegration:
 
             # Push without destination - should use PORTOLAN_REMOTE env var
             with _patched_push() as mock_push:
-                # Set remote via env var (Issue #356: sensitive settings via env vars only)
+                # Set remote via env var (sensitive settings via env vars only)
                 with patch.dict(os.environ, {"PORTOLAN_REMOTE": "s3://workflow-bucket/catalog"}):
                     result = runner.invoke(
                         cli,
@@ -482,17 +455,11 @@ class TestPushDefaultRemoteIntegration:
         )
 
 
-# =============================================================================
 # Sync command - Same default remote behavior
-# =============================================================================
 
 
 class TestSyncDefaultRemote:
-    """Tests for sync using configured remote as default destination.
-
-    The sync command should have the same default remote behavior as push,
-    since sync is essentially pull + push.
-    """
+    """Tests for sync using configured remote as default destination."""
 
     @pytest.mark.unit
     def test_sync_uses_configured_remote_when_no_destination(

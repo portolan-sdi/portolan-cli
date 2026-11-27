@@ -1,9 +1,4 @@
-"""A catalog-wide pull with no report callback writes nothing to the terminal.
-
-Collection discovery lives in ``sync.push.discover_collections``. On a
-``PermissionError`` it still prints a warning through ``portolan_cli.output``,
-so that line bypasses the ``report`` callback of ``pull_catalog``.
-"""
+"""A catalog-wide pull with no report callback writes nothing to the terminal."""
 
 from __future__ import annotations
 

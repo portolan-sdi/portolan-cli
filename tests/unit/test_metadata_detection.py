@@ -1,14 +1,4 @@
-"""Tests for metadata detection functions.
-
-TDD: These tests are written FIRST, before implementation.
-
-Tests cover:
-- 2.1 get_stored_metadata(path) - Read existing STAC item + versions.json
-- 2.2 get_current_metadata(path) - Extract fresh metadata from file
-- 2.3 is_stale(stored, current) - MTIME check + heuristic fallback
-- 2.4 detect_changes(stored, current) - Return list of what changed
-- 3.1 check_file_metadata(path) - Return MetadataCheckResult for single file
-"""
+"""Tests for metadata detection functions."""
 
 from __future__ import annotations
 
@@ -18,9 +8,7 @@ from typing import Any
 
 import pytest
 
-# =============================================================================
 # Fixtures for Detection Tests
-# =============================================================================
 
 
 @pytest.fixture
@@ -101,9 +89,7 @@ def catalog_with_metadata(
     return catalog_dir
 
 
-# =============================================================================
 # Tests for get_stored_metadata
-# =============================================================================
 
 
 class TestGetStoredMetadata:
@@ -131,7 +117,7 @@ class TestGetStoredMetadata:
     def test_an_item_named_by_item_id_registers_its_file(
         self, tmp_path: Path, href: str, found: bool
     ) -> None:
-        """Issue #840: ``add --item-id scene`` writes ``scene.json`` beside ``rgb.tif``."""
+        """``add --item-id scene`` writes ``scene.json`` beside ``rgb.tif``."""
         import json
 
         from portolan_cli.metadata.detection import get_stored_metadata
@@ -179,9 +165,7 @@ class TestGetStoredMetadata:
         assert result.source_mtime is None
 
 
-# =============================================================================
 # Tests for get_current_metadata
-# =============================================================================
 
 
 class TestGetCurrentMetadata:
@@ -239,9 +223,7 @@ class TestGetCurrentMetadata:
             get_current_metadata(txt_file)
 
 
-# =============================================================================
 # Tests for is_stale
-# =============================================================================
 
 
 class TestIsStale:
@@ -364,9 +346,7 @@ class TestIsStale:
         assert reason == "schema_changed"
 
 
-# =============================================================================
 # Tests for detect_changes
-# =============================================================================
 
 
 class TestDetectChanges:
@@ -509,9 +489,7 @@ class TestDetectChanges:
         assert changes == []
 
 
-# =============================================================================
 # Tests for check_file_metadata
-# =============================================================================
 
 
 class TestCheckFileMetadata:
@@ -601,9 +579,8 @@ class TestCheckFileMetadata:
 
         result = check_file_metadata(parquet_path, collection_dir)
 
-        # Should be stale because mtime changed
-        # But heuristics may or may not match, depends on stored values
-        # BREAKING is also valid if schema fingerprint differs (test file vs stored)
+        # The mtime changed, so the file is stale. BREAKING is also valid if the
+        # schema fingerprint differs from the stored one.
         assert result.status in (
             MetadataStatus.STALE,
             MetadataStatus.FRESH,
@@ -642,9 +619,7 @@ class TestCheckFileMetadata:
             check_file_metadata(nonexistent, tmp_path)
 
 
-# =============================================================================
 # Tests for Schema Fingerprinting
-# =============================================================================
 
 
 class TestSchemaFingerprint:
@@ -679,9 +654,7 @@ class TestSchemaFingerprint:
         assert len(fp2) > 0
 
 
-# =============================================================================
 # Tests for StoredMetadata Dataclass
-# =============================================================================
 
 
 class TestStoredMetadataDataclass:
@@ -728,9 +701,7 @@ class TestStoredMetadataDataclass:
         assert stored.schema_fingerprint is None
 
 
-# =============================================================================
 # Edge Case Tests
-# =============================================================================
 
 
 class TestDetectionEdgeCases:
@@ -802,15 +773,11 @@ class TestDetectionEdgeCases:
 
         changes = detect_changes(state)
 
-        # Depends on implementation - exact comparison vs tolerance
-        # For now, exact comparison is used, so this would show as changed
-        # This test documents the behavior
+        # Exact comparison is used, so a small change shows as changed.
         assert isinstance(changes, list)
 
 
-# =============================================================================
-# One read per file and run (issue #995 suspects 3 and 8)
-# =============================================================================
+# One read per file and run
 
 
 def _count_footer_reads(monkeypatch: pytest.MonkeyPatch) -> list[str]:
@@ -899,11 +866,7 @@ class TestOneFooterReadPerFile:
 
 
 def _tracked_parcels(catalog: Path, source: Path, *, size_delta: int = 0) -> tuple[Path, Path]:
-    """Copy ``source`` into the collection and record its stat, off by ``size_delta``.
-
-    Returns:
-        The collection directory and the copied file.
-    """
+    """Copy ``source`` into the collection and record its stat, off by ``size_delta``."""
     import shutil
 
     collection_dir = catalog / "test-collection"
@@ -932,7 +895,7 @@ def _catalog_with_points(root: Path, points: Path) -> Path:
 
 
 class TestStatBeforeOpen:
-    """An unchanged stat proves a file fresh with no open of the file (#995-8)."""
+    """An unchanged stat proves a file fresh with no open of the file."""
 
     @pytest.mark.unit
     def test_an_unchanged_item_asset_is_fresh_unopened(
@@ -1011,7 +974,7 @@ class TestOneMtimePredicate:
 
 
 class TestScanReadsVersionsOncePerCollection:
-    """``check --metadata`` reads each versions.json once per run (#995-3)."""
+    """``check --metadata`` reads each versions.json once per run."""
 
     @pytest.mark.unit
     def test_three_assets_one_read(

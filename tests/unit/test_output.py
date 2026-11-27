@@ -1,13 +1,4 @@
-"""Tests for output.py - standardized terminal output utilities.
-
-These tests verify the observable behavior of output functions,
-specifically targeting behavior that earlier tests did not catch:
-- Default nl=True parameter (newlines added by default)
-- Prefix symbols are used (✓, ✗, →, ⚠)
-- Colors are applied (green, red, blue, yellow)
-- Dry-run mode prefixes messages with [DRY RUN]
-- Verbose mode includes additional technical details
-"""
+"""Tests for output.py - standardized terminal output utilities."""
 
 from __future__ import annotations
 
@@ -323,11 +314,7 @@ class _TTY(StringIO):
 
 @pytest.fixture
 def default_writer() -> Iterator[None]:
-    """Install the click-free writer for one test, then restore the previous one.
-
-    Importing ``portolan_cli.cli`` installs the click writer for the whole
-    session, so a test of the default writer installs it explicitly.
-    """
+    """Install the click-free writer for one test, then restore the previous one."""
     from portolan_cli import output
 
     previous = output.get_writer()
@@ -339,11 +326,7 @@ def default_writer() -> Iterator[None]:
 
 
 class TestWriter:
-    """The writer that turns a styled message into terminal output (#947).
-
-    Library callers must not load Click, so ``output`` has its own writer.
-    ``cli.py`` installs a writer that uses ``click.echo``.
-    """
+    """The writer that turns a styled message into terminal output."""
 
     @pytest.mark.unit
     @pytest.mark.usefixtures("default_writer")
@@ -437,12 +420,7 @@ class TestWriter:
 
 
 class TestStdoutToStderr:
-    """JSON mode keeps stdout for the envelope alone (#1005).
-
-    Library code calls ``info``, ``success``, ``detail``, and ``progress``,
-    and does not know the output mode. While ``stdout_to_stderr`` is active,
-    those messages go to stderr.
-    """
+    """JSON mode keeps stdout for the envelope alone."""
 
     @pytest.mark.unit
     @pytest.mark.usefixtures("default_writer")

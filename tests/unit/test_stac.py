@@ -1,8 +1,4 @@
-"""Unit tests for STAC generation module.
-
-Tests the stac module which wraps pystac for creating STAC catalogs,
-collections, and items following Portolan's conventions.
-"""
+"""Unit tests for STAC generation module."""
 
 from __future__ import annotations
 
@@ -35,7 +31,7 @@ class TestCreateCollection:
 
         assert collection.id == "test-collection"
         assert collection.description == "A test collection"
-        assert collection.license == "other"  # default (STAC 1.1, issue #568)
+        assert collection.license == "other"  # default (STAC 1.1)
         assert isinstance(collection, pystac.Collection)
 
     @pytest.mark.unit
@@ -98,7 +94,7 @@ class TestCreateCollection:
 
     @pytest.mark.unit
     def test_create_collection_rejects_a_projected_bbox(self) -> None:
-        """The collection extent is WGS84 too (#928)."""
+        """The collection extent is WGS84 too."""
         with pytest.raises(InvalidBboxError) as excinfo:
             create_collection(
                 collection_id="utm",
@@ -126,7 +122,7 @@ class TestCreateItem:
 
     @pytest.mark.unit
     def test_create_item_rejects_a_projected_bbox(self) -> None:
-        """A bbox in a projected CRS is not WGS84, so STAC rejects the Item (#928)."""
+        """A bbox in a projected CRS is not WGS84, so STAC rejects the Item."""
         with pytest.raises(InvalidBboxError) as excinfo:
             create_item(
                 item_id="utm-item",
@@ -137,7 +133,7 @@ class TestCreateItem:
 
     @pytest.mark.unit
     def test_create_item_stores_the_snapped_bbox(self) -> None:
-        """A float that rounds past 180 passes the check, so the Item stores 180.0 (#928)."""
+        """A float that rounds past 180 passes the check, so the Item stores 180.0."""
         item = create_item(item_id="edge", bbox=[170.0, -10.0, 180.00000000000006, 10.0])
 
         assert item.bbox == [170.0, -10.0, 180.0, 10.0]
@@ -186,7 +182,7 @@ class TestCreateItem:
         assert item.datetime is None
         assert item.properties["start_datetime"] == "1900-01-01T00:00:00Z"
         assert item.properties["end_datetime"] == "9999-12-31T23:59:59Z"
-        # The marker that used to travel with the range is gone (issue #654).
+        # The range carries no marker.
         assert "portolan:datetime_provisional" not in item.properties
 
     @pytest.mark.unit
@@ -274,12 +270,6 @@ class TestItemManagement:
 
     @pytest.mark.unit
     def test_add_item_keeps_the_item_file_where_add_wrote_it(self, tmp_path: Path) -> None:
-        """#840: an --item-id item stays beside its data, not at <collection>/<id>/.
-
-        On main a saved collection placed the item at the best-practice path,
-        so the item landed twice: once beside the data, once in a new
-        directory named after the id.
-        """
         collection = create_collection(collection_id="imagery", description="d")
         collection.set_self_href(str(tmp_path / "imagery" / "collection.json"))
         item = create_item(item_id="custom-scene", bbox=[0, 0, 1, 1])
@@ -312,12 +302,7 @@ class TestItemManagement:
 
 
 class TestFileStatistics:
-    """The file extension is declared from the assets that use it (issue #654).
-
-    The aggregates this used to write (``portolan:total_size_bytes``,
-    ``portolan:asset_count``) are gone: the spec defines no portolan: field, and
-    a consumer sums ``file:size`` itself.
-    """
+    """The file extension is declared from the assets that use it."""
 
     @pytest.mark.unit
     def test_declare_file_extension_writes_no_aggregates(self) -> None:

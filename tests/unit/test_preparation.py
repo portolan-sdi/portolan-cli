@@ -1,9 +1,4 @@
-"""Unit tests for the preparation module (issue #623).
-
-`preparation.py` holds the per-item conversion/metadata-routing extracted from
-add.py. These tests exercise the routing and STAC-shaping logic directly against
-the new module's seam, independent of the full add() orchestration.
-"""
+"""Unit tests for the preparation module."""
 
 from __future__ import annotations
 
@@ -29,7 +24,7 @@ pytestmark = pytest.mark.unit
 
 
 class TestConvertAndExtractRouting:
-    """_convert_and_extract_metadata routes by format + extension (issue #368)."""
+    """_convert_and_extract_metadata routes by format + extension."""
 
     def test_pmtiles_copied_and_extracted_as_cloud_native(self, tmp_path: Path) -> None:
         """.pmtiles is copied as-is (no GeoParquet conversion) and metadata read."""
@@ -200,18 +195,13 @@ def _scan(directory: Path, primary: str, *, collection_level: bool = True) -> di
 
 
 class TestStemGroupResolver:
-    """One resolver gives every scanned file its key and role (#933, #960, #929).
-
-    The answer depends on the files only. It must not depend on the ``iterdir``
-    order or on which file of the group is the primary, because every item of a
-    flat collection scans the same files.
-    """
+    """One resolver gives every scanned file its key and role."""
 
     @pytest.mark.parametrize("primary", ["points.parquet", "points.geojson"])
     def test_converted_geoparquet_is_data_and_its_source_is_source(
         self, tmp_path: Path, primary: str
     ) -> None:
-        """Issue #960: the source GeoJSON was registered with the data role."""
+        """The source GeoJSON was registered with the data role."""
         _write(tmp_path, "points.parquet", "points.geojson")
 
         assert _scan(tmp_path, primary) == {
@@ -243,7 +233,7 @@ class TestStemGroupResolver:
     def test_pmtiles_beside_geoparquet_is_the_visual_derivative(
         self, tmp_path: Path, primary: str
     ) -> None:
-        """Issues #929 and #933: the PMTiles never takes the data key or role."""
+        """The PMTiles never takes the data key or role."""
         _write(tmp_path, "zoning.parquet", "zoning.pmtiles")
 
         assert _scan(tmp_path, primary) == {
@@ -365,12 +355,6 @@ class TestStemGroupResolver:
         assert [_get_asset_role(tmp_path / "basemap.pmtiles")] == roles
 
     def test_the_item_mirror_is_never_a_scanned_asset(self, tmp_path: Path) -> None:
-        """``items.parquet`` is GeoParquet, so the scan gave the mirror the data role.
-
-        ``register_mirror_asset`` is its one writer, with the role
-        ``collection-mirror``. The PMTiles and thumbnail side-steps read data
-        assets, so a mirror with the data role became a tile source.
-        """
         _write(tmp_path, "roads.parquet", "items.parquet")
 
         assert _scan(tmp_path, "roads.parquet") == {"roads": ("./roads.parquet", ["data"])}
@@ -456,12 +440,6 @@ class TestScanItemAssetsSymlinks:
     """_scan_item_assets rejects symlinks before is_dir()/is_file() branching."""
 
     def test_symlinked_filegdb_directory_is_not_tracked(self, tmp_path: Path) -> None:
-        """A symlinked .gdb dir must be skipped, not checksummed as a container.
-
-        is_dir() follows symlinks, so before the fix a symlinked FileGDB
-        directory reached the is_filegdb() container path and got tracked,
-        escaping the item boundary. Pin that it is now excluded.
-        """
         collection_dir = tmp_path / "roads"
         collection_dir.mkdir()
         primary = collection_dir / "roads.parquet"
@@ -491,12 +469,6 @@ class TestExtractBboxWgs84:
     """wgs84_bbox CRS handling."""
 
     def test_projjson_dict_crs_is_passed_through(self) -> None:
-        """A PROJJSON dict reaches the CRS layer rather than raising.
-
-        geoparquet-io 1.4.0 keeps the source CRS on write, so a CRS with no
-        authority code now arrives as a PROJJSON dict. pyproj reads PROJJSON
-        directly (Issue #810).
-        """
         projjson = {"type": "ProjectedCRS", "name": "POSGAR 94 / Argentina 5"}
         meta = MagicMock()
         meta.crs = projjson
@@ -524,15 +496,7 @@ class TestExtractBboxWgs84:
 
 
 class TestConvertVectorRetriesTransientInterrupt:
-    """The add pipeline's ``convert_vector`` retries a transient DuckDB interrupt.
-
-    Regression guard for the Issue #339 nightly ``test_add_1000_files_*`` flake:
-    ``add`` and ``check --fix`` convert single-layer vectors via
-    ``preparation.convert_vector``, so the bounded transient-interrupt retry
-    must protect this code path. A single ``InterruptException`` on the
-    first ``gpio.convert`` must be retried and succeed; a non-transient error must
-    still fail fast.
-    """
+    """The add pipeline's ``convert_vector`` retries a transient DuckDB interrupt."""
 
     def test_convert_vector_retries_then_succeeds(self, tmp_path: Path) -> None:
         import geoparquet_io as gpio
@@ -664,12 +628,7 @@ class TestConvertTabularKeepsAForeignFile:
 
 
 class TestIsRewriteTemp:
-    """`add` must recognize the scratch file of an in-place rewrite.
-
-    `_rewrite_parquet_in_place` writes a hidden sibling and swaps it in. A hard
-    kill skips the cleanup, and `add` reads the collection directory before it
-    converts anything, so a leftover would be ingested as a source (issue #805).
-    """
+    """`add` must recognize the scratch file of an in-place rewrite."""
 
     @pytest.mark.unit
     @pytest.mark.parametrize(
@@ -696,12 +655,7 @@ class TestIsRewriteTemp:
 
 
 class TestForceRule:
-    """`add --force` keeps an existing output, for every format handler (#386, #805, #947).
-
-    `--force` means "ignore change detection", not "convert again". The handler
-    converts the kept output again only when it reads that format, which brings
-    an existing GeoParquet up to the profile.
-    """
+    """`add --force` keeps an existing output, for every format handler."""
 
     @staticmethod
     def _keep(target: Path, layout: object) -> MagicMock:
@@ -779,12 +733,7 @@ class TestForceRule:
 
 
 class TestAssertRewriteKeptEverything:
-    """The swap gate compares the source and the rewritten file.
-
-    geoparquet-io writes no `crs` key, and the GeoParquet specification reads
-    an absent `crs` as OGC:CRS84. A projected file would come back labelled as
-    longitude and latitude, so the gate refuses the swap (issue #805).
-    """
+    """The swap gate compares the source and the rewritten file."""
 
     @pytest.mark.unit
     def test_it_accepts_a_faithful_rewrite(self, tmp_path: Path) -> None:
@@ -838,13 +787,6 @@ class TestAssertRewriteKeptEverything:
     @pytest.mark.unit
     @pytest.mark.parametrize("epsg", [4326, "OGC:CRS84"])
     def test_a_dropped_wgs84_crs_is_not_a_loss(self, tmp_path: Path, epsg: object) -> None:
-        """An absent ``crs`` means OGC:CRS84, so dropping WGS84 loses nothing.
-
-        geoparquet-io omits the key for WGS84 data. Treating that as a loss
-        refused the rewrite of every WGS84 file, so the file never gained its
-        bbox covering column. A partitioned ``add`` then rewrote each partition
-        on its own, which made a 100,000-row add take 248s rather than 11s.
-        """
         from pyproj import CRS
 
         from portolan_cli.metadata import RewriteFidelity
@@ -918,12 +860,7 @@ class TestAssertRewriteKeptEverything:
 
 
 class TestTheGateSeesWhatTheRewriteDrops:
-    """geoparquet-io 1.7.0 drops some publisher metadata that the old gate did not read.
-
-    Each case writes a GeoParquet with no bbox covering column, so ``add``
-    rewrites it in place. The rewrite loses one field. The gate must keep the
-    operator's file as it is.
-    """
+    """geoparquet-io 1.7.0 drops some publisher metadata that the old gate did not read."""
 
     @staticmethod
     def _geoparquet(path: Path, case: str) -> Path:
@@ -991,12 +928,7 @@ class TestTheGateSeesWhatTheRewriteDrops:
 
 
 class TestTheRewrittenFooterIsReadOnce:
-    """The rewrite gate reads the footer of the new file. The metadata read reuses it.
-
-    The gate opens the scratch file, which then replaces the source. Its footer
-    holds the same bytes as the output, so a second open of the output reads
-    nothing new.
-    """
+    """The rewrite gate reads the footer of the new file. The metadata read reuses it."""
 
     @pytest.mark.unit
     def test_an_in_place_rewrite_opens_two_footers(self, tmp_path: Path) -> None:
@@ -1034,11 +966,7 @@ class TestTheRewrittenFooterIsReadOnce:
 
 
 class TestRasterAddCountsGdalReads:
-    """Count Python and GDAL reads, including the VRT's second source open.
-
-    The source gives the dtype and statistics; the VRT reads its pixels.
-    The new COG gives the statistics check and item metadata through the memo.
-    """
+    """Count Python and GDAL reads, including the VRT's second source open."""
 
     @staticmethod
     def _opens(catalog: Path, source: Path) -> int:
@@ -1145,11 +1073,7 @@ class TestRewriteOrKeep:
 
 
 class TestAnAddedCogCarriesItsStatistics:
-    """``convert_raster`` embeds band statistics in a COG that has none (issue #748).
-
-    rashid reads with GDAL_PAM_ENABLED=NO, so a ``.aux.xml`` does not count.
-    A lossless COG gets one rewrite. A lossy COG stays, with a warning.
-    """
+    """``convert_raster`` embeds band statistics in a COG that has none."""
 
     @staticmethod
     def _tags(path: Path) -> dict[str, str]:
@@ -1357,11 +1281,6 @@ class TestTheStatisticsRewriteKeepsEveryPixel:
 
     @pytest.mark.unit
     def test_a_nodata_pixel_of_one_band_stays_nodata(self, tmp_path: Path) -> None:
-        """Band 1 holds the nodata value 0 where bands 2 and 3 hold data.
-
-        A warp through rio-cogeo reads such a pixel as valid. It writes 1 into
-        band 1 so that the pixel does not read as nodata, and the data changes.
-        """
         import numpy as np
         import rasterio
         from rasterio.shutil import copy
@@ -1406,7 +1325,7 @@ def _two_bands_one_empty(path: Path) -> Path:
 
 
 class TestBandStatisticsWriteNoSidecar:
-    """Reading band statistics leaves no ``.aux.xml`` beside the COG (issue #748)."""
+    """Reading band statistics leaves no ``.aux.xml`` beside the COG."""
 
     @pytest.mark.unit
     def test_computed_statistics_leave_no_sidecar(self, tmp_path: Path, fixtures_dir: Path) -> None:

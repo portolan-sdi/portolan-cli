@@ -1,16 +1,4 @@
-"""Unit tests for ``_remove_from_versions`` asset-key matching.
-
-Regression coverage for issue #589: item-level assets are keyed
-``{item_id}/{filename}`` in versions.json (where ``item_id`` is the item's
-*directory* name, e.g. a Hive partition dir), but ``_remove_from_versions``
-used to reconstruct the key from the file *stem* — so ``portolan rm`` of any
-item whose directory name != file stem (every real Hive partition and nested
-item layout) left a phantom entry behind.
-
-The matcher now compares each tracked asset's ``href`` (catalog-root-relative,
-which already encodes the true item dir) against the removed file's actual
-location, so it is correct regardless of how ``add`` derived the item id.
-"""
+"""Unit tests for ``_remove_from_versions`` asset-key matching."""
 
 from __future__ import annotations
 
@@ -34,18 +22,12 @@ if TYPE_CHECKING:
 
 
 def _catalog_with_assets(tmp_path: Path, asset_keys: list[str]) -> tuple[Path, Path]:
-    """Build a managed catalog whose one collection tracks the given assets.
-
-    Each asset is keyed ``asset_key`` with an href of ``mycoll/{asset_key}``
-    (the shape that ``add`` stages: catalog-root-relative,
-    including the collection dir). Returns ``(collection_dir, versions_path)``.
-    """
+    """Build a managed catalog whose one collection tracks the given assets."""
     portolan_dir = tmp_path / ".portolan"
     portolan_dir.mkdir()
     (portolan_dir / "config.yaml").write_text("{}\n", encoding="utf-8")
-    # find_catalog_root requires catalog.json alongside the sentinel; without it
-    # the root resolves to None and the caller silently falls back to the
-    # collection's grandparent.
+    # find_catalog_root requires catalog.json alongside the sentinel; without it the root resolves
+    # to None and the caller silently falls back to the collection's grandparent.
     (tmp_path / "catalog.json").write_text("{}\n", encoding="utf-8")
 
     coll_dir = tmp_path / "mycoll"
@@ -79,13 +61,6 @@ def _touch(coll_dir: Path, rel: str) -> Path:
 
 @pytest.mark.unit
 def test_remove_item_scoped_key_dropped(tmp_path: Path) -> None:
-    """rm of an item-level asset removes its ``{item_dir}/{filename}`` key.
-
-    The item dir (``boundaries_2020``) differs from the file stem
-    (``districts``) — the realistic layout. Pre-fix the matcher reconstructed
-    ``districts/districts.parquet`` from the stem, missed the tracked
-    ``boundaries_2020/districts.parquet`` key, and left it as a phantom entry.
-    """
     key = "boundaries_2020/districts.parquet"
     coll_dir, versions_path = _catalog_with_assets(tmp_path, [key])
     file_path = _touch(coll_dir, key)  # mycoll/boundaries_2020/districts.parquet
@@ -98,12 +73,6 @@ def test_remove_item_scoped_key_dropped(tmp_path: Path) -> None:
 
 @pytest.mark.unit
 def test_remove_hive_partition_key_dropped(tmp_path: Path) -> None:
-    """rm of a Hive-partitioned item removes its ``{cell=...}/{filename}`` key.
-
-    Acceptance criterion for #589. ``add`` derives the item id from the Hive
-    partition directory name (``kdtree_cell=0000000000``), so the stem-based
-    matcher never matched it. Pre-fix this assertion fails (phantom survives).
-    """
     key = "kdtree_cell=0000000000/data.parquet"
     coll_dir, versions_path = _catalog_with_assets(tmp_path, [key])
     file_path = _touch(coll_dir, key)  # mycoll/kdtree_cell=0000000000/data.parquet
@@ -116,12 +85,6 @@ def test_remove_hive_partition_key_dropped(tmp_path: Path) -> None:
 
 @pytest.mark.unit
 def test_remove_does_not_over_match_sibling_item(tmp_path: Path) -> None:
-    """Removing one item's asset must not touch a sibling with the same filename.
-
-    Guards against a naive ``endswith('/data.parquet')`` matcher: ``district_a``
-    and ``district_b`` both track a ``data.parquet``; removing the file under
-    ``district_a`` must drop only that key.
-    """
     coll_dir, versions_path = _catalog_with_assets(
         tmp_path, ["district_a/data.parquet", "district_b/data.parquet"]
     )
@@ -147,12 +110,7 @@ def test_remove_collection_level_key_dropped(tmp_path: Path) -> None:
 
 
 def _nested_catalog(tmp_path: Path, asset_key: str) -> tuple[Path, Path]:
-    """Build a catalog whose collection sits under a subcatalog (``sub/coll``).
-
-    Mirrors what ``add`` writes for a nested collection id (ADR-0032): the
-    collection dir carries ``collection.json`` and ``versions.json``, and the
-    tracked href includes both path segments. Returns ``(coll_dir, versions_path)``.
-    """
+    """Build a catalog whose collection sits under a subcatalog (``sub/coll``)."""
     portolan_dir = tmp_path / ".portolan"
     portolan_dir.mkdir()
     (portolan_dir / "config.yaml").write_text("{}\n", encoding="utf-8")
@@ -180,13 +138,6 @@ def _nested_catalog(tmp_path: Path, asset_key: str) -> tuple[Path, Path]:
 
 @pytest.mark.unit
 def test_nested_collection_resolves_the_real_catalog_root(tmp_path: Path) -> None:
-    """Publishing a removal for ``sub/coll`` writes that collection's versions.json.
-
-    Acceptance criterion for #723. ``JsonFileBackend._versions_path`` used to
-    flatten the nested id through ``Path(collection).name``, so the new version
-    landed in ``{catalog_root}/coll/versions.json`` and the real file kept the
-    asset as a phantom entry.
-    """
     coll_dir, versions_path = _nested_catalog(tmp_path, "tunnels.parquet")
     file_path = _touch(coll_dir, "tunnels.parquet")
 
@@ -199,13 +150,6 @@ def test_nested_collection_resolves_the_real_catalog_root(tmp_path: Path) -> Non
 
 @pytest.mark.unit
 def test_remove_one_file_untracks_asset_in_a_nested_collection(tmp_path: Path) -> None:
-    """``rm`` finds the versions.json of a collection under a subcatalog (#723).
-
-    ``_remove_one_file`` built the path from ``resolve_collection_id``, which
-    returns only the first component (``sub``). It looked for
-    ``{catalog_root}/sub/versions.json``, found nothing, and skipped untracking
-    while still deleting the file — the phantom entry in the issue transcript.
-    """
     coll_dir, versions_path = _nested_catalog(tmp_path, "polygons.parquet")
     file_path = _touch(coll_dir, "polygons.parquet")
 
@@ -233,12 +177,6 @@ def test_remove_one_file_untracks_item_asset_in_a_nested_collection(tmp_path: Pa
 
 @pytest.mark.unit
 def test_remove_source_drops_converted_parquet_asset(tmp_path: Path) -> None:
-    """Removing a non-cloud-native source drops its converted ``.parquet`` asset.
-
-    ``add`` converts e.g. ``roads.shp`` to ``roads.parquet`` and tracks the
-    parquet. ``rm roads.shp`` must still untrack ``roads.parquet`` (suffix-swap
-    fallback), or the parquet becomes a phantom entry.
-    """
     coll_dir, versions_path = _catalog_with_assets(tmp_path, ["roads.parquet"])
     file_path = _touch(coll_dir, "roads.shp")  # source still on disk, tracked as parquet
 
@@ -252,12 +190,6 @@ def test_remove_source_drops_converted_parquet_asset(tmp_path: Path) -> None:
 def test_directly_tracked_source_is_matched_without_the_parquet_fallback(
     tmp_path: Path,
 ) -> None:
-    """A non-parquet asset tracked under its own href is dropped by href match.
-
-    The ``.parquet`` suffix swap is a *fallback* for the convert-on-add case. It
-    must not run when the href already matched, or the direct hit is discarded
-    and replaced by a parquet lookup that finds nothing.
-    """
     coll_dir, versions_path = _catalog_with_assets(tmp_path, ["roads.shp"])
     file_path = _touch(coll_dir, "roads.shp")
 
@@ -280,13 +212,6 @@ def test_new_version_records_the_removed_filename(tmp_path: Path) -> None:
 
 @pytest.mark.unit
 def test_nested_collection_resolves_hrefs_against_the_catalog_root(tmp_path: Path) -> None:
-    """Hrefs are resolved against the catalog root, not the collection's grandparent.
-
-    Under a subcatalog (ADR-0032) the collection sits two levels below the root,
-    so ``versions_path.parent.parent`` is the subcatalog rather than the catalog.
-    Computing hrefs against it yields ``coll/x.parquet`` where the tracked href
-    is ``sub/coll/x.parquet``, and nothing matches.
-    """
     portolan_dir = tmp_path / ".portolan"
     portolan_dir.mkdir()
     (portolan_dir / "config.yaml").write_text("{}\n", encoding="utf-8")

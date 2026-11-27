@@ -1,9 +1,4 @@
-"""Validation for the metadata.yaml providers block (issue #684).
-
-``portolan metadata validate`` should catch a malformed providers array before
-generation does, so the human sees the problem next to the file they wrote
-rather than as a PTL-PRV finding from ``portolan check``.
-"""
+"""Validation for the metadata.yaml providers block."""
 
 from __future__ import annotations
 
