@@ -2994,6 +2994,8 @@ class TestPartitionedOutputWithGeoparquetIO:
         def unreadable(_metadata: object, output_path: Path) -> list[float]:
             # A sidecar that the conversion wrote, after the run started.
             output_path.with_name(output_path.name + ".aux.xml").write_text("<x/>")
+            # A parallel add of points.parquet.other.geojson writes this one.
+            output_path.with_name(output_path.name + ".other.parquet").write_bytes(b"PAR1")
             raise CRSTransformError("EPSG:999999", "crs not found")
 
         monkeypatch.setattr(preparation, "wgs84_bbox", unreadable)
@@ -3004,6 +3006,7 @@ class TestPartitionedOutputWithGeoparquetIO:
         assert sorted(p.name for p in coll.iterdir()) == [
             "points.geojson",
             "points.parquet.notes.txt",
+            "points.parquet.other.parquet",
         ]
 
     @pytest.mark.integration
