@@ -24,6 +24,8 @@ PRAGMA = re.compile(r"#!|#:|#\s*(noqa|type:|pragma|fmt:|pyright:|mypy:)")
 SECTION = re.compile(r"(Args|Returns|Raises|Yields|Attributes):\s*$")
 COVERED = re.compile(r"(^|/)(pyproject\.toml|prek\.toml|\.github/workflows/[^/]+\.yml|[^/]+\.py)$")
 DEFS = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+# A synced file is edited in portolan-ops, so this repo cannot fix it.
+SYNCED = "synced from portolan-sdi/portolan-ops"
 
 
 def _hist(text: str) -> bool:
@@ -138,6 +140,8 @@ def check(path: Path, root: Path, rendered: dict[str, set[str]]) -> list[str]:
     """Return the findings for one file as ``path:line: CODE message`` lines."""
     rel = Path(os.path.relpath(path.resolve(), root.resolve())).as_posix()
     rows = path.read_text(encoding="utf-8").splitlines()
+    if any(SYNCED in row for row in rows[:5]):
+        return []
     if path.suffix != ".py":
         found = _comments(
             [(n, s.strip(), True) for n, s in enumerate(rows, 1) if s.lstrip()[:1] == "#"]

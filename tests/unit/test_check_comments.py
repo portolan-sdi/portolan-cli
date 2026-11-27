@@ -190,6 +190,11 @@ def test_toml_and_yaml_count_only_comment_lines(tmp_path: Path) -> None:
     assert _codes(tmp_path, ".github/workflows/ci.yml", yml) == ["COM-HIST"]
 
 
+def test_files_synced_from_ops_are_skipped(tmp_path: Path) -> None:
+    head = "# Thin caller — synced from portolan-sdi/portolan-ops (ci/x.yml).\n# Edit it there.\n"
+    assert _codes(tmp_path, ".github/workflows/x.yml", head + "# a\n# b\n# see #12\n") == []
+
+
 def test_main_ignores_other_paths_and_reports(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
