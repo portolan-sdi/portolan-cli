@@ -39,28 +39,6 @@ pytestmark = pytest.mark.integration
 
 AUTO = frozenset(rule for rule, row in RULE_REMEDIATION.items() if row.bucket is Bucket.AUTO)
 
-_GEOPARQUET_KEPT = (
-    "check --fix classifies an existing GeoParquet as cloud-native and never rewrites it. "
-    "The convert fixer is inert and points at `portolan add --force --reconvert`."
-)
-_COG_KEPT = (
-    "check --fix skips a GeoTIFF that passes cog_validate. Only `check --fix --force` "
-    "re-optimizes it."
-)
-#: Rules whose repair ``check --fix`` does not make. Each maps to the reason,
-#: and the test runs as a strict xfail, so a fix turns it red.
-NOT_REPAIRED: dict[str, str] = {
-    "PTL-DAT-003": (
-        "check --fix selects only the inert convert fixer for a type that contradicts the "
-        "bytes. No pass derives the media type from the bytes again."
-    ),
-    "PTL-DAT-006": _GEOPARQUET_KEPT,
-    "PTL-DAT-007": _GEOPARQUET_KEPT,
-    "PTL-DAT-008": _GEOPARQUET_KEPT,
-    "PTL-DAT-011": _COG_KEPT,
-    "PTL-DAT-013": _COG_KEPT,
-}
-
 # Each example runs the CLI four times, so the example count is a fraction of
 # the profile's. CI gets 2 examples, a local run 4, and nightly 20.
 EXAMPLES = max(2, settings().max_examples // 25)
@@ -99,7 +77,6 @@ def test_every_auto_rule_has_a_breaker_or_a_reason() -> None:
     assert set(BREAKERS) | set(UNBREAKABLE) == AUTO
     assert not set(BREAKERS) & set(UNBREAKABLE)
     assert all(reason.strip() for reason in UNBREAKABLE.values())
-    assert set(NOT_REPAIRED) <= set(BREAKERS)
 
 
 @contextmanager
@@ -125,20 +102,7 @@ def test_the_rule_fires(rule_id: str, base: Base, data: st.DataObject) -> None:
         pass
 
 
-def _repairable() -> list[Any]:
-    return [
-        pytest.param(
-            rule,
-            id=rule,
-            marks=[pytest.mark.xfail(strict=True, reason=NOT_REPAIRED[rule])]
-            if rule in NOT_REPAIRED
-            else [],
-        )
-        for rule in sorted(BREAKERS)
-    ]
-
-
-@pytest.mark.parametrize("rule_id", _repairable())
+@pytest.mark.parametrize("rule_id", sorted(BREAKERS))
 @settings(max_examples=EXAMPLES)
 @given(data=st.data())
 def test_fix_repairs_the_rule_and_a_second_fix_is_a_no_op(

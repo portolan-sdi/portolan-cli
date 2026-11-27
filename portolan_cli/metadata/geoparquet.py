@@ -259,8 +259,8 @@ def read_spatial_layout(source: Path | pq.ParquetFile) -> SpatialLayout:
     (issue #805).
 
     The answer says nothing about row order. A file that carries the column but
-    holds unordered rows still fails PTL-DAT-006, and ``add --force
-    --reconvert`` is what rewrites it.
+    holds unordered rows still fails PTL-DAT-006, and ``check --fix`` or
+    ``add --force --reconvert`` rewrites it.
 
     Args:
         source: Path to a Parquet file, or a file the caller opened with

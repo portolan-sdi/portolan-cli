@@ -50,14 +50,14 @@ class GeoParquetHandler:
         return output
 
     def reconvert(self, source: Path, catalog_root: Path | None) -> Path:
-        """Rewrite a GeoParquet file with the current settings (``add --reconvert``).
-
-        There is no ``reoptimize``: ``check --fix --force`` re-encodes rasters
-        only (issue #530).
-        """
+        """Rewrite a GeoParquet file with the current settings (``add --reconvert``)."""
         output = api.convert_vector(source, source.parent, catalog_root, reconvert=True)
         self._check(output)
         return output
+
+    def reoptimize(self, source: Path, catalog_root: Path | None) -> Path:
+        """Rewrite a GeoParquet file that a ``check --fix`` finding names."""
+        return self.reconvert(source, catalog_root)
 
     def partition(self, path: Path, catalog_root: Path | None) -> list[Path]:
         """Partition a file above the size threshold. See ``partition_strategy``."""

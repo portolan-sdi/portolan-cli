@@ -1225,7 +1225,8 @@ def _output_check_json(payload: dict[str, Any], *, failed: bool) -> None:
 @click.option(
     "--fix",
     is_flag=True,
-    help="Fix issues: convert geo-assets to cloud-native, update stale metadata",
+    help="Fix issues: convert geo-assets to cloud-native, rewrite the data files that a "
+    "finding names, update stale metadata",
 )
 @click.option(
     "--dry-run",
@@ -1240,8 +1241,8 @@ def _output_check_json(payload: dict[str, Any], *, failed: bool) -> None:
 @click.option(
     "--force",
     is_flag=True,
-    help="Re-optimize already-valid COGs by re-applying current COG settings, "
-    "e.g. to add missing overviews (use with --fix; rasters only)",
+    help="Re-optimize every valid COG by re-applying current COG settings, also the COGs "
+    "that no finding names (use with --fix; rasters only)",
 )
 @click.option(
     "--workers",
@@ -1624,18 +1625,17 @@ def _render_check(
 
 
 def _print_check_fix_preview(report: Any) -> None:
-    """Print preview of what would be converted."""
-    from portolan_cli.formats import CloudNativeStatus
+    """Print preview of what would be converted or rewritten in place."""
+    previews = report.conversion_report.results if report.conversion_report else []
 
-    convertible = [f for f in report.files if f.status == CloudNativeStatus.CONVERTIBLE]
-
-    if not convertible:
+    if not previews:
         info_output("No files need conversion")
         return
 
-    info_output(f"Dry run: {len(convertible)} file(s) would be converted")
-    for f in convertible:
-        detail(f"  {f.relative_path} ({f.display_name}) -> {f.target_format}")
+    info_output(f"Dry run: {len(previews)} file(s) would be converted")
+    for r in previews:
+        relative = r.source.relative_to(report.root).as_posix()
+        detail(f"  {relative} ({r.format_from}) -> {r.format_to}")
 
 
 def _print_legacy_removal_results(removal: Any, *, verbose: bool = False) -> None:

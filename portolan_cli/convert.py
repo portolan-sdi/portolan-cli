@@ -352,13 +352,13 @@ def _early_exit_result(
 ) -> ConversionResult | None:
     """Return a SKIPPED/UNSUPPORTED result if no conversion should run, else None.
 
-    Cloud-native files are skipped, EXCEPT when ``force`` is set and the file is a
-    RASTER (a valid COG) — that case re-optimizes in place (issue #530), so this
-    returns None to let conversion proceed. Vectors are never force-re-processed.
+    Cloud-native files are skipped, EXCEPT when ``force`` is set and the handler
+    has a ``reoptimize`` method. That case rewrites the file in place, so this
+    returns None to let conversion proceed. The caller picks which files to force.
     Unsupported formats are accepted with no error.
     """
     if format_info.status == CloudNativeStatus.CLOUD_NATIVE:
-        # --force re-optimizes a file whose handler can rewrite it (issue #530).
+        # force re-optimizes a file whose handler can rewrite it.
         from portolan_cli.plugins.formats import handler_for
 
         handler = handler_for(source, catalog_path, state=state) if force else None
@@ -414,9 +414,8 @@ def convert_file(
         vector_settings: Explicit vector settings override. Takes precedence over
             ``catalog_path``-loaded settings. If None, loads from
             ``catalog_path`` or falls back to no spatial optimization.
-        force: Re-optimize an already-cloud-native RASTER by re-applying current
-            ``cog_settings`` (e.g. to add missing overviews). Raster-scoped only:
-            cloud-native vectors are still skipped (issue #530). Has no effect on
+        force: Rewrite an already-cloud-native file whose handler has a
+            ``reoptimize`` method, with the current settings. Has no effect on
             CONVERTIBLE or UNSUPPORTED files.
         state: The run state, which parses the config once per command.
 
