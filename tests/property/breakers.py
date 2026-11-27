@@ -194,7 +194,11 @@ def _rewrite_points(path: Path, coords: list[tuple[float, float]], **write_optio
 
 def _original_coords(path: Path) -> list[tuple[float, float]]:
     boxes = pq.read_table(path, columns=["bbox"]).column("bbox").to_pylist()
-    return [(b["xmin"], b["ymin"]) for b in boxes]
+    coords = []
+    for box in boxes:
+        assert box is not None
+        coords.append((box["xmin"], box["ymin"]))
+    return coords
 
 
 # ---------------------------------------------------------------------------

@@ -230,11 +230,12 @@ def test_an_unsafe_key_is_always_refused(catalog: Input, key: str, place: str) -
     planner refuses each one as a document key, a key prefix, or a prior key.
     """
     documents, documentation = catalog
+    options: dict[str, Any] = {}
+    if place == "document":
+        documents[key] = _container("Catalog", "extra", "Extra")
+    elif place == "prefix":
+        options["key_prefix"] = key.rsplit("/", 1)[0]
+    else:
+        options["prior_managed_keys"] = [key]
     with pytest.raises(writer.InvalidKeyError):
-        if place == "document":
-            documents[key] = _container("Catalog", "extra", "Extra")
-            writer.plan_catalog(documents, documentation)
-        elif place == "prefix":
-            writer.plan_catalog(documents, documentation, key_prefix=key.rsplit("/", 1)[0])
-        else:
-            writer.plan_catalog(documents, documentation, prior_managed_keys=[key])
+        writer.plan_catalog(documents, documentation, **options)
