@@ -115,7 +115,6 @@ def _summary(wall_duration_seconds: float | None = None) -> ExtractionSummary:
 
 @pytest.mark.unit
 def test_summary_wall_duration_roundtrip() -> None:
-    """The fetch wall time survives a save and a load (issue #991)."""
     summary = _summary(wall_duration_seconds=1.75)
     data = summary.to_dict()
     assert data["wall_duration_seconds"] == 1.75
@@ -124,7 +123,6 @@ def test_summary_wall_duration_roundtrip() -> None:
 
 @pytest.mark.unit
 def test_summary_without_wall_duration_keeps_the_old_shape() -> None:
-    """A report written before issue #991 loads, and writes no new key."""
     data = _summary().to_dict()
     assert "wall_duration_seconds" not in data
     assert ExtractionSummary.from_dict(data).wall_duration_seconds is None
@@ -142,7 +140,6 @@ def _recording_extract(seen: list[str | None]) -> Callable[..., ExtractionReport
 
 @pytest.mark.unit
 def test_run_extract_command_forwards_the_id_it_checks(tmp_path: Path) -> None:
-    """The id in the options is the one the extraction gets (Codex review of #1133)."""
     seen: list[str | None] = []
 
     run_extract_command(

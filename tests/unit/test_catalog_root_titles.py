@@ -1,9 +1,4 @@
-"""Unit tests for the root catalog title override (issue #815).
-
-The root ``.portolan/metadata.yaml`` may carry ``title`` and ``description``.
-``apply_catalog_human_titles`` copies them onto the root ``catalog.json``, the
-way ``apply_human_titles`` already does for a collection.
-"""
+"""Unit tests for the root catalog title override."""
 
 from __future__ import annotations
 
@@ -103,12 +98,6 @@ class TestApplyCatalogHumanTitles:
         assert catalog["title"] == "Phl Housing Demo"
 
     def test_subcatalog_keeps_its_own_title(self, tmp_path: Path) -> None:
-        """The root title must not overwrite a subcatalog title.
-
-        The sweep reads every ``catalog.json``. A subcatalog with no
-        ``metadata.yaml`` of its own keeps the title its path segment produced,
-        because ``title`` never inherits from a parent.
-        """
         _catalog(tmp_path)
         _metadata(tmp_path, {"title": "Philadelphia Housing"})
         sub = tmp_path / "zoning"
@@ -133,7 +122,6 @@ class TestApplyCatalogHumanTitles:
         assert subcatalog["title"] == "Zoning"
 
     def test_subcatalog_takes_its_own_metadata_title(self, tmp_path: Path) -> None:
-        """A subcatalog reads the metadata.yaml in its own directory (#815)."""
         _catalog(tmp_path)
         _metadata(tmp_path, {"title": "Philadelphia Housing"})
         sub = tmp_path / "zoning"
@@ -176,7 +164,7 @@ class TestApplyCatalogHumanTitles:
 
 @pytest.mark.unit
 class TestTitleDoesNotInherit:
-    """title/description name one object and never inherit (issue #815)."""
+    """Title/description name one object and never inherit."""
 
     def test_collection_does_not_take_the_root_title(self, tmp_path: Path) -> None:
         from portolan_core.config import load_merged_metadata

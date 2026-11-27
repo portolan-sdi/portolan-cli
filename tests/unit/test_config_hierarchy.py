@@ -1,11 +1,4 @@
-"""Tests for hierarchical .portolan/ folder support.
-
-Tests the directory tree walking and config/metadata merging:
-- find_portolan_files(): Find all .portolan/{filename} from start to root
-- load_merged_yaml(): Deep merge YAML files with child-overrides-parent
-- load_merged_config(): Config-specific merge with backwards compatibility
-- load_merged_metadata(): Metadata-specific merge for README generation
-"""
+"""Tests for hierarchical .portolan/ folder support."""
 
 from __future__ import annotations
 
@@ -541,11 +534,7 @@ class TestLoadMergedMetadata:
 
 
 class TestGetSettingWithHierarchy:
-    """Tests for get_setting() using hierarchical .portolan/ folders.
-
-    Note: Tests use non-sensitive keys (workers, backend) because sensitive keys
-    (remote, profile, region) cannot be read from config.yaml per Issue #356.
-    """
+    """Tests for get_setting() using hierarchical .portolan/ folders."""
 
     @pytest.mark.unit
     def test_collection_folder_config_overrides_catalog(self, tmp_path: Path) -> None:

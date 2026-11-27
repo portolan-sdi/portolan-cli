@@ -1,10 +1,4 @@
-"""Tests for the finalization writers outside finalize_items (#801, #1046).
-
-``refresh_collection_fields`` reports whether it changed collection.json,
-because ``check --fix`` turns that answer into an UPDATED result.
-``_stage_items`` stages the version snapshot that ``push`` trusts, and
-``commit_run`` writes it.
-"""
+"""Tests for the finalization writers outside finalize_items."""
 
 from __future__ import annotations
 

@@ -1,9 +1,4 @@
-"""``list`` orders files the same way on Windows and POSIX.
-
-A Windows ``Path`` compares without case. ``sorted`` on paths therefore put
-``data.parquet`` before ``README.md`` on Windows and after it on POSIX. The
-``list --json`` asset order then differed between platforms.
-"""
+"""``list`` orders files the same way on Windows and POSIX."""
 
 from __future__ import annotations
 

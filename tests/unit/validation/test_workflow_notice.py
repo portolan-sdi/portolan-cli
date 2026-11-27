@@ -1,10 +1,4 @@
-"""The workflow notice: files on disk the catalog does not account for.
-
-An unregistered data file is not a conformance defect — rashid validates the
-catalog it is given, and a file nothing points at is outside that catalog. It is
-still worth saying out loud, so `run_check` carries it on a separate channel
-that never becomes a ``PTL-*`` finding.
-"""
+"""The workflow notice: files on disk the catalog does not account for."""
 
 from __future__ import annotations
 

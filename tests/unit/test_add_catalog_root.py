@@ -1,14 +1,4 @@
-"""Unit tests for 'portolan add .' at catalog root (Issue #137).
-
-Tests the fix for: add. fails at catalog root with
-"Cannot determine collection from path: /path/to/my-catalog"
-
-The root cause: resolve_collection_id raises ValueError when path == catalog_root
-because relative_to produces an empty parts tuple.
-
-Fix: detect when target_path == catalog_root and call add_files with
-collection_id=None, letting it infer each file's collection from its path.
-"""
+"""Unit tests for 'portolan add .' at catalog root."""
 
 from __future__ import annotations
 
@@ -30,13 +20,7 @@ def runner() -> CliRunner:
 
 
 def setup_catalog(path: Path) -> None:
-    """Create an initialized Portolan catalog.
-
-    Creates full managed catalog structure with:
-    - .portolan/config.yaml (sentinel)
-    (Note: state.json removed per issue #290)
-    - catalog.json at root (STAC standard)
-    """
+    """Create an initialized Portolan catalog."""
     portolan_dir = path / ".portolan"
     portolan_dir.mkdir()
     (portolan_dir / "config.yaml").write_text("# Portolan configuration\n")

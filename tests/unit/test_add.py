@@ -1,8 +1,4 @@
-"""Unit tests for the add pipeline module.
-
-Tests the add module which orchestrates the workflow for adding,
-listing, and removing items from a Portolan catalog.
-"""
+"""Unit tests for the add pipeline module."""
 
 from __future__ import annotations
 
@@ -188,7 +184,7 @@ class TestAdd:
     @pytest.mark.unit
     def test_add_vector(self, initialized_catalog: Path, tmp_path: Path) -> None:
         """add processes a vector file and creates STAC item."""
-        # Create file INSIDE collection/item directory structure (Issue #163)
+        # Create file INSIDE collection/item directory structure
         item_dir = initialized_catalog / "test-collection" / "data"
         item_dir.mkdir(parents=True, exist_ok=True)
 
@@ -223,7 +219,7 @@ class TestAdd:
     @pytest.mark.unit
     def test_add_raster(self, initialized_catalog: Path, tmp_path: Path) -> None:
         """add processes a raster file and creates STAC item."""
-        # Create file INSIDE collection/item directory structure (Issue #163)
+        # Create file INSIDE collection/item directory structure
         item_dir = initialized_catalog / "imagery" / "satellite"
         item_dir.mkdir(parents=True, exist_ok=True)
 
@@ -283,7 +279,7 @@ class TestAdd:
         self, initialized_catalog: Path, tmp_path: Path
     ) -> None:
         """add accepts optional title and description."""
-        # Create file INSIDE collection/item directory structure (Issue #163)
+        # Create file INSIDE collection/item directory structure
         item_dir = initialized_catalog / "test" / "mydata"
         item_dir.mkdir(parents=True, exist_ok=True)
 
@@ -313,7 +309,7 @@ class TestAdd:
         self, initialized_catalog: Path, tmp_path: Path
     ) -> None:
         """add creates collection when it doesn't exist."""
-        # Create file INSIDE collection/item directory structure (Issue #163)
+        # Create file INSIDE collection/item directory structure
         item_dir = initialized_catalog / "new-collection" / "mydata"
         item_dir.mkdir(parents=True, exist_ok=True)
 
@@ -571,29 +567,12 @@ class TestAddMissingBbox:
 
 
 class TestAddItemIdDerivation:
-    """Tests for item_id derivation from directory structure (Issue #163).
-
-    Per the design, item_id should be derived from the PARENT DIRECTORY name,
-    not the filename. This ensures files stay organized with their companions
-    and avoids creating duplicate directories.
-
-    Example:
-        censo-2010/data/radios.parquet
-                   ^^^^
-                   item_id = "data" (parent directory)
-                   NOT "radios" (filename stem)
-    """
+    """Tests for item_id derivation from directory structure."""
 
     @pytest.mark.unit
     def test_item_id_from_parent_directory_not_filename(
         self, initialized_catalog: Path, tmp_path: Path
     ) -> None:
-        """item_id should be derived from parent directory name, not filename.
-
-        Given: censo-2010/data/radios.parquet
-        Expected item_id: "data" (parent directory)
-        Wrong item_id: "radios" (filename stem)
-        """
         # Set up: collection/item_dir/file.geojson structure
         collection_dir = initialized_catalog / "censo-2010"
         item_dir = collection_dir / "data"  # This should become the item_id
@@ -633,14 +612,6 @@ class TestAddItemIdDerivation:
 
     @pytest.mark.unit
     def test_add_tracks_in_place_no_copy(self, initialized_catalog: Path, tmp_path: Path) -> None:
-        """add should track files in-place, not copy them to a new directory.
-
-        Given: collection/item_dir/file.geojson
-        Expected: Converted file stays in collection/item_dir/
-        Wrong: Copied to collection/filename_stem/ (creates duplicate)
-
-        Issue #163: The current implementation copies files, causing duplication.
-        """
         # Set up structure: collection/data/radios.geojson
         collection_dir = initialized_catalog / "censo-2010"
         item_dir = collection_dir / "data"
@@ -692,16 +663,6 @@ class TestAddItemIdDerivation:
 
     @pytest.mark.integration
     def test_add_no_artifacts_on_validation_failure(self, initialized_catalog: Path) -> None:
-        """Failed add leaves no partial artifacts (Issue #163 atomicity).
-
-        When add fails due to missing geometry/bbox, it should be atomic:
-        - No new directories created
-        - No files copied
-        - No collection.json created
-        - No versions.json created
-
-        This tests the REAL code path without mocks to verify atomicity.
-        """
         # Create collection with an item directory containing non-geo parquet
         collection_dir = initialized_catalog / "demographics"
         item_dir = collection_dir / "census-data"
@@ -797,11 +758,6 @@ class TestPathSegmentValidation:
     def test_rejects_unsafe_collection_id(
         self, initialized_catalog: Path, tmp_path: Path, bad_id: str
     ) -> None:
-        """add rejects collection_id values with traversal or backslashes.
-
-        Forward slashes ARE allowed for nested catalog paths
-        (e.g., 'climate/hittekaart'), but traversal segments are rejected.
-        """
         geojson_path = tmp_path / "data.geojson"
         geojson_path.write_text(self._GEOJSON)
 
@@ -836,11 +792,7 @@ def _stage_item_assets(
 
 
 class TestUpdateVersionsHref:
-    """Tests for staged versions with catalog-root-relative hrefs.
-
-    The href in versions.json must be relative to catalog root so that
-    push.py and pull.py can resolve it via `catalog_root / href`.
-    """
+    """Tests for staged versions with catalog-root-relative hrefs."""
 
     @pytest.mark.unit
     def test_href_is_catalog_root_relative(self, tmp_path: Path) -> None:
@@ -1065,7 +1017,7 @@ class TestMultiAssetAdd:
         self, initialized_catalog: Path, tmp_path: Path
     ) -> None:
         """add creates assets for ALL files in item_dir, not just the primary."""
-        # Create file INSIDE item directory (Issue #163)
+        # Create file INSIDE item directory
         item_dir = initialized_catalog / "test-collection" / "data"
         item_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1102,7 +1054,7 @@ class TestMultiAssetAdd:
         self, initialized_catalog: Path, tmp_path: Path
     ) -> None:
         """add ignores STAC JSON files (collection.json, etc.) in the item directory."""
-        # Create file INSIDE item directory (Issue #163)
+        # Create file INSIDE item directory
         item_dir = initialized_catalog / "test-collection" / "data"
         item_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1121,9 +1073,7 @@ class TestMultiAssetAdd:
             collection_id="test-collection",
         )
 
-        # The item.json file is written by pystac after we scan, so it won't
-        # be in the scanned assets. But the data file should be there.
-        # Verify no STAC files appear in asset_paths
+        # pystac writes item.json after the scan, so no STAC file is in asset_paths.
         for asset_path in result.asset_paths:
             basename = Path(asset_path).name
             assert basename not in IGNORED_FILES, f"STAC file {basename} should not be an asset"
@@ -1131,7 +1081,7 @@ class TestMultiAssetAdd:
     @pytest.mark.unit
     def test_add_skips_hidden_files(self, initialized_catalog: Path, tmp_path: Path) -> None:
         """add skips hidden files (starting with dot) in item_dir."""
-        # Create file INSIDE item directory (Issue #163)
+        # Create file INSIDE item directory
         item_dir = initialized_catalog / "test-collection" / "data"
         item_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1162,7 +1112,7 @@ class TestMultiAssetAdd:
     @pytest.mark.unit
     def test_add_skips_symlinks(self, initialized_catalog: Path, tmp_path: Path) -> None:
         """add does not follow symlinks when scanning item_dir."""
-        # Create file INSIDE item directory (Issue #163)
+        # Create file INSIDE item directory
         item_dir = initialized_catalog / "test-collection" / "data"
         item_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1312,7 +1262,7 @@ class TestMultiAssetListAndInfo:
 
 
 class TestComputeDirSize:
-    """Tests for compute_dir_size (Issue #501)."""
+    """Tests for compute_dir_size."""
 
     @pytest.mark.unit
     def test_compute_dir_size_single_file(self, tmp_path: Path) -> None:

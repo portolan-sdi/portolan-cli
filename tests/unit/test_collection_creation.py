@@ -1,11 +1,4 @@
-"""Unit tests for collection creation (User Story 2).
-
-Tests cover:
-- create_collection() returns CollectionModel
-- Extent extraction from GeoParquet
-- Schema extraction and writing
-- Collection JSON serialization
-"""
+"""Unit tests for collection creation (User Story 2)."""
 
 from __future__ import annotations
 

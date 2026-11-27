@@ -1,16 +1,4 @@
-"""Unit tests for empty WFS layer handling.
-
-Tests Issue #450: Graceful handling of empty WFS layers.
-
-When a WFS layer has 0 features, gpio raises WFSError with message
-"No features returned from WFS service for layer '{typename}'."
-
-We should:
-1. Detect this specific error
-2. Mark the layer as "empty" (not "failed")
-3. Continue with the next layer
-4. Report empty layers in the summary
-"""
+"""Unit tests for empty WFS layer handling."""
 
 from __future__ import annotations
 

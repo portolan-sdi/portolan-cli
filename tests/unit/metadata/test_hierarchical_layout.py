@@ -1,15 +1,4 @@
-"""Freshness lookups against the layout `portolan add` writes (issue #709).
-
-`add` puts an item in its own directory and records its assets in versions.json
-under the key ``{item_id}/{filename}``. The existing detection tests build the
-flat layout, where an item JSON sits beside its data file in the collection
-directory and the versions.json key is the bare file name.
-``metadata/scan.py`` documents the flat layout as unsupported, so nothing
-covered the key `add` really writes. The bare-name lookup therefore never
-matched, and every item-level asset read as STALE.
-
-These tests pin the hierarchical layout on both readers.
-"""
+"""Freshness lookups against the layout `portolan add` writes."""
 
 from __future__ import annotations
 
@@ -58,11 +47,7 @@ def _item_json(item_id: str, href: str) -> dict[str, Any]:
 
 
 def _versions_json(asset_key: str, **overrides: Any) -> dict[str, Any]:
-    """versions.json exactly as `add` writes it for an item-level asset.
-
-    `add` records ``mtime`` and never ``source_mtime`` for an item-level asset,
-    so the reader has to accept ``mtime`` as the baseline.
-    """
+    """Versions.json exactly as `add` writes it for an item-level asset."""
     asset: dict[str, Any] = {
         "sha256": STORED_SHA256,
         "size_bytes": 1024,
@@ -105,11 +90,6 @@ class TestStoredMetadataLookup:
     """`get_stored_metadata` resolves the key `add` writes."""
 
     def test_reads_the_item_prefixed_key(self, hierarchical_collection: tuple[Path, Path]) -> None:
-        """The entry lives under ``{item_id}/{filename}``, not ``{filename}``.
-
-        Before the fix the lookup used the bare file name and returned
-        ``source_mtime=None``, which made `is_stale` answer ``new_file``.
-        """
         collection_dir, data_file = hierarchical_collection
 
         stored = get_stored_metadata(data_file, collection_dir)
@@ -136,11 +116,6 @@ class TestStoredMetadataLookup:
         assert stored.source_mtime == 999.0
 
     def test_resolves_a_collection_level_bare_key(self, tmp_path: Path) -> None:
-        """A collection-level asset keys on its bare file name.
-
-        The data file sits in the collection directory, so ``relative`` holds no
-        path separator. The bare key resolves the entry.
-        """
         collection_dir = tmp_path / "rasters"
         collection_dir.mkdir(parents=True)
         data_file = collection_dir / DATA_NAME
@@ -153,11 +128,6 @@ class TestStoredMetadataLookup:
         assert entry["mtime"] == STORED_MTIME
 
     def test_nested_item_resolves_a_bare_key_without_a_collision(self, tmp_path: Path) -> None:
-        """A nested item asset resolves the bare key when no file collides.
-
-        A sub-catalog inside a collection keys the item asset by basename. No
-        collection-level file shares the name, so the bare key stays valid.
-        """
         collection_dir = tmp_path / "rasters"
         item_dir = collection_dir / "2024" / ITEM_ID
         item_dir.mkdir(parents=True)
@@ -171,14 +141,6 @@ class TestStoredMetadataLookup:
         assert entry["mtime"] == STORED_MTIME
 
     def test_item_asset_ignores_a_colliding_bare_key(self, tmp_path: Path) -> None:
-        """An item-level asset never falls back onto a collection-level key.
-
-        The item data file and a collection-level asset share the file name
-        ``data.tif``. The versions.json holds only the bare key ``data.tif`` with
-        a foreign baseline. The item-level lookup uses ``{item_id}/data.tif``.
-        The bare key must not answer for it, or the wrong baseline drives a
-        spurious STALE (issue #709).
-        """
         collision_name = "data.tif"
         collection_dir = tmp_path / "rasters"
         item_dir = collection_dir / ITEM_ID
@@ -199,11 +161,6 @@ class TestVersionsTrackingUpdate:
     def test_refreshes_the_item_prefixed_entry(
         self, hierarchical_collection: tuple[Path, Path]
     ) -> None:
-        """Before the fix the bare-name lookup raised KeyError.
-
-        `_fix_single_file` discarded that error, so the baseline never landed and
-        the next run read STALE again.
-        """
         collection_dir, data_file = hierarchical_collection
         versions_path = collection_dir / "versions.json"
 
@@ -228,13 +185,6 @@ class TestVersionsTrackingUpdate:
         assert set(assets) == {f"{ITEM_ID}/{DATA_NAME}"}
 
     def test_item_asset_never_overwrites_a_colliding_bare_key(self, tmp_path: Path) -> None:
-        """The writer skips a bare key when the asset is item-level.
-
-        The versions.json holds only a collection-level ``data.tif`` entry. The
-        item data file shares that name under ``{item_id}/data.tif``. The writer
-        must not treat the bare key as the item's entry. It raises KeyError and
-        leaves the foreign baseline unchanged (issue #709).
-        """
         collision_name = "data.tif"
         collection_dir = tmp_path / "rasters"
         item_dir = collection_dir / ITEM_ID
@@ -261,13 +211,6 @@ class TestTouchedButIdentical:
     def test_content_hash_clears_a_moved_mtime(
         self, tmp_path: Path, valid_points_parquet: Path
     ) -> None:
-        """`git clone` resets mtimes. The stored sha256 settles the question.
-
-        `add` stores no ``schema_fingerprint`` for an item-level asset, so
-        `is_stale` cannot prove a schema break. The collection-level path already
-        falls back to the content hash (#512). The item path must do the same
-        instead of reporting BREAKING.
-        """
         import shutil
 
         from portolan_cli.metadata.detection import check_file_metadata

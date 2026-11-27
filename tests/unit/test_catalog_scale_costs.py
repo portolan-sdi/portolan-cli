@@ -1,7 +1,4 @@
-"""Counter tests for the catalog-scale suspects of issue #995 in the Lane B modules.
-
-Each test names the suspect it holds and the pre-fix count that turns it red.
-"""
+"""Counter tests for catalog-scale costs."""
 
 from __future__ import annotations
 
@@ -47,7 +44,7 @@ def tracked(
 
 
 class TestStatusHashesNothingWhenUnchanged:
-    """#995-1: detect_modified_files hashed every asset (10 here)."""
+    """1: detect_modified_files hashed every asset (10 here)."""
 
     def test_unchanged_collection(
         self, tmp_path: Path, tracked: Callable[[int], Path], counters: Callable[[str], int]
@@ -69,7 +66,7 @@ class TestStatusHashesNothingWhenUnchanged:
 
 
 class TestIsCurrentReadsVersionsOnce:
-    """#995-2: is_current read versions.json once per candidate file (10 here)."""
+    """2: is_current read versions.json once per candidate file (10 here)."""
 
     def test_shared_state(
         self, tmp_path: Path, tracked: Callable[[int], Path], counters: Callable[[str], int]
@@ -88,7 +85,7 @@ class TestIsCurrentReadsVersionsOnce:
 
 
 class TestPublishReusesRecordedChecksums:
-    """#995-5: JsonFileBackend.publish hashed every asset it got (5 here)."""
+    """5: JsonFileBackend.publish hashed every asset it got (5 here)."""
 
     def test_unchanged_assets(
         self, tmp_path: Path, tracked: Callable[[int], Path], counters: Callable[[str], int]
@@ -128,7 +125,7 @@ class TestPublishReusesRecordedChecksums:
 
 
 class TestPullFastPath:
-    """#995-11: pull allowed 1 ms where the shared predicate allows 1 us or 2 s."""
+    """11: pull allowed 1 ms where the shared predicate allows 1 us or 2 s."""
 
     def test_whole_second_record_inside_two_seconds_is_not_hashed(
         self, tmp_path: Path, tracked: Callable[[int], Path], counters: Callable[[str], int]
@@ -150,7 +147,7 @@ class TestPullFastPath:
 
 
 class TestMetadataMtimePredicate:
-    """#995-11: metadata freshness compared mtimes with an exact ``!=``."""
+    """11: metadata freshness compared mtimes with an exact ``!=``."""
 
     def test_whole_second_record_inside_two_seconds_is_unchanged(self) -> None:
         from portolan_cli.metadata.models import FileMetadataState
@@ -239,7 +236,7 @@ def mirror_writes(monkeypatch: pytest.MonkeyPatch) -> list[Path]:
 
 
 class TestItemsParquetMirror:
-    """#995-6 and #995-7: the mirror rebuilt on every run and hashed twice or more."""
+    """The items.parquet mirror is not rebuilt or hashed more than needed."""
 
     def test_mirror_is_hashed_once_per_run(
         self, catalog: Path, counters: Callable[[str], int]
@@ -256,13 +253,6 @@ class TestItemsParquetMirror:
     def test_unchanged_rerun_writes_no_mirror(
         self, catalog: Path, mirror_writes: list[Path], monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """The second run with unchanged items writes no ``items.parquet``.
-
-        The private ``stac_geoparquet.arrow._to_parquet`` module is made
-        unimportable, as a stac-geoparquet that moves it would do. Before the
-        fix, the footer fingerprint needed that module, so the second run
-        rebuilt the file.
-        """
         from portolan_cli.stac_parquet import generate_parquet_mirrors
 
         monkeypatch.setitem(sys.modules, "stac_geoparquet.arrow._to_parquet", None)

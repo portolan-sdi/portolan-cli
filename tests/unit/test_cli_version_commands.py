@@ -1,14 +1,4 @@
-"""Unit tests for CLI version commands and backend-routing helpers.
-
-Covers:
-- ``portolan version current``
-- ``portolan version list``
-- ``portolan version rollback`` and ``portolan version prune``, which
-  ``portolan_cli.backends.iceberg.cli`` provides through entry points (#947),
-  with their iceberg backend guard
-- ``_check_backend_push_support`` — push routing
-- ``_try_backend_pull`` — pull routing
-"""
+"""Unit tests for CLI version commands and backend-routing helpers."""
 
 from __future__ import annotations
 
@@ -25,9 +15,7 @@ from portolan_cli.cli import cli
 if TYPE_CHECKING:
     from pathlib import Path
 
-# ---------------------------------------------------------------------------
 # Helpers
-# ---------------------------------------------------------------------------
 
 
 def _make_iceberg_catalog(tmp_path: Path) -> Path:
@@ -107,9 +95,7 @@ def runner() -> CliRunner:
     return CliRunner()
 
 
-# ---------------------------------------------------------------------------
 # version current
-# ---------------------------------------------------------------------------
 
 
 class TestVersionCurrentCommand:
@@ -242,9 +228,7 @@ class TestVersionCurrentCommand:
         assert "2 asset" in result.output
 
 
-# ---------------------------------------------------------------------------
 # version list
-# ---------------------------------------------------------------------------
 
 
 class TestVersionListCommand:
@@ -357,9 +341,7 @@ class TestVersionListCommand:
         assert data["success"] is False
 
 
-# ---------------------------------------------------------------------------
 # version rollback
-# ---------------------------------------------------------------------------
 
 
 class TestVersionRollbackCommand:
@@ -486,9 +468,7 @@ def test_missing_iceberg_extra_reports_a_json_error(
     ]
 
 
-# ---------------------------------------------------------------------------
 # version prune
-# ---------------------------------------------------------------------------
 
 
 class TestVersionPruneCommand:
@@ -613,9 +593,7 @@ class TestVersionPruneCommand:
         assert "prune failed badly" in result.output
 
 
-# ---------------------------------------------------------------------------
 # _check_backend_push_support
-# ---------------------------------------------------------------------------
 
 
 class TestCheckBackendPushSupport:
@@ -651,7 +629,6 @@ class TestCheckBackendPushSupport:
 
     @pytest.mark.unit
     def test_push_prints_the_backend_message(self, runner: CliRunner, tmp_path: Path) -> None:
-        """push is blocked with the message the backend gives (#977)."""
         catalog_root = _make_file_catalog(tmp_path)
         (catalog_root / ".portolan" / "config.yaml").write_text("backend: custom\n")
 
@@ -690,9 +667,7 @@ class TestCheckBackendPushSupport:
         assert "not supported" not in result.output or "custom" not in result.output
 
 
-# ---------------------------------------------------------------------------
 # _try_backend_pull
-# ---------------------------------------------------------------------------
 
 
 class TestTryBackendPull:

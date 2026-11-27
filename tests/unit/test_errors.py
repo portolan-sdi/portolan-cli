@@ -1,11 +1,4 @@
-"""Unit tests for Portolan error classes.
-
-Tests cover:
-- Base PortolanError behavior
-- Error codes format (PRTLN-{category}{number})
-- Error to_dict serialization
-- Specific error types for each category
-"""
+"""Unit tests for Portolan error classes."""
 
 from __future__ import annotations
 
@@ -360,14 +353,7 @@ class TestErrorCodeFormat:
 
 
 class TestConversionErrors:
-    """Tests for conversion-related error classes.
-
-    Conversion errors use the PRTLN-CNV prefix:
-    - PRTLN-CNV000: ConversionError (base)
-    - PRTLN-CNV001: UnsupportedFormatError
-    - PRTLN-CNV002: ConversionFailedError
-    - PRTLN-CNV003: ValidationFailedError
-    """
+    """Tests for conversion-related error classes."""
 
     @pytest.mark.unit
     def test_conversion_error_base_code(self) -> None:

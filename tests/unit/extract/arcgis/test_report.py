@@ -1,13 +1,4 @@
-"""Unit tests for ArcGIS extraction report models.
-
-Tests the dataclasses for extraction reporting:
-- LayerResult: Individual layer extraction status
-- ExtractionSummary: Aggregate statistics
-- MetadataExtracted: Harvested ArcGIS metadata
-- ExtractionReport: Full extraction report
-
-Following TDD: tests written before implementation.
-"""
+"""Unit tests for ArcGIS extraction report models."""
 
 from __future__ import annotations
 

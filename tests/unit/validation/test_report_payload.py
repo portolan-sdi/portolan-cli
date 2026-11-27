@@ -1,10 +1,4 @@
-"""The `check --json` payload: rashid findings enriched with remediation.
-
-The payload is the agent contract. A finding passes through rashid's
-``to_dict()`` verbatim — same rule_id, same fix_hint, same expected/actual — and
-gains three CLI-owned keys telling the agent whether to wait for `--fix` or act
-itself.
-"""
+"""The `check --json` payload: rashid findings enriched with remediation."""
 
 from __future__ import annotations
 
@@ -364,14 +358,7 @@ class TestSurvivorIndexing:
 
 
 class TestFixedCountCountsOnlyRepairedFindings:
-    """``fixed_count`` measures pre-fix defects resolved, not post-fix noise.
-
-    A repair pass can expose a defect that was not reportable before it ran —
-    the links fixer writes a child link, and the title rule then fires on it.
-    Counting every post-fix AUTO finding as a survivor made those newly exposed
-    defects cancel out repairs that really happened, so a pass that fixed
-    something reported ``Fixed automatically (0)``.
-    """
+    """``fixed_count`` measures pre-fix defects resolved, not post-fix noise."""
 
     def test_a_newly_exposed_finding_does_not_cancel_a_repair(self) -> None:
         pre = [_finding("PTL-BBX-001")]

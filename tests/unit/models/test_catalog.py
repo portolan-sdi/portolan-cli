@@ -1,11 +1,4 @@
-"""Unit tests for CatalogModel dataclass.
-
-Tests cover:
-- Dataclass creation with required and optional fields
-- JSON serialization (to_dict/from_dict)
-- Validation rules (id pattern, timestamps)
-- STAC compatibility
-"""
+"""Unit tests for CatalogModel dataclass."""
 
 from __future__ import annotations
 

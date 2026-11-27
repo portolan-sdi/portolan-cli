@@ -1,8 +1,4 @@
-"""Tests for input validation and hardening against agent hallucinations.
-
-These tests verify that the input validation module correctly rejects
-malicious or malformed inputs that agents might hallucinate.
-"""
+"""Tests for input validation and hardening against agent hallucinations."""
 
 from __future__ import annotations
 
@@ -213,7 +209,7 @@ class TestValidateItemId:
 
 @pytest.mark.unit
 class TestValidateCatalogId:
-    """Tests for catalog ID validation (issue #821)."""
+    """Tests for catalog ID validation."""
 
     def test_valid_catalog_id(self) -> None:
         """Valid catalog IDs are accepted."""
@@ -233,11 +229,6 @@ class TestValidateCatalogId:
             validate_catalog_id("a" * (MAX_CATALOG_ID_LENGTH + 1))
 
     def test_rejects_characters_outside_stac_pattern(self) -> None:
-        """One rule rejects every class of bad input a shell can deliver.
-
-        A tab, a query string, a percent escape, and a path separator all reach
-        the CLI as ordinary argument text, so each must fail the pattern.
-        """
         bad_ids = (
             "my catalog",
             "catalog.v2",

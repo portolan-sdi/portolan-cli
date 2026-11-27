@@ -1,13 +1,4 @@
-"""No module in ``portolan_cli`` or ``portolan_core`` may write JSON in place.
-
-An in-place write truncates the destination before the new bytes land, so a
-process killed mid-write leaves a zero-length ``collection.json`` where a valid
-one used to be. :func:`portolan_core.json_io.write_json_atomic` writes to a temp
-file and ``os.replace``s it into position, which cannot truncate. Issue #682
-introduced the helper, #687 finished adopting it, and this sweep keeps a raw
-``json.dump(data, handle)`` or ``path.write_text(json.dumps(data))`` from
-reappearing.
-"""
+"""No module in ``portolan_cli`` or ``portolan_core`` may write JSON in place."""
 
 from __future__ import annotations
 
@@ -46,13 +37,7 @@ def _contains_json_dumps(node: ast.expr) -> bool:
 
 
 def in_place_json_writes(tree: ast.AST) -> list[int]:
-    """Line numbers of writes that serialize JSON straight onto a destination.
-
-    Two shapes: ``json.dump(data, handle)`` (a file object, so two-plus
-    positional args) and ``dest.write_text(json.dumps(data))``. A bare
-    ``json.dumps(data)`` that feeds a checksum or an upload body is fine — no
-    file is truncated — so only these two forms count.
-    """
+    """Line numbers of writes that serialize JSON straight onto a destination."""
     lines: list[int] = []
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
@@ -90,7 +75,7 @@ class TestNoInPlaceJsonWrites:
         files = _package_files()
         assert len(files) > 100
         assert CLI_ROOT / "viz" / "pmtiles.py" in files
-        # versions.py writes versions.json. It moved into portolan-core (#1133).
+        # versions.py, in portolan-core, writes versions.json.
         assert CORE_ROOT / "versions.py" in files
 
     def test_a_json_dump_to_a_handle_is_detected(self) -> None:

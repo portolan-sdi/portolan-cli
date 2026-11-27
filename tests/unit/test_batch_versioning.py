@@ -1,9 +1,4 @@
-"""Unit tests for batch versioning (Issue #281).
-
-Tests the prepare/finalize separation that enables O(n) versioning instead of O(n²).
-
-The key insight: separate GDAL-bound work (parallelizable) from file I/O (batch).
-"""
+"""Unit tests for batch versioning."""
 
 from __future__ import annotations
 
@@ -57,7 +52,6 @@ class TestPreparedItem:
 
     @pytest.mark.unit
     def test_prepared_item_has_metadata_field(self) -> None:
-        """PreparedItem should have optional metadata field for table extension (Issue #304)."""
         from portolan_cli.add import PreparedItem
         from portolan_cli.metadata.geoparquet import GeoParquetMetadata
 

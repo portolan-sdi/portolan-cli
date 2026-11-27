@@ -1,16 +1,4 @@
-"""Unit tests for unified list command with status indicators.
-
-Per issue #210: The list command now shows tracking status for all files.
-The status command has been removed (folded into list).
-
-Status indicators:
-- Tracked (in versions.json, unchanged)
-- + Untracked (on disk, not in versions.json)
-- ~ Modified (in versions.json, checksum changed)
-- ! Deleted (in versions.json, missing from disk)
-
-Everything in a catalog is tracked unless excluded by ignored_files config.
-"""
+"""Unit tests for unified list command with status indicators."""
 
 from __future__ import annotations
 
@@ -99,11 +87,7 @@ def make_item(item_dir: Path, assets: dict[str, str]) -> None:
 
 
 def make_versions_json(col_dir: Path, assets: dict[str, dict]) -> None:
-    """Write a versions.json at collection root.
-
-    Assets should be a dict like {"item1/data.parquet": {"sha256": "abc", "size_bytes": 100}}.
-    This function adds the required 'href' field automatically.
-    """
+    """Write a versions.json at collection root."""
     # Add href field to each asset (required by versions.json schema)
     full_assets = {}
     for key, data in assets.items():
@@ -149,9 +133,7 @@ def run_list(runner: CliRunner, tmp_path: Path, *flags: str) -> Result:
         return runner.invoke(cli, ["list", *flags, "--catalog", str(tmp_path)])
 
 
-# =============================================================================
 # Test: Status indicators in list output
-# =============================================================================
 
 
 class TestListStatusIndicators:
@@ -207,9 +189,7 @@ class TestListStatusIndicators:
         assert "!" in result.output or "deleted" in result.output.lower()
 
 
-# =============================================================================
 # Test: Scan all subdirectories (not just initialized collections)
-# =============================================================================
 
 
 class TestListScansAllSubdirectories:
@@ -258,9 +238,7 @@ class TestListScansAllSubdirectories:
         assert "thumbnail.png" in result.output
 
 
-# =============================================================================
 # Test: --tracked-only and --untracked-only flags
-# =============================================================================
 
 
 class TestListFilterFlags:
@@ -299,9 +277,7 @@ class TestListFilterFlags:
         assert "data.parquet" not in result.output
 
 
-# =============================================================================
 # Test: Ignored files are excluded
-# =============================================================================
 
 
 class TestListIgnoredFiles:
@@ -336,9 +312,7 @@ class TestListIgnoredFiles:
         assert "temp.tmp" not in result.output
 
 
-# =============================================================================
 # Test: JSON output includes status
-# =============================================================================
 
 
 class TestListJsonWithStatus:
@@ -384,9 +358,7 @@ class TestListJsonWithStatus:
             assert "total_untracked" in summary or "untracked" in summary
 
 
-# =============================================================================
 # Test: Status command is removed
-# =============================================================================
 
 
 class TestStatusCommandRemoved:
@@ -394,11 +366,6 @@ class TestStatusCommandRemoved:
 
     @pytest.mark.unit
     def test_status_command_not_available(self, runner: CliRunner) -> None:
-        """portolan status command is no longer available.
-
-        Uses isolated_filesystem to avoid false positives from any
-        .portolan directory in the test runner's working directory.
-        """
         with runner.isolated_filesystem():
             result = runner.invoke(cli, ["status"])
 
@@ -406,9 +373,7 @@ class TestStatusCommandRemoved:
             assert result.exit_code != 0 or "no such command" in result.output.lower()
 
 
-# =============================================================================
-# Test: Format detection fix (issue #210)
-# =============================================================================
+# Test: Format detection fix
 
 
 class TestFormatDetectionFix:

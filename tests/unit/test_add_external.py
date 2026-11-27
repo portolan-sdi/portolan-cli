@@ -1,13 +1,4 @@
-"""Unit tests for external / remote data registration.
-
-Covers `portolan add-external` and the underlying
-`portolan_cli.external.add_external`, which register a remote
-cloud-native data as a catalog collection WITHOUT downloading or
-converting it (referenced in place).
-
-Motivating case: Overture Maps places — planet-scale GeoParquet on Overture's
-own public S3.
-"""
+"""Unit tests for external / remote data registration."""
 
 from __future__ import annotations
 
@@ -276,7 +267,7 @@ class TestAddExternal:
         data = json.loads(collection_path.read_text())
 
         # data asset points at the remote URL, kept as-is, marked external by
-        # the role alone: the spec defines no portolan: field (issue #654).
+        # the role alone: the spec defines no portolan: field.
         asset = data["assets"]["data"]
         assert asset["href"] == OVERTURE_URL
         assert asset["type"] == "application/vnd.apache.parquet"
@@ -290,11 +281,6 @@ class TestAddExternal:
         assert via_links[0]["href"] == "https://docs.overturemaps.org/guides/places/"
 
     def test_no_local_file_written(self, tmp_path: Path) -> None:
-        """Nothing is downloaded: only metadata sidecars exist in the collection.
-
-        AGENTS.md is scaffolded alongside collection.json — it is
-        metadata, not downloaded data, so the "no local data file" invariant holds.
-        """
         setup_catalog(tmp_path)
         add_external(
             license="CC-BY-4.0",
@@ -589,12 +575,7 @@ class TestAddExternalCommand:
 
 
 class TestAddExternalRequiresALicense:
-    """Issue #686: --license used to default to 'other' with no way to add a link.
-
-    Every external collection therefore shipped a guaranteed PTL-LIC-002 error.
-    Referencing data in place does not make its license unknowable, so the flag is
-    required and 'other' now has a --license-url to pair with.
-    """
+    """add-external requires --license, and --license-url pairs with 'other'."""
 
     def test_missing_license_fails(self, runner: CliRunner) -> None:
         with runner.isolated_filesystem():

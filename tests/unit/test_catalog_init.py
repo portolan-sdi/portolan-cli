@@ -118,11 +118,6 @@ class TestCatalogInit:
 
     @pytest.mark.unit
     def test_versions_json_at_catalog_root_not_portolan(self, tmp_path: Path) -> None:
-        """versions.json must be written to catalog root, not .portolan/.
-
-        states: versions.json is consumer-visible metadata and must live
-        alongside STAC files at the catalog root, not hidden inside .portolan/.
-        """
         Catalog.init(tmp_path)
 
         root_versions = tmp_path / "versions.json"

@@ -1,14 +1,4 @@
-"""Unit tests for Issue #353: Extract should add rel:via provenance link.
-
-Tests that extraction commands add a `via` link to collection.json
-pointing to the original data source URL.
-
-STAC `via` link relation:
-- rel: "via"
-- href: The source URL (e.g., ArcGIS FeatureServer URL)
-- type: "text/html" (for web service URLs)
-- title: Describes the source (e.g., "Source ArcGIS Feature Service")
-"""
+"""Extract should add rel:via provenance link."""
 
 from __future__ import annotations
 

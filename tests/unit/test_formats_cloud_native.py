@@ -1,8 +1,4 @@
-"""Unit tests for cloud-native format detection.
-
-These tests verify that cloud-native formats (GeoParquet, COG, FlatGeobuf, etc.)
-are correctly classified as CLOUD_NATIVE per spec 002-cloud-native-warnings User Story 1.
-"""
+"""Unit tests for cloud-native format detection."""
 
 from __future__ import annotations
 
@@ -92,13 +88,6 @@ class TestCloudNativeDetection:
 
     @pytest.mark.unit
     def test_raquet_extension_is_not_special(self, tmp_path: Path) -> None:
-        """`.raquet` is not a recognized extension (issue #487).
-
-        RaQuet rasters are real Parquet files written with a `.parquet`
-        extension (per raquet.io: `raquet-io convert … output.parquet`), so a
-        literal `.raquet` file matches nothing and is unsupported. Real RaQuet
-        files flow through the `.parquet` content-inspection branch instead.
-        """
         raquet_file = tmp_path / "test.raquet"
         raquet_file.write_bytes(b"\x00\x00\x00\x00")
         result = get_cloud_native_status(raquet_file)
@@ -155,12 +144,6 @@ class TestIsCloudOptimizedGeotiff:
 
     @pytest.mark.unit
     def test_is_cog_delegates_to_rio_cogeo(self, valid_rgb_cog: Path) -> None:
-        """is_cloud_optimized_geotiff correctly delegates to rio-cogeo.
-
-        Note: rio-cogeo considers small TIFFs (<512x512) as valid COGs even
-        without explicit tiling, because they fit in a single tile. This is
-        expected behavior per COG specification.
-        """
         from rio_cogeo.cogeo import cog_validate
 
         from portolan_cli.formats import is_cloud_optimized_geotiff

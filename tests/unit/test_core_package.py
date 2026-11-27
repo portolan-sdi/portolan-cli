@@ -1,8 +1,4 @@
-"""The portolan-core distribution imports without the CLI or the geospatial stack (#1133).
-
-The check runs in a fresh interpreter, because the test session has already
-imported click and most of the geospatial stack.
-"""
+"""The portolan-core distribution imports without the CLI or the geospatial stack."""
 
 from __future__ import annotations
 

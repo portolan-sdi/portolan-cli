@@ -1,9 +1,4 @@
-"""Discovery walks each real directory once, whatever symlinks point at it.
-
-A directory symlink that points back at an ancestor makes a cycle. Discovery
-used to follow it until the OS refused the path. `portolan add` then found the
-same file about 40 times and converted it each time.
-"""
+"""Discovery walks each real directory once, whatever symlinks point at it."""
 
 from __future__ import annotations
 

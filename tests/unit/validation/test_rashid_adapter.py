@@ -48,8 +48,7 @@ class TestLoadRulesConfig:
         _write_config(tmp_path, {"stac_lint": {"severity": {"check_thumbnail": "error"}}})
         with pytest.warns(DeprecationWarning, match="stac_lint"):
             config = load_rules_config(tmp_path)
-        # Disjoint namespaces: the old keys name native rules that no longer
-        # exist, so nothing is translated.
+        # Disjoint namespaces: the old keys name removed native rules, so nothing is translated.
         assert config.severity_overrides == {}
 
     def test_check_block_alongside_stac_lint_still_applies(self, tmp_path: Path) -> None:

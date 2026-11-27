@@ -1,10 +1,4 @@
-"""Tests for the emit helpers (dual-mode JSON/human output).
-
-These pin the helpers to behavior byte-identical to the inline
-``if use_json: ... else: ...`` blocks they replace in ``cli.py``:
-- JSON mode echoes ``envelope.to_json()`` exactly.
-- Text mode routes through ``output.error`` / renders nothing for success.
-"""
+"""Tests for the emit helpers (dual-mode JSON/human output)."""
 
 from __future__ import annotations
 

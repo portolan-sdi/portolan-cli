@@ -1,11 +1,4 @@
-"""Unit tests for edge cases in format detection.
-
-These tests cover edge cases mentioned in the spec:
-- Ambiguous .tif extension (COG vs non-COG)
-- .json file detected as GeoJSON vs plain JSON
-- Unknown extension handling
-- File not found handling
-"""
+"""Unit tests for edge cases in format detection."""
 
 from __future__ import annotations
 
@@ -171,11 +164,7 @@ class TestCaseInsensitivity:
 
 
 class TestCorruptedParquet:
-    """Tests for corrupted/invalid Parquet file handling.
-
-    When a file has .parquet extension but is not a valid Parquet file,
-    it should be detected as UNSUPPORTED (not silently treated as tabular).
-    """
+    """Tests for corrupted/invalid Parquet file handling."""
 
     @pytest.mark.unit
     def test_corrupted_parquet_detected_as_unsupported(self, tmp_path: Path) -> None:

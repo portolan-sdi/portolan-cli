@@ -1,22 +1,4 @@
-"""Unit tests for Issue #252 - Full Catalog Push/Pull Sync.
-
-Tests that push uploads ALL STAC metadata files (catalog.json, collection.json,
-{item_id}.json) in addition to assets and versions.json.
-
-Design principle from: Portolan owns bucket contents.
-The catalog should round-trip perfectly: push -> clone should recreate the catalog.
-
-Test categories:
-- Push uploads catalog.json so standalone push creates clonable remote catalog
-- Push uploads collection.json for each collection
-- Push uploads {item_id}.json for each item (Portolan naming convention)
-- push_all_collections uploads catalog.json at the end (when all collections succeed)
-- Manifest-last pattern preserved (data first, then manifests)
-
-Note: Both push() and push_all_collections() upload catalog.json. This ensures
-standalone push() creates a complete catalog, while push_all_collections()
-ensures a final consistent catalog.json when pushing multiple collections.
-"""
+"""Full Catalog Push/Pull Sync."""
 
 from __future__ import annotations
 
@@ -30,9 +12,7 @@ import pytest
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-# =============================================================================
 # Test fixtures
-# =============================================================================
 
 
 @pytest.fixture(autouse=True)
@@ -72,24 +52,7 @@ def empty_remote(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.fixture
 def full_catalog(tmp_path: Path) -> Path:
-    """Create a complete catalog with catalog.json, collection.json, {item_id}.json.
-
-    Uses Portolan's actual naming convention where item STAC files are named
-    {item_id}.json (not item.json).
-
-    Structure:
-        catalog/
-            .portolan/
-                config.yaml
-            catalog.json            <- root STAC catalog
-            versions.json           <- root versions file
-            test-collection/
-                collection.json     <- STAC collection
-                versions.json       <- collection versions
-                test-item/
-                    test-item.json  <- STAC item ({item_id}.json naming)
-                    data.parquet    <- asset file
-    """
+    """Create a complete catalog with catalog.json, collection.json, {item_id}.json."""
     catalog_dir = tmp_path / "catalog"
     catalog_dir.mkdir()
 
@@ -211,19 +174,12 @@ def full_catalog(tmp_path: Path) -> Path:
     return catalog_dir
 
 
-# =============================================================================
 # Push: catalog.json upload tests
-# =============================================================================
 
 
 @pytest.mark.unit
 class TestPushUploadsCatalogJson:
-    """Tests that catalog.json is uploaded by both push() and push_all_collections().
-
-    push() uploads catalog.json so standalone push creates a complete, clonable
-    remote catalog. push_all_collections() also uploads catalog.json at the end
-    (when all collections succeed) to ensure a final consistent state.
-    """
+    """Tests that catalog.json is uploaded by both push() and push_all_collections()."""
 
     def test_per_collection_push_uploads_catalog_json(self, full_catalog: Path) -> None:
         """Per-collection push SHOULD upload catalog.json for standalone use."""
@@ -256,11 +212,6 @@ class TestPushUploadsCatalogJson:
         assert result.success
 
     def test_push_all_collections_uploads_catalog_json(self, full_catalog: Path) -> None:
-        """push_all_collections uploads catalog.json at the end (may also be uploaded by push).
-
-        Each push() call uploads catalog.json, and push_all_collections also uploads
-        it at the end when all collections succeed. This ensures a consistent final state.
-        """
         from portolan_cli.sync.push import push_all_collections
 
         uploaded_keys: list[str] = []
@@ -329,9 +280,7 @@ class TestPushUploadsCatalogJson:
         assert uploaded_content["test-prefix/catalog.json"] == local_content
 
 
-# =============================================================================
 # Push: collection.json upload tests
-# =============================================================================
 
 
 @pytest.mark.unit
@@ -368,18 +317,12 @@ class TestPushUploadsCollectionJson:
         assert result.success
 
 
-# =============================================================================
 # Push: item STAC file upload tests
-# =============================================================================
 
 
 @pytest.mark.unit
 class TestPushUploadsItemStacFiles:
-    """Tests that push uploads {item_id}.json for each item.
-
-    Portolan uses the naming convention {item_id}.json for item STAC files,
-    where item_id matches the item directory name.
-    """
+    """Tests that push uploads {item_id}.json for each item."""
 
     def test_push_uploads_item_stac_file(self, full_catalog: Path) -> None:
         """Push should upload {item_id}.json for all items in the collection."""
@@ -409,9 +352,7 @@ class TestPushUploadsItemStacFiles:
         assert result.success
 
 
-# =============================================================================
 # Push: manifest-last ordering tests
-# =============================================================================
 
 
 @pytest.mark.unit
@@ -419,15 +360,6 @@ class TestPushManifestLastOrdering:
     """Tests that push follows manifest-last pattern for atomicity."""
 
     def test_push_uploads_assets_before_manifests(self, full_catalog: Path) -> None:
-        """Push should upload assets before any JSON manifests.
-
-        Order for per-collection push should be:
-        1. Asset files (data.parquet, etc.)
-        2. {item_id}.json (leaf manifests)
-        3. collection.json (intermediate manifests)
-        4. catalog.json (root manifest)
-        5. versions.json (last - makes the push "visible")
-        """
         from portolan_cli.sync.push import push
 
         upload_order: list[str] = []
@@ -480,9 +412,7 @@ class TestPushManifestLastOrdering:
         )
 
 
-# =============================================================================
 # Push: complete file list tests
-# =============================================================================
 
 
 @pytest.mark.unit

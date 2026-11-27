@@ -1,21 +1,10 @@
-"""Unit tests for concurrency defaults and configuration.
-
-Tests for Issue #344: Conservative concurrency defaults to prevent
-overwhelming home networks. Validates:
-- Default file concurrency lowered from 50 to 8
-- Default chunk concurrency lowered from 12 to 4
-- Total connection footprint calculation
-
-TDD: These tests are written FIRST, before implementation changes.
-"""
+"""Unit tests for concurrency defaults and configuration."""
 
 from __future__ import annotations
 
 import pytest
 
-# =============================================================================
 # Default Value Tests
-# =============================================================================
 
 
 class TestDefaultConcurrencyValues:
@@ -23,34 +12,18 @@ class TestDefaultConcurrencyValues:
 
     @pytest.mark.unit
     def test_get_default_concurrency_returns_8(self) -> None:
-        """Default file concurrency should be 8 (lowered from 50).
-
-        Rationale (Issue #344): 50 concurrent file uploads × 12 chunks each
-        = 600 connections, which overwhelms home NAT tables. 8 is safe.
-        """
         from portolan_cli.async_utils import get_default_concurrency
 
         assert get_default_concurrency() == 8
 
     @pytest.mark.unit
     def test_get_default_chunk_concurrency_returns_4(self) -> None:
-        """Default chunk concurrency should be 4 (lowered from 12).
-
-        Rationale (Issue #344): Per-file multipart chunk concurrency of 12
-        multiplies with file concurrency to create connection storms.
-        4 chunks × 8 files = 32 connections, which is safe for home networks.
-        """
         from portolan_cli.async_utils import get_default_chunk_concurrency
 
         assert get_default_chunk_concurrency() == 4
 
     @pytest.mark.unit
     def test_default_connection_footprint_is_32(self) -> None:
-        """Default connection footprint should be 32 (8 files × 4 chunks).
-
-        This is the maximum concurrent HTTP connections with default settings.
-        Safe for consumer NAT tables (typically 1k-4k session limit).
-        """
         from portolan_cli.async_utils import (
             get_default_chunk_concurrency,
             get_default_concurrency,
@@ -96,9 +69,7 @@ class TestConcurrencyConstants:
         assert calculate_connection_footprint(50, 12, workers=4) == 2400
 
 
-# =============================================================================
 # Upload Module Default Tests
-# =============================================================================
 
 
 class TestUploadModuleDefaults:
@@ -157,9 +128,7 @@ class TestUploadModuleDefaults:
         assert setup.call_args.kwargs["chunk_concurrency"] == 4
 
 
-# =============================================================================
 # Push Module Default Tests
-# =============================================================================
 
 
 class TestPushModuleDefaults:
@@ -208,9 +177,7 @@ class TestPushModuleDefaults:
         assert chunk_param.default is None
 
 
-# =============================================================================
 # CLI Default Tests
-# =============================================================================
 
 
 class TestCLIDefaults:

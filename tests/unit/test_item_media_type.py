@@ -1,11 +1,4 @@
-"""Regression tests for item media-type derivation (issue #736).
-
-`item._get_media_type` carried its own hardcoded extension map, so a COG came
-out as `image/tiff; application=geotiff` without `profile=cloud-optimized`.
-rashid uses `is_cog_media_type` as a detection gate, so the missing profile made
-`PTL-MIR-001` silently never fire instead of flagging the collection. `add` was
-unaffected because it uses the registry-backed map in `preparation`.
-"""
+"""Regression tests for item media-type derivation."""
 
 from __future__ import annotations
 

@@ -1,17 +1,4 @@
-"""Unit tests for optional-derivative classification (Issue #735).
-
-The spec supplies the vocabulary. Section Assets in specs/portolan/core.md gives
-every asset at least one role. Role `data` marks the primary file. Role `visual`
-marks the PMTiles derivative a client draws. Role `thumbnail` marks the preview,
-role `style` a MapLibre style, role `collection-mirror` the items.parquet copy.
-Section Single-File Collections then says a collection "may optionally carry a
-`.pmtiles`, a `thumbnail.png`, and a `styles/` directory". So an absent optional
-derivative is no reason to fail a push. A `data` or `source` asset stays a hard
-error.
-
-The role comes first. The filename patterns run only when no STAC object claims
-the href. Each pattern comes from the module that writes the file.
-"""
+"""Unit tests for optional-derivative classification."""
 
 from __future__ import annotations
 
@@ -206,7 +193,7 @@ class TestSourceArtifacts:
             "imagery/data.parquet",
             "imagery/data.geojson",
             # A collection thumbnail Portolan adopted rather than drew. With no
-            # role on record the conservative answer is a hard error (#735).
+            # role on record the conservative answer is a hard error.
             "imagery/thumbnail.png",
             "imagery/thumbnail.jpg",
             "imagery/preview.png",

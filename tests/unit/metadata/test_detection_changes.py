@@ -1,4 +1,4 @@
-"""Tests for detect_changes: each signal reports only when it can compare (#839)."""
+"""Tests for detect_changes: each signal reports only when it can compare."""
 
 from __future__ import annotations
 

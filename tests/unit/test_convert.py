@@ -1,8 +1,4 @@
-"""Unit tests for convert module.
-
-Tests ConversionStatus enum, ConversionResult dataclass, convert_file(),
-ConversionReport, and convert_directory() functions.
-"""
+"""Unit tests for convert module."""
 
 from __future__ import annotations
 
@@ -14,9 +10,7 @@ import pytest
 
 from portolan_core.errors import CRSMismatchError, CRSTransformError, InvalidBboxError
 
-# =============================================================================
 # Phase 1: ConversionStatus Enum Tests
-# =============================================================================
 
 
 class TestConversionStatus:
@@ -107,9 +101,7 @@ class TestConversionStatus:
         assert "SUCCESS" in str(ConversionStatus.SUCCESS)
 
 
-# =============================================================================
 # Phase 1: ConversionResult Dataclass Tests
-# =============================================================================
 
 
 class TestConversionResult:
@@ -337,9 +329,7 @@ class TestConversionResult:
         assert result.duration_ms is not None
 
 
-# =============================================================================
 # Phase 2: convert_file() Tests
-# =============================================================================
 
 
 class TestConvertFileSkip:
@@ -541,12 +531,7 @@ class TestConvertFileRaster:
 
 
 class TestTheConversionKeepsEveryPixel:
-    """write_cog writes the pixels of the source as they are.
-
-    rio-cogeo wraps the source in a WarpedVRT. The warper reads a pixel at the
-    nodata value of one band as valid when another band holds data there, and
-    writes nodata + 1 into the first band.
-    """
+    """Write_cog writes the pixels of the source as they are."""
 
     @pytest.mark.unit
     def test_a_nodata_pixel_under_valid_pixels_of_another_band_survives(
@@ -577,11 +562,7 @@ class TestTheConversionKeepsEveryPixel:
 
 
 class TestTheCogCarriesItsStatistics:
-    """A converted COG embeds its band statistics (issue #748, PTL-DAT-009/010).
-
-    rashid reads with GDAL_PAM_ENABLED=NO, so statistics in a ``.aux.xml``
-    sidecar do not count. The conversion writes them into the COG itself.
-    """
+    """A converted COG embeds its band statistics."""
 
     @staticmethod
     def _gtiff(path: Path) -> Path:
@@ -657,12 +638,7 @@ class TestTheCogCarriesItsStatistics:
 
 
 class TestTheCogProfileSuitsItsCompression:
-    """write_cog sends GDAL only the creation options that its codec accepts.
-
-    GDAL accepts PREDICTOR only for DEFLATE, LZW, LZMA, and ZSTD. GDAL names
-    the uncompressed codec NONE, and Portolan accepts it as RAW, after the
-    rio-cogeo profile of that name.
-    """
+    """Write_cog sends GDAL only the creation options that its codec accepts."""
 
     @staticmethod
     def _write(tmp_path: Path, compression: str, caplog: pytest.LogCaptureFixture) -> Path:
@@ -680,9 +656,8 @@ class TestTheCogProfileSuitsItsCompression:
     def _gdal_messages(caplog: pytest.LogCaptureFixture) -> list[str]:
         import logging
 
-        # rio-cogeo copies the profile into an uncompressed intermediate file.
-        # GDAL warns about the PREDICTOR of that file with COMPRESS=NONE.
-        # Portolan does not write that file, so these tests ignore it.
+        # rio-cogeo writes an uncompressed intermediate file, and GDAL warns about its
+        # PREDICTOR with COMPRESS=NONE. Portolan does not write that file, so ignore it.
         return [
             r.getMessage()
             for r in caplog.records
@@ -809,9 +784,7 @@ class TestConvertFileValidation:
         assert result.error is not None
 
 
-# =============================================================================
 # Phase 3: ConversionReport Tests
-# =============================================================================
 
 
 class TestConversionReport:
@@ -1054,9 +1027,7 @@ class TestConversionReport:
         )
 
 
-# =============================================================================
 # Phase 3: convert_directory() Tests
-# =============================================================================
 
 
 class TestConvertDirectoryBasic:
@@ -1123,16 +1094,7 @@ class TestConvertDirectoryBasic:
 
 
 class TestConvertDirectoryPoolFallback:
-    """Parallel conversion falls back to serial when the process pool can't start.
-
-    A ``ProcessPoolExecutor`` can fail to spawn workers in restricted
-    environments: locked-down containers with no ``/dev/shm``, seccomp filters
-    that block ``clone``, or a nested multiprocessing context inside another
-    test runner. Each one surfaces as ``BrokenProcessPool`` in the parent.
-    Without a fallback every file is reported FAILED even though the inputs are
-    valid. Conversion must still complete by dropping to the serial path
-    (issue #612).
-    """
+    """Parallel conversion falls back to serial when the process pool can't start."""
 
     @pytest.mark.unit
     def test_falls_back_to_serial_when_pool_broken(
@@ -1420,28 +1382,14 @@ class TestConvertDirectoryIdempotent:
         assert report2.skipped >= 1
 
 
-# =============================================================================
 # Phase 4.6: convert_file() Error Types Tests
-# =============================================================================
 
 
 class TestConvertFileErrorTypes:
-    """Tests verifying convert_file() uses correct error types.
-
-    Task 4.6: Refactor convert_file() to use new error types from errors.py:
-    - UnsupportedFormatError for unsupported formats
-    - ConversionFailedError for conversion exceptions
-    - ValidationFailedError for validation failures
-    """
+    """Tests verifying convert_file() uses correct error types."""
 
     @pytest.mark.unit
     def test_unsupported_format_returns_unsupported_status(self, tmp_path: Path) -> None:
-        """Unsupported format returns UNSUPPORTED status (not FAILED).
-
-        The convert_file() function returns UNSUPPORTED for formats that aren't
-        convertible (like NetCDF). This is distinct from FAILED which indicates
-        a conversion error.
-        """
         from portolan_cli.convert import ConversionStatus, convert_file
         from portolan_core.errors import UnsupportedFormatError
 
@@ -1466,11 +1414,6 @@ class TestConvertFileErrorTypes:
         reason="geoparquet-io segfaults on malformed input on Windows (upstream bug)",
     )
     def test_conversion_exception_uses_conversion_failed_error(self, tmp_path: Path) -> None:
-        """Conversion exception should use ConversionFailedError internally.
-
-        When geoparquet-io or rio-cogeo throws an exception, the convert_file()
-        function should catch it and use ConversionFailedError for context.
-        """
         from portolan_cli.convert import ConversionStatus, convert_file
         from portolan_core.errors import ConversionFailedError
 
@@ -1531,9 +1474,7 @@ class TestConvertFileErrorTypes:
         assert ValidationFailedError("/path", ["error"]).code == "PRTLN-CNV003"
 
 
-# =============================================================================
 # Phase 7: Edge Cases and Hardening
-# =============================================================================
 
 
 class TestConvertFileEdgeCases:
@@ -1545,11 +1486,6 @@ class TestConvertFileEdgeCases:
         reason="geoparquet-io segfaults on malformed input on Windows (upstream bug)",
     )
     def test_shapefile_with_missing_sidecars(self, tmp_path: Path) -> None:
-        """Shapefile with missing sidecars attempts conversion (delegates to geoparquet-io).
-
-        We delegate to upstream libraries. geoparquet-io may handle
-        incomplete shapefiles differently.
-        """
         from portolan_cli.convert import convert_file
 
         # Create a minimal .shp file without sidecars
@@ -1566,11 +1502,6 @@ class TestConvertFileEdgeCases:
 
     @pytest.mark.unit
     def test_permission_error_handling(self, tmp_path: Path) -> None:
-        """Permission error during conversion returns FAILED with clear message.
-
-        Note: This test is skipped on Windows (permission model differs) and
-        when running as root (root can write anywhere).
-        """
         import os
 
         # Skip on Windows - different permission model
@@ -1773,20 +1704,10 @@ class TestConvertFileSourceMtime:
         assert source.stat().st_mtime == source_mtime
 
 
-# =============================================================================
 # SQL Injection Prevention Tests (Security)
-# =============================================================================
 
 
-# NOTE: TestValidateLayerName and TestBuildStReadExpr removed.
-# Those functions were part of the DuckDB workaround for multi-layer support.
-# Now using geoparquet-io's native layer parameter instead.
-# See: https://github.com/geoparquet/geoparquet-io/issues/315
-
-
-# =============================================================================
-# COG Thumbnail Generation Tests (Issue #372)
-# =============================================================================
+# COG Thumbnail Generation Tests
 
 
 class TestGenerateCogThumbnail:
@@ -1800,12 +1721,6 @@ class TestGenerateCogThumbnail:
         caplog: pytest.LogCaptureFixture,
         recwarn: pytest.WarningsRecorder,
     ) -> None:
-        """A thumbnail JPEG is created next to the COG file, with no GDAL or rasterio warning.
-
-        The JPEG driver rejects a PHOTOMETRIC creation option, and GDAL logs
-        that through ``rasterio._env`` on every render. A thumbnail carries no
-        georeference on purpose, so ``NotGeoreferencedWarning`` is noise too.
-        """
         import logging
         import shutil
 
@@ -2090,9 +2005,7 @@ class TestGenerateCogThumbnail:
         assert thumb.exists()
 
 
-# =============================================================================
-# VectorSettings Integration Tests (Issue #340)
-# =============================================================================
+# VectorSettings Integration Tests
 
 
 class TestVectorSettingsIntegration:
@@ -2308,20 +2221,11 @@ class TestVectorSettingsIntegration:
         assert error is None
 
 
-# =============================================================================
 # Transient DuckDB "Query interrupted" retry (nightly stress-test flake)
-# =============================================================================
 
 
 class TestVectorConversionRetriesTransientInterrupt:
-    """`convert_file` retries a transient DuckDB "Query interrupted".
-
-    geoparquet-io runs conversions through DuckDB, which non-deterministically
-    raises ``InterruptException('Query interrupted')`` (~1/1000 files) during
-    bulk ``add`` when a pending signal trips its per-query check. The interrupt
-    clears once raised, so a bounded retry keeps one interrupted query from
-    failing a whole 1000-file add. Any other error must still fail fast.
-    """
+    """`convert_file` retries a transient DuckDB "Query interrupted"."""
 
     @pytest.mark.unit
     def test_detects_transient_by_exception_name(self) -> None:
@@ -2435,7 +2339,7 @@ class TestVectorConversionRetriesTransientInterrupt:
 
 
 class TestRepairShapefileEncodingSidecar:
-    """Encoding sidecar repair before shapefile conversion (issue #783)."""
+    """Encoding sidecar repair before shapefile conversion."""
 
     def _dbf(self, path: Path, records: bytes) -> None:
         """Minimal DBF: 32-byte header whose bytes 8-9 point past itself."""
@@ -2505,14 +2409,7 @@ class TestRepairShapefileEncodingSidecar:
 
 
 class TestApplyVectorSettingsSkipsGeometrylessTables:
-    """Spatial operations need a geometry column (issue #805).
-
-    ``gpio.convert`` reads a CSV of records as a plain table with
-    ``geometry_column`` set to None. Calling ``add_bbox()`` on it makes DuckDB
-    raise ``Binder Error: Column "geometry" referenced that exists in the
-    SELECT clause - but this column cannot be referenced before it is
-    defined``, which failed the whole ``add``.
-    """
+    """Spatial operations need a geometry column."""
 
     @pytest.mark.unit
     def test_a_table_with_no_geometry_is_returned_untouched(self) -> None:
@@ -2577,14 +2474,7 @@ class TestApplyVectorSettingsSkipsGeometrylessTables:
 
 
 class TestPartitionedOutputStaysHive:
-    """`_write_partitioned` asks for the Hive layout at every call site.
-
-    geoparquet-io 1.4.0 flipped the Python API default for ``hive`` from True to
-    False (geoparquet-io#661). Portolan needs the directories: each one becomes
-    a STAC Item, and ``partitioning.build_glob_pattern`` matches
-    ``<scheme>_cell=*``. These tests read the keyword arguments rather than the
-    written files, so they hold whatever geoparquet-io defaults to next.
-    """
+    """`_write_partitioned` asks for the Hive layout at every call site."""
 
     @staticmethod
     def _spy(scheme: str) -> tuple[Any, dict[str, Any]]:
@@ -2649,13 +2539,7 @@ class TestPartitionedOutputStaysHive:
 
 
 class TestPartitionedOutputWithGeoparquetIO:
-    """`apply_vector_settings` and `_write_partitioned` run against geoparquet-io.
-
-    geoparquet-io 1.5 made every partition method and ``add_kdtree`` refuse a
-    call that names neither a resolution nor ``auto`` (geoparquet-io#800,
-    #855). The spy tests above cannot see that, because they never call the
-    library. These tests write real partitions.
-    """
+    """`apply_vector_settings` and `_write_partitioned` run against geoparquet-io."""
 
     _COLUMNS: ClassVar[dict[str, str]] = {
         "h3": "h3_cell",
@@ -2709,12 +2593,6 @@ class TestPartitionedOutputWithGeoparquetIO:
 
     @pytest.mark.integration
     def test_single_file_writers_keep_the_index_column(self, tmp_path: Path) -> None:
-        """`partition: true` alone still adds the column for a single-file write.
-
-        `add` and the multilayer writer call `apply_vector_settings` and write
-        one file whatever `partition` says. Only `preparation.convert_vector`
-        passes `partitioned=True`, when the partition rule partitions next.
-        """
         from portolan_cli.conversion_config import VectorSettings
         from portolan_cli.convert import apply_vector_settings
 
@@ -2737,11 +2615,6 @@ class TestPartitionedOutputWithGeoparquetIO:
 
     @pytest.mark.integration
     def test_add_keeps_one_file_with_the_index_column(self, tmp_path: Path) -> None:
-        """`add` writes one file with the index column, whatever `partition` says.
-
-        The partition rule that `add` runs is the size threshold only. A
-        400-row file stays whole.
-        """
         import pyarrow.parquet as pq
 
         from portolan_cli.partitioning import partition_strategy, partition_vector_file
@@ -2802,11 +2675,6 @@ class TestPartitionedOutputWithGeoparquetIO:
     def test_size_partition_refuses_a_directory_with_partitions(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """A second partitioned source in one directory raises and keeps its file.
-
-        geoparquet-io does not write over a cell that exists, so a write into
-        the same directory would lose the rows in each shared cell.
-        """
         from portolan_cli import partitioning
         from portolan_core.errors import PartitionCollisionError
 
@@ -2851,12 +2719,6 @@ class TestPartitionedOutputWithGeoparquetIO:
     def test_add_collision_removes_only_a_new_copy(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, created_output: bool
     ) -> None:
-        """A collision in `add` removes the converted file only when this run wrote it.
-
-        A new copy goes, so the collection holds no row twice. A file that
-        existed before the run stays: a `.parquet` source that is its own
-        output, or an output that `add --force` kept.
-        """
         from portolan_cli import partitioning
         from portolan_cli.add import _maybe_partition_large_file
         from portolan_core.errors import PartitionCollisionError
@@ -2930,10 +2792,6 @@ class TestPartitionedOutputWithGeoparquetIO:
     def test_a_failed_layer_cleanup_keeps_the_other_layers(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: Exception
     ) -> None:
-        """An OSError on the removal of a failed layer file stops nothing (#928).
-
-        The add reports the real layer error and prepares the other layers.
-        """
         from portolan_cli import add
         from portolan_cli.convert import LayerConversionResult
 
@@ -3020,7 +2878,6 @@ class TestPartitionedOutputWithGeoparquetIO:
     def test_prepare_item_removes_a_new_output_when_the_crs_fails(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: Exception
     ) -> None:
-        """A CRS that cannot transform stops the add and leaves no converted file (#928)."""
         from portolan_cli import preparation
 
         coll, source = self._points_catalog(tmp_path)
@@ -3067,7 +2924,6 @@ class TestPartitionedOutputWithGeoparquetIO:
     def test_a_failed_add_keeps_the_user_files_beside_the_output(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """The cleanup removes only the sidecars this run made, not a user's notes (#928)."""
         from portolan_cli import preparation
 
         coll, source = self._points_catalog(tmp_path)

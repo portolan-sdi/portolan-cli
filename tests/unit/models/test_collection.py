@@ -1,12 +1,4 @@
-"""Unit tests for CollectionModel dataclass.
-
-Tests cover:
-- Dataclass creation with required and optional fields
-- Extent model with spatial and temporal bounds
-- JSON serialization (to_dict/from_dict)
-- Validation rules (license, bbox ranges)
-- STAC compatibility
-"""
+"""Unit tests for CollectionModel dataclass."""
 
 from __future__ import annotations
 

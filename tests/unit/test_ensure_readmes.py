@@ -1,8 +1,4 @@
-"""Unit tests for README scaffolding and its ``describedby`` link (issue #654).
-
-rashid requires a README.md next to every catalog and collection (PTL-FIL-001)
-referenced by a ``rel="describedby"`` markdown link (PTL-FIL-003).
-"""
+"""Unit tests for README scaffolding and its ``describedby`` link."""
 
 from __future__ import annotations
 
@@ -110,12 +106,6 @@ class TestEnsureReadmes:
         assert described[0]["type"] == "text/markdown"
 
     def test_preserves_a_foreign_describedby_link(self, tmp_path: Path) -> None:
-        """A non-README ``describedby`` link (e.g. a data dictionary) must survive.
-
-        Regression: the link scan used to take the *first* ``describedby`` link
-        and overwrite it with the README link, destroying the publisher's
-        pointer to their own documentation on every ``add``.
-        """
         data_dictionary = {
             "rel": "describedby",
             "href": "./data-dictionary.pdf",
@@ -142,13 +132,6 @@ class TestEnsureReadmes:
     def test_preserves_a_describedby_link_to_another_directorys_readme(
         self, tmp_path: Path
     ) -> None:
-        """``../shared/README.md`` is a different file, basename notwithstanding.
-
-        Regression: the resolved-path comparison was followed by an
-        unconditional basename fallback, so any href ending in ``README.md``
-        matched — and the publisher's pointer to a shared README one directory
-        up was rewritten to ``./README.md`` on every ``add``.
-        """
         (tmp_path / "shared").mkdir()
         (tmp_path / "shared" / "README.md").write_text("# Shared\n", encoding="utf-8")
         foreign = {

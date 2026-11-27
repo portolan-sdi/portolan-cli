@@ -1,9 +1,4 @@
-"""Iceberg uses the built-in plugin form (#947).
-
-Its backend comes from a `portolan_backends` hook module, and its `version
-rollback` and `version prune` commands come from `portolan.commands` entry
-points that portolan-cli declares.
-"""
+"""Iceberg uses the built-in plugin form."""
 
 from __future__ import annotations
 

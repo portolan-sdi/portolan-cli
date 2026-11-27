@@ -26,7 +26,7 @@ pytestmark = pytest.mark.unit
 
 
 class TestWMSErrorsKeepNoKey:
-    """#981: an error or a warning about a WMS request names the service, not its key."""
+    """An error or a warning about a WMS request names the service, not its key."""
 
     URL = "https://h.example/geoserver/wms?apikey=SECRET&service=WMS"
     CLEAN = "https://h.example/geoserver/wms?service=WMS"
@@ -143,7 +143,6 @@ class TestBuildWMSGetStylesURL:
         assert "/geoserver/wms" in result
 
     def test_preserves_extra_query_params(self) -> None:
-        """Non-WMS query parameters (e.g. an API key) survive (issue #910)."""
         wfs_url = "https://example.com/geoserver/wfs?apikey=YOUR_API_KEY"
         result = _build_wms_getstyles_url(wfs_url, "geonode:layer")
 
@@ -161,7 +160,6 @@ class TestBuildWMSGetStylesURL:
         assert "service=WFS" not in result
 
     def test_wfs_request_params_do_not_reach_wms_urls(self) -> None:
-        """#981: typeNames and outputFormat are WFS parameters. WMS URLs drop them."""
         from portolan_cli.extract.common.styles import _build_wms_getlegendgraphic_url
 
         wfs_url = "https://h.example/geoserver/wfs?apikey=k%2B1&typeNames=x&outputFormat=json"
@@ -409,9 +407,7 @@ class TestStyleFileOutput:
         assert result.path.name == "original.json"
 
 
-# =============================================================================
-# Legend Extraction Tests (Issue #498)
-# =============================================================================
+# Legend Extraction Tests
 
 
 class TestBuildWMSGetLegendGraphicURL:
@@ -451,7 +447,6 @@ class TestBuildWMSGetLegendGraphicURL:
         assert "/geoserver/wms" in result
 
     def test_preserves_extra_query_params(self) -> None:
-        """Non-WMS query parameters (e.g. an API key) survive (issue #910)."""
         from portolan_cli.extract.common.styles import _build_wms_getlegendgraphic_url
 
         wfs_url = "https://example.com/geoserver/wfs?apikey=YOUR_API_KEY"

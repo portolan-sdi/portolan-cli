@@ -1,11 +1,4 @@
-"""Tests for ImageServer tile grid calculation.
-
-These tests cover:
-- Basic tile grid computation
-- Edge cases: tiny extents, uneven divisions, negative coordinates
-- Tile count calculation
-- TileSpec properties
-"""
+"""Tests for ImageServer tile grid calculation."""
 
 from __future__ import annotations
 
@@ -202,7 +195,6 @@ class TestComputeTileGrid:
         extent = {"xmin": 0, "ymin": 0, "xmax": 100.5, "ymax": 100.5}
         tiles = list(compute_tile_grid(extent, pixel_size_x=0.5, pixel_size_y=0.5, tile_size=100))
 
-        # 100.5 / (0.5 * 100) = 2.01 -> ceil = 3 tiles per axis? No, let's verify
         # tile_width_map = 100 * 0.5 = 50 map units
         # num_cols = ceil(100.5 / 50) = ceil(2.01) = 3
         assert len(tiles) == 9  # 3x3 grid
@@ -283,10 +275,8 @@ class TestComputeTileGrid:
         # X pixels are 2x larger than Y pixels
         tiles = list(compute_tile_grid(extent, pixel_size_x=2, pixel_size_y=1, tile_size=50))
 
-        # tile_width_map = 50 * 2 = 100
-        # tile_height_map = 50 * 1 = 50
-        # cols = ceil(200 / 100) = 2
-        # rows = ceil(100 / 50) = 2
+        # tile map size = 50 * 2 by 50 * 1 = 100 by 50
+        # cols = ceil(200 / 100) = 2, rows = ceil(100 / 50) = 2
         assert len(tiles) == 4
 
 

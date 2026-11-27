@@ -1,17 +1,4 @@
-"""Tests for STAC asset key normalization.
-
-When _scan_item_assets builds STAC asset entries, well-known roles
-(thumbnail, metadata, documentation) should:
-- Use the role name as the asset key (e.g., "thumbnail" not "preview")
-  so STAC consumers can find the asset by role without inspecting paths.
-
-Note: Titles are human-enrichable fields (Issue #446) and should NOT be
-auto-generated. They come from metadata.yaml or preserved from existing
-metadata via merge strategy.
-
-Falls back to stem on collision so a user with two thumbnails or two
-metadata files still gets stable keys.
-"""
+"""Tests for STAC asset key normalization."""
 
 from __future__ import annotations
 
@@ -137,11 +124,7 @@ class TestAssetKeyNormalization:
 
 
 class TestAssetTitles:
-    """Asset titles are human-enrichable fields (Issue #446).
-
-    Titles should NOT be auto-generated from role names. They should come from
-    metadata.yaml or be preserved from existing metadata via merge strategy.
-    """
+    """Asset titles are human-enrichable fields."""
 
     @pytest.mark.unit
     def test_thumbnail_has_no_auto_title(self, item_dir_with_data: tuple[Path, Path]) -> None:

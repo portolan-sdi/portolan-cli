@@ -1,15 +1,4 @@
-"""Unit tests for the license model a collection must satisfy (issue #686).
-
-A collection with no license, or with ``other`` and no ``rel="license"`` link,
-fails the validator: PTL-LIC-001 and PTL-LIC-002 are both ERROR. ``license_gap``
-answers whether generation is about to produce one of those, branch for branch
-against ``rashid_core.rules.license``, so ``portolan add`` refuses the write instead
-of shipping a catalog ``portolan check`` then rejects.
-
-Spelling is deliberately out of scope here. rashid keeps its 727-identifier SPDX
-list in a private module, so ``portolan check`` owns that judgment and this
-module never guesses at it.
-"""
+"""Unit tests for the license model a collection must satisfy."""
 
 from __future__ import annotations
 
@@ -61,7 +50,6 @@ class TestLicenseGap:
         assert "proprietary" in gap
 
     def test_other_without_a_link_is_a_gap(self) -> None:
-        """PTL-LIC-002, the defect issue #686 reported."""
         gap = license_gap(OTHER_LICENSE, has_license_link=False)
 
         assert gap is not None
@@ -80,13 +68,6 @@ class TestLicenseGap:
         assert license_gap(license_id, has_license_link=False) is None
 
     def test_spelling_is_judged_against_rashids_list(self) -> None:
-        """rashid 0.1.4 published SPDX_LICENSE_IDS, so the gate can check it (issue #727).
-
-        Before this, a misspelled identifier passed the gate and reappeared as
-        PTL-LIC-001 under ``portolan check``, after ``add`` had already written
-        the collection. Naming the official spelling here is what rashid's hint
-        does, so the two commands say the same word.
-        """
         gap = license_gap("cc-by-4.0", has_license_link=False)
 
         assert gap is not None

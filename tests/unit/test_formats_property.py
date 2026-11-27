@@ -1,8 +1,4 @@
-"""Invariant tests for format detection.
-
-Verifies invariants across all known extensions using parameterized tests
-and hypothesis property-based testing.
-"""
+"""Invariant tests for format detection."""
 
 from __future__ import annotations
 
@@ -159,17 +155,11 @@ class TestFormatInfoDataIntegrity:
         assert actual == expected
 
 
-# =============================================================================
 # Hypothesis Property-Based Tests
-# =============================================================================
 
 
 class TestHypothesisPMTilesConsistency:
-    """Property-based tests for PMTiles format consistency.
-
-    Regression tests for issue #198: PMTiles must be treated consistently
-    across all format detection code paths.
-    """
+    """Property-based tests for PMTiles format consistency."""
 
     @pytest.mark.unit
     @given(
@@ -220,21 +210,12 @@ class TestHypothesisPMTilesConsistency:
 
 
 class TestHypothesisCloudNativeVectorConsistency:
-    """Property-based tests for cloud-native vector format consistency.
-
-    Ensures PMTiles and FlatGeobuf (cloud-native vector formats) behave
-    identically across all detection code paths.
-    """
+    """Property-based tests for cloud-native vector format consistency."""
 
     @pytest.mark.unit
     @given(ext=st.sampled_from([".pmtiles", ".fgb"]))
     @settings(max_examples=20)
     def test_cloud_native_vectors_in_both_extension_sets(self, ext: str) -> None:
-        """Cloud-native vector formats are in both CLOUD_NATIVE and VECTOR extensions.
-
-        Property: .pmtiles and .fgb are in both CLOUD_NATIVE_EXTENSIONS and VECTOR_EXTENSIONS
-        This ensures detect_format() returns VECTOR, then convert_vector() skips conversion.
-        """
         assert ext in CLOUD_NATIVE_EXTENSIONS, f"{ext} not in CLOUD_NATIVE_EXTENSIONS"
         assert ext in VECTOR_EXTENSIONS, f"{ext} not in VECTOR_EXTENSIONS"
 

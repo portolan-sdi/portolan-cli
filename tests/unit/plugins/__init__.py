@@ -1,1 +1,1 @@
-"""Tests for the plugin system (#947)."""
+"""Tests for the plugin system."""

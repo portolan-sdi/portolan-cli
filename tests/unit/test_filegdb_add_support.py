@@ -1,8 +1,4 @@
-"""Unit tests for FileGDB add support (Issue #154).
-
-FileGDBs should be processable by `portolan add`, not just detected by `scan`.
-This requires promoting FileGDBs from `special_formats` to `ready` list.
-"""
+"""Unit tests for FileGDB add support."""
 
 from __future__ import annotations
 
@@ -187,7 +183,7 @@ class TestFileGDBCountsInSummary:
 
 @pytest.mark.unit
 class TestFileGDBNotInSpecialFormats:
-    """Tests that FileGDBs are NO LONGER in special_formats after this change."""
+    """FileGDBs are not in special_formats."""
 
     def test_filegdb_not_in_special_formats(self, tmp_path: Path) -> None:
         """FileGDB should NOT appear in special_formats anymore (moved to ready)."""
@@ -275,11 +271,7 @@ class TestFileGDBPropertyBased:
 
 @pytest.mark.realdata
 class TestFileGDBRealFixture:
-    """Tests using real FileGDB fixtures from GDAL test data.
-
-    These tests verify Portolan's orchestration works with production FileGDB structures.
-    The fixture is field_alias.gdb from GDAL autotest/ogr/data/filegdb/.
-    """
+    """Tests using real FileGDB fixtures from GDAL test data."""
 
     @pytest.fixture
     def real_filegdb(self) -> Path:
@@ -343,12 +335,6 @@ class TestFileGDBArchives:
     """Tests for FileGDB archive (.gdb.zip) handling."""
 
     def test_filegdb_archive_not_in_ready(self, tmp_path: Path) -> None:
-        """FileGDB archives (.gdb.zip) should NOT be in ready list.
-
-        Archives need extraction before they can be processed by `portolan add`.
-        They should remain as skipped files (or special_formats) until we
-        implement archive extraction.
-        """
         archive = tmp_path / "data.gdb.zip"
         archive.write_bytes(b"PK\x03\x04" + b"\x00" * 100)  # Minimal ZIP header
 
@@ -445,11 +431,6 @@ class TestFileGDBDuplicateDetection:
     """Tests for FileGDB participation in duplicate/multi-asset detection."""
 
     def test_filegdb_tracked_in_basenames(self, tmp_path: Path) -> None:
-        """FileGDB should participate in duplicate basename detection.
-
-        If parcels.gdb and parcels.shp exist in the same directory, both should
-        be flagged as potential duplicates since they have the same base name.
-        """
         # Create FileGDB
         gdb_dir = tmp_path / "parcels.gdb"
         gdb_dir.mkdir()
@@ -470,18 +451,10 @@ class TestFileGDBDuplicateDetection:
         assert gdb_dir in ready_paths, "FileGDB should be in ready"
         assert shp in ready_paths, "Shapefile should be in ready"
 
-        # Verify FileGDB participates in duplicate/multi-asset tracking.
-        # The implementation tracks basenames, so both parcels.gdb and parcels.shp
-        # are registered. Whether this raises a warning depends on policy.
-        # The key assertion is that both files are discovered and tracked.
+        # The scan tracks basenames, so both parcels.gdb and parcels.shp are registered.
         assert len(result.ready) >= 2, "Both FileGDB and Shapefile should be tracked"
 
     def test_filegdb_tracked_in_primaries_by_dir(self, tmp_path: Path) -> None:
-        """FileGDB should be tracked as a primary file in its directory.
-
-        This enables multi-asset detection for directories containing both
-        FileGDB and other formats.
-        """
         # Create FileGDB
         gdb_dir = tmp_path / "data.gdb"
         gdb_dir.mkdir()

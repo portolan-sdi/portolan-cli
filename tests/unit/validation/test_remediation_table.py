@@ -1,12 +1,4 @@
-"""Completeness gate for the remediation table.
-
-The table maps a rashid rule id onto how `portolan check` remediates it: `--fix`
-does it (AUTO), the agent has to act on a requirement sentence (INSTRUCT), or it
-is a hosting-server setting outside the catalog (EXTERNAL). Two properties
-matter and neither can be spot-checked: every id rashid can emit must resolve to
-*some* remediation without raising, and every AUTO entry must name the fixer key
-Phase 3 will register.
-"""
+"""Completeness gate for the remediation table."""
 
 from __future__ import annotations
 
@@ -74,15 +66,6 @@ class TestBucketInvariants:
         assert blank == []
 
     def test_live_defects_are_external(self) -> None:
-        """Range/CORS defects are server configuration, never a catalog edit.
-
-        ``PTL-LIV-000`` is excluded: it is the pass's own degradation warning
-        (the prober could not reach the host), not a defect in the hosting.
-        ``PTL-LIV-006`` is excluded too. The host lacks a file the catalog
-        links, and a push of the catalog uploads it (issue #935).
-        ``PTL-LIV-007`` is excluded as well. The root self link is a field in
-        catalog.json, so the fix is a catalog edit.
-        """
         live_buckets = {
             RULE_REMEDIATION[rule_id].bucket
             for rule_id in RULE_REMEDIATION

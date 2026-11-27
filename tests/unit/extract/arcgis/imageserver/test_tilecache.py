@@ -1,11 +1,4 @@
-"""Tests for the ArcGIS ImageServer tile cache reader.
-
-A hosted tiled imagery layer reports ``capabilities: "Image,TilesOnly"``. It
-rejects ``exportImage`` with HTTP 400 and serves only the pre-rendered cache at
-``/tile/{level}/{row}/{col}`` (issue #870). These tests cover the cache reader.
-
-TDD: These tests are written FIRST, before implementation.
-"""
+"""Tests for the ArcGIS ImageServer tile cache reader."""
 
 from __future__ import annotations
 
@@ -66,9 +59,7 @@ async def _assert_empty_tile(
     assert not out.exists()
 
 
-# =============================================================================
 # Fixtures
-# =============================================================================
 
 
 @pytest.fixture
@@ -107,9 +98,7 @@ def _client(handler: Any) -> httpx.AsyncClient:
     return httpx.AsyncClient(transport=httpx.MockTransport(handler))
 
 
-# =============================================================================
 # parse_tile_info
-# =============================================================================
 
 
 class TestParseTileInfo:
@@ -156,9 +145,7 @@ class TestParseTileInfo:
         assert parsed.crs_string() == "EPSG:26915"
 
 
-# =============================================================================
 # export_image_supported
-# =============================================================================
 
 
 class TestExportImageSupported:
@@ -177,9 +164,7 @@ class TestExportImageSupported:
         assert export_image_supported([]) is True
 
 
-# =============================================================================
 # Level selection
-# =============================================================================
 
 
 class TestSelectLod:
@@ -213,9 +198,7 @@ class TestSelectLod:
             empty.select_lod(30.0)
 
 
-# =============================================================================
 # Grid computation
-# =============================================================================
 
 
 class TestComputeCacheTileGrid:
@@ -280,9 +263,8 @@ class TestComputeCacheTileGrid:
     def test_float_noise_in_the_extent_makes_no_sliver_row(
         self, cache: TileCacheInfo, lod_native: LevelOfDetail
     ) -> None:
-        # A live service reports an extent whose ymax sits 1.86e-09 above the
-        # cache origin. Without a snap the grid starts one pixel high, which
-        # adds a row of 1 pixel tall tiles and shifts every block index by one.
+        # A live service reports a ymax 1.86e-09 above the cache origin. Without a snap,
+        # the grid adds a row of 1-pixel tiles and shifts every block index by one.
         extent = {
             "xmin": ORIGIN_X,
             "ymin": ORIGIN_Y - 1024 * 30.0,
@@ -338,9 +320,7 @@ class TestComputeCacheTileGrid:
         assert (tiles[0].width_px, tiles[0].height_px) == (256, 256)
 
 
-# =============================================================================
 # Cache tile references
-# =============================================================================
 
 
 class TestCacheTileRefs:
@@ -410,9 +390,7 @@ class TestCacheTileRefs:
         assert cache_tile_refs(spec, cache, lod_native) == []
 
 
-# =============================================================================
 # Decoding
-# =============================================================================
 
 
 class TestDecodeTileBytes:
@@ -448,11 +426,6 @@ class TestDecodeTileBytes:
             decode_tile_bytes(b"Lerc2 " + b"\x00" * 40, "LERC2D")
 
     def test_decodes_a_jpegplus_tile(self) -> None:
-        """JPEGPlus is an ArcGIS label for a plain JPEG payload.
-
-        The live service Imagery_2021 (EPSG:6447) serves such tiles, and each
-        one starts with the JPEG magic bytes (pull request #871 review).
-        """
         jpeg = _jpeg_bytes()
         assert jpeg[:2] == b"\xff\xd8"
 
@@ -482,9 +455,7 @@ def _png_bytes() -> bytes:
         return bytes(memfile.read())
 
 
-# =============================================================================
 # Fetching
-# =============================================================================
 
 
 class TestFetchCacheTile:
@@ -667,9 +638,7 @@ class TestCacheTileRefUrl:
         assert ref.url("https://host/x/ImageServer/") == "https://host/x/ImageServer/tile/9/3/4"
 
 
-# =============================================================================
-# Coarse scan (issue #870)
-# =============================================================================
+# Coarse scan
 
 
 class TestSelectProbeLod:
@@ -779,7 +748,7 @@ class TestProbeBlockEmpty:
 
 
 class TestLercLoadFailure:
-    """The advice must match the failure (issue #870)."""
+    """The advice must match the failure."""
 
     def test_an_absent_package_says_to_install_it(self, monkeypatch: pytest.MonkeyPatch) -> None:
         import builtins
@@ -846,11 +815,6 @@ class TestEnsureCacheReadable:
             ensure_cache_readable(self._cache("BUNDLE"))
 
     def test_reports_a_lerc_decoder_that_does_not_load(self) -> None:
-        """The lerc wheel carries no Linux aarch64 binary.
-
-        The import then raises OSError on every tile. The check reports it
-        once, before the run costs any request (pull request #871 review).
-        """
         import builtins
 
         real_import = builtins.__import__
@@ -936,7 +900,7 @@ class TestCacheRateLimitResponse:
 
 
 class TestFloatMosaicNodata:
-    """A float mosaic states its masked pixels as nan (PR #871 review)."""
+    """A float mosaic states its masked pixels as nan."""
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -958,12 +922,6 @@ class TestFloatMosaicNodata:
         valid: int,
         has_nodata: bool,
     ) -> None:
-        """A float raster needs nan, because a mask alone does not survive.
-
-        rio-cogeo wraps the source in a WarpedVRT with an alpha band, and GDAL
-        builds a float alpha band for a float source. An integer raster keeps
-        its internal mask instead (pull request #871 review).
-        """
         body = (FIXTURE_DIR / fixture).read_bytes()
         out = tmp_path / "out.tif"
 
@@ -984,7 +942,6 @@ class TestFloatMosaicNodata:
 
 @pytest.mark.asyncio
 async def test_cache_read_error_names_the_tile_without_its_userinfo() -> None:
-    """#981: the error names the tile URL, not the password of the service URL."""
     from portolan_cli.extract.arcgis.imageserver.tilecache import (
         TileCacheError,
         _download_cache_tile,
@@ -1006,7 +963,6 @@ async def test_cache_read_error_names_the_tile_without_its_userinfo() -> None:
 async def test_cache_read_error_carries_its_status_for_the_retry_rule(
     status: int, label: str | None
 ) -> None:
-    """#1035: a cache tile follows the one retry rule. A 403 is permanent, a 503 is not."""
     from portolan_cli.extract.arcgis.imageserver.tilecache import (
         TileCacheError,
         _download_cache_tile,
@@ -1025,7 +981,6 @@ async def test_cache_read_error_carries_its_status_for_the_retry_rule(
 
 @pytest.mark.asyncio
 async def test_cache_rate_limit_error_names_the_tile_without_its_userinfo() -> None:
-    """A 429 error names the tile URL, not the password of the service URL (#1133)."""
     from portolan_cli.extract.arcgis.imageserver.tilecache import _download_cache_tile
 
     ref = CacheTileRef(level=9, row=3, col=4, dst_row=0, dst_col=0)

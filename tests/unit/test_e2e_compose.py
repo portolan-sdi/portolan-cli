@@ -1,11 +1,4 @@
-"""Regression tests for the image pins in the e2e Docker stack.
-
-MinIO withdrew its community images in September 2026 and every branch failed
-at the image pull (#919). A digest pin makes a re-pushed tag fail loudly instead
-of changing the stack. Renovate proposes each new digest as a pull request. The
-org preset in portolan-sdi/portolan-ops (renovate/default.json5) scans this test
-directory, so the repo holds no update config of its own.
-"""
+"""Regression tests for the image pins in the e2e Docker stack."""
 
 from __future__ import annotations
 

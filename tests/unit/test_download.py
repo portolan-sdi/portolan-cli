@@ -1,15 +1,4 @@
-"""Unit tests for download module.
-
-Tests for downloading files from cloud object storage (S3, GCS, Azure).
-These tests mock obstore to test download logic in isolation.
-
-Test categories:
-- URL parsing (reuses upload.py's parse_object_store_url)
-- DownloadResult dataclass
-- download_file function
-- download_directory function with parallel downloads
-- Credential checking (reuses upload.py's check_credentials)
-"""
+"""Unit tests for download module."""
 
 from __future__ import annotations
 
@@ -39,9 +28,7 @@ def _streaming_response(data: bytes) -> MagicMock:
     return response
 
 
-# =============================================================================
 # Test Fixtures
-# =============================================================================
 
 
 @pytest.fixture
@@ -92,9 +79,7 @@ region = eu-west-1
         yield aws_dir
 
 
-# =============================================================================
 # DownloadResult Tests
-# =============================================================================
 
 
 class TestDownloadResult:
@@ -156,9 +141,7 @@ class TestDownloadResult:
         assert result.errors == []
 
 
-# =============================================================================
 # Download File Tests
-# =============================================================================
 
 
 class TestDownloadFile:
@@ -318,9 +301,7 @@ class TestDownloadFile:
             assert result.success is True
 
 
-# =============================================================================
 # Download Directory Tests
-# =============================================================================
 
 
 class TestDownloadDirectory:
@@ -562,9 +543,7 @@ class TestDownloadDirectory:
             assert result.files_downloaded == 3
 
 
-# =============================================================================
 # Custom S3 Endpoint Tests
-# =============================================================================
 
 
 class TestCustomS3Endpoint:
@@ -641,9 +620,7 @@ class TestCustomS3Endpoint:
             assert call_kwargs["skip_signature"] is True
 
 
-# =============================================================================
 # Streaming and Resume Tests
-# =============================================================================
 
 
 class TestStreamingDownload:
@@ -684,9 +661,7 @@ class TestStreamingDownload:
             assert dest_file.stat().st_size == total_size
 
 
-# =============================================================================
 # Integration with upload.py Utilities
-# =============================================================================
 
 
 class TestUploadModuleReuse:
@@ -729,9 +704,7 @@ class TestUploadModuleReuse:
             assert "max_concurrency" in kwargs
 
 
-# =============================================================================
-# File Integrity and Cleanup Tests (Issues #1, #2, #9)
-# =============================================================================
+# File Integrity and Cleanup Tests
 
 
 class TestFileIntegrity:
@@ -861,9 +834,7 @@ class TestFileIntegrity:
             assert not local_path.exists()
 
 
-# =============================================================================
-# Overwrite Protection Tests (Issue #3)
-# =============================================================================
+# Overwrite Protection Tests
 
 
 class TestOverwriteProtection:
@@ -963,9 +934,7 @@ class TestOverwriteProtection:
             assert existing_file.read_bytes() == b"original"
 
 
-# =============================================================================
-# Path Traversal Security Tests (Issue #6)
-# =============================================================================
+# Path Traversal Security Tests
 
 
 class TestPathTraversalProtection:
@@ -1054,9 +1023,7 @@ class TestPathTraversalProtection:
             assert result.files_failed == 1
 
 
-# =============================================================================
-# Input Validation Tests (Issue #8)
-# =============================================================================
+# Input Validation Tests
 
 
 class TestInputValidation:
@@ -1102,9 +1069,7 @@ class TestInputValidation:
             )
 
 
-# =============================================================================
-# Error Type Consistency Tests (Issue #7)
-# =============================================================================
+# Error Type Consistency Tests
 
 
 class TestErrorTypeConsistency:
@@ -1153,9 +1118,7 @@ class TestErrorTypeConsistency:
             assert isinstance(result.errors[0][0], Path)
 
 
-# =============================================================================
 # Additional Coverage Tests
-# =============================================================================
 
 
 class TestDryRunCoverage:
@@ -1295,7 +1258,7 @@ class TestExceptionCleanupInDownloadFile:
 
 
 class TestGetRemoteFileSize:
-    """Tests for HTTP HEAD file size retrieval (Issue #501)."""
+    """Tests for HTTP HEAD file size retrieval."""
 
     @pytest.mark.unit
     def test_get_remote_file_size_returns_content_length(self) -> None:

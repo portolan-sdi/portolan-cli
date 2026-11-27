@@ -1,11 +1,4 @@
-"""Unit tests for item creation (User Story 2).
-
-Tests cover:
-- create_item() returns ItemModel
-- Geometry and bbox extraction
-- Asset creation
-- Item JSON serialization
-"""
+"""Unit tests for item creation (User Story 2)."""
 
 from __future__ import annotations
 

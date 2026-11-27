@@ -1,10 +1,4 @@
-"""Tests for portolan_core.config module.
-
-Tests the configuration system including:
-- Loading/saving config from .portolan/config.yaml
-- Setting precedence (CLI > env > collection config > catalog config > default)
-- Collection-level config overrides
-"""
+"""Tests for portolan_core.config module."""
 
 from __future__ import annotations
 
@@ -196,11 +190,7 @@ def _setting_through_state(
     collection: str | None = None,
     collection_path: Path | None = None,
 ) -> Any | None:
-    """Call ``RunState.setting`` with the arguments of ``get_setting``.
-
-    A legacy ``collection`` name becomes the directory of that collection. With
-    no catalog, the state opens on an empty directory, which holds no config.
-    """
+    """Call ``RunState.setting`` with the arguments of ``get_setting``."""
     from portolan_core.run_state import RunState
 
     with tempfile.TemporaryDirectory() as empty:
@@ -211,11 +201,7 @@ def _setting_through_state(
 
 
 class TestGetSetting:
-    """Tests for get_setting function with precedence.
-
-    Each test runs twice: through ``config.get_setting`` and through
-    ``RunState.setting``, which must keep the same precedence.
-    """
+    """Tests for get_setting function with precedence."""
 
     @pytest.fixture(params=["get_setting", "run_state"])
     def resolve(self, request: pytest.FixtureRequest) -> Resolver:
@@ -664,14 +650,12 @@ class TestConfigConstants:
 
     @pytest.mark.unit
     def test_sensitive_settings_includes_remote(self) -> None:
-        """SENSITIVE_SETTINGS should include 'remote' (Issue #356)."""
         from portolan_core.config import SENSITIVE_SETTINGS
 
         assert "remote" in SENSITIVE_SETTINGS
 
     @pytest.mark.unit
     def test_sensitive_settings_includes_profile(self) -> None:
-        """SENSITIVE_SETTINGS should include 'profile' and 'aws_profile' (Issue #356)."""
         from portolan_core.config import SENSITIVE_SETTINGS
 
         assert "profile" in SENSITIVE_SETTINGS
@@ -679,7 +663,6 @@ class TestConfigConstants:
 
     @pytest.mark.unit
     def test_sensitive_settings_includes_region(self) -> None:
-        """SENSITIVE_SETTINGS should include 'region' (Issue #356)."""
         from portolan_core.config import SENSITIVE_SETTINGS
 
         assert "region" in SENSITIVE_SETTINGS
@@ -693,7 +676,6 @@ class TestConfigConstants:
 
     @pytest.mark.unit
     def test_sensitive_settings_not_in_known_settings(self) -> None:
-        """Sensitive settings should not be in KNOWN_SETTINGS (Issue #356)."""
         from portolan_core.config import KNOWN_SETTINGS, SENSITIVE_SETTINGS
 
         for setting in SENSITIVE_SETTINGS:
@@ -860,7 +842,7 @@ class TestConfigFilePath:
 
 
 class TestSensitiveSettings:
-    """Tests for sensitive settings protection (Issue #356)."""
+    """Tests for sensitive settings protection."""
 
     @pytest.mark.unit
     def test_set_setting_rejects_remote(self, tmp_path: Path) -> None:
@@ -927,7 +909,7 @@ class TestSensitiveSettings:
 
 
 class TestDotenvLoading:
-    """Tests for .env file loading (Issue #356)."""
+    """Tests for .env file loading."""
 
     @pytest.mark.unit
     def test_load_dotenv_from_catalog_loads_env_file(self, tmp_path: Path) -> None:
@@ -996,7 +978,7 @@ class TestDotenvLoading:
 
 
 class TestEnvFileIgnored:
-    """Tests that .env files are excluded from tracking (Issue #356)."""
+    """Tests that .env files are excluded from tracking."""
 
     @pytest.mark.unit
     def test_default_ignored_files_includes_env(self) -> None:
@@ -1009,7 +991,7 @@ class TestEnvFileIgnored:
 
 
 class TestSensitiveSettingsMigration:
-    """Tests for check_sensitive_settings_in_config (Issue #356 migration)."""
+    """Tests for check_sensitive_settings_in_config."""
 
     @pytest.mark.unit
     def test_detects_sensitive_settings_in_config(self, tmp_path: Path) -> None:
@@ -1269,7 +1251,7 @@ class TestPMTilesConfigSettings:
 
 
 class TestCoerceHelpers:
-    """Tests for coerce_bool / coerce_int (env values arrive as strings, #620)."""
+    """Tests for coerce_bool / coerce_int (env values arrive as strings)."""
 
     @pytest.mark.unit
     def test_coerce_bool_truthy_strings(self) -> None:
@@ -1299,7 +1281,7 @@ class TestCoerceHelpers:
 
 
 class TestResolvePushSettings:
-    """Tests for resolve_push_settings precedence (CLI > env > config, #620)."""
+    """Tests for resolve_push_settings precedence (CLI > env > config)."""
 
     def _init_catalog(self, path: Path, config: str = "") -> None:
         portolan_dir = path / ".portolan"
@@ -1363,7 +1345,7 @@ def _read_yaml(catalog: Path) -> object:
 
 
 class TestDottedKeysNest:
-    """``set_setting`` writes a dotted key as a nested path (issue #1020)."""
+    """``set_setting`` writes a dotted key as a nested path."""
 
     @pytest.mark.unit
     def test_dotted_key_writes_nested_yaml(self, tmp_path: Path) -> None:
@@ -1433,7 +1415,7 @@ class TestDottedKeysNest:
 
 
 class TestUnknownKeysRejected:
-    """``set_setting`` rejects a key that no reader reads (issue #1020)."""
+    """``set_setting`` rejects a key that no reader reads."""
 
     @pytest.mark.unit
     def test_unknown_key_raises_with_the_known_keys(self, tmp_path: Path) -> None:
@@ -1472,7 +1454,7 @@ class TestUnknownKeysRejected:
 
 
 class TestConversionReadersSeeConfigSet:
-    """Each conversion reader returns what ``set_setting`` wrote (issue #1020)."""
+    """Each conversion reader returns what ``set_setting`` wrote."""
 
     @pytest.mark.unit
     def test_vector_settings(self, tmp_path: Path) -> None:
@@ -1510,7 +1492,7 @@ class TestConversionReadersSeeConfigSet:
 
 
 class TestLegacyFlatKeys:
-    """A flat dotted key from an older ``config set`` keeps its effect (issue #1020)."""
+    """A flat dotted key from an older ``config set`` keeps its effect."""
 
     @pytest.mark.unit
     def test_flat_key_reads_as_its_nested_equivalent(self, tmp_path: Path) -> None:
@@ -1574,7 +1556,7 @@ def _rewrite_in_place(path: Path, text: str, mtime_ns: int) -> None:
 
 
 class TestOneParsePerFile:
-    """One run parses each YAML file once while it stays the same (issues #1006, #994)."""
+    """One run parses each YAML file once while it stays the same."""
 
     @pytest.mark.unit
     def test_threads_that_miss_together_merge_once(
@@ -1835,7 +1817,7 @@ def _read_through_state(name: str, root: Path, collection: Path, state: Any) -> 
 
 
 class TestReadersTakeTheState:
-    """Each reader on a per-file or per-collection path reads through the state (#994)."""
+    """Each reader on a per-file or per-collection path reads through the state."""
 
     @pytest.mark.unit
     @pytest.mark.parametrize(
@@ -1899,7 +1881,7 @@ class TestReadersTakeTheState:
 
 
 class TestCheckReadsTheConfigOnce:
-    """check reads the catalog config.yaml through one run state (issue #994)."""
+    """Check reads the catalog config.yaml through one run state."""
 
     @pytest.mark.integration
     def test_run_check_parses_the_catalog_config_once(self, tmp_path: Path) -> None:
@@ -1915,7 +1897,7 @@ class TestCheckReadsTheConfigOnce:
 
 
 class TestHandlersReadTheState:
-    """A format handler takes no state. add hands it the settings (issue #994)."""
+    """A format handler takes no state. add hands it the settings."""
 
     @pytest.mark.integration
     @pytest.mark.parametrize("workers", [1, 4])
@@ -1992,12 +1974,7 @@ class _NoPushBackend:
 
 
 class TestCollectionBackendAndRemote:
-    """``backend`` and ``remote`` resolve through the collection hierarchy.
-
-    On ``main`` the push check read only the legacy ``collections:`` section.
-    A collection's own ``.portolan/config.yaml`` now applies, as for every
-    other setting.
-    """
+    """``backend`` and ``remote`` resolve through the collection hierarchy."""
 
     @staticmethod
     def _catalog(root: Path, *, own: str = "", legacy: str = "") -> Path:
@@ -2078,7 +2055,7 @@ class TestCollectionBackendAndRemote:
 
 
 class TestCheckFixReadsTheState:
-    """The geo-asset pass of ``check --fix`` reads config.yaml once per run (#994)."""
+    """The geo-asset pass of ``check --fix`` reads config.yaml once per run."""
 
     @staticmethod
     def _parses_at(root: Path, n: int, *, dry_run: bool) -> int:
@@ -2226,7 +2203,7 @@ class TestCheckFixReadsTheState:
 
 
 class TestYamlLoader:
-    """Every YAML load uses libyaml when PyYAML has it (issue #994)."""
+    """Every YAML load uses libyaml when PyYAML has it."""
 
     @pytest.mark.unit
     @pytest.mark.parametrize("with_libyaml", [True, False])
@@ -2244,7 +2221,7 @@ class TestYamlLoader:
         loaders: list[type] = []
         real_load = yaml.load
 
-        def spy(stream: str, Loader: type) -> object:  # noqa: N803 (the PyYAML name)
+        def spy(stream: str, Loader: type) -> object:  # noqa: N803 - the PyYAML name
             loaders.append(Loader)
             return real_load(stream, Loader=Loader)
 
@@ -2299,7 +2276,7 @@ def _write_config(directory: Path, text: str) -> None:
 
 
 class TestTypedValues:
-    """Each schema type parses the text of a ``config set`` VALUE (issue #1020)."""
+    """Each schema type parses the text of a ``config set`` VALUE."""
 
     @pytest.mark.unit
     @pytest.mark.parametrize(("text", "stored"), [("auto", "auto"), ("7", 7)])
@@ -2362,7 +2339,7 @@ class TestTypedValues:
 
 
 class TestPatternKeys:
-    """A key below a ``.*`` pattern reads and unsets as one name (issue #1020)."""
+    """A key below a ``.*`` pattern reads and unsets as one name."""
 
     @pytest.mark.unit
     def test_get_and_unset_a_handler_pin(self, tmp_path: Path) -> None:
@@ -2377,7 +2354,7 @@ class TestPatternKeys:
 
 
 class TestLegacyFlatKeysInCollections:
-    """The fold also reads the flat keys under ``collections:`` (issue #1020)."""
+    """The fold also reads the flat keys under ``collections:``."""
 
     @pytest.mark.unit
     def test_flat_key_under_a_collection_reads_as_its_typed_nested_value(
@@ -2424,7 +2401,7 @@ class TestLegacyCollectionsMerge:
 
 
 class TestLoadersReturnDeepCopies:
-    """An edit of a nested value in a result does not reach the next read (issue #1006)."""
+    """An edit of a nested value in a result does not reach the next read."""
 
     @pytest.mark.unit
     def test_get_setting_and_load_merged_config(self, tmp_path: Path) -> None:
@@ -2461,7 +2438,7 @@ class TestLoadersReturnDeepCopies:
 
 
 class TestListNestedSettings:
-    """``list_settings`` lists nested leaves with their sources (issue #1020)."""
+    """``list_settings`` lists nested leaves with their sources."""
 
     @pytest.mark.unit
     def test_catalog_listing_holds_leaves_but_not_the_collections_section(

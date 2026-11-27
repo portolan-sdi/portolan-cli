@@ -1,10 +1,4 @@
-"""Helpers for add_files properties that stub out item preparation.
-
-The CSV and tabular Parquet skip properties check that add_files does not
-raise on a directory that mixes GeoJSON with non-geo files, and that it
-hands every candidate file to prepare_item once. They stub prepare_item and finalize_items, so no
-geoparquet-io conversion runs.
-"""
+"""Helpers for add_files properties that stub out item preparation."""
 
 from __future__ import annotations
 
@@ -42,16 +36,7 @@ def write_point_geojson(path: Path, index: int) -> None:
 def add_mixed_directory_without_raising(
     collection_dir: Path, catalog_root: Path, item_id: str
 ) -> list[Path]:
-    """Run add_files on ``collection_dir`` with item preparation stubbed.
-
-    Per issue #281, add_files calls prepare_item and then finalize_items.
-
-    Returns:
-        The paths that add_files passed to prepare_item, sorted.
-
-    Raises:
-        pytest.fail.Exception: If add_files raises.
-    """
+    """Run add_files on ``collection_dir`` with item preparation stubbed."""
     with (
         patch("portolan_cli.add.prepare_item") as mock_prepare,
         patch("portolan_cli.add.finalize_items") as mock_finalize,

@@ -1,9 +1,4 @@
-"""Tests for ArcGIS service/layer discovery.
-
-Discovery client fetches service and layer information from ArcGIS REST API
-endpoints using httpx. This is the first step in the extraction flow:
-URL → Discovery → Filtering → Extraction.
-"""
+"""Tests for ArcGIS service/layer discovery."""
 
 from __future__ import annotations
 
@@ -29,9 +24,7 @@ from portolan_cli.extract.arcgis.discovery import (
 pytestmark = pytest.mark.unit
 
 
-# =============================================================================
 # Fixtures
-# =============================================================================
 
 
 @pytest.fixture
@@ -79,9 +72,7 @@ def _mock_httpx_response(data: dict[str, Any]) -> MagicMock:
     return mock_response
 
 
-# =============================================================================
 # ensure_json_format tests
-# =============================================================================
 
 
 class TestEnsureJsonFormat:
@@ -111,9 +102,7 @@ class TestEnsureJsonFormat:
         assert "f=json" in result
 
 
-# =============================================================================
 # discover_layers tests
-# =============================================================================
 
 
 class TestDiscoverLayers:
@@ -139,7 +128,6 @@ class TestDiscoverLayers:
     def test_returns_tables_apart_from_layers(
         self, feature_server_response: dict[str, Any]
     ) -> None:
-        """#812: discovery reports the tables; the caller decides to extract them."""
         with patch("portolan_cli.extract.arcgis.discovery.httpx.Client") as mock_client:
             mock_client.return_value.__enter__.return_value.get.return_value = _mock_httpx_response(
                 feature_server_response
@@ -197,9 +185,7 @@ class TestDiscoverLayers:
                 discover_layers("https://services.arcgis.com/test/FeatureServer")
 
 
-# =============================================================================
 # discover_services tests
-# =============================================================================
 
 
 class TestDiscoverServices:
@@ -267,9 +253,7 @@ class TestDiscoverServices:
             assert result == []
 
 
-# =============================================================================
 # Data class tests
-# =============================================================================
 
 
 class TestLayerInfo:
@@ -341,9 +325,7 @@ class TestServiceDiscoveryResult:
         assert result.author == "Author"
 
 
-# =============================================================================
 # ArcGISClient token, retry, and embedded-error tests
-# =============================================================================
 
 
 @pytest.mark.unit
@@ -410,9 +392,7 @@ def test_discover_services_forwards_token(monkeypatch: pytest.MonkeyPatch) -> No
     assert "token=TKN789" in seen["url"]
 
 
-# =============================================================================
 # discover_services_recursive tests
-# =============================================================================
 
 
 def _mock_endpoints(monkeypatch: pytest.MonkeyPatch, responses: dict[str, dict]) -> None:
@@ -540,9 +520,7 @@ def test_recursive_builds_full_path_for_nested_folders(monkeypatch: pytest.Monke
     assert traversal.visited == ["L1", "L1/L2"]
 
 
-# =============================================================================
-# Query capability detection (issue #1001)
-# =============================================================================
+# Query capability detection
 
 
 def _discover_with(monkeypatch: pytest.MonkeyPatch, body: dict[str, Any]) -> ServiceDiscoveryResult:
@@ -598,9 +576,7 @@ def test_discover_layers_keeps_layers_when_query_or_unknown(
     assert result.skip_reason is None
 
 
-# =============================================================================
-# One client for every discovery request: token (#855) and retry (#811)
-# =============================================================================
+# One client for every discovery request: token and retry
 
 
 def _transport(answers: list[httpx.Response], seen: list[str]) -> httpx.MockTransport:
@@ -618,7 +594,6 @@ _SERVICE = {"layers": [{"id": 0, "name": "Parcels", "type": "Feature Layer"}]}
 
 @pytest.mark.unit
 def test_discover_layers_sends_the_token() -> None:
-    """#855: a token-gated server needs the token on the layer-list request."""
     seen: list[str] = []
     client = ArcGISClient(
         token="TKN", transport=_transport([httpx.Response(200, json=_SERVICE)], seen)
@@ -632,7 +607,6 @@ def test_discover_layers_sends_the_token() -> None:
 
 @pytest.mark.unit
 def test_transient_failure_is_retried_once_and_discovery_completes() -> None:
-    """#811: one HTTP 503 during discovery does not end the harvest."""
     seen: list[str] = []
     answers = [httpx.Response(503, json={}), httpx.Response(200, json=_SERVICE)]
     client = ArcGISClient(retries=3, retry_delay=0.0, transport=_transport(answers, seen))
@@ -665,7 +639,6 @@ def test_embedded_server_error_is_retried() -> None:
     ],
 )
 def test_permanent_failure_is_not_retried(answer: httpx.Response) -> None:
-    """#811: a bad URL or a missing token fails at once, with no repeat request."""
     seen: list[str] = []
     client = ArcGISClient(retries=3, retry_delay=0.0, transport=_transport([answer], seen))
 
@@ -679,11 +652,6 @@ _EMPTY_SERVICE = {"currentVersion": 12, "layers": [], "tables": []}
 
 @pytest.mark.unit
 def test_empty_layer_list_is_asked_again() -> None:
-    """ArcGIS Online answers about half the requests for one live service with no layers.
-
-    The live suite saw it on _Sharswood_Choice_Neighborhood_Boundary: 21 of 40
-    requests in a row listed ``"layers": []`` in an otherwise equal body.
-    """
     seen: list[str] = []
     answers = [httpx.Response(200, json=_EMPTY_SERVICE), httpx.Response(200, json=_SERVICE)]
     client = ArcGISClient(retries=3, retry_delay=0.0, transport=_transport(answers, seen))
@@ -708,8 +676,6 @@ def test_service_that_stays_empty_returns_no_layers() -> None:
 def test_fetch_error_names_the_service_without_its_userinfo(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """#981: the error and the retry log name the service, not the password in its URL."""
-
     def refuse(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("refused", request=request)
 
@@ -728,7 +694,6 @@ def test_fetch_error_names_the_service_without_its_userinfo(
 
 
 def test_request_timeout_status_is_retried() -> None:
-    """#1035: HTTP 408 is transient, so the client asks again."""
     answers = iter([httpx.Response(408), httpx.Response(200, json={"layers": [], "name": "X"})])
     client = ArcGISClient(
         retries=2, retry_delay=0.0, transport=httpx.MockTransport(lambda request: next(answers))
@@ -741,7 +706,6 @@ def test_request_timeout_status_is_retried() -> None:
 
 
 def test_permanent_status_fails_at_once_and_says_so() -> None:
-    """#1035: HTTP 404 gets one request and a message that names it as permanent."""
     requests: list[httpx.Request] = []
 
     def gone(request: httpx.Request) -> httpx.Response:

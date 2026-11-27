@@ -1,8 +1,4 @@
-"""Tests for WFS layer discovery.
-
-These tests verify the WFS discovery module which wraps geoparquet-io's
-WFS capabilities and normalizes terminology (typename → layer).
-"""
+"""Tests for WFS layer discovery."""
 
 from __future__ import annotations
 
@@ -213,7 +209,7 @@ class TestWFSDiscoveryError:
 
 
 class TestDiscoveryErrorKeepsNoCredential:
-    """#981: a failed discovery names the service and drops its key."""
+    """A failed discovery names the service and drops its key."""
 
     URL = "https://h.example/geoserver/wfs?api_key=SECRET"
     QUOTED = (

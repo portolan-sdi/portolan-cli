@@ -1,11 +1,4 @@
-"""Tests for `portolan metadata` and `portolan readme` CLI commands.
-
-These tests verify the CLI behavior for:
-- `portolan metadata init` - Generate metadata.yaml template
-- `portolan metadata validate` - Validate metadata.yaml (contact + license required)
-- `portolan readme` - Generate README.md from STAC + metadata
-- `portolan readme --check` - Check README freshness for CI
-"""
+"""Tests for `portolan metadata` and `portolan readme` CLI commands."""
 
 from __future__ import annotations
 
@@ -34,11 +27,6 @@ class TestMetadataInit:
     def test_leaves_the_catalog_root_metadata_alone(
         self, runner: CliRunner, tmp_path: Path
     ) -> None:
-        """`portolan init` seeds the root metadata.yaml, so `metadata init` must not clobber it.
-
-        Overwriting it would drop the license the human supplied at init and leave
-        the catalog unable to accept an add (issue #686).
-        """
         with runner.isolated_filesystem(temp_dir=tmp_path):
             runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
 
@@ -499,12 +487,6 @@ class TestMetadataValidate:
 
     @pytest.mark.unit
     def test_recursive_aggregates_errors(self, runner: CliRunner, tmp_path: Path) -> None:
-        """metadata validate should aggregate errors from multiple invalid files.
-
-        Note: metadata uses hierarchical resolution, so children inherit from parents.
-        To test aggregated errors, children must explicitly override with INVALID values
-        (not just missing fields, which would inherit from parent).
-        """
         with runner.isolated_filesystem(temp_dir=tmp_path):
             runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             valid_metadata = "contact:\n  name: Test\n  email: test@example.org\nlicense: MIT\n"
@@ -566,11 +548,6 @@ class TestMetadataValidate:
 
     @pytest.mark.unit
     def test_recursive_exit_code_on_any_failure(self, runner: CliRunner, tmp_path: Path) -> None:
-        """metadata validate should exit 1 if ANY file is invalid.
-
-        Note: metadata uses hierarchical resolution, so children inherit from parents.
-        To test actual errors, children must explicitly override with INVALID values.
-        """
         with runner.isolated_filesystem(temp_dir=tmp_path):
             runner.invoke(cli, ["init", "--auto", "--license", "CC-BY-4.0"])
             valid_metadata = "contact:\n  name: Test\n  email: test@example.org\nlicense: MIT\n"
@@ -728,7 +705,7 @@ class TestReadmeGenerate:
         """
         cat = _readme_catalog(run_cli, tmp_path, title="My Catalog")
 
-        # `init` scaffolds a README (issue #654); remove it so the
+        # `init` scaffolds a README; remove it so the
         # assertion below measures what --stdout writes, not what init did.
         (cat / "README.md").unlink()
 

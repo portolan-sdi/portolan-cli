@@ -140,7 +140,6 @@ def test_tables_from_names_lists_without_network() -> None:
 
 
 def test_failed_request_keeps_no_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
-    """#981: requests quotes the request URL with its api_key. The error drops the key."""
     import requests
 
     from portolan_cli.extract.carto.discovery import carto_sql_request
@@ -162,7 +161,6 @@ def test_failed_request_keeps_no_api_key(monkeypatch: pytest.MonkeyPatch) -> Non
 
 
 def test_url_without_scheme_error_keeps_no_api_key() -> None:
-    """#981: the error quotes the URL that the user typed, without its key."""
     with pytest.raises(CartoDiscoveryError) as caught:
         normalize_sql_api_url("phl.carto.com/api/v2/sql?api_key=K")
 
@@ -172,7 +170,6 @@ def test_url_without_scheme_error_keeps_no_api_key() -> None:
 
 
 def test_invalid_url_error_holds_no_api_key() -> None:
-    """The error names the URL without its API key (Codex re-review of #1133)."""
     with pytest.raises(CartoDiscoveryError) as caught:
         normalize_sql_api_url("https://acct.carto.com/wrong?api_key=SECRET")
 

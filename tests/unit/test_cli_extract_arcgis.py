@@ -191,7 +191,6 @@ def test_imageserver_rejects_auth_flags() -> None:
 
 @pytest.mark.unit
 def test_extract_arcgis_has_output_crs_flag() -> None:
-    """The --output-crs flag must appear in help (issue #802)."""
     runner = CliRunner()
     result = runner.invoke(cli, ["extract", "arcgis", "--help"])
     assert result.exit_code == 0
@@ -201,7 +200,6 @@ def test_extract_arcgis_has_output_crs_flag() -> None:
 
 @pytest.mark.unit
 def test_output_crs_threads_into_options(monkeypatch: pytest.MonkeyPatch) -> None:
-    """--output-crs reaches ExtractionOptions passed to extract_arcgis_catalog (issue #802)."""
     from types import SimpleNamespace
 
     from portolan_cli.extract.arcgis.orchestrator import ExtractionOptions
@@ -252,7 +250,6 @@ def test_output_crs_threads_into_options(monkeypatch: pytest.MonkeyPatch) -> Non
 
 @pytest.mark.unit
 def test_catalog_id_threads_into_options(monkeypatch: pytest.MonkeyPatch) -> None:
-    """--id reaches ExtractionOptions passed to extract_arcgis_catalog (issue #821)."""
     from types import SimpleNamespace
 
     from portolan_cli.extract.arcgis.orchestrator import ExtractionOptions
@@ -303,7 +300,6 @@ def test_catalog_id_threads_into_options(monkeypatch: pytest.MonkeyPatch) -> Non
 
 @pytest.mark.unit
 def test_extract_arcgis_rejects_bad_id_before_extraction(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A bad --id fails before the download starts, not after it (issue #821)."""
     calls: list[str] = []
 
     def _never_called(*args: object, **kwargs: object) -> None:
@@ -334,11 +330,6 @@ def test_extract_arcgis_rejects_bad_id_before_extraction(monkeypatch: pytest.Mon
 def test_extract_arcgis_rejects_bad_id_before_imageserver_extraction(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The raster path checks --id at the boundary too (issue #821).
-
-    An ImageServer URL dispatches to a different handler than the vector path,
-    so the check must sit before that branch, not inside it.
-    """
     calls: list[str] = []
 
     async def _never_called(*args: object, **kwargs: object) -> None:
@@ -397,11 +388,6 @@ def _capture_imageserver_options(
 def test_extract_arcgis_passes_retries_to_imageserver_options(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """`--retries` reaches the raster path (issue #870).
-
-    Before the fix the CLI accepted the flag and dropped it, so every tile
-    got the default three attempts.
-    """
     captured = _capture_imageserver_options(monkeypatch, ["--retries", "5"])
 
     assert captured[0].max_retries == 5
@@ -411,7 +397,6 @@ def test_extract_arcgis_passes_retries_to_imageserver_options(
 def test_extract_arcgis_passes_license_to_imageserver_options(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """`--license` and `--license-url` reach the raster path (issue #870)."""
     captured = _capture_imageserver_options(
         monkeypatch,
         ["--license", "other", "--license-url", "https://example.com/terms.html"],
@@ -440,7 +425,6 @@ async def _no_tiles(*_args: object, **_kwargs: object) -> tuple[int, None]:
 def test_imageserver_text_names_the_service_without_its_token(
     monkeypatch: pytest.MonkeyPatch, args: tuple[str, ...], answer: str | None, line: str
 ) -> None:
-    """#981: the prompt and the progress line name the service, not the token in its URL."""
     monkeypatch.setattr(
         "portolan_cli.extract.arcgis.imageserver.orchestrator.run_imageserver",
         _no_tiles,
@@ -459,7 +443,6 @@ def test_imageserver_text_names_the_service_without_its_token(
 def test_imageserver_json_names_the_service_without_its_token(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """#981: the JSON envelope names the service, not the token in its URL."""
     import json
 
     monkeypatch.setattr(
@@ -475,7 +458,6 @@ def test_imageserver_json_names_the_service_without_its_token(
 
 @pytest.mark.unit
 def test_list_services_names_the_root_without_its_token(monkeypatch: pytest.MonkeyPatch) -> None:
-    """#981: the listing header names the services root, not the token in its URL."""
     from portolan_cli.extract.arcgis.orchestrator import ServicesRootDiscoveryResult
 
     monkeypatch.setattr(
@@ -512,7 +494,6 @@ def _fail_imageserver_license(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.mark.unit
 def test_imageserver_missing_license_prints_the_hint(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The raster path prints the license hint, as the FeatureServer path does (#871 review)."""
     _fail_imageserver_license(monkeypatch)
 
     result = CliRunner().invoke(cli, ["extract", "arcgis", IMAGESERVER_URL, "--auto"])

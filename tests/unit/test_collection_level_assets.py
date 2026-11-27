@@ -1,7 +1,4 @@
-"""Tests for collection-level asset handling.
-
-Issue #250: portolan add creates incorrect asset paths for collection-level assets.
-"""
+"""Tests for collection-level asset handling."""
 
 from __future__ import annotations
 
@@ -82,14 +79,6 @@ class TestCollectionLevelAssets:
     """Test collection-level asset handling."""
 
     def test_collection_level_asset_href_is_correct(self, initialized_catalog, fixtures_dir):
-        """Test that collection-level assets get correct href in versions.json.
-
-        When a file is directly in a collection directory (collection/file.parquet),
-        the href in versions.json should be 'collection/file.parquet', NOT
-        'collection/collection/file.parquet' (double nesting).
-
-        This is the RED phase - test should fail initially.
-        """
         # Arrange: Create collection with file at collection level
         collection_dir = initialized_catalog / "demographics"
         collection_dir.mkdir()
@@ -120,7 +109,7 @@ class TestCollectionLevelAssets:
         assert len(versions_data["versions"]) > 0, "Should have at least one version"
         version = versions_data["versions"][0]
 
-        # Check the asset key - should be collection-relative (Issue #354)
+        # Check the asset key - should be collection-relative
         # For collection-level assets, key is filename only; href includes collection path
         assert "census.parquet" in version["assets"], (
             f"Asset key should be 'census.parquet' (collection-relative), got: {list(version['assets'].keys())}"
@@ -134,11 +123,6 @@ class TestCollectionLevelAssets:
         )
 
     def test_collection_level_asset_no_duplicate_directory(self, initialized_catalog, fixtures_dir):
-        """Test that collection-level assets don't create duplicate nested directories.
-
-        Bug: portolan add creates collection/collection/ subdirectory for collection-level assets.
-        Expected: No subdirectory created when file is already at collection level.
-        """
         # Arrange
         collection_dir = initialized_catalog / "demographics"
         collection_dir.mkdir()
@@ -178,11 +162,6 @@ class TestCollectionLevelAssets:
         )
 
     def test_collection_level_vector_no_item_json(self, initialized_catalog, fixtures_dir):
-        """Test that collection-level vector assets do NOT create item.json.
-
-        Single vector files (GeoParquet, Shapefile, GeoPackage) are
-        collection-level assets - no item.json, asset directly in collection.json.
-        """
         # Arrange
         collection_dir = initialized_catalog / "demographics"
         collection_dir.mkdir()
@@ -219,11 +198,6 @@ class TestCollectionLevelAssets:
     def test_collection_level_vector_asset_in_collection_json(
         self, initialized_catalog, fixtures_dir
     ):
-        """Test that collection-level vector assets appear in collection.json assets.
-
-        The asset should be in collection.json's "assets" field,
-        NOT as an item link.
-        """
         # Arrange
         collection_dir = initialized_catalog / "demographics"
         collection_dir.mkdir()
@@ -266,11 +240,6 @@ class TestCollectionLevelAssets:
         )
 
     def test_explicit_item_id_forces_item_level(self, initialized_catalog, fixtures_dir):
-        """Test that explicit --item-id forces item-level structure (traditional).
-
-        When user explicitly provides item_id, the asset should be item-level
-        (with item.json), not collection-level.
-        """
         # Arrange
         collection_dir = initialized_catalog / "demographics"
         collection_dir.mkdir()
@@ -289,9 +258,7 @@ class TestCollectionLevelAssets:
             description=None,
         )
 
-        # Assert: item.json SHOULD exist when item_id is explicit
-        # The item.json location depends on implementation - it may be in
-        # a subdirectory or at collection level. Key is that it exists.
+        # The item JSON can be in a subdirectory or at collection level.
         item_json_files = list(collection_dir.rglob("census-2020.json"))
         assert len(item_json_files) == 1, (
             "Should create item.json when explicit item_id is provided"
@@ -307,29 +274,14 @@ class TestCollectionLevelAssets:
         assert len(item_links) == 1, "Should have item link when explicit item_id is provided"
 
 
-# =============================================================================
-# Issue #383: Non-geospatial parquet files with collection-level geo companions
-# =============================================================================
+# Non-geospatial parquet files with collection-level geo companions
 
 
 @pytest.mark.unit
 class TestCollectionLevelNonGeoCompanions:
-    """Tests for issue #383: non-geo parquet files with collection-level geo companions.
-
-    Bug: Non-geo parquet files fail to track when their companion geo file is
-    collection-level because `source_to_item_dir` doesn't include collection-level
-    sources.
-
-    Fix: Add `source_to_collection_dir` mapping for collection-level sources.
-    """
+    """Non-geo parquet files with collection-level geo companions."""
 
     def test_non_geo_with_collection_level_geo_is_tracked(self, initialized_catalog, fixtures_dir):
-        """Non-geo parquet tracks when geo companion is collection-level (fix #383).
-
-        When a geo file is added as a collection-level asset, its non-geo
-        companion parquet should also be registered as a collection-level asset
-        in collection.json.
-        """
         # Set up collection with collection.json
         collection_dir = initialized_catalog / "my-collection"
         collection_dir.mkdir()
@@ -386,9 +338,8 @@ class TestCollectionLevelNonGeoCompanions:
         assert non_geo_file in skipped
         assert len(failures) == 0
 
-        # A companion asset attaches to a collection that is already reported,
-        # so it stays in `skipped`; only standalone tabular files report as
-        # added (issue #712).
+        # A companion asset attaches to a collection that is already reported, so it
+        # stays in `skipped`. Only standalone tabular files report as added.
         assert added == []
 
         # Verify: asset added to collection.json
@@ -398,7 +349,7 @@ class TestCollectionLevelNonGeoCompanions:
         )
         assert updated["assets"]["stats"]["href"] == "./stats.parquet"
 
-        # Verify: asset added to versions.json (Issue #383 fix includes versioning)
+        # Verify: asset added to versions.json
         versions_data = json.loads(versions_json.read_text())
         assert len(versions_data["versions"]) == 1, "Should have one version entry"
         version_assets = versions_data["versions"][0]["assets"]
@@ -422,7 +373,7 @@ class TestCollectionLevelNonGeoCompanions:
             initialized_catalog, deferred_non_geo, source_to_item_dir, source_to_collection_dir
         )
 
-        # Issue #432: Now fails with helpful hint when tabular.enabled=false (default)
+        # Now fails with helpful hint when tabular.enabled=false (default)
         # This provides actionable feedback instead of silent skip
         assert len(failures) == 1
         assert "tabular" in failures[0].error.lower()
