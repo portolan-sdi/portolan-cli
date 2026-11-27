@@ -1,9 +1,4 @@
-"""Version operations middle layer.
-
-Bridges CLI commands and versioning backends. All imports of
-portolan_cli.backends and portolan_core.config are lazy (inside function
-bodies) to keep the module lightweight and avoid circular imports.
-"""
+"""Version operations middle layer."""
 
 from __future__ import annotations
 
@@ -111,12 +106,7 @@ class CurrentVersionResult:
 def describe_current_version(
     collection: str, *, catalog_root: Path | None = None
 ) -> CurrentVersionResult:
-    """Return the current version of ``collection`` through the active backend.
-
-    Raises:
-        FileNotFoundError: If the collection has no versions.
-        ValueError: If the backend or the versions.json is not valid.
-    """
+    """Return the current version of ``collection`` through the active backend."""
     return CurrentVersionResult(
         collection, get_current_version(collection, catalog_root=catalog_root)
     )
@@ -155,11 +145,7 @@ class VersionHistoryResult:
 def describe_version_history(
     collection: str, *, catalog_root: Path | None = None
 ) -> VersionHistoryResult:
-    """Return each version of ``collection`` through the active backend.
-
-    Raises:
-        ValueError: If the backend or the versions.json is not valid.
-    """
+    """Return each version of ``collection`` through the active backend."""
     return VersionHistoryResult(collection, list_versions(collection, catalog_root=catalog_root))
 
 
@@ -176,26 +162,7 @@ def publish_version(
     catalog_root: Path | None = None,
     state: RunState | None = None,
 ) -> Version:
-    """Publish a new version of a collection through the active backend.
-
-    The first seven arguments are those of ``VersioningBackend.publish``. A
-    missing schema becomes the ``"unknown"`` fingerprint.
-
-    Args:
-        collection: Collection identifier/path.
-        assets: Mapping of asset names to asset paths/URIs.
-        schema: Schema fingerprint, or None.
-        breaking: Whether this is a breaking change.
-        message: Human-readable description of the change.
-        removed: Asset keys that the version drops.
-        version: Explicit version string, or None for the next one.
-        backend_name: Backend to use. If None, resolved from config.
-        catalog_root: Path to catalog root for config lookup.
-        state: The run state, which reads the backend setting once per run.
-
-    Returns:
-        The newly created Version object.
-    """
+    """Publish a new version of a collection through the active backend."""
     from portolan_cli.backends import get_backend
 
     name = _resolve_backend_name(backend_name, catalog_root, state, collection=collection)
@@ -222,14 +189,7 @@ def semver_error(version: str) -> str | None:
 
 @dataclass(frozen=True)
 class VersionBumpResult:
-    """The outcome of ``portolan version bump``.
-
-    ``error`` reports a failure as data: the type and the message that the
-    command reports in its envelope. It is a plain tuple, because this module
-    is on the import path of push and must not load ``json_output``.
-    ``published`` is None when nothing changed, when the confirmation declined,
-    or on an error.
-    """
+    """The outcome of ``portolan version bump``."""
 
     collection: str
     previous_version: str | None = None
@@ -244,12 +204,7 @@ class VersionBumpResult:
         return bool(self.modified or self.deleted)
 
     def to_dict(self) -> dict[str, Any]:
-        """Return the envelope data of ``portolan version bump``.
-
-        Raises:
-            ValueError: On an error or a declined confirmation. The command
-                reports those outcomes without success data.
-        """
+        """Return the envelope data of ``portolan version bump``."""
         if self.error is not None or (self.published is None and self.changed):
             raise ValueError(f"A failed or declined bump of {self.collection} has no envelope data")
         if self.published is None:
@@ -279,24 +234,7 @@ def bump_collection_version(
     breaking: bool = False,
     confirm: Callable[[VersionBumpResult], bool] | None = None,
 ) -> VersionBumpResult:
-    """Publish ``new_version`` of ``collection`` from the files on disk.
-
-    The function compares the files with the checksums of the current version
-    in versions.json. It publishes the modified files and drops the deleted
-    ones. With no change, it publishes nothing.
-
-    Args:
-        collection: Collection identifier, relative to ``catalog_root``.
-        new_version: Explicit semver string, such as ``"1.2.0"``.
-        catalog_root: Root directory of the catalog.
-        notes: Message of the new version.
-        breaking: Whether the new version has breaking changes.
-        confirm: Receives the planned bump before the publish. A False return
-            publishes nothing. The CLI asks the user here.
-
-    Returns:
-        The planned bump, with the published version or the error.
-    """
+    """Publish ``new_version`` of ``collection`` from the files on disk."""
     from portolan_core.status import detect_deleted_files, detect_modified_files
     from portolan_core.versions import read_versions
 
@@ -383,30 +321,7 @@ def _commit_to_plugin(
 
 
 def commit_run(state: RunState) -> dict[str, Version]:
-    """Write the versions that a run staged, one version per collection.
-
-    The file backend gets one ``add_version`` and one ``write_versions`` for
-    each staged collection. The staged assets carry their checksums, so nothing
-    is hashed again. A collection whose stage changes nothing gets no write.
-    Then one update of the catalog-level versions.json covers every staged
-    collection, under the catalog lock. A failure of that index update is
-    logged, because the collection records are already on disk. A run with no
-    stages reconciles the file-backed collections again, so an unchanged add
-    repairs an index update that failed in an earlier run.
-
-    Each collection goes to its own backend, which ``RunState.backend`` reads
-    from its config hierarchy. A plugin backend gets one ``publish_version``
-    for each of its staged collections.
-
-    Successful stages are cleared. If a collection fails, unfinished stages
-    remain available for retry, and the index still reflects earlier writes.
-
-    Args:
-        state: The state of the run.
-
-    Returns:
-        Collection id to the version written, for each collection that got one.
-    """
+    """Write the versions that a run staged, one version per collection."""
     from portolan_cli.catalog import CollectionSummary, collection_summaries, update_catalog_index
     from portolan_core.versions import write_versions
 
@@ -461,19 +376,7 @@ def commit_run(state: RunState) -> dict[str, Version]:
 
 @contextmanager
 def owned_run(catalog_root: Path, state: RunState | None = None) -> Iterator[RunState]:
-    """Yield the run state of a public entry point, and commit it if it is new.
-
-    A caller that passes its own ``state`` commits it itself, so this yields it
-    and commits nothing. With no ``state``, this opens one and commits it when
-    the block ends without an exception. An exception commits nothing.
-
-    Args:
-        catalog_root: Root directory of the catalog.
-        state: The caller's state, or None.
-
-    Yields:
-        The state to pass down.
-    """
+    """Yield the run state of a public entry point, and commit it if it is new."""
     if state is not None:
         yield state
         return
@@ -482,11 +385,6 @@ def owned_run(catalog_root: Path, state: RunState | None = None) -> Iterator[Run
     own = RunState.open(catalog_root)
     yield own
     commit_run(own)
-
-
-# =============================================================================
-# Backend routing helpers (used by CLI for push/pull/version commands)
-# =============================================================================
 
 
 class PushBlockedResult:
@@ -502,11 +400,7 @@ def check_backend_supports_push(
     *,
     state: RunState | None = None,
 ) -> PushBlockedResult | None:
-    """Check if the active backend supports file-based push.
-
-    Returns None if push is allowed, or a PushBlockedResult with the
-    blocking message if push is not supported.
-    """
+    """Check if the active backend supports file-based push."""
     from portolan_cli.backends import get_backend
     from portolan_core.run_state import RunState
     from portolan_core.stac_links import catalog_collections, versioned_collections
@@ -566,14 +460,7 @@ def try_backend_pull(
     *,
     state: RunState | None = None,
 ) -> BackendPullResult:
-    """Attempt a pull via the active non-file backend.
-
-    Returns a BackendPullResult with handled=True if the backend handled the pull,
-    or handled=False if the file-based pull should proceed as normal.
-
-    Without ``collection`` the backend pulls each collection of the catalog in
-    turn, and the result sums them (issue #977).
-    """
+    """Attempt a pull via the active non-file backend."""
     from portolan_cli.backends import get_backend
     from portolan_core.run_state import RunState
     from portolan_core.stac_links import catalog_collections

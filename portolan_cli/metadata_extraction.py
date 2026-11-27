@@ -1,27 +1,4 @@
-"""Extracted metadata models for metadata seeding.
-
-This module defines source-agnostic metadata models that can be populated from
-various extraction sources (ArcGIS, GDAL, etc.) and used to seed metadata.yaml.
-
-The ExtractedMetadata class serves as an intermediate representation between
-source-specific metadata extractors and the metadata.yaml seeding process.
-
-Usage:
-    from portolan_cli.metadata_extraction import ExtractedMetadata
-
-    # Create from extracted data
-    extracted = ExtractedMetadata(
-        source_type="arcgis_featureserver",
-        source_url="https://services.arcgis.com/.../FeatureServer",
-        attribution="City of Philadelphia",
-        producer="GIS Team",
-        keywords=["census", "demographics"],
-    )
-
-    # Use with seeding
-    from portolan_cli.metadata_seeding import seed_metadata_yaml
-    seed_metadata_yaml(extracted, Path(".portolan/metadata.yaml"))
-"""
+"""Extracted metadata models for metadata seeding."""
 
 from __future__ import annotations
 
@@ -31,13 +8,6 @@ from dataclasses import asdict, dataclass
 @dataclass(frozen=True)
 class ExtractedMetadata:
     """Source-agnostic metadata extracted from a data source.
-
-    This class holds metadata that can be extracted from various sources
-    (ArcGIS services, GDAL files, etc.) and used to seed metadata.yaml.
-
-    All fields except source_type may be None if not available from the source.
-    The seeding process will convert None values to TODO placeholders for
-    required fields.
 
     Attributes:
         source_type: Identifier for the extraction source (e.g., "arcgis_featureserver").
@@ -67,16 +37,10 @@ class ExtractedMetadata:
     keywords: list[str] | None = None
     """List of discovery keywords/tags."""
 
-    # The source names who made the data. It never names who maintains this copy.
-    # So the seed has a producer field and no contact field. The contact and the
-    # host belong to whoever runs the copy. Only metadata.yaml knows them.
     producer: str | None = None
     """Organization the source names as the author of the data."""
 
     license_raw: str | None = None
-    # Sources publish a licence page but never an SPDX id. When license_raw holds a
-    # URL, seeding uses `other` plus this link, which is conformant without anyone
-    # guessing at an identifier (issue #686).
     license_url: str | None = None
     """Raw license text (not SPDX identifier, for human review)."""
 

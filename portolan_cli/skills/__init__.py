@@ -1,8 +1,4 @@
-"""Skills module for Portolan CLI.
-
-Skills have moved to a separate repository. Installation instructions are
-synced from https://github.com/portolan-sdi/portolan-skills via CI.
-"""
+"""Skills module for Portolan CLI."""
 
 from __future__ import annotations
 
@@ -34,12 +30,7 @@ def get_skill(_name: str) -> str | None:
 
 @dataclass(frozen=True)
 class SkillListing:
-    """The result of ``portolan skills list``.
-
-    Attributes:
-        skills: Skill names. The skills live in an external repo, so it is empty.
-        instructions: The install instructions that the CLI prints.
-    """
+    """The result of ``portolan skills list``."""
 
     skills: list[str]
     instructions: str = field(repr=False)
@@ -56,13 +47,7 @@ def list_skill_entries() -> SkillListing:
 
 @dataclass(frozen=True)
 class SkillView:
-    """The result of ``portolan skills show``.
-
-    Attributes:
-        name: The requested skill name.
-        content: The skill text. The skills live in an external repo, so it is None.
-        instructions: The install instructions that the CLI prints.
-    """
+    """The result of ``portolan skills show``."""
 
     name: str
     content: str | None

@@ -1,8 +1,4 @@
-"""Collection creation and management.
-
-Provides functions to create CollectionModel from data files,
-extract extent information, and write collection metadata to JSON.
-"""
+"""Collection creation and management."""
 
 from __future__ import annotations
 
@@ -37,23 +33,7 @@ def create_collection(
     title: str | None = None,
     license: str = "CC-BY-4.0",
 ) -> CollectionModel:
-    """Create a CollectionModel from a data file.
-
-    Extracts spatial extent from the data file metadata.
-
-    Args:
-        collection_id: Unique collection identifier.
-        data_path: Path to data file (GeoParquet or COG).
-        description: Collection description.
-        title: Optional human-readable title.
-        license: SPDX license identifier.
-
-    Returns:
-        CollectionModel with extracted metadata.
-
-    Raises:
-        FileNotFoundError: If data_path doesn't exist.
-    """
+    """Create a CollectionModel from a data file."""
     if not data_path.exists():
         raise FileNotFoundError(f"Data file not found: {data_path}")
 
@@ -80,16 +60,7 @@ def _extract_extent_from_file(
     *,
     timestamp: datetime | None = None,
 ) -> ExtentModel:
-    """Extract spatial and temporal extent from a data file.
-
-    Args:
-        path: Path to data file.
-        timestamp: Optional timestamp to use for temporal interval start.
-            If None, uses current UTC time.
-
-    Returns:
-        ExtentModel with spatial bbox.
-    """
+    """Extract spatial and temporal extent from a data file."""
     suffix = path.suffix.lower()
     bbox: list[list[float]]
 
@@ -112,9 +83,6 @@ def _extract_extent_from_file(
     # Use provided timestamp or current time
     interval_start = (timestamp or datetime.now(UTC)).isoformat()
 
-    # Create extent with spatial bbox and open temporal interval
-    # The STAC bbox rule (one bbox, or the envelope and its parts) lives in
-    # compute_bbox_union. A bbox it cannot validate reaches the model as is.
     return ExtentModel(
         spatial=SpatialExtent(bbox=compute_bbox_union(bbox, wgs84_only=False).bboxes or bbox),
         temporal=TemporalExtent(interval=[[interval_start, None]]),
@@ -122,15 +90,7 @@ def _extract_extent_from_file(
 
 
 def write_collection_json(collection: CollectionModel, path: Path) -> Path:
-    """Write collection metadata to JSON file.
-
-    Args:
-        collection: CollectionModel to write.
-        path: Directory to write to.
-
-    Returns:
-        Path to written file.
-    """
+    """Write collection metadata to JSON file."""
     path.mkdir(parents=True, exist_ok=True)
     output_path = path / "collection.json"
 
@@ -140,15 +100,7 @@ def write_collection_json(collection: CollectionModel, path: Path) -> Path:
 
 
 def write_schema_json(schema: SchemaModel, path: Path) -> Path:
-    """Write schema metadata to JSON file.
-
-    Args:
-        schema: SchemaModel to write.
-        path: Directory to write to.
-
-    Returns:
-        Path to written file.
-    """
+    """Write schema metadata to JSON file."""
     path.mkdir(parents=True, exist_ok=True)
     output_path = path / "schema.json"
 
@@ -158,19 +110,7 @@ def write_schema_json(schema: SchemaModel, path: Path) -> Path:
 
 
 def _get_sibling_collection_bboxes(catalog_root: Path) -> list[list[float]]:
-    """Get bounding boxes from all sibling collections in the catalog (Issue #432).
-
-    The collections come from the containment walk that ``check`` applies
-    (issue #944). A collection without a ``child`` link counts too. Used for
-    AOI inheritance when creating tabular-only collections.
-
-    Args:
-        catalog_root: Root directory of the catalog.
-
-    Returns:
-        List of bboxes [west, south, east, north] from sibling collections.
-        Empty list if no collections with valid extents found.
-    """
+    """Get bounding boxes from all sibling collections in the catalog."""
     if not (catalog_root / "catalog.json").exists():
         return []
 
@@ -205,18 +145,7 @@ def _first_collection_bbox(collection_path: Path) -> list[float] | None:
 
 
 def _compute_union_bbox(bboxes: list[list[float]]) -> list[float]:
-    """Compute the union (enclosing) bounding box from multiple bboxes.
-
-    Filters out invalid bboxes (inf/nan/out-of-range) with warnings (issue #516).
-    Handles antimeridian-crossing bboxes properly.
-
-    Args:
-        bboxes: List of bboxes, each [west, south, east, north].
-
-    Returns:
-        Union bbox [min_west, min_south, max_east, max_north].
-        Returns global fallback if all bboxes are invalid.
-    """
+    """Compute the union (enclosing) bounding box from multiple bboxes."""
     from portolan_core.bbox import compute_bbox_union
 
     if not bboxes:
@@ -231,14 +160,7 @@ def _compute_union_bbox(bboxes: list[list[float]]) -> list[float]:
 
 
 def _get_metadata_yaml_bbox(collection_dir: Path) -> list[float] | None:
-    """Check metadata.yaml for explicit bbox (priority 1).
-
-    Args:
-        collection_dir: Path to the collection directory.
-
-    Returns:
-        Bbox [west, south, east, north] if found in metadata.yaml, None otherwise.
-    """
+    """Check metadata.yaml for explicit bbox (priority 1)."""
     metadata_path = collection_dir / "metadata.yaml"
     if not metadata_path.exists():
         return None

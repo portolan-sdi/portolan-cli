@@ -1,8 +1,4 @@
-"""Schema import functionality for round-trip editing.
-
-Imports edited schema from JSON, CSV, or Parquet back into SchemaModel.
-Validates that mandatory fields haven't been modified (breaking changes).
-"""
+"""Schema import functionality for round-trip editing."""
 
 from __future__ import annotations
 
@@ -56,12 +52,7 @@ def _parse_csv_cog_row(row: dict[str, str]) -> BandSchema:
 
 
 def _read_sidecar_meta(path: Path) -> dict[str, Any]:
-    """Read schema metadata from sidecar .meta.json file if present.
-
-    Returns:
-        Metadata dict with schema_version, format, crs, statistics.
-        Empty dict if sidecar doesn't exist.
-    """
+    """Read schema metadata from sidecar .meta.json file if present."""
     meta_path = path.with_suffix(path.suffix + ".meta.json")
     if meta_path.exists():
         with Path(meta_path).open(encoding="utf-8") as f:
@@ -71,18 +62,7 @@ def _read_sidecar_meta(path: Path) -> dict[str, Any]:
 
 
 def import_schema_json(path: Path) -> SchemaModel:
-    """Import schema from JSON file.
-
-    Args:
-        path: Path to JSON file.
-
-    Returns:
-        SchemaModel loaded from file.
-
-    Raises:
-        FileNotFoundError: If file doesn't exist.
-        json.JSONDecodeError: If file is not valid JSON.
-    """
+    """Import schema from JSON file."""
     if not path.exists():
         raise FileNotFoundError(f"File not found: {path}")
 
@@ -98,24 +78,7 @@ def import_schema_csv(
     format: str | None = None,
     schema_version: str = "1.0.0",
 ) -> SchemaModel:
-    """Import schema from CSV file.
-
-    If a sidecar .meta.json file exists, it will be used to restore
-    schema_version, format, crs, and statistics.
-
-    Args:
-        path: Path to CSV file.
-        format: Data format ("geoparquet" or "cog"). If None, reads from sidecar.
-        schema_version: Schema version to use. Overridden by sidecar if present.
-
-    Returns:
-        SchemaModel loaded from CSV.
-
-    Raises:
-        FileNotFoundError: If file doesn't exist.
-        ValueError: If format is not provided and no sidecar exists,
-                   or if required columns are missing.
-    """
+    """Import schema from CSV file."""
     if not path.exists():
         raise FileNotFoundError(f"File not found: {path}")
 
@@ -157,24 +120,7 @@ def import_schema_parquet(
     format: str | None = None,
     schema_version: str = "1.0.0",
 ) -> SchemaModel:
-    """Import schema from Parquet file.
-
-    If a sidecar .meta.json file exists, it will be used to restore
-    schema_version, format, crs, and statistics.
-
-    Args:
-        path: Path to Parquet file.
-        format: Data format ("geoparquet" or "cog"). If None, reads from sidecar.
-        schema_version: Schema version to use. Overridden by sidecar if present.
-
-    Returns:
-        SchemaModel loaded from Parquet.
-
-    Raises:
-        FileNotFoundError: If file doesn't exist.
-        ValueError: If format is not provided and no sidecar exists.
-        ImportError: If pyarrow is not installed.
-    """
+    """Import schema from Parquet file."""
     if not path.exists():
         raise FileNotFoundError(f"File not found: {path}")
 

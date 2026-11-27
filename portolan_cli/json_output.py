@@ -1,30 +1,4 @@
-"""JSON output envelope module for consistent CLI output formatting.
-
-This module provides the OutputEnvelope dataclass and factory functions
-for generating consistent JSON output across all CLI commands. The envelope
-structure supports agent-native workflows where LLMs parse command output.
-
-Envelope Structure:
-    {
-        "success": true|false,
-        "command": "command_name",
-        "data": { ... },
-        "errors": [ ... ],  # Only present when success=false
-        "meta": { ... }     # Only present when tracing is on (issue #991)
-    }
-
-Usage:
-    from portolan_cli.json_output import success_envelope, error_envelope, ErrorDetail
-
-    # For successful operations
-    envelope = success_envelope("scan", {"files": [...], "count": 5})
-    print(envelope.to_json())
-
-    # For errors
-    errors = [ErrorDetail(type="FileNotFoundError", message="File not found")]
-    envelope = error_envelope("scan", errors)
-    print(envelope.to_json())
-"""
+"""JSON output envelope module for consistent CLI output formatting."""
 
 from __future__ import annotations
 
@@ -59,14 +33,7 @@ class ErrorDetail:
 
 @dataclass
 class OutputEnvelope:
-    """The consistent wrapper structure for all JSON command output.
-
-    Attributes:
-        success: True if command completed without errors, False otherwise
-        command: Name of the command that produced this output (e.g., "scan", "init")
-        data: Command-specific payload; structure varies by command
-        errors: Array of error objects; present only when success=False
-    """
+    """The consistent wrapper structure for all JSON command output."""
 
     success: bool
     command: str
@@ -74,12 +41,7 @@ class OutputEnvelope:
     errors: list[ErrorDetail] | None = field(default=None)
 
     def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary for JSON serialization.
-
-        The errors field is excluded when None (for success cases). The meta
-        field holds the span tree and counters, and is present only when
-        tracing is on.
-        """
+        """Convert to dictionary for JSON serialization."""
         result: dict[str, Any] = {
             "success": self.success,
             "command": self.command,
@@ -96,15 +58,7 @@ class OutputEnvelope:
         return result
 
     def to_json(self, *, indent: int | None = 2) -> str:
-        """Convert to JSON string.
-
-        Args:
-            indent: Indentation level for pretty printing. Default is 2.
-                   Use None for compact output.
-
-        Returns:
-            JSON string representation of the envelope.
-        """
+        """Convert to JSON string."""
         return json.dumps(self.to_dict(), indent=indent)
 
 

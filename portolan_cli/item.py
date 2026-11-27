@@ -1,8 +1,4 @@
-"""Item creation and management.
-
-Provides functions to create ItemModel from data files,
-extract geometry and assets, and write item metadata to JSON.
-"""
+"""Item creation and management."""
 
 from __future__ import annotations
 
@@ -21,9 +17,6 @@ from portolan_core.models.item import AssetModel, ItemModel
 # missing "profile=cloud-optimized" is invisible to rashid's COG detection gate.
 _MEDIA_TYPE_MAP: dict[str, str] = _reg.field_map("media_type")
 
-# The registry keys only ".parquet", but this module's own geometry path treats
-# ".geoparquet" as a parquet variant (see _extract_geometry_from_file). Alias it
-# to the registry's value so the two stay consistent without a second literal.
 _MEDIA_TYPE_MAP.setdefault(".geoparquet", _MEDIA_TYPE_MAP[".parquet"])
 
 
@@ -35,23 +28,7 @@ def create_item(
     title: str | None = None,
     description: str | None = None,
 ) -> ItemModel:
-    """Create an ItemModel from a data file.
-
-    Extracts geometry, bbox, and creates asset reference.
-
-    Args:
-        item_id: Unique item identifier.
-        data_path: Path to data file (GeoParquet or COG).
-        collection_id: Parent collection ID.
-        title: Optional human-readable title.
-        description: Optional item description.
-
-    Returns:
-        ItemModel with extracted metadata.
-
-    Raises:
-        FileNotFoundError: If data_path doesn't exist.
-    """
+    """Create an ItemModel from a data file."""
     if not data_path.exists():
         raise FileNotFoundError(f"Data file not found: {data_path}")
 
@@ -92,14 +69,7 @@ def create_item(
 def _extract_geometry_from_file(
     path: Path,
 ) -> tuple[list[float], dict[str, Any]]:
-    """Extract bbox and geometry from a data file.
-
-    Args:
-        path: Path to data file.
-
-    Returns:
-        Tuple of (bbox, geometry) where geometry is a GeoJSON polygon.
-    """
+    """Extract bbox and geometry from a data file."""
     suffix = path.suffix.lower()
     bbox: list[float]
 
@@ -111,9 +81,6 @@ def _extract_geometry_from_file(
         from portolan_cli.metadata.cog import extract_cog_metadata
 
         cog_metadata = extract_cog_metadata(path)
-        # STAC requires bbox in WGS84 whatever the raster's own CRS (#708).
-        # Returns the bbox unchanged when the CRS is already 4326 or unknown,
-        # so an already-WGS84 source is never transformed twice.
         bbox = list(transform_bbox_to_wgs84(cog_metadata.bbox, cog_metadata.crs))
     else:
         # Default to global extent
@@ -126,16 +93,7 @@ def _extract_geometry_from_file(
 
 
 def _bbox_to_polygon(bbox: list[float]) -> dict[str, Any]:
-    """Convert bbox to GeoJSON polygon.
-
-    Args:
-        bbox: Bounding box [west, south, east, north].
-
-    Returns:
-        GeoJSON Polygon geometry.
-    """
-    # A 6-element bbox is [west, south, min_z, east, north, max_z]; reduce to 2D
-    # so the polygon uses the correct easting/northing (issue #592).
+    """Convert bbox to GeoJSON polygon."""
     from portolan_core.bbox import to_2d_bbox
 
     west, south, east, north = to_2d_bbox(bbox)
@@ -155,27 +113,12 @@ def _bbox_to_polygon(bbox: list[float]) -> dict[str, Any]:
 
 
 def _get_media_type(path: Path) -> str:
-    """Get IANA media type for a file.
-
-    Args:
-        path: Path to file.
-
-    Returns:
-        Media type string.
-    """
+    """Get IANA media type for a file."""
     return _MEDIA_TYPE_MAP.get(path.suffix.lower(), "application/octet-stream")
 
 
 def write_item_json(item: ItemModel, path: Path) -> Path:
-    """Write item metadata to JSON file.
-
-    Args:
-        item: ItemModel to write.
-        path: Directory to write to.
-
-    Returns:
-        Path to written file.
-    """
+    """Write item metadata to JSON file."""
     path.mkdir(parents=True, exist_ok=True)
     output_path = path / f"{item.id}.json"
 
@@ -185,17 +128,7 @@ def write_item_json(item: ItemModel, path: Path) -> Path:
 
 
 def read_item_json(path: Path) -> ItemModel:
-    """Read item metadata from JSON file.
-
-    Args:
-        path: Path to item JSON file.
-
-    Returns:
-        ItemModel loaded from file.
-
-    Raises:
-        FileNotFoundError: If file doesn't exist.
-    """
+    """Read item metadata from JSON file."""
     if not path.exists():
         raise FileNotFoundError(f"File not found: {path}")
 

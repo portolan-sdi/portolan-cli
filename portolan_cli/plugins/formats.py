@@ -1,17 +1,4 @@
-"""Format handlers: the protocols and the registry that picks one per file (#947).
-
-A format handler turns a source file into a cloud-native file and reads the
-metadata Portolan needs for STAC. Plugins add handlers through the
-``portolan_formats`` hook. The built-in handlers come from the same hook.
-
-Precedence for one file, first match wins:
-
-1. ``conversion.handlers`` in ``.portolan/config.yaml`` pins a handler by name
-   for an extension.
-2. A plugin handler that claims the file. Two plugin handlers that claim one
-   file raise ``AmbiguousFormatError`` until a pin decides.
-3. A built-in handler that claims the file.
-"""
+"""Format handlers: the protocols and the registry that picks one per file."""
 
 from __future__ import annotations
 
@@ -44,7 +31,6 @@ class FormatContext:
         defaults: The ``defaults`` section of the merged ``metadata.yaml``.
         merge_strategy: How ``add`` merges detected values into existing ones.
         state: The run state of the command, or None. A handler passes it to
-            the ``api`` helpers that read config, so each file is read once.
     """
 
     catalog_root: Path
@@ -87,7 +73,6 @@ class FormatHandler(Protocol):
         extensions: Lowercase source extensions with a dot, for example ``.xyz``.
         media_type: Media type of the converted file.
         asset_level: ``collection`` when a single file in a collection directory
-            is a collection-level asset, ``item`` when each file is an item.
     """
 
     @property
@@ -124,59 +109,25 @@ class FormatHandler(Protocol):
         """
 
     def convert(self, source: Path, output_dir: Path, catalog_root: Path | None) -> Path:
-        """Write the cloud-native file into ``output_dir`` and return its path.
-
-        Validate the result and raise ``InvalidOutputError`` when it fails.
-        Write a thumbnail here when the format has one. ``add`` and
-        ``check --fix`` both call this.
-        """
+        """Write the cloud-native file into ``output_dir`` and return its path."""
 
     def read_metadata(self, path: Path) -> FormatMetadata:
         """Read the metadata of a converted file."""
 
     def describe_item(self, item: Any, output: Path, metadata: Any, context: FormatContext) -> None:
-        """Add format fields to a new STAC item before Portolan saves it.
-
-        ``item`` is a ``pystac.Item``. Change it in place: properties,
-        assets, and ``stac_extensions``.
-        """
+        """Add format fields to a new STAC item before Portolan saves it."""
 
     def describe_collection(
         self, collection: Any, metadata: list[Any], context: FormatContext
     ) -> None:
-        """Add format fields to a collection after an ``add``.
-
-        ``collection`` is a ``pystac.Collection``. ``metadata`` holds what
-        ``read_metadata`` returned for each file this ``add`` converted.
-        """
+        """Add format fields to a collection after an ``add``."""
 
     def inspect(self, path: Path, catalog_root: Path | None) -> Any:
         """Return a ``FileInfo`` for ``portolan info``. Raise ValueError if unsupported."""
 
 
-# Optional handler methods, found with getattr:
-#   partition(path, catalog_root) -> list[Path]
-#       Split a converted file into Hive partitions. Return [] to keep it whole.
-#   reoptimize(source, catalog_root) -> Path
-#       Rewrite a cloud-native file that a ``check --fix`` finding names, or a
-#       raster under ``check --fix --force``.
-#   reconvert(source, catalog_root) -> Path
-#       Rewrite a file that is its own output for ``add --force --reconvert``.
-
-
 def format_handlers() -> list[tuple[str, FormatHandler]]:
-    """Return every format handler with the name of the plugin that gives it.
-
-    A hook result that is not a list, or a list entry that is not a
-    ``FormatHandler``, produces a ``PluginWarning`` and is dropped.
-
-    The list is cached per plugin manager, because ``add`` and ``scan`` ask for
-    a handler once per file. ``reset_plugin_manager`` makes a new manager, which
-    drops the cache.
-
-    Returns:
-        ``(plugin_name, handler)`` pairs, built-ins first.
-    """
+    """Return every format handler with the name of the plugin that gives it."""
     from portolan_cli.plugins.manager import PluginWarning, call_each, get_plugin_manager
 
     manager = get_plugin_manager()
@@ -226,21 +177,7 @@ def extension_of(path: Path) -> str:
 def handler_for(
     path: Path, catalog_root: Path | None = None, *, state: ConfigSource | None = None
 ) -> FormatHandler | None:
-    """Pick the format handler for ``path``.
-
-    Args:
-        path: Source file or FileGDB directory.
-        catalog_root: Catalog root, to read ``conversion.handlers``. None reads
-            no pin.
-        state: The run state, which parses the config once per run.
-
-    Returns:
-        The handler, or None when no handler claims the file.
-
-    Raises:
-        AmbiguousFormatError: Two plugin handlers claim the file and no pin decides.
-        UnknownFormatHandlerError: A pin names a handler that does not exist.
-    """
+    """Pick the format handler for ``path``."""
     selected = select_handler(path, catalog_root, state=state)
     return selected[1] if selected else None
 
@@ -267,10 +204,6 @@ def select_handler(
         from portolan_cli.conversion_config import get_conversion_overrides, get_handler_pins
 
         pinned = get_handler_pins(catalog_root, state=state).get(extension)
-        # conversion.extensions.convert sends a cloud-native vector, such as a
-        # FlatGeobuf, to GeoParquet. Its own handler only copies it (#1020). A
-        # listed raster keeps the COG handler, which converts it again. A
-        # listed PMTiles keeps its handler: tiles have no GeoParquet conversion.
         if (
             pinned is None
             and extension in _reg.convert_on_request_extensions("GeoParquet")
@@ -299,11 +232,7 @@ def select_handler(
 
 
 def _claims(plugin_name: str, handler: FormatHandler, path: Path) -> bool:
-    """Ask ``handler`` to claim ``path``. A plugin that raises claims nothing.
-
-    One broken plugin must not stop ``scan``, ``check``, or ``add`` for every
-    file with its extension, so the error becomes a ``PluginWarning``.
-    """
+    """Ask ``handler`` to claim ``path``. A plugin that raises claims nothing."""
     if is_builtin(plugin_name):
         return handler.claims(path)
     try:

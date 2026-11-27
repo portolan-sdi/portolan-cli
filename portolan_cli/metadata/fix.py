@@ -1,14 +1,4 @@
-"""Metadata fix functions.
-
-Provides the fix_metadata orchestration function that applies
-fixes for all issues in a MetadataReport:
-- Creates missing STAC items
-- Updates stale items with fresh metadata
-- Handles breaking schema changes
-
-Plus the catalog-wide repairs `check --fix` runs that no rashid rule reports,
-including :func:`strip_removed_fields`.
-"""
+"""Metadata fix functions."""
 
 from __future__ import annotations
 
@@ -41,13 +31,7 @@ if TYPE_CHECKING:
 
 
 class FixAction(Enum):
-    """Type of fix action performed.
-
-    Attributes:
-        CREATED: New STAC item was created.
-        UPDATED: Existing STAC item was updated.
-        SKIPPED: No action needed (file was FRESH).
-    """
+    """Type of fix action performed."""
 
     CREATED = "created"
     UPDATED = "updated"
@@ -56,14 +40,7 @@ class FixAction(Enum):
 
 @dataclass
 class FixResult:
-    """Result from fixing a single file's metadata.
-
-    Attributes:
-        file_path: Path to the fixed file.
-        action: Type of fix action performed.
-        success: Whether the fix succeeded.
-        message: Description of what was done or error message.
-    """
+    """Result from fixing a single file's metadata."""
 
     file_path: Path
     action: FixAction
@@ -82,18 +59,7 @@ class FixResult:
 
 @dataclass
 class FixReport:
-    """Aggregate report of fix results.
-
-    A SKIPPED result is not a fix: an ORPHANED file or a collection-level asset
-    is *reported* with an explanation and left alone. Counting it as a fix made
-    ``check --fix`` claim work it had not done, so the counts below derive from
-    each result's action rather than from the length of the list.
-
-    Attributes:
-        results: List of individual fix results.
-        fresh_skipped: Number of files skipped before any fix was attempted
-            (already FRESH, so no FixResult was produced for them).
-    """
+    """Aggregate report of fix results."""
 
     results: list[FixResult] = field(default_factory=list)
     fresh_skipped: int = 0
@@ -141,27 +107,7 @@ def fix_metadata(
     dry_run: bool = False,
     state: RunState | None = None,
 ) -> FixReport:
-    """Apply fixes for all issues in a MetadataReport.
-
-    For each non-FRESH result in the report:
-    - MISSING: Create a new STAC item
-    - STALE: Update the existing STAC item
-    - BREAKING: Update the item (same as STALE, but logged differently)
-
-    A MISSING item is prepared in the loop and finalized after it, in one
-    ``finalize_items`` call for the batch, as ``add`` does. The catalog-wide
-    sweeps of ``finalize_items`` then run once per call, and a recreated item
-    is byte-identical to an added one.
-
-    Args:
-        directory: Root directory of the catalog/collection.
-        report: MetadataReport with check results.
-        dry_run: If True, don't actually make changes.
-        state: The run state of the command. None opens one run per catalog.
-
-    Returns:
-        FixReport with results of all fix operations.
-    """
+    """Apply fixes for all issues in a MetadataReport."""
     fix_results: list[FixResult] = []
     fresh_skipped = 0
     to_finalize: dict[Path, list[tuple[FixResult, PreparedItem]]] = {}
@@ -189,18 +135,7 @@ def fix_metadata(
 def _finalize_created_items(
     catalog_root: Path, batch: list[tuple[FixResult, PreparedItem]], state: RunState | None
 ) -> list[FixResult]:
-    """Finalize the prepared MISSING items of one catalog, then write their mirrors.
-
-    One ``finalize_items`` call writes the batch, and the items.parquet mirror
-    folds into the version it stages, as after ``add``. One run state holds
-    both. The command commits it once, or this function commits its own state
-    when the caller passes none. A failure fails every result of the batch.
-    The versions that ``finalize_items`` staged before the failure stay staged,
-    so versions.json follows the collection.json files already on disk.
-
-    Returns:
-        One SKIPPED result for each collection whose mirror could not be written.
-    """
+    """Finalize the prepared MISSING items of one catalog, then write their mirrors."""
     from portolan_cli.finalization import finalize_items
     from portolan_cli.stac_parquet import generate_parquet_mirrors
     from portolan_cli.version_ops import owned_run
@@ -236,26 +171,7 @@ def _finalize_created_items(
 def repair_titles_and_links(
     catalog_root: Path, *, dry_run: bool = False, state: RunState | None = None
 ) -> list[FixResult]:
-    """Populate human-readable titles/descriptions and link titles (Issue #502).
-
-    Repairs what rashid's mandatory-title rules (PTL-TTL-001/-002/-003) flag:
-
-    - every catalog/collection gets a human-readable title (derived from its id
-      when missing or technical) and a description (defaulting to the title);
-    - every item referenced by an item link gets a title in its properties;
-    - every ``child``/``item`` link gets its target's title backfilled.
-
-    Existing human-authored titles/descriptions are preserved. A title in a
-    catalog's own ``metadata.yaml`` overrides the derived one (issue #815).
-
-    Args:
-        catalog_root: Root directory of the catalog.
-        dry_run: If True, report what would change without writing.
-        state: The run state, which reads metadata.yaml once per command.
-
-    Returns:
-        FixResults for each file that was (or would be) modified.
-    """
+    """Repair catalog titles and link titles."""
     from portolan_cli.catalog import apply_catalog_human_titles, ensure_link_titles
     from portolan_cli.humanize import derive_title
 
@@ -299,10 +215,7 @@ def repair_titles_and_links(
         # link-title backfill below has a title to copy.
         results.extend(_repair_item_titles(catalog_root, stac_file, data, dry_run=dry_run))
 
-    # Issue #815: a title a human wrote in metadata.yaml wins over the derived
-    # one above. The sweep runs after the loop for that reason. A user who
-    # edits metadata.yaml repairs the catalog with `check --fix` and does not
-    # re-run `add` over the data.
+    # A title from metadata.yaml wins over the derived one, so this sweep runs after the loop.
     results.extend(
         FixResult(
             file_path=catalog_path,
@@ -321,16 +234,7 @@ def repair_titles_and_links(
 
 
 def _every_stac_object(catalog_root: Path) -> Iterator[Path]:
-    """Every published object in the tree: containers, then the items they own.
-
-    Items are reached through each collection's ``rel="item"`` links rather than
-    by globbing, because Portolan names an item file after the item
-    (``scene-001/scene-001.json``), so no filename pattern finds them all.
-    Yielded once each: a collection and an organizing catalog beneath it can
-    both link the same item. A collection that will not parse yields no items;
-    the sweep reports nothing about it rather than raising over a file some
-    other check already flags.
-    """
+    """Every published object in the tree: containers, then the items they own."""
     from portolan_core.stac_links import owned_item_hrefs
 
     seen: set[Path] = set()
@@ -361,14 +265,7 @@ def _strip_from_mapping(container: Any) -> bool:
 
 
 def _migrate_managed_marker(asset: dict[str, Any]) -> None:
-    """Carry ``portolan:managed: false`` over to the ``external`` role before it goes.
-
-    The marker's whole job was telling a reader that Portolan does not own the
-    bytes behind the href. The ``external`` role says the same thing in
-    spec-defined terms, and ``add-external`` has always written both, so this
-    only fires for an asset some other path produced. Read once, never written
-    back (issue #654).
-    """
+    """Carry ``portolan:managed: false`` over to the ``external`` role before it goes."""
     from portolan_cli.external import EXTERNAL_ROLE
 
     if asset.get(LEGACY_MANAGED_FIELD) is not False:
@@ -420,26 +317,7 @@ def _read_json_object(path: Path) -> dict[str, Any] | None:
 
 
 def strip_removed_fields(catalog_root: Path, *, dry_run: bool = False) -> list[FixResult]:
-    """Delete the ``portolan:`` fields no spec version defines (issue #654).
-
-    Runs from the fix workflow rather than from the fixer registry, for the same
-    reason item freshness does: no rashid rule reports these. A rule fires on a
-    requirement an object fails, and no requirement names a field the spec does
-    not have, so there is no finding to dispatch on and the sweep has to run on
-    its own.
-
-    Sweeps catalogs, collections, and items, and strips each field from all
-    three places one was ever written: the object, an item's ``properties``, and
-    an asset. ``portolan:managed`` is read before it is deleted, so an external
-    asset keeps the recognition the marker used to provide.
-
-    Args:
-        catalog_root: Root directory of the catalog.
-        dry_run: If True, report what would change without writing.
-
-    Returns:
-        One FixResult per object that carried at least one removed field.
-    """
+    """Remove fields that STAC does not allow."""
     return [
         result
         for path in _every_stac_object(catalog_root)
@@ -448,22 +326,7 @@ def strip_removed_fields(catalog_root: Path, *, dry_run: bool = False) -> list[F
 
 
 def repair_pmtiles_links(catalog_root: Path, *, dry_run: bool = False) -> list[FixResult]:
-    """Backfill the ``rel="pmtiles"`` web-map-links link on collections (rashid PTL-VIZ-003).
-
-    Repairs what rashid PTL-VIZ-003 flags: a
-    collection that registers a PMTiles asset but does not emit a collection-level
-    ``rel="pmtiles"`` link. For each PMTiles asset lacking a matching link, the link
-    is added (with the web-map-links extension declared and ``pmtiles:layers`` set
-    from the asset filename). Collections whose links are already present are left
-    untouched.
-
-    Args:
-        catalog_root: Root directory of the catalog.
-        dry_run: If True, report what would change without writing.
-
-    Returns:
-        FixResults for each collection that was (or would be) modified.
-    """
+    """Backfill the ``rel="pmtiles"`` web-map-links link on collections (rashid PTL-VIZ-003)."""
     results: list[FixResult] = []
 
     for collection_json in sorted(catalog_root.rglob("collection.json")):
@@ -500,9 +363,7 @@ def _repair_pmtiles_collection(collection_json: Path, *, dry_run: bool) -> FixRe
 
     linked_hrefs = pmtiles_link_hrefs(data.get("links", []))
     missing = [href for href in pmtiles_hrefs if href not in linked_hrefs]
-    # A collection may have all its links yet still lack the web-map-links
-    # extension declaration (e.g. a hand-edited collection.json). The PMTiles-link rule
-    # flags that too, so repair it here to keep check and --fix in agreement.
+    # A hand-edited collection can lack the web-map-links declaration; repair it so check and --fix agree.
     missing_extension = WEB_MAP_LINKS_EXTENSION not in data.get("stac_extensions", [])
     if not missing and not missing_extension:
         return None
@@ -510,13 +371,7 @@ def _repair_pmtiles_collection(collection_json: Path, *, dry_run: bool) -> FixRe
     if not dry_run:
         collection_dir = collection_json.parent
         for href in missing:
-            # Best-effort: the layer name is derived from the PMTiles file
-            # stem. If the tiles were generated with a custom ``--layer``
-            # override differing from the file name, the override is not
-            # recorded anywhere the backfill can read, so pmtiles:layers may
-            # not match the actual layer name inside the PMTiles. The
-            # generate path (pmtiles.generate_pmtiles_for_collection) honors
-            # the override; this fallback cannot.
+            # Best effort: a custom --layer name is not recorded, so the file stem is used.
             add_pmtiles_link_to_collection(collection_dir, href, layers=[Path(href).stem])
         if missing_extension and not missing:
             # Links are complete but the extension declaration is absent;
@@ -592,20 +447,7 @@ def _fix_single_file(
     dry_run: bool = False,
     state: RunState | None = None,
 ) -> FixResult:
-    """Fix metadata for a single file based on its check result.
-
-    A MISSING file goes through :func:`_prepare_missing` instead, except in a
-    dry run.
-
-    Args:
-        check_result: The check result indicating what needs fixing.
-        directory: Root directory for context.
-        dry_run: If True, don't actually make changes.
-        state: The run state, which parses the config once per command.
-
-    Returns:
-        FixResult describing what was done.
-    """
+    """Fix metadata for a single file based on its check result."""
     file_path = check_result.file_path
     status = check_result.status
 
@@ -635,10 +477,7 @@ def _fix_single_file(
 
     try:
         if status in (MetadataStatus.STALE, MetadataStatus.BREAKING):
-            # Item.json sits next to the data file in the hierarchical layout
-            # produced by `add` ({item_dir}/{item_id}.json). Per
-            # only this layout is supported — the legacy flat sibling-JSON
-            # layout is reported as ORPHANED upstream, never STALE.
+            # Item JSON sits at {item_dir}/{item_id}.json; the flat sibling layout is reported as ORPHANED.
             item_path = file_path.parent / f"{file_path.stem}.json"
 
             # Collection-level assets have no companion item.json
@@ -703,12 +542,7 @@ def _fix_single_file(
 def _prepare_missing(
     check_result: MetadataCheckResult, directory: Path, *, state: RunState | None = None
 ) -> tuple[FixResult, tuple[Path, PreparedItem] | None]:
-    """Prepare the item of a MISSING file, for one ``finalize_items`` call later.
-
-    Returns:
-        The result, and the catalog root with the prepared item. A failed
-        preparation returns a failed result and no item.
-    """
+    """Prepare the item of a MISSING file, for one ``finalize_items`` call later."""
     file_path = check_result.file_path
     collection_dir = _resolve_collection_dir(file_path, directory)
     try:
@@ -719,12 +553,7 @@ def _prepare_missing(
 
 
 def _resolve_collection_dir(file_path: Path, fallback: Path) -> Path:
-    """Find the nearest ancestor of `file_path` containing collection.json.
-
-    Callers may pass either a collection directory or a catalog root as
-    `fallback`. Walking up from the data file lets fix_metadata work
-    correctly in both cases (and across nested-catalog hierarchies per.
-    """
+    """Find the nearest ancestor of `file_path` containing collection.json."""
     if (fallback / "collection.json").exists():
         return fallback
     for ancestor in file_path.resolve().parents:

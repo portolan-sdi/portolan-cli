@@ -1,16 +1,4 @@
-"""Collection ID validation and normalization.
-
-Per portolan-spec/structure.md, collection IDs SHOULD:
-- Contain only lowercase letters, numbers, hyphens, underscores, and forward slashes
-- Start with a letter or number (not hyphen/underscore)
-- Be unique within the catalog
-- Support nested paths (e.g., climate/hittekaart, rivers/2020/q1)
-
-This module provides:
-- validate_collection_id(): Check if an ID is valid
-- normalize_collection_id(): Convert invalid ID to valid form
-- CollectionIdError: Raised when normalization fails
-"""
+"""Collection ID validation and normalization."""
 
 from __future__ import annotations
 
@@ -27,11 +15,6 @@ if TYPE_CHECKING:
 
 _RASTER_MIN_PATH_PARTS = 3
 
-# Pattern for valid collection IDs (supports path syntax):
-# - Start with lowercase letter or number (year-based organization like 2020/)
-# - Followed by lowercase letters, numbers, hyphens, underscores, or forward slashes
-# - No leading/trailing/double slashes
-# - Each segment starts with letter or number (not hyphen/underscore)
 VALID_COLLECTION_ID_PATTERN: re.Pattern[str] = re.compile(
     r"^[a-z0-9][a-z0-9_-]*(?:/[a-z0-9][a-z0-9_-]*)*$"
 )
@@ -45,16 +28,7 @@ class CollectionIdError(ValueError):
 
 
 def validate_collection_id(collection_id: str) -> tuple[bool, str | None]:
-    """Validate a collection ID against naming conventions.
-
-    Args:
-        collection_id: The collection ID to validate.
-
-    Returns:
-        Tuple of (is_valid, error_message).
-        If valid, returns (True, None).
-        If invalid, returns (False, "description of the problem").
-    """
+    """Validate a collection ID against naming conventions."""
     # Check for empty or whitespace-only
     if not collection_id or not collection_id.strip():
         return False, "Collection ID cannot be empty"
@@ -88,17 +62,7 @@ def validate_collection_id(collection_id: str) -> tuple[bool, str | None]:
 
 
 def _transliterate_to_ascii(text: str) -> str:
-    """Transliterate non-ASCII characters to ASCII equivalents.
-
-    Uses Unicode NFKD normalization to decompose characters, then
-    encodes to ASCII, ignoring characters that can't be represented.
-
-    Example:
-        >>> _transliterate_to_ascii("données")
-        'donnees'
-        >>> _transliterate_to_ascii("naïve")
-        'naive'
-    """
+    """Transliterate non-ASCII characters to ASCII equivalents."""
     # Normalize to decomposed form (e -> e + combining accent)
     normalized = unicodedata.normalize("NFKD", text)
     # Encode to ASCII, ignoring non-ASCII characters
@@ -106,28 +70,7 @@ def _transliterate_to_ascii(text: str) -> str:
 
 
 def normalize_collection_id(collection_id: str) -> str:
-    """Normalize a collection ID to valid form.
-
-    Transformations applied:
-    1. Lowercase
-    2. Transliterate non-ASCII to ASCII
-    3. Replace invalid characters (spaces, special chars) with hyphens (preserves slashes)
-    4. Collapse multiple consecutive hyphens
-    5. Strip leading/trailing hyphens and slashes
-    6. Collapse double slashes
-    7. Clean up segment boundaries (strip hyphens)
-
-    Note: Segments CAN start with numbers (year-based organization like 2020/).
-
-    Args:
-        collection_id: The collection ID to normalize.
-
-    Returns:
-        Normalized collection ID.
-
-    Raises:
-        CollectionIdError: If input is empty or normalizes to empty string.
-    """
+    """Normalize a collection ID to valid form."""
     # Check for empty input
     if not collection_id or not collection_id.strip():
         raise CollectionIdError("Collection ID cannot be empty")
@@ -156,9 +99,6 @@ def normalize_collection_id(collection_id: str) -> str:
             f"Collection ID '{collection_id}' cannot be normalized - no valid characters remain"
         )
 
-    # Step 7: Clean up segments
-    # Numbers at segment start are valid (year-based organization like 2020/)
-    # But hyphens/underscores at start still need fixing
     segments = result.split("/")
     fixed_segments = []
     for raw_segment in segments:
@@ -178,20 +118,7 @@ def normalize_collection_id(collection_id: str) -> str:
 
 
 def resolve_collection_id(path: Path, catalog_root: Path) -> str:
-    """Resolve collection ID from a file path.
-
-    First path component (relative to catalog root) = collection ID.
-
-    Args:
-        path: Path to the file.
-        catalog_root: Root directory of the catalog.
-
-    Returns:
-        Collection ID (first directory component relative to catalog).
-
-    Raises:
-        ValueError: If path is not inside catalog root.
-    """
+    """Resolve collection ID from a file path."""
     # Get path relative to catalog root
     try:
         relative = path.resolve().relative_to(catalog_root.resolve())
@@ -213,50 +140,7 @@ def resolve_collection_id(path: Path, catalog_root: Path) -> str:
 def infer_nested_collection_id(
     path: Path, catalog_root: Path, *, state: ConfigSource | None = None
 ) -> str:
-    """Infer nested collection ID from a file or directory-based data asset.
-
-    Collection depth depends on the format type, because vector data is a
-    collection-level asset while raster data is organized into items:
-
-    - **Vector data**: Parent directory = collection (collection-level asset)
-      Example: demographics/boundaries.parquet -> collection = "demographics"
-
-    - **Raster data**: Grandparent directory = collection, parent = item
-      Example: 2025/tile1/scene.tif -> collection = "2025", item = "tile1"
-
-    Per Issue #443, Hive partition directories (key=value format) are filtered
-    out and NOT included in the collection ID:
-      Example: sites/contours/gms_feature_id=abc/data.parquet -> "sites/contours"
-
-    Directory-based formats like FileGDB (*.gdb) are treated as vector data
-    (collection-level assets).
-
-    Examples:
-        # Vector (collection-level)
-        climate/hittekaart/data.parquet -> "climate/hittekaart"
-        demographics/boundaries.geojson -> "demographics"
-        ocha/my_data.gdb -> "ocha" (FileGDB directory)
-
-        # Raster (item-level, needs subdirectory)
-        imagery/2025/tile1/scene.tif -> "imagery/2025"
-        satellite/scene-001/B04.tif -> "satellite"
-
-        # Hive partitions (filtered out)
-        sites/contours/gms_feature_id=abc/data.parquet -> "sites/contours"
-        data/year=2024/month=01/file.parquet -> "data"
-
-    Args:
-        path: Path to the file or directory-based data asset (e.g., FileGDB).
-        catalog_root: Root directory of the catalog.
-        state: The run state, which parses the config once per run.
-
-    Returns:
-        Collection ID (nested path relative to catalog root, excluding Hive partitions).
-
-    Raises:
-        ValueError: If path is not inside catalog root, at root level, or
-            if raster data lacks required item subdirectory structure.
-    """
+    """Infer nested collection ID from a file or directory-based data asset."""
     from portolan_cli.scan.detect import is_hive_partition_dir
 
     # Get path relative to catalog root
@@ -270,13 +154,6 @@ def infer_nested_collection_id(
     if not parts:
         raise ValueError(f"Cannot determine collection from path: {path}")
 
-    # A path is treated as a "data asset" (not a collection) if it's a file
-    # OR a FileGDB directory. FileGDB directories (*.gdb) contain the actual
-    # data - they're assets, not organizational collections (Issue #259).
-    #
-    # For FileGDB detection, we use:
-    # 1. is_filegdb() - content inspection (internal .gdbtable files or 'gdb' marker)
-    # 2. Suffix fallback - handles empty/incomplete/corrupted FileGDB directories
     is_gdb_suffix = path.is_dir() and path.name.lower().endswith(".gdb")
     is_asset = path.is_file() or is_filegdb(path) or is_gdb_suffix
 
@@ -284,9 +161,6 @@ def infer_nested_collection_id(
     if is_asset and len(parts) == 1:
         raise ValueError(f"Data asset {path} must be in a subdirectory (collection)")
 
-    # The format handler decides the collection depth (#947)
-    # - asset_level "collection" (vector): parent directory = collection
-    # - asset_level "item" (raster): grandparent = collection, parent = item
     from portolan_cli.plugins.formats import handler_for
 
     handler = handler_for(path, catalog_root, state=state)
@@ -307,8 +181,6 @@ def infer_nested_collection_id(
         # Return parent as collection (all but last component)
         collection_parts = parts[:-1] if is_asset else parts
 
-    # Filter out Hive partition directories (key=value pattern)
-    # Per Issue #443: partitions should not be part of collection ID
     collection_parts = tuple(
         part for part in collection_parts if is_hive_partition_dir(part) is None
     )

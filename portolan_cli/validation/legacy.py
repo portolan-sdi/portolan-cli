@@ -1,27 +1,4 @@
-"""Date a catalog by the markers an older Portolan left in it.
-
-Three generations are detectable, and none is something rashid can report. A
-rule fires on a spec requirement an object fails; these are properties the spec
-has since removed, so no requirement names them and no rule can. `check` still
-owes the operator a sentence about each, which is what this module writes.
-
-The first marker is a catalog published before the versioned profile schema URI
-existed, when Portolan described itself through ``portolan:``-prefixed custom
-fields instead. Those catalogs are not conformant and never were (decision 1 in
-the rashid migration: acceptable pre-1.0). Saying so in one sentence beats
-leaving the operator to infer it from a PTL-CNF-001 on every object.
-
-The second is the ``portolan:styles`` manifest, written up to 0.8.0 and
-removed from the spec in favor of the ``default`` asset role (issue #739).
-
-The third is the rest of the ``portolan:`` fields Portolan emitted through
-0.8.0, dropped when the spec confirmed it defines none (issue #654). That one
-is deliberately blind to the schema URI: the catalogs carrying those fields are
-exactly the ones that also declare the URI, so gating on it would report
-nothing.
-
-The detectors are independent, and a catalog can trip any, all, or none.
-"""
+"""Date a catalog by the markers an older Portolan left in it."""
 
 from __future__ import annotations
 
@@ -94,21 +71,7 @@ def _has_legacy_field(doc: dict[str, Any]) -> bool:
 
 
 def detect_legacy_generation(root: Path) -> str | None:
-    """Return an explanatory note when ``root`` is a pre-schema-URI catalog.
-
-    A catalog is legacy when its root catalog.json declares no Portolan schema
-    URI *and* a ``portolan:`` custom field survives on the root or on one of its
-    collections. Both halves are required: a catalog that already carries the
-    schema URI is current whatever else it holds, and a plain STAC catalog
-    Portolan never touched is not ours to date.
-
-    Args:
-        root: Catalog root directory.
-
-    Returns:
-        A message naming the remedy, or None when the catalog is current,
-        missing, or unreadable.
-    """
+    """Return an explanatory note when ``root`` is a pre-schema-URI catalog."""
     catalog = _load(root / "catalog.json")
     if catalog is None or _has_schema_uri(catalog):
         return None
@@ -125,22 +88,7 @@ def detect_legacy_generation(root: Path) -> str | None:
 
 
 def detect_style_manifest(root: Path) -> str | None:
-    """Return an explanatory note when a collection still lists styles by hand.
-
-    Walks the whole tree rather than the direct children :data:`_SCAN_GLOB`
-    matches, because a collection nests under intermediate catalogs at any
-    depth and a manifest hiding three levels down is the one nobody finds by
-    hand. The message does not name the collection, so the walk returns on the
-    first hit; a current catalog is the case that pays for the full pass, once
-    per `check` run against a tree rashid reads in full anyway.
-
-    Args:
-        root: Catalog root directory.
-
-    Returns:
-        A message naming the remedy, or None when no collection carries the
-        removed property.
-    """
+    """Return an explanatory note when a collection still lists styles by hand."""
     for collection_path in root.rglob("collection.json"):
         collection = _load(collection_path)
         if collection is not None and LEGACY_STYLE_MANIFEST_FIELD in collection:
@@ -149,12 +97,7 @@ def detect_style_manifest(root: Path) -> str | None:
 
 
 def _carries_removed_field(doc: dict[str, Any]) -> bool:
-    """Whether a STAC object holds a removed field anywhere it could have landed.
-
-    Three homes, because that is where they were written: the object itself
-    (the aggregates, the manifests), an item's ``properties`` (the provisional
-    marker), and an asset (the glob and the managed flag).
-    """
+    """Whether a STAC object holds a removed field anywhere it could have landed."""
     if any(field in doc for field in _REMOVED_FIELDS_TO_REPORT):
         return True
     properties = doc.get("properties")
@@ -172,13 +115,7 @@ def _carries_removed_field(doc: dict[str, Any]) -> bool:
 
 
 def _item_paths(collection_path: Path) -> list[Path]:
-    """The items a collection owns, or nothing when it cannot be read.
-
-    Items are found through the collection's ``rel="item"`` links, because
-    Portolan names an item file after the item (``scene-001/scene-001.json``)
-    and no filename pattern finds them all. An unreadable collection is
-    somebody else's finding, so it yields no items rather than raising.
-    """
+    """The items a collection owns, or nothing when it cannot be read."""
     from portolan_core.stac_links import owned_item_hrefs
 
     try:
@@ -197,19 +134,7 @@ def _items_carry_removed_field(collection_path: Path) -> bool:
 
 
 def detect_removed_fields(root: Path) -> str | None:
-    """Return an explanatory note when any object still carries a removed field.
-
-    Walks the root catalog, then every collection, then the items each one owns,
-    returning on the first hit: the message names no object, so counting them
-    buys nothing. Items come last because reading them costs the most and
-    ``portolan:datetime_provisional`` is the only field that lives there.
-
-    Args:
-        root: Catalog root directory.
-
-    Returns:
-        A message naming the remedy, or None when no object carries one.
-    """
+    """Return an explanatory note when any object still carries a removed field."""
     catalog = _load(root / "catalog.json")
     if catalog is not None and _carries_removed_field(catalog):
         return _REMOVED_FIELDS_MESSAGE
@@ -228,20 +153,7 @@ def detect_removed_fields(root: Path) -> str | None:
 
 
 def detect_legacy_notes(root: Path) -> str | None:
-    """Every legacy marker `check` found in ``root``, as one note.
-
-    The detectors are independent, so a catalog can trip several. They are joined
-    into the single note the report carries rather than given a channel each:
-    the operator reads one warning block, and the ``legacy_note`` key in the
-    JSON payload keeps the shape agents already parse.
-
-    Args:
-        root: Catalog root directory.
-
-    Returns:
-        The notes separated by a blank line, or None when the catalog is
-        current.
-    """
+    """Every legacy marker `check` found in ``root``, as one note."""
     detectors = (detect_legacy_generation, detect_style_manifest, detect_removed_fields)
     notes = [note for note in (detect(root) for detect in detectors) if note]
     return "\n\n".join(notes) if notes else None

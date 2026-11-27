@@ -1,16 +1,4 @@
-"""Vector thumbnail generation module (Issue #13).
-
-Generates JPEG thumbnails from PMTiles and GeoParquet files with optional basemaps.
-Mirrors the COG thumbnail pattern in convert.py.
-
-Public API:
-- ThumbnailConfig: Configuration dataclass for thumbnail generation
-- generate_vector_thumbnail: Orchestrator (prefers GeoParquet, falls back to PMTiles)
-- generate_thumbnail_from_pmtiles: Generate from PMTiles
-- generate_thumbnail_from_geoparquet: Generate from GeoParquet
-- add_basemap: Draw basemap tiles under the data of an EPSG:3857 axes
-- get_thumbnail_config: Load config from catalog's config.yaml
-"""
+"""Vector thumbnail generation from PMTiles and GeoParquet files."""
 
 from __future__ import annotations
 
@@ -66,11 +54,7 @@ _ctx_lock = threading.Lock()
 
 @functools.cache
 def _ensure_contextily() -> Any:
-    """Lazy-load contextily, returning module or None if unavailable.
-
-    Thread-safe: the lock lets only one thread run the import. The cache
-    keeps the result, so later calls do not take the lock.
-    """
+    """Lazy-load contextily, returning module or None if unavailable."""
     with _ctx_lock:
         try:
             import contextily as ctx
@@ -78,11 +62,6 @@ def _ensure_contextily() -> Any:
             logger.debug("contextily not available, basemaps disabled")
             return None
         return ctx
-
-
-# =============================================================================
-# Config Parsing Helpers
-# =============================================================================
 
 
 def _parse_bool(value: Any, key: str, default: bool) -> bool:
@@ -145,11 +124,6 @@ def _parse_int(value: Any, key: str, default: int) -> int:
     return default
 
 
-# =============================================================================
-# Configuration
-# =============================================================================
-
-
 #: The basemap a thumbnail gets when the config names none. CARTO tiles need a
 #: key now: a request without one gets a tile that reads "API KEY REQUIRED"
 #: (etag ``wm-da89c20e77c1-light``). Esri serves this light gray canvas with
@@ -159,23 +133,7 @@ DEFAULT_BASEMAP_PROVIDER = "Esri.WorldGrayCanvas"
 
 @dataclass(frozen=True)
 class ThumbnailConfig:
-    """Configuration for thumbnail generation.
-
-    Attributes:
-        enabled: Whether to generate thumbnails (default True).
-        max_size: Maximum pixel dimension for longest edge (default 512).
-        quality: JPEG quality 1-100 (default 75).
-        basemap_provider: Contextily basemap provider name (default
-            ``DEFAULT_BASEMAP_PROVIDER``). Set to 'none' to disable basemap.
-        basemap_opacity: Basemap opacity 0.0-1.0 (default 1.0).
-        basemap_zoom_adjust: Zoom level adjustment for basemap (default 0).
-        basemap_api_key: Key for the tile provider (default None). CARTO
-            needs one. The env var PORTOLAN_THUMBNAILS_BASEMAP_API_KEY sets it.
-        max_features: Feature ceiling for a single render (default 100,000).
-            Beyond it the reader samples, so render cost stays bounded in file
-            size. Thumbnails became part of the default add pipeline in Issue
-            #683, which is what makes an unbounded read a problem.
-    """
+    """Configuration for thumbnail generation."""
 
     enabled: bool = True
     max_size: int = 512
@@ -189,12 +147,7 @@ class ThumbnailConfig:
 
 
 class BasemapRun:
-    """The basemap state of one run: the providers that did not answer.
-
-    One run marks a provider after a tile timeout or the deadline. Its later
-    thumbnails then draw no basemap and do not wait again. A new run asks the
-    provider again. ``get_thumbnail_config`` keeps one per run state.
-    """
+    """The basemap state of one run: the providers that did not answer."""
 
     def __init__(self) -> None:
         """Start a run in which every provider may answer."""
@@ -238,17 +191,7 @@ def _basemap_run(catalog_path: Path, state: object) -> BasemapRun | None:
 def get_thumbnail_config(
     catalog_path: Path, *, state: ConfigSource | None = None
 ) -> ThumbnailConfig:
-    """Load thumbnail config from catalog's config.yaml.
-
-    Reads the 'thumbnails' section and returns a ThumbnailConfig instance.
-
-    Args:
-        catalog_path: Root path of the catalog.
-        state: The run state, which parses the config once per run.
-
-    Returns:
-        ThumbnailConfig instance. Returns defaults if no config exists.
-    """
+    """Load thumbnail config from catalog's config.yaml."""
     config = load_catalog_config(catalog_path, state=state).data
     thumbnails = get_dict(config, "thumbnails")
     run = _basemap_run(catalog_path, state)
@@ -288,35 +231,14 @@ THUMBNAIL_STEM_SUFFIX = ".thumb"
 
 
 def thumbnail_path_for(data_path: Path) -> Path:
-    """Return the thumbnail path for a data file (single source of the convention).
-
-    Thumbnails are written next to their source as ``{stem}.thumb.jpg``. Both the
-    PMTiles and GeoParquet render paths use this, and the PMTiles side-step relies
-    on it to locate an already-generated thumbnail when generation is skipped.
-
-    Args:
-        data_path: Path to the source data file (PMTiles or GeoParquet).
-
-    Returns:
-        Path to the sibling thumbnail file.
-    """
+    """Return the thumbnail path for a data file (single source of the convention)."""
     return data_path.with_name(f"{data_path.stem}{THUMBNAIL_STEM_SUFFIX}.jpg")
 
 
 def is_generated_thumbnail(filename: str) -> bool:
-    """True when ``filename`` carries the ``{stem}.thumb.{ext}`` name we write.
-
-    The test reads the basename alone. It answers for a versions.json href and
-    for a path on disk. An adopted ``thumbnail.png`` returns False, because that
-    image belongs to the user. Only a file Portolan drew is safe to redraw
-    (Issue #735).
-    """
+    """True when ``filename`` carries the ``{stem}.thumb.{ext}`` name we write."""
     return PurePosixPath(filename.lower()).stem.endswith(THUMBNAIL_STEM_SUFFIX)
 
-
-# =============================================================================
-# Tile Coordinate Transformation
-# =============================================================================
 
 # MVT default tile extent (coordinates range from 0 to EXTENT)
 MVT_EXTENT = 4096
@@ -336,11 +258,7 @@ def _tile_to_lat(y: int, z: int) -> float:
 
 
 def _tile_bounds(z: int, x: int, y: int) -> tuple[float, float, float, float]:
-    """Get geographic bounds for a tile.
-
-    Returns:
-        (lon_min, lat_min, lon_max, lat_max)
-    """
+    """Get geographic bounds for a tile."""
     lon_min = _tile_to_lon(x, z)
     lon_max = _tile_to_lon(x + 1, z)
     lat_max = _tile_to_lat(y, z)  # Y=0 is north
@@ -354,17 +272,7 @@ def _transform_coord(
     tile_bounds: tuple[float, float, float, float],
     extent: int = MVT_EXTENT,
 ) -> tuple[float, float]:
-    """Transform MVT tile-space coordinate to geographic.
-
-    Args:
-        mvt_x: X coordinate in tile extent space (0 to extent).
-        mvt_y: Y coordinate in tile extent space (0 to extent).
-        tile_bounds: (lon_min, lat_min, lon_max, lat_max).
-        extent: MVT tile extent (default 4096).
-
-    Returns:
-        (longitude, latitude)
-    """
+    """Transform MVT tile-space coordinate to geographic."""
     lon_min, lat_min, lon_max, lat_max = tile_bounds
     lon = lon_min + (mvt_x / extent) * (lon_max - lon_min)
     # Y is inverted in MVT (0 at top). A tile is linear in Web Mercator y,
@@ -388,14 +296,8 @@ def _transform_coords(
 
     Handles Point, LineString, Polygon, and Multi* geometry coordinate structures.
     """
-    # Depth limit for coordinate nesting:
-    # - Point: 0 (coords = [x, y])
-    # - LineString: 1 (coords = [[x,y], ...])
-    # - Polygon: 2 (coords = [[[x,y], ...]])
-    # - MultiPolygon: 3
-    # - GeometryCollection containing MultiPolygon: 4
-    # - Nested GeometryCollection edge cases: 5-6
-    # Beyond 6 is almost certainly malformed data.
+    # Max coordinate nesting: a MultiPolygon is 3, a GeometryCollection 4-6.
+    # Deeper than 6 is malformed data.
     if depth > _MAX_GEOMETRY_DEPTH:
         return coords
 
@@ -414,10 +316,6 @@ def _transform_coords(
     return coords
 
 
-# =============================================================================
-# PMTiles Reading (Internal)
-# =============================================================================
-
 # Limit geometries to prevent OOM on dense tiles (thumbnails don't need all features)
 _MAX_GEOMETRIES = 10000
 _MAX_TILES_PER_ZOOM = 256
@@ -429,17 +327,7 @@ def _extract_coord_bounds(
     lats: list[float],
     depth: int = 0,
 ) -> None:
-    """Recursively extract lon/lat bounds from coordinate arrays.
-
-    Handles all GeoJSON geometry coordinate structures (Point, LineString,
-    Polygon, Multi* types). Appends found coordinates to the lons/lats lists.
-
-    Args:
-        coords: Coordinate array from GeoJSON geometry.
-        lons: List to append longitude values to.
-        lats: List to append latitude values to.
-        depth: Recursion depth (safety limit).
-    """
+    """Recursively extract lon/lat bounds from coordinate arrays."""
     if depth > _MAX_GEOMETRY_DEPTH or not coords:
         return
 
@@ -502,18 +390,7 @@ def _process_tile_data(
 def _read_pmtiles_geometries(
     pmtiles_path: Path,
 ) -> tuple[list[dict[str, Any]], tuple[float, float, float, float] | None]:
-    """Read geometries from low-zoom PMTiles tiles with geographic coordinates.
-
-    Transforms MVT tile-space coordinates to geographic (lon/lat) coordinates.
-
-    Args:
-        pmtiles_path: Path to PMTiles file.
-
-    Returns:
-        Tuple of (geometries, bounds) where:
-        - geometries: List of geometry dicts with 'type' and 'coordinates' keys.
-        - bounds: (minx, miny, maxx, maxy) bounding box, or None if no geometries.
-    """
+    """Read geometries from low-zoom PMTiles tiles with geographic coordinates."""
     try:
         from pmtiles.reader import MmapSource, Reader
     except ImportError:
@@ -585,17 +462,6 @@ def _collect_geometries_at_zoom(
     return False
 
 
-# =============================================================================
-# Thumbnail rendering presets and data-aware parameters (Issue #518)
-# =============================================================================
-#
-# The matplotlib floor renders a deliberately punchy, data-aware preset instead
-# of honoring the extracted Mapbox/WFS style, which is pale by design (e.g.
-# fill-opacity 0.2, hairline outlines) and washes out on a 512 px tile over a
-# light basemap. Only the style's *categorical* fill colors are reused; opacity,
-# edge color, and stroke widths always come from these presets. The real style
-# is rendered by the opt-in MapLibre-native skill (Track 2), not here.
-
 THUMB_FILL_COLOR = "#3388ff"  # punchy default fill / categorical fallback
 THUMB_EDGE_COLOR = "#13447a"  # bold outline (vs the old hairline #2266cc)
 
@@ -603,26 +469,14 @@ THUMB_EDGE_COLOR = "#13447a"  # bold outline (vs the old hairline #2266cc)
 _DENSE_FEATURE_COUNT = 2000
 _MID_FEATURE_COUNT = 200
 
-# Visibility floors for the off-axis dimensions. A single RenderParams is
-# applied to every feature in a layer (the GeoParquet path issues one
-# ``gdf.plot`` for the whole frame), so a layer with mixed geometry types would
-# otherwise drop the non-dominant ones to nothing: points vanish when
-# marker_size is 0, lines/edges vanish when stroke_width is 0. Flooring both to
-# a small positive value keeps every geometry type visible. Pure single-type
-# layers are unaffected (a polygon layer has no points to size, etc.).
+# Floor the off-axis size above 0 so a mixed-geometry layer never draws a type invisibly.
 _MIN_VISIBLE_MARKER = 2.0
 _MIN_VISIBLE_STROKE = 0.4
 
 
 @dataclass(frozen=True)
 class RenderParams:
-    """Data-aware cosmetic parameters for one thumbnail render.
-
-    Attributes:
-        marker_size: Point marker size (matplotlib ``markersize``).
-        stroke_width: Line thickness (lines) or polygon edge width.
-        fill_opacity: Fill/marker alpha. Always >= 0.5 to avoid washout.
-    """
+    """Data-aware cosmetic parameters for one thumbnail render."""
 
     marker_size: float
     stroke_width: float
@@ -630,19 +484,11 @@ class RenderParams:
 
 
 def _compute_render_params(geom_category: str, feature_count: int) -> RenderParams:
-    """Select punchy, data-aware render parameters (Issue #518).
-
-    Scales marker size / stroke width / fill opacity to geometry type and
-    feature density: sparse layers get bigger, bolder marks; dense layers get
-    smaller marks and (for polygons) lower opacity so they don't blob to solid.
-    Fill opacity is clamped to >= 0.5 so the result is never washed out.
-    """
+    """Select punchy, data-aware render parameters."""
     dense = feature_count >= _DENSE_FEATURE_COUNT
     mid = feature_count >= _MID_FEATURE_COUNT
 
-    # The dominant geometry type drives the *primary* dimension's density
-    # scaling; the off-axis dimension is floored (not zeroed) so a mixed-geometry
-    # layer never renders a minority type invisibly (see _MIN_VISIBLE_* above).
+    # The dominant geometry type drives the density scaling; the other dimension is floored.
     if geom_category == "point":
         marker = 1.5 if dense else 3.0 if mid else 6.0
         return RenderParams(marker_size=marker, stroke_width=_MIN_VISIBLE_STROKE, fill_opacity=0.8)
@@ -662,43 +508,12 @@ def _frame_bounds(
     max_aspect: float = 2.5,
     margin: float = 0.05,
 ) -> tuple[float, float, float, float]:
-    """Frame a bbox for a square thumbnail.
-
-    The function pads the extent, gives a degenerate extent a box, and bounds
-    the limit aspect ratio (#518).
-
-    Two real jobs and one caveat:
-
-    1. **Margin** — adds a uniform ``margin`` so geometry is not flush to the
-       figure edge.
-    2. **Degenerate extents** — a single point (both axes zero) or a perfectly
-       vertical/horizontal extent (one axis zero) would otherwise collapse
-       ``set_xlim``/``set_ylim``; the aspect cap grows the zero/short axis to a
-       finite span so the limits stay valid and contextily can derive a zoom.
-
-    Caveat: this does **not** make an elongated *geometry* more legible. Under
-    ``set_aspect('equal')`` the displayed scale is fixed by the longer axis, so
-    widening the short axis's *limits* only adds whitespace around the geometry —
-    a 35:1 polygon is still rendered as a thin strip either way (measured: ~11px
-    vs ~14px wide at 512px). ``max_aspect`` therefore bounds the surrounding
-    whitespace, it does not de-elongate the data. Operates on the bbox only
-    (O(1)); never reads geometry.
-
-    Args:
-        bounds: (minx, miny, maxx, maxy).
-        max_aspect: Maximum allowed width/height (or height/width) ratio.
-        margin: Fractional padding added to each side after capping.
-
-    Returns:
-        Framed (minx, miny, maxx, maxy).
-    """
+    """Frame a bbox for a square thumbnail."""
     minx, miny, maxx, maxy = bounds
     width = maxx - minx
     height = maxy - miny
 
-    # Degenerate extent (a single point, both axes zero): give it a finite box
-    # so set_xlim/set_ylim don't collapse. True scale is unknown, so a nominal
-    # span is fine — contextily derives a sensible zoom from it.
+    # A degenerate extent gets a finite box so the axis limits do not collapse.
     if width <= 0 and height <= 0:
         half = 0.5
         minx, maxx = minx - half, maxx + half
@@ -739,12 +554,8 @@ def _profile(geoms: Any) -> tuple[str, int]:
     return ("point", "line", "polygon")[dominant], count
 
 
-# =============================================================================
-# Drawing (shared by the GeoParquet and the PMTiles paths)
-# =============================================================================
-
 #: Pixels per inch of the thumbnail figure. Only the ratio to ``max_size``
-#: matters. The value keeps the stroke and marker presets of #518 in points.
+#: matters. The value keeps the stroke and marker presets in points.
 _DPI = 100
 
 #: The EPSG:3857 world spans 2 x this value in x. pyproj maps latitude +-90 to
@@ -761,13 +572,7 @@ def _count_draw(_event: object) -> None:
 
 
 def _new_figure(frame: tuple[float, float, float, float], max_size: int) -> tuple[Any, Any]:
-    """Make a figure whose one axes fills it and shows ``frame`` at equal scale.
-
-    The longer side gets ``max_size`` pixels. The figure has its own Agg canvas
-    and no pyplot state, so a render in a worker thread does not touch the
-    process-wide backend. Every draw of the figure adds 1 to the
-    ``thumbnail.draws`` counter.
-    """
+    """Make a figure whose one axes fills it and shows ``frame`` at equal scale."""
     from matplotlib.backends.backend_agg import FigureCanvasAgg
     from matplotlib.figure import Figure
 
@@ -791,12 +596,7 @@ def _new_figure(frame: tuple[float, float, float, float], max_size: int) -> tupl
 
 
 def _ring_path(rings: Any, closed: bool) -> Any:
-    """One matplotlib Path that holds every ring or line in ``rings``.
-
-    Each part starts with MOVETO. A closed part ends with CLOSEPOLY. The
-    vertices come from shapely in one call, so the cost does not depend on
-    how many Python objects the layer has (#993).
-    """
+    """One matplotlib Path that holds every ring or line in ``rings``."""
     import numpy as np
     import shapely
     from matplotlib.path import Path as MplPath
@@ -813,11 +613,7 @@ def _ring_path(rings: Any, closed: bool) -> Any:
 
 
 def _explode(geoms: Any) -> tuple[Any, Any]:
-    """Split multi-part geometries and collections into single parts.
-
-    Returns:
-        The parts, and for each part the index of the feature it came from.
-    """
+    """Split multi-part geometries and collections into single parts."""
     import numpy as np
     import shapely
 
@@ -832,21 +628,7 @@ def _explode(geoms: Any) -> tuple[Any, Any]:
 
 
 def _draw_features(ax: Any, geoms: Any, colors: Any, params: RenderParams) -> None:
-    """Draw every feature with one artist per geometry kind and colour.
-
-    Polygons are one filled path, lines one stroked path, and points one
-    scatter. The paths go in with ``add_artist``, not ``add_patch``: the frame
-    is already set, and ``add_patch`` walks every Bezier segment to grow the
-    data limits (14 s at 100,000 polygons). Geopandas made one PathPatch per polygon, and the PMTiles path one
-    ``ax.plot`` per point and line. That took 14 s of a 17 s render at 100,000
-    polygons (#993).
-
-    Args:
-        ax: Axes to draw on.
-        geoms: Array of shapely geometries in the axes CRS.
-        colors: One fill colour, or one colour per feature.
-        params: Render presets for the layer.
-    """
+    """Draw every feature with one artist per geometry kind and colour."""
     import numpy as np
     import shapely
     from matplotlib.patches import PathPatch
@@ -903,11 +685,7 @@ def _draw_features(ax: Any, geoms: Any, colors: Any, params: RenderParams) -> No
 
 @functools.lru_cache(maxsize=16)
 def _mercator_transformer(source: Any) -> Any:
-    """Return the transformer from ``source`` to EPSG:3857.
-
-    pyproj builds a transformer in about 8 ms, which was a sixth of a
-    collection thumbnail. A run renders many collections in a few CRSs.
-    """
+    """Return the transformer from ``source`` to EPSG:3857."""
     from pyproj import Transformer
 
     return Transformer.from_crs(source, "EPSG:3857", always_xy=True)
@@ -918,25 +696,7 @@ def _to_web_mercator(
     bounds: tuple[float, float, float, float],
     crs: Any,
 ) -> tuple[Any, tuple[float, float, float, float]] | None:
-    """Reproject the drawn geometries and their bounds to EPSG:3857.
-
-    Basemap tiles are in EPSG:3857. Drawing the data there means no tile is
-    warped. contextily warped the tiles into the data CRS for each collection,
-    which took 17 s of a 36 s 100-collection add (#993). The geometries are a
-    sample of at most ``max_features``, so this is cheap.
-
-    A geographic source keeps its longitudes in one piece. EPSG:3857 wraps
-    longitude 190 to -170, so the projection adds the whole turns of the
-    world back. A GeoParquet bbox with minx > maxx crosses the antimeridian,
-    and the longitudes west of the crossing move east by 360.
-
-    Returns:
-        The projected geometries and bounds, or None when the CRS is unknown,
-        when the coordinates do not fit it (for example projected values under
-        a geographic CRS, #516), or when the data lies wholly past the
-        EPSG:3857 latitude limit, where it would collapse to a line. The caller
-        then draws in the source CRS with no basemap.
-    """
+    """Reproject the drawn geometries and their bounds to EPSG:3857."""
     import numpy as np
     import shapely
     from pyproj import CRS
@@ -992,9 +752,7 @@ def _to_web_mercator(
     if not (np.isfinite(box).all() and np.isfinite(coords).all()):
         logger.debug("Coordinates do not fit %s; drawing without a basemap", crs)
         return None
-    # A geographic longitude lies in -180 to 360 (the 0 to 360 convention),
-    # plus 360 for the east side of a crossing. One degree more on each side
-    # is rounding.
+    # A longitude lies in -180 to 360; one degree more on each side is rounding.
     degree = world / 360
     if (
         len(coords)
@@ -1018,27 +776,11 @@ def _render(
     output_path: Path,
     config: ThumbnailConfig,
 ) -> bool:
-    """Draw one thumbnail with one figure draw, and write it as a JPEG.
-
-    Both render paths end here, so they cannot drift apart (#468).
-
-    Args:
-        geoms: Array of shapely geometries.
-        colors: One fill colour, or one colour per geometry.
-        bounds: Extent of the data in ``crs``, for the frame.
-        crs: CRS of ``geoms`` and ``bounds``. None means unknown.
-        output_path: Where to write the JPEG.
-        config: Thumbnail configuration.
-
-    Returns:
-        True when the file was written.
-    """
+    """Draw one thumbnail with one figure draw, and write it as a JPEG."""
     params = _compute_render_params(*_profile(geoms))
     minx, miny, maxx, maxy = bounds
     if maxx <= minx and maxy <= miny:
-        # One point has no extent. Give it the nominal box of _frame_bounds in
-        # the source units (one degree for lon/lat) before the projection, so
-        # it does not become a 1 m box in EPSG:3857.
+        # One point has no extent: use the nominal box of _frame_bounds in source units.
         bounds = (minx - 0.5, miny - 0.5, maxx + 0.5, maxy + 0.5)
     projected = _to_web_mercator(geoms, bounds, crs)
     if projected is not None:
@@ -1075,26 +817,12 @@ def _render_geometries(
     bounds: tuple[float, float, float, float] | None = None,
     style_path: Path | None = None,
 ) -> bool:
-    """Render PMTiles geometries to a JPEG thumbnail.
-
-    Args:
-        geometries: List of geometry dicts with 'type', 'coordinates', and 'properties'.
-        output_path: Where to write the JPEG.
-        config: Thumbnail configuration.
-        bounds: Geographic bounds (minx, miny, maxx, maxy). None takes the
-            bounds of the geometries.
-        style_path: Optional path to Mapbox GL style for categorical coloring.
-
-    Returns:
-        True if successful, False otherwise.
-    """
+    """Render PMTiles geometries to a JPEG thumbnail."""
     import numpy as np
     import shapely
     from shapely.geometry import shape
 
-    # Reuse only the style's categorical fill colors (when present); opacity,
-    # edge, and stroke always come from the punchy preset, never the pale
-    # extracted paint (#518).
+    # Reuse only the style's categorical fill colors; opacity, edge and stroke come from the preset.
     colors: str | list[str] = THUMB_FILL_COLOR
     if style_path:
         from portolan_cli.viz.thumbnail_style import (
@@ -1119,19 +847,8 @@ def _render_geometries(
     return _render(geoms, colors, bounds, "OGC:CRS84", output_path, config)
 
 
-# =============================================================================
-# GeoParquet Reading (Internal)
-# =============================================================================
-
-
 def _bbox_from_geo(geo_meta: dict[str, Any]) -> tuple[float, float, float, float] | None:
-    """Return the finite 2D bbox that GeoParquet metadata declares, or None.
-
-    GeoParquet spec: columns.<geom_col>.bbox is [minx, miny, maxx, maxy] in 2D
-    and [minx, miny, minz, maxx, maxy, maxz] in 3D, so to_2d_bbox does the
-    reduction. The CRS may not be WGS84, and inf/nan values are rejected
-    (issue #516).
-    """
+    """Return the finite 2D bbox that GeoParquet metadata declares, or None."""
     from portolan_core.bbox import is_finite_bbox, to_2d_bbox
 
     for col_meta in get_dict(geo_meta, "columns").values():
@@ -1150,16 +867,7 @@ _SAMPLE_BATCH_ROWS = 65_536
 
 
 def _sample_rows(parquet_file: Any, columns: list[str], max_features: int) -> Any:
-    """Read about ``max_features`` rows spread evenly across the file.
-
-    Keeps every n-th row of every row group, and streams the batches, so
-    memory stays bounded by one batch even for one huge row group. The read
-    takes **every** row group. geoparquet-io writes spatially sorted output,
-    so each row group covers one patch of the extent. The old sampler read 2
-    of the 21 row groups of a 1M-polygon file and drew two strips of the data.
-    Each group restarts the stride, so the count can pass ``max_features`` by
-    at most one row per group.
-    """
+    """Read about ``max_features`` rows spread evenly across the file."""
     import math
 
     import numpy as np
@@ -1182,13 +890,7 @@ def _encoding(geo_meta: dict[str, Any], primary: str) -> str:
 
 
 def _geo_frame(table: Any, primary: str, encoding: str, crs: Any) -> Any:
-    """Build a GeoDataFrame from an Arrow table read from a GeoParquet file.
-
-    A GeoArrow column (GeoParquet 1.1) gets the extension name of its
-    encoding, so that ``GeoDataFrame.from_arrow`` decodes it. A writer can
-    leave the name out of the Arrow schema. The table comes from the open
-    file, so the read opens the file once.
-    """
+    """Build a GeoDataFrame from an Arrow table read from a GeoParquet file."""
     import geopandas
 
     if encoding == "wkb":
@@ -1204,11 +906,7 @@ def _geo_frame(table: Any, primary: str, encoding: str, crs: Any) -> Any:
 
 
 def _declared_crs(geo_meta: dict[str, Any], primary: str) -> Any:
-    """Return the CRS that GeoParquet metadata declares for ``primary``.
-
-    The spec reads an absent ``crs`` as OGC:CRS84 and an explicit null as an
-    unknown CRS.
-    """
+    """Return the CRS that GeoParquet metadata declares for ``primary``."""
     from pyproj import CRS
 
     column = get_dict(get_dict(geo_meta, "columns"), primary)
@@ -1219,11 +917,7 @@ def _declared_crs(geo_meta: dict[str, Any], primary: str) -> Any:
 
 
 def _wkb_frame(table: Any, primary: str, crs: Any) -> Any:
-    """Build a GeoDataFrame from an Arrow table whose ``primary`` column is WKB.
-
-    A GeoParquet table is a WKB column plus `geo` file metadata, not GeoArrow
-    extension types, so GeoDataFrame.from_arrow cannot read it.
-    """
+    """Build a GeoDataFrame from an Arrow table whose ``primary`` column is WKB."""
     import geopandas
 
     geometry = geopandas.GeoSeries.from_wkb(
@@ -1239,26 +933,7 @@ def _read_geoparquet_for_thumbnail(
     max_features: int | None = None,
     color_field: str | None = None,
 ) -> tuple[Any, tuple[float, float, float, float] | None, Any]:
-    """Read the geometry of a GeoParquet for its thumbnail.
-
-    One ``ParquetFile`` gives the footer, the ``geo`` metadata, the bbox, and
-    the rows. Only the geometry column is read, plus ``color_field`` when a
-    categorical style needs it. Below ``max_features`` every row is read.
-    Above it the read is sampled, so a default ``add`` cannot spend unbounded
-    time on one collection (Issue #683).
-
-    Args:
-        gpq_path: Path to GeoParquet file.
-        max_features: Feature ceiling. None reads every feature.
-        color_field: Attribute that a categorical style colours by. Matched
-            without regard to case.
-
-    Returns:
-        Tuple of (gdf, full_bbox, source_crs) where:
-        - gdf: GeoDataFrame of features to draw (or None if failed)
-        - full_bbox: (minx, miny, maxx, maxy) from metadata or computed
-        - source_crs: CRS of the data, or None when unknown
-    """
+    """Read the geometry of a GeoParquet for its thumbnail."""
     try:
         import geopandas  # noqa: F401 - the gate for the optional extra
         import pyarrow.parquet as pq
@@ -1345,11 +1020,7 @@ def _stream_bounds(
 
 
 def _finite_bounds(gdf: Any) -> tuple[float, float, float, float] | None:
-    """Return the total bounds of ``gdf``, or None when they are not finite.
-
-    Invalid bounds (inf/nan) would poison the frame, so the render fails fast
-    rather than draw a garbage extent (issue #516).
-    """
+    """Return the total bounds of ``gdf``, or None when they are not finite."""
     from portolan_core.bbox import is_finite_bbox
 
     bounds = gdf.total_bounds
@@ -1366,20 +1037,9 @@ def _render_geoparquet(
     config: ThumbnailConfig,
     style_path: Path | None = None,
 ) -> bool:
-    """Render GeoParquet to JPEG thumbnail.
-
-    Args:
-        gpq_path: Path to GeoParquet file.
-        output_path: Where to write the JPEG.
-        config: Thumbnail configuration.
-        style_path: Optional path to Mapbox GL style for categorical coloring.
-
-    Returns:
-        True if successful, False otherwise.
-    """
+    """Render GeoParquet to JPEG thumbnail."""
     try:
-        # Reuse only the style's categorical fill colors (with a punchy
-        # fallback), never its pale opacity/edge paint (#518).
+        # Reuse only the style's categorical fill colors; opacity, edge and stroke come from the preset.
         style = None
         if style_path:
             from portolan_cli.viz.thumbnail_style import load_thumbnail_style
@@ -1411,10 +1071,6 @@ def _render_geoparquet(
         logger.debug("Failed to render GeoParquet: %s", e)
         return False
 
-
-# =============================================================================
-# Basemap
-# =============================================================================
 
 #: Parallel tile requests per basemap. Neither Esri (the default) nor CARTO
 #: publishes a concurrency limit for its tile host. CARTO publishes only a
@@ -1467,14 +1123,7 @@ _TILE_PX = 256
 
 
 def _with_api_key(provider: Any, api_key: str | None) -> Any:
-    """Return ``provider`` with ``api_key`` in its tile URL.
-
-    A provider whose URL holds a token field (xyzservices marks it with
-    ``<insert your ...>``) gets the key in that field. Any other provider gets
-    a ``key`` query parameter, which is how CARTO reads it
-    (https://www.carto.com/basemaps/apikey/). CARTO serves a watermark tile to
-    a request without a key.
-    """
+    """Return ``provider`` with ``api_key`` in its tile URL."""
     if not api_key:
         return provider
     token_fields = {
@@ -1489,11 +1138,7 @@ def _with_api_key(provider: Any, api_key: str | None) -> Any:
 
 
 def _needs_key(name: str, provider: Any) -> bool:
-    """True when ``provider`` serves only a watermark without a key.
-
-    The first such render of a run logs one warning. The thumbnail then gets
-    no basemap, because a watermark tile is never the map that the user wants.
-    """
+    """True when ``provider`` serves only a watermark without a key."""
     url = str(provider.get("url", ""))
     if not any(host in url for host in _KEYED_TILE_HOSTS):
         return False
@@ -1512,12 +1157,7 @@ def _needs_key(name: str, provider: Any) -> bool:
 
 
 def _basemap_zoom(ax: Axes, provider: Any, zoom_adjust: int) -> int:
-    """Pick the lowest zoom whose tiles give one tile pixel per output pixel.
-
-    The figure has a fixed pixel size, so the zoom follows from the metres per
-    pixel of the frame. One level lower would blur the basemap, and one level
-    higher would fetch about four times the tiles.
-    """
+    """Pick the lowest zoom whose tiles give one tile pixel per output pixel."""
     import math
 
     left, right = ax.get_xlim()
@@ -1537,29 +1177,7 @@ def _fetch_basemap(  # noqa: PLR0914 - the tile grid, mosaic and bounds are loca
     size_px: tuple[int, int],
     deadline: float,
 ) -> tuple[Any, tuple[float, float, float, float]]:
-    """Return the basemap of ``frame`` (EPSG:3857) at the output resolution.
-
-    The merged tiles are cut to the frame and resized once, with Pillow. Then
-    the draw copies pixels and does not resample a 1280 px tile mosaic on each
-    render, which took half of a 85 ms collection thumbnail. The result is
-    memoized for the run.
-
-    Args:
-        ctx_module: The contextily module.
-        provider: The tile provider, with its key.
-        frame: (left, bottom, right, top) in EPSG:3857.
-        zoom: The tile zoom.
-        size_px: The pixel size of the frame in the output.
-        deadline: The ``time.monotonic`` value by which the tiles must be in.
-
-    Returns:
-        An RGBA array, and its extent (left, right, bottom, top). The extent is
-        smaller than the frame when the frame passes the edge of the tile
-        world, as a frame around global data does.
-
-    Raises:
-        _TileServerDownError: When a tile passes its timeout or the deadline.
-    """
+    """Return the basemap of ``frame`` (EPSG:3857) at the output resolution."""
     key = (provider.build_url(), zoom, *frame, *size_px)
     with _tile_memo_lock:
         hit = _tile_memo.get(key)
@@ -1570,9 +1188,7 @@ def _fetch_basemap(  # noqa: PLR0914 - the tile grid, mosaic and bounds are loca
     import numpy as np
     from PIL import Image
 
-    # Private parts of contextily, read at version 1.7.0. bounds2img has no
-    # way to time a request out, so this function fetches the tiles itself
-    # and uses contextily for the tile list and the mosaic.
+    # Private contextily functions, read at contextily 1.7.0; bounds2img cannot time out a request.
     # tests/unit/test_thumbnail.py pins their signatures.
     tile_module = ctx_module.tile
     left, bottom, right, top = frame
@@ -1612,12 +1228,7 @@ def _fetch_basemap(  # noqa: PLR0914 - the tile grid, mosaic and bounds are loca
 
 
 def _get_tile(url: str) -> Any:
-    """Fetch one tile with a socket timeout, as an RGBA array.
-
-    The request, the retries, and the decode are those of contextily's
-    ``_retryer`` with its defaults, plus the timeout. An HTTP error other than
-    404 gets ``_TILE_RETRIES`` more requests.
-    """
+    """Fetch one tile with a socket timeout, as an RGBA array."""
     import io
 
     import numpy as np
@@ -1638,18 +1249,7 @@ def _get_tile(url: str) -> Any:
 
 
 def _get_tiles(urls: list[str], deadline: float) -> list[Any]:
-    """Fetch ``urls`` on ``_TILE_CONNECTIONS`` daemon threads by ``deadline``.
-
-    A worker holds the lock only to take the next URL, never during a
-    request. A worker that is still in a request at the deadline is a
-    daemon. It ends at its socket timeout and does not keep the process
-    alive.
-
-    Raises:
-        _TileServerDownError: When a request times out or does not connect, or
-            the deadline passes.
-        Exception: The first other error of a request.
-    """
+    """Fetch ``urls`` on ``_TILE_CONNECTIONS`` daemon threads by ``deadline``."""
     import requests
 
     tiles: list[Any] = [None] * len(urls)
@@ -1691,16 +1291,7 @@ def _get_tiles(urls: list[str], deadline: float) -> list[Any]:
 
 
 def _world_copies(left: float, right: float) -> list[tuple[float, float, float]]:
-    """Split the x range of a frame at the edges of the EPSG:3857 tile world.
-
-    A frame past longitude 180, as for data that crosses the antimeridian,
-    takes those tiles from the west edge of the world. The tile server has
-    no tile east of 180.
-
-    Returns:
-        For each copy of the world that the frame touches: the x shift of
-        that copy, and the part of the frame in it.
-    """
+    """Split the x range of a frame at the edges of the EPSG:3857 tile world."""
     world = 2 * _MERCATOR_LIMIT
     first = math.floor((left + _MERCATOR_LIMIT) / world)
     last = math.ceil((right + _MERCATOR_LIMIT) / world) - 1
@@ -1724,23 +1315,7 @@ def add_basemap(  # noqa: PLR0914 - the tile grid, mosaic and bounds are locals
     api_key: str | None = None,
     run: BasemapRun | None = None,
 ) -> None:
-    """Draw basemap tiles under the data of an EPSG:3857 axes.
-
-    The tiles come on ``_TILE_CONNECTIONS`` connections. Each request has
-    ``_TILE_TIMEOUT_S``, and all of them have ``_BASEMAP_DEADLINE_S``. The
-    tiles are drawn with ``imshow``. The attribution is an ``ax.text``.
-    contextily's ``add_attribution`` drew the whole figure once more to wrap
-    the text.
-
-    Args:
-        ax: Matplotlib Axes in EPSG:3857, with its limits set to the frame.
-        provider: Contextily provider name (e.g., 'Esri.WorldGrayCanvas').
-            Pass 'none' to skip basemap.
-        opacity: Basemap opacity 0.0-1.0.
-        zoom_adjust: Zoom level adjustment.
-        api_key: Key for the tile provider. CARTO needs one.
-        run: The basemap state of the run. None makes this call its own run.
-    """
+    """Draw basemap tiles under the data of an EPSG:3857 axes."""
     if provider == "none":
         return
     run = run if run is not None else BasemapRun()
@@ -1827,28 +1402,12 @@ def add_basemap(  # noqa: PLR0914 - the tile grid, mosaic and bounds are locals
         )
 
 
-# =============================================================================
-# Public API
-# =============================================================================
-
-
 def generate_thumbnail_from_pmtiles(
     pmtiles_path: Path,
     config: ThumbnailConfig,
     style_path: Path | None = None,
 ) -> Path | None:
-    """Generate JPEG thumbnail from PMTiles file.
-
-    Reads low-zoom tiles, extracts geometries, and renders to JPEG.
-
-    Args:
-        pmtiles_path: Path to source PMTiles file.
-        config: Thumbnail configuration.
-        style_path: Optional path to Mapbox GL style for categorical coloring.
-
-    Returns:
-        Path to generated thumbnail, or None if generation failed.
-    """
+    """Generate JPEG thumbnail from PMTiles file."""
     thumb_path = thumbnail_path_for(pmtiles_path)
 
     try:
@@ -1871,16 +1430,7 @@ def generate_thumbnail_from_geoparquet(
     config: ThumbnailConfig,
     style_path: Path | None = None,
 ) -> Path | None:
-    """Generate JPEG thumbnail from GeoParquet file.
-
-    Args:
-        gpq_path: Path to source GeoParquet file.
-        config: Thumbnail configuration.
-        style_path: Optional path to Mapbox GL style for categorical coloring.
-
-    Returns:
-        Path to generated thumbnail, or None if generation failed.
-    """
+    """Generate JPEG thumbnail from GeoParquet file."""
     thumb_path = thumbnail_path_for(gpq_path)
     if _render_geoparquet(gpq_path, thumb_path, config, style_path=style_path):
         logger.debug("Generated GeoParquet thumbnail: %s", thumb_path)
@@ -1895,25 +1445,7 @@ def generate_vector_thumbnail(
     config: ThumbnailConfig,
     style_path: Path | None = None,
 ) -> Path | None:
-    """Generate thumbnail for vector data, preferring the GeoParquet source.
-
-    Orchestrator function: renders from the GeoParquet when it is locally
-    available, falling back to decoding PMTiles. The parquet carries exact
-    geometry; PMTiles at thumbnail zoom carry tippecanoe's simplification and
-    its tiny-polygon placeholder squares, so datasets whose features are small
-    at collection scale (parcels, forests, POI clusters) rendered as floating
-    rectangles instead of their real shapes (issue #786). Tiles remain the
-    right source when no local parquet exists (e.g. remote data).
-
-    Args:
-        pmtiles_path: Path to PMTiles file (optional, used as fallback).
-        geoparquet_path: Path to GeoParquet file (optional, preferred).
-        config: Thumbnail configuration.
-        style_path: Optional path to Mapbox GL style for categorical coloring.
-
-    Returns:
-        Path to generated thumbnail, or None if generation failed or disabled.
-    """
+    """Generate thumbnail for vector data, preferring the GeoParquet source."""
     if not config.enabled:
         logger.debug("Thumbnail generation disabled")
         return None

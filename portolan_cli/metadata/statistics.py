@@ -1,13 +1,4 @@
-"""Statistics extraction module for raster bands and parquet columns.
-
-Extracts statistics from:
-- COG/raster files via rasterio (min, max, mean, stddev)
-- GeoParquet files via PyArrow metadata (min, max, null_count)
-
-- Stats computed by default
-- Raster uses approx mode (~100ms via GDAL overviews)
-- Parquet uses PyArrow metadata only (instant, no DuckDB)
-"""
+"""Statistics extraction module for raster bands and parquet columns."""
 
 from __future__ import annotations
 
@@ -24,17 +15,7 @@ from portolan_core.trace import count
 
 
 def _serialize_stat_value(value: Any) -> Any:
-    """Convert a statistic value to JSON-serializable form.
-
-    PyArrow statistics can return native Python datetime/date objects
-    for timestamp columns. These need to be converted to ISO 8601 strings.
-
-    Args:
-        value: The statistic value from PyArrow (min/max).
-
-    Returns:
-        JSON-serializable value (datetime → ISO string, others unchanged).
-    """
+    """Convert a statistic value to JSON-serializable form."""
     if value is None:
         return None
     if isinstance(value, datetime):
@@ -46,15 +27,7 @@ def _serialize_stat_value(value: Any) -> Any:
 
 @dataclass
 class BandStatistics:
-    """Statistics for a single raster band.
-
-    Attributes:
-        minimum: Minimum pixel value.
-        maximum: Maximum pixel value.
-        mean: Mean pixel value.
-        stddev: Standard deviation of pixel values.
-        valid_percent: Percentage of valid (non-nodata) pixels (optional).
-    """
+    """Statistics for a single raster band."""
 
     minimum: float
     maximum: float
@@ -77,14 +50,7 @@ class BandStatistics:
 
 @dataclass
 class ColumnStatistics:
-    """Statistics for a Parquet column.
-
-    Attributes:
-        name: Column name.
-        min_value: Minimum value (typed).
-        max_value: Maximum value (typed).
-        null_count: Number of null values.
-    """
+    """Statistics for a Parquet column."""
 
     name: str
     min_value: Any | None = None
@@ -92,11 +58,7 @@ class ColumnStatistics:
     null_count: int = 0
 
     def to_stac_dict(self) -> dict[str, Any]:
-        """Format for STAC table:columns[].statistics.
-
-        Omits None values and zero null_count.
-        Converts datetime values to ISO 8601 strings for JSON serialization.
-        """
+        """Format for STAC table:columns[].statistics."""
         result: dict[str, Any] = {}
         if self.min_value is not None:
             result["minimum"] = _serialize_stat_value(self.min_value)
@@ -112,21 +74,9 @@ def extract_band_statistics(
     *,
     mode: Literal["cached", "approx", "exact"] = "approx",
 ) -> list[BandStatistics]:
-    """Extract band statistics from a COG/raster file.
-
-    Args:
-        path: Path to raster file.
-        mode: Statistics computation mode:
-            - 'cached': Read from embedded GDAL metadata only (instant)
-            - 'approx': Use GDAL approx mode with overviews (fast, default)
-            - 'exact': Compute exact statistics (slow, reads all pixels)
-
-    Returns:
-        List of BandStatistics, one per band.
-    """
+    """Extract band statistics from a COG/raster file."""
     count("raster.opens")
-    # PAM off: GDAL would write the statistics it computes to a .aux.xml
-    # sidecar, which is no part of the published COG (issue #748).
+    # PAM off: GDAL would write a .aux.xml sidecar next to the COG.
     with rasterio.Env(GDAL_PAM_ENABLED="NO"), rasterio.open(path) as src:
         return band_statistics_of(src, mode=mode)
 
@@ -192,21 +142,7 @@ def _has_statistics(tags: dict[str, str]) -> bool:
 
 
 def embedded_statistics(source: Path | Any) -> Literal["present", "missing", "lossy"]:
-    """Report whether a COG carries its band statistics in the file itself.
-
-    The read has PAM off, as rashid reads, so a ``.aux.xml`` does not count.
-
-    Args:
-        source: A COG, or a COG open with PAM off. A path is opened and closed here.
-
-    Returns:
-        ``present`` when every band has the five statistics tags, or has no
-        valid pixel (``STATISTICS_VALID_PERCENT=0``), so that no statistics
-        exist to embed. ``lossy``
-        when some are missing and the tiles use lossy compression, such as JPEG
-        or lossy WEBP. A rewrite would re-encode those pixels. ``missing``
-        otherwise.
-    """
+    """Report whether a COG carries its band statistics in the file itself."""
     if not isinstance(source, Path):
         return _embedded_statistics_of(source)
     count("raster.opens")
@@ -223,26 +159,12 @@ def _embedded_statistics_of(src: Any) -> Literal["present", "missing", "lossy"]:
 
 
 def _as_gdal_stores(value: float) -> float:
-    """Round a computed statistic to the 14 significant digits GDAL stores.
-
-    GDAL writes the statistics it computes into the .aux.xml sidecar as
-    ``%.14g`` text, and the next run reads them back from there. Without the
-    rounding, ``add --force`` wrote other values than the first ``add``.
-    """
+    """Round a computed statistic to the 14 significant digits GDAL stores."""
     return float(f"{value:.14g}")
 
 
 def _is_stats_compatible_type(field: Any) -> bool:
-    """Check if a PyArrow field type supports meaningful statistics.
-
-    Binary, struct, list, and geometry columns don't have meaningful min/max.
-
-    Args:
-        field: PyArrow field from schema.
-
-    Returns:
-        True if the field type supports meaningful statistics.
-    """
+    """Check if a PyArrow field type supports meaningful statistics."""
     import pyarrow as pa
 
     # Types that don't support meaningful min/max statistics
@@ -260,23 +182,7 @@ def _is_stats_compatible_type(field: Any) -> bool:
 
 
 def extract_parquet_statistics(path: Path) -> dict[str, ColumnStatistics]:
-    """Extract column statistics from Parquet file metadata.
-
-    Reads only the file footer (~8KB), not actual data.
-    Works on 10GB+ files instantly.
-
-    Limitations:
-    - Only min/max/null_count (no mean/stddev without DuckDB)
-    - Statistics must be present in file (write-time setting)
-    - Geometry columns (binary) are skipped - no meaningful min/max
-
-    Args:
-        path: Path to Parquet file.
-
-    Returns:
-        Dict mapping column name to ColumnStatistics.
-        Binary/geometry columns are excluded.
-    """
+    """Extract column statistics from Parquet file metadata."""
     count("parquet.opens")
     pf = pq.ParquetFile(path)
     schema = pf.schema_arrow

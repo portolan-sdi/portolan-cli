@@ -1,9 +1,4 @@
-"""Module-level ``__getattr__`` and ``__dir__`` that load names on first access.
-
-The package root and ``portolan_cli.api`` re-export names from heavier
-modules. Loading each name on first access keeps their import light (#944,
-#947). This module imports only the standard library.
-"""
+"""Module-level ``__getattr__`` and ``__dir__`` that load names on first access."""
 
 from __future__ import annotations
 
@@ -22,21 +17,7 @@ def lazy_exports(
     *,
     cache: bool = True,
 ) -> tuple[Callable[[str], Any], Callable[[], list[str]]]:
-    """Build ``__getattr__`` and ``__dir__`` for a module with lazy exports.
-
-    Args:
-        module_name: ``__name__`` of the module, for the error message.
-        exports: Name to the module that defines it.
-        public: The module's ``__all__``.
-        namespace: The module's ``globals()``. A loaded name is cached here
-            when ``cache`` is True.
-        cache: Keep a loaded name in ``namespace``. With False, every access
-            reads the source module again, as a function-level import does.
-            A test that patches the source module then reaches the caller.
-
-    Returns:
-        The ``__getattr__`` and ``__dir__`` functions for the module.
-    """
+    """Build ``__getattr__`` and ``__dir__`` for a module with lazy exports."""
 
     def _getattr(name: str) -> Any:
         source = exports.get(name)

@@ -1,25 +1,4 @@
-"""The plugin manager, built on the first hook call (#947).
-
-Importing this module creates nothing. ``get_plugin_manager`` builds one
-``pluggy.PluginManager`` and caches it. It registers the built-in hook modules
-first, then each outside plugin from the ``portolan`` entry point group.
-``hook_calls`` and ``call_each`` list the built-ins first. Do not call
-``PluginManager.hook.<name>()`` directly: pluggy calls the plugin registered
-last first, so its results put the outside plugins first.
-
-``PORTOLAN_PLUGINS`` controls discovery of outside plugins:
-
-- unset: load every installed plugin.
-- ``none``: load no outside plugin.
-- ``a,b``: load only the entry points named ``a`` and ``b``.
-
-Built-in plugins always load. A plugin that fails to load produces a
-``PluginLoadWarning``, and the CLI keeps running.
-
-The loop reads entry points itself rather than through
-``PluginManager.load_setuptools_entrypoints``, which stops at the first
-import error and has no filter.
-"""
+"""The plugin manager, built on the first hook call."""
 
 from __future__ import annotations
 
@@ -39,7 +18,6 @@ if TYPE_CHECKING:
 
 ENTRY_POINT_GROUP = "portolan"
 COMMANDS_ENTRY_POINT_GROUP = "portolan.commands"
-# Deprecated in #947. Read by plugins.builtin.legacy_backends.
 LEGACY_BACKENDS_ENTRY_POINT_GROUP = "portolan.backends"
 ENV_VAR = "PORTOLAN_PLUGINS"
 BUILTIN_DISTRIBUTION = "portolan-cli"
@@ -69,12 +47,7 @@ class PluginLoadWarning(PluginWarning):
 
 @functools.cache
 def _scan(group: str) -> tuple[EntryPoint, ...]:
-    """Read one entry point group once per process.
-
-    The scan reads every installed distribution. One ``portolan --help`` asks
-    for the command group several times, and each scan costs about 8 ms with
-    230 distributions installed. ``reset_plugin_manager`` clears the cache.
-    """
+    """Read one entry point group once per process."""
     return tuple(entry_points(group=group))
 
 
@@ -104,19 +77,7 @@ def is_builtin(ep: EntryPoint) -> bool:
 
 
 def plugin_names(ep: EntryPoint) -> set[str]:
-    """Return the names ``PORTOLAN_PLUGINS`` uses to select ``ep``.
-
-    A hook entry point is selected by its own name. A command is selected by
-    the hook entry point names of its distribution, so one name enables or
-    disables everything a package adds. A distribution with commands and no
-    hooks is selected by the first segment of the command name.
-
-    Args:
-        ep: Entry point from either group.
-
-    Returns:
-        Names that select the entry point.
-    """
+    """Return the names ``PORTOLAN_PLUGINS`` uses to select ``ep``."""
     if ep.group == ENTRY_POINT_GROUP:
         return {ep.name}
     dist = _distribution(ep)
@@ -129,18 +90,7 @@ def plugin_names(ep: EntryPoint) -> set[str]:
 
 
 def enabled_entry_points(group: str) -> list[EntryPoint]:
-    """Return the entry points in ``group`` that ``PORTOLAN_PLUGINS`` enables.
-
-    Entry points that portolan-cli declares always load. Two distributions can
-    declare the same name. An entry point that portolan-cli declares wins the
-    name. Otherwise the first one in discovery order wins.
-
-    Args:
-        group: Entry point group name.
-
-    Returns:
-        Entry points in discovery order, one per name.
-    """
+    """Return the entry points in ``group`` that ``PORTOLAN_PLUGINS`` enables."""
     selected: dict[str, EntryPoint] = {}
     for ep in _enabled(group):
         if ep.name not in selected or (is_builtin(ep) and not is_builtin(selected[ep.name])):
@@ -149,14 +99,7 @@ def enabled_entry_points(group: str) -> list[EntryPoint]:
 
 
 def shadowed_entry_points(group: str) -> list[EntryPoint]:
-    """Return the enabled outside entry points that lose a name to portolan-cli.
-
-    Args:
-        group: Entry point group name.
-
-    Returns:
-        Outside entry points whose name portolan-cli also declares in ``group``.
-    """
+    """Return the enabled outside entry points that lose a name to portolan-cli."""
     enabled = _enabled(group)
     own = {ep.name for ep in enabled if is_builtin(ep)}
     return [ep for ep in enabled if not is_builtin(ep) and ep.name in own]
@@ -225,11 +168,7 @@ def _drop_plugins_with_unknown_hooks(pm: pluggy.PluginManager) -> None:
 
 @functools.cache
 def get_plugin_manager() -> pluggy.PluginManager:
-    """Return the plugin manager. Build it on the first call.
-
-    Returns:
-        The cached manager with built-in and enabled outside plugins.
-    """
+    """Return the plugin manager. Build it on the first call."""
     pm = pluggy.PluginManager(hookspecs.PROJECT_NAME)
     pm.add_hookspecs(hookspecs)
     for name, module_name in _BUILTIN_MODULES.items():
@@ -241,20 +180,7 @@ def get_plugin_manager() -> pluggy.PluginManager:
 
 
 def call_each(hook_name: str, **kwargs: Any) -> list[tuple[str, Any]]:
-    """Call one hook plugin by plugin and keep the plugin name of each result.
-
-    A plugin whose hook raises produces a ``PluginWarning``, and the call
-    continues with the next plugin. A None result is dropped.
-
-    Args:
-        hook_name: Name of a hook in ``hookspecs``.
-        **kwargs: Hook arguments.
-
-    Returns:
-        ``(plugin_name, result)`` pairs in the order of ``hook_calls``. The
-        built-ins come first, then the outside plugins in pluggy call order.
-        ``builtin:legacy_backends`` comes last.
-    """
+    """Call one hook plugin by plugin and keep the plugin name of each result."""
     results: list[tuple[str, Any]] = []
     for plugin_name, call in hook_calls(hook_name):
         try:
@@ -268,23 +194,7 @@ def call_each(hook_name: str, **kwargs: Any) -> list[tuple[str, Any]]:
 
 
 def hook_calls(hook_name: str) -> list[tuple[str, Callable[..., Any]]]:
-    """Return one callable per plugin that implements ``hook_name``.
-
-    Each callable takes the full hook arguments as keywords and passes on the
-    ones the implementation names. The built-ins come first in registration
-    order. The outside plugins follow in pluggy call order: ``tryfirst``, then
-    the plugin registered last, then ``trylast``. ``tryfirst`` and ``trylast``
-    cannot move an outside plugin before a built-in. The deprecated
-    ``legacy_backends`` module comes last. A hook wrapper produces a
-    ``PluginWarning`` and is skipped, because a plain call of a wrapper only
-    creates a generator. An empty list means no plugin implements the hook.
-
-    Args:
-        hook_name: Name of a hook in ``hookspecs``.
-
-    Returns:
-        ``(plugin_name, call)`` pairs.
-    """
+    """Return one callable per plugin that implements ``hook_name``."""
     pm = get_plugin_manager()
     ranked: list[tuple[tuple[int, int], str, Callable[..., Any]]] = []
     # get_hookimpls() lists trylast, then registration order, then tryfirst.

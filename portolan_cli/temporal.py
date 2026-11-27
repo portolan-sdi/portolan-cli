@@ -1,11 +1,4 @@
-"""Temporal extent handling for STAC items.
-
-- Default to null (open temporal interval) when --datetime not provided
-- Publish the sentinel start/end range for a null datetime, which is what says
-  the temporal extent is unknown (no marker field travels with it: the spec
-  defines no portolan: property, issue #654)
-- Accept flexible datetime formats (ISO 8601, YYYY-MM-DD, space-separated)
-"""
+"""Temporal extent handling for STAC items."""
 
 from __future__ import annotations
 
@@ -13,17 +6,7 @@ from datetime import UTC, datetime
 
 
 def ensure_utc_aware(dt: datetime | None) -> datetime | None:
-    """Ensure a datetime is timezone-aware (UTC).
-
-    Converts naive datetimes to UTC-aware. Required for STAC compliance and
-    to avoid comparison errors between naive and aware datetimes.
-
-    Args:
-        dt: Datetime to normalize, or None.
-
-    Returns:
-        UTC-aware datetime, or None if input is None.
-    """
+    """Ensure a datetime is timezone-aware (UTC)."""
     if dt is None:
         return None
     if dt.tzinfo is None:
@@ -33,24 +16,7 @@ def ensure_utc_aware(dt: datetime | None) -> datetime | None:
 
 
 def parse_flexible_datetime(value: str | None) -> datetime | None:
-    """Parse a datetime string with flexible format support.
-
-    Accepts:
-    - ISO 8601: 2024-01-15T10:30:00Z
-    - ISO without Z: 2024-01-15T10:30:00
-    - Date only: 2024-01-15
-    - Space-separated: 2024-01-15 10:30:00
-
-    Args:
-        value: Datetime string or None.
-
-    Returns:
-        A timezone-aware datetime, or None if the input is empty or None. An
-        input without an offset reads as UTC.
-
-    Raises:
-        ValueError: If format is invalid.
-    """
+    """Parse a datetime string with flexible format support."""
     if value is None or value.strip() == "":
         return None
 
@@ -63,10 +29,6 @@ def parse_flexible_datetime(value: str | None) -> datetime | None:
     except ValueError:
         pass
 
-    # The remaining formats carry no zone. STAC requires an RFC 3339 timestamp
-    # with an offset, so a naive result reads as UTC. Without this the CLI
-    # published a naive datetime for "--datetime 2024-01-15", and a later
-    # comparison against an aware datetime raised TypeError.
     for fmt in (
         "%Y-%m-%dT%H:%M:%S",  # ISO without a zone
         "%Y-%m-%d %H:%M:%S",  # Space-separated

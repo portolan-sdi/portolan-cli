@@ -1,14 +1,4 @@
-"""Plain-Parquet (tabular) metadata extraction.
-
-A tabular asset is a Parquet file with no ``geo`` footer key. The spec's
-Tabular Data section asks such a collection to document its columns with the
-STAC table extension and to populate ``extent.temporal`` when the data carries
-a time dimension (rashid PTL-DAT-015, issue #749).
-
-Both answers come from the Parquet footer, so nothing here reads row data:
-the Arrow schema gives column names and types, and per-row-group column
-statistics give the temporal bounds.
-"""
+"""Plain-Parquet (tabular) metadata extraction."""
 
 from __future__ import annotations
 
@@ -27,15 +17,7 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class TabularMetadata:
-    """Metadata extracted from a plain (geometry-less) Parquet file.
-
-    Attributes:
-        schema: Column names mapped to their Arrow type names.
-        row_count: Number of rows.
-        temporal_interval: Earliest and latest value across every temporal
-            column, or None when the file carries no temporal column or the
-            writer emitted no statistics for one.
-    """
+    """Metadata extracted from a plain (geometry-less) Parquet file."""
 
     schema: dict[str, str]
     row_count: int
@@ -43,17 +25,7 @@ class TabularMetadata:
 
 
 def extract_tabular_metadata(path: Path) -> TabularMetadata | None:
-    """Extract table metadata from a plain Parquet file.
-
-    Args:
-        path: Path to the candidate asset.
-
-    Returns:
-        TabularMetadata, or None when ``path`` is not a readable Parquet file
-        or is GeoParquet. GeoParquet is excluded deliberately: the geospatial
-        storage rules own it, and its schema already reaches the collection
-        through ``add_table_extension``.
-    """
+    """Extract table metadata from a plain Parquet file."""
     if path.suffix.lower() != ".parquet":
         return None
     try:
@@ -71,13 +43,7 @@ def extract_tabular_metadata(path: Path) -> TabularMetadata | None:
 
 
 def _temporal_interval(parquet: pq.ParquetFile) -> tuple[datetime, datetime] | None:
-    """Earliest and latest value across every temporal column of the file.
-
-    Reads per-row-group column statistics rather than the data. A column whose
-    writer emitted no statistics contributes nothing, so a file where no
-    temporal column carries statistics yields None and leaves the collection's
-    extent alone rather than guessing at it.
-    """
+    """Earliest and latest value across every temporal column of the file."""
     temporal_columns = {
         field.name for field in parquet.schema_arrow if pa.types.is_temporal(field.type)
     }
@@ -107,14 +73,7 @@ def _temporal_interval(parquet: pq.ParquetFile) -> tuple[datetime, datetime] | N
 
 
 def _as_utc(value: object) -> datetime | None:
-    """Normalize a Parquet temporal statistic to a timezone-aware UTC datetime.
-
-    Parquet exposes date columns as ``date`` and timestamp columns as
-    ``datetime``, which may be naive. STAC requires RFC 3339, so a date becomes
-    midnight and a naive datetime is read as UTC. Time-of-day and duration
-    statistics carry no calendar date, so they cannot bound an extent and are
-    dropped.
-    """
+    """Normalize a Parquet temporal statistic to a timezone-aware UTC datetime."""
     if isinstance(value, datetime):
         if value.tzinfo is None:
             return value.replace(tzinfo=UTC)
