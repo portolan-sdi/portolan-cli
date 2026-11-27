@@ -75,7 +75,7 @@ FOUNDATION_FILES = frozenset(
 FOUNDATION_TESTS = (
     "tests/integration/test_generated_catalog_conformance.py",
     "tests/integration/test_catalog_invariants.py",
-    "tests/properties",
+    "tests/property",
 )
 
 

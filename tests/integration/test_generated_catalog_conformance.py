@@ -43,7 +43,7 @@ from rashid_core.api import LocalOnlyReader, RulesConfig, Severity, ValidationOp
 
 from tests.catalog_invariants import check_catalog_invariants
 from tests.known_upstream import GPIO_WFS_OOM
-from tests.properties.test_rebuild_idempotence import shrink_geoparquet
+from tests.property.test_rebuild_idempotence import shrink_geoparquet
 
 if TYPE_CHECKING:
     from tests.catalog_invariants import RunCli
