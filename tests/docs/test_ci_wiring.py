@@ -258,20 +258,43 @@ def test_diff_cover_gates_the_changed_lines() -> None:
 
 
 def test_only_the_live_network_step_continues_on_error() -> None:
-    """A soft-fail step gates nothing. Live third-party servers are the one exception."""
-    jobs = _jobs("nightly.yml")
+    """A soft-fail step gates nothing. Live third-party servers are the one exception.
 
-    soft = [
-        (name, step.get("name"))
-        for name, job in jobs.items()
-        for step in job.get("steps", [])
-        if step.get("continue-on-error")
-    ]
-    soft_jobs = [name for name, job in jobs.items() if job.get("continue-on-error")]
+    The check reads every workflow. The security audit once had two soft-fail
+    steps. One ran the ruff S rules that the quality job already gates, and it
+    could only warn. The other let a pip-audit crash end in a green run.
+    """
+    soft = []
+    soft_jobs = []
+    for workflow in sorted(WORKFLOWS.glob("*.yml")):
+        for name, job in _jobs(workflow.name).items():
+            if job.get("continue-on-error"):
+                soft_jobs.append((workflow.name, name))
+            soft.extend(
+                (workflow.name, name, step.get("name"))
+                for step in job.get("steps", [])
+                if step.get("continue-on-error")
+            )
 
-    assert soft == [("network-live", "Run network tests against live services")]
+    assert soft == [("nightly.yml", "network-live", "Run network tests against live services")]
     assert soft_jobs == []
-    assert "dependency-check" not in jobs
+    assert "dependency-check" not in _jobs("nightly.yml")
+
+
+def test_security_audit_fails_when_pip_audit_cannot_run() -> None:
+    """A crash or invalid JSON from pip-audit must turn the run red.
+
+    The vulnerability path stays green and opens the tracking issue instead.
+    The capture must keep stderr out of the JSON. A clean pip-audit run writes
+    "No known vulnerabilities found" to stderr, and ``2>&1`` made that run
+    look like a crash.
+    """
+    (step,) = [s for s in _jobs("security-audit.yml")["audit"]["steps"] if s.get("id") == "audit"]
+    capture = step["run"].split("AUDIT_OUTPUT=$(uv run pip-audit", 1)[1].split(")", 1)[0]
+    error_branch = step["run"].split("::error::pip-audit failed", 1)[1]
+
+    assert capture.rstrip().endswith("--format json")
+    assert "exit 1" in error_branch
 
 
 @pytest.mark.parametrize("workflow", ["ci.yml", "nightly.yml"])
