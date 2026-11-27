@@ -171,6 +171,8 @@ from portolan_core.constants import (
 )
 from portolan_core.errors import (
     AssetKeyCollisionError,
+    CRSMismatchError,
+    CRSTransformError,
     MissingLicenseError,
     NoGeometryError,
     PartitionCollisionError,
@@ -919,6 +921,10 @@ class _ProcessResult:
     source_to_collection_dir: dict[Path, tuple[Path, str]] = field(default_factory=dict)
 
 
+#: The errors on which prepare_item removes a new output that has no bbox.
+_NO_BBOX_ERRORS = (NoGeometryError, CRSTransformError, CRSMismatchError)
+
+
 def _prepare_multilayer_file(
     file_path: Path,
     coll_id: str,
@@ -984,6 +990,10 @@ def _prepare_multilayer_file(
                     result.output.unlink(missing_ok=True)
                 skips[result.output] = err.message
             except Exception as err:
+                # prepare_item cannot tell a new layer file from an old one, so
+                # a layer file this run wrote goes here, with no STAC record.
+                if isinstance(err, _NO_BBOX_ERRORS) and result.output not in existing:
+                    result.output.unlink(missing_ok=True)
                 failure_list.append(
                     AddFailure(path=result.output, error=f"Layer {result.layer}: {err}")
                 )
