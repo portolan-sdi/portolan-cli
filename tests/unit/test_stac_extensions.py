@@ -333,6 +333,34 @@ class TestProjectionExtension:
         assert metadata.to_stac_properties()["proj:epsg"] == 32610
 
     @pytest.mark.unit
+    def test_add_projection_extension_writes_projjson_for_a_custom_crs(self) -> None:
+        """A CRS with no code to name goes in proj:projjson, with no proj:code (#928)."""
+        from pyproj import CRS
+
+        from portolan_cli.stac import add_projection_extension, create_item
+
+        item = create_item(item_id="test-projjson", bbox=[0, 0, 1, 1])
+        projjson = CRS(
+            "+proj=tmerc +lat_0=0 +lon_0=-111.37 +k=0.99991 +x_0=512000 +y_0=0 "
+            "+ellps=GRS80 +units=m +no_defs"
+        ).to_json_dict()
+        projjson["id"] = {"authority": "MYORG", "code": 1}
+        metadata = GeoParquetMetadata(
+            bbox=(500000.0, 4000000.0, 510000.0, 4010000.0),
+            crs=projjson,
+            geometry_type="Point",
+            geometry_column="geometry",
+            feature_count=1,
+            schema={},
+        )
+
+        add_projection_extension(item, metadata)
+        properties = item.to_dict(include_self_link=False, transform_hrefs=False)["properties"]
+
+        assert properties["proj:projjson"] == projjson
+        assert "proj:code" not in properties
+
+    @pytest.mark.unit
     def test_add_projection_extension_sets_proj_shape_for_raster(self) -> None:
         """add_projection_extension sets proj:shape for COGMetadata."""
         from portolan_cli.stac import add_projection_extension, create_item

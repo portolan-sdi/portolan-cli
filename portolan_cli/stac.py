@@ -1391,7 +1391,8 @@ def add_projection_extension(
     """Add Projection extension fields to an item from metadata.
 
     Always sets (when available):
-    - proj:code: CRS code (EPSG or WKT)
+    - proj:code: CRS code (EPSG or WKT), or proj:projjson for a PROJJSON
+      CRS that no code names
     - proj:bbox: Bounding box in native CRS
 
     For raster metadata (COGMetadata), also sets:
@@ -1416,8 +1417,13 @@ def add_projection_extension(
             # WKT or other format - store as-is
             item.properties["proj:code"] = crs_str
     elif isinstance(crs_str, dict):
-        # PROJJSON format (used by some GeoParquet files)
-        item.properties["proj:code"] = _projjson_code(crs_str)
+        # PROJJSON format (used by some GeoParquet files). A CRS with no code
+        # to name goes in proj:projjson (projection v2.0.0), not proj:code.
+        code = _projjson_code(crs_str)
+        if code is None:
+            item.properties["proj:projjson"] = crs_str
+        else:
+            item.properties["proj:code"] = code
 
     # Set proj:bbox (native CRS bbox)
     if hasattr(metadata, "bbox") and metadata.bbox is not None:
@@ -1442,8 +1448,8 @@ def add_projection_extension(
         item.stac_extensions.append(ext_url)
 
 
-def _projjson_code(crs: dict[str, Any]) -> str:
-    """The proj:code of a PROJJSON CRS.
+def _projjson_code(crs: dict[str, Any]) -> str | None:
+    """The proj:code of a PROJJSON CRS, or None when no code names it.
 
     The id counts only when pyproj resolves it. An id such as EPSG:999999 or
     MYORG:1 gives way to the EPSG match of the definition (#928).
@@ -1463,7 +1469,7 @@ def _projjson_code(crs: dict[str, Any]) -> str:
         epsg = CRS.from_user_input(crs).to_epsg()
     except CRSError:
         epsg = None
-    return f"EPSG:{epsg}" if epsg is not None else str(crs)
+    return f"EPSG:{epsg}" if epsg is not None else None
 
 
 def geometry_type_list(value: object) -> list[str]:
