@@ -2974,6 +2974,39 @@ class TestPartitionedOutputWithGeoparquetIO:
         assert sorted(p.name for p in coll.iterdir()) == ["points.geojson"]
 
     @pytest.mark.integration
+    def test_a_failed_add_keeps_the_user_files_beside_the_output(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The cleanup removes only the sidecars this run made, not a user's notes (#928)."""
+        import shutil
+
+        from portolan_cli import preparation
+
+        (tmp_path / ".portolan").mkdir()
+        (tmp_path / ".portolan" / "config.yaml").write_text("{}\n", encoding="utf-8")
+        coll = tmp_path / "coll"
+        coll.mkdir()
+        fixtures = Path(__file__).parents[1] / "fixtures" / "vector" / "valid"
+        source = coll / "points.geojson"
+        shutil.copy(fixtures / "points.geojson", source)
+        (coll / "points.parquet.notes.txt").write_text("keep me\n", encoding="utf-8")
+
+        def unreadable(_metadata: object, output_path: Path) -> list[float]:
+            # A sidecar that the conversion wrote, after the run started.
+            output_path.with_name(output_path.name + ".aux.xml").write_text("<x/>")
+            raise CRSTransformError("EPSG:999999", "crs not found")
+
+        monkeypatch.setattr(preparation, "wgs84_bbox", unreadable)
+
+        with pytest.raises(CRSTransformError):
+            preparation.prepare_item(path=source, catalog_root=tmp_path, collection_id="coll")
+
+        assert sorted(p.name for p in coll.iterdir()) == [
+            "points.geojson",
+            "points.parquet.notes.txt",
+        ]
+
+    @pytest.mark.integration
     def test_single_file_kdtree_index(self, tmp_path: Path) -> None:
         """A non-partitioned kdtree index adds the `kdtree_cell` column."""
         from portolan_cli.conversion_config import VectorSettings

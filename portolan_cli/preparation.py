@@ -612,7 +612,14 @@ def _pre_validate_geometry(path: Path) -> None:
         return
 
 
-def _cleanup_orphaned_output(output_path: Path, item_dir: Path, source_path: Path) -> None:
+def _sidecars(output_path: Path) -> frozenset[Path]:
+    """The files named ``<output name>.*`` beside ``output_path``."""
+    return frozenset(output_path.parent.glob(f"{glob.escape(output_path.name)}.*"))
+
+
+def _cleanup_orphaned_output(
+    output_path: Path, item_dir: Path, source_path: Path, keep: frozenset[Path] = frozenset()
+) -> None:
     """Clean up orphaned conversion output when geometry extraction fails.
 
     Called when conversion succeeds but produces no geometry (empty bbox).
@@ -628,6 +635,8 @@ def _cleanup_orphaned_output(output_path: Path, item_dir: Path, source_path: Pat
         output_path: Path to the converted output file.
         item_dir: Directory containing the item files.
         source_path: Original source file path (won't be deleted if same).
+        keep: Files with the output name that existed before the conversion.
+            They belong to the user, such as ``points.parquet.notes.txt``.
     """
     if not output_path.exists() or output_path == source_path:
         return
@@ -639,7 +648,7 @@ def _cleanup_orphaned_output(output_path: Path, item_dir: Path, source_path: Pat
         output_path.unlink()
         logger.debug("Cleaned up orphaned conversion output: %s", output_path)
         for sidecar in item_dir.glob(f"{glob.escape(output_path.name)}.*"):
-            if sidecar.resolve() != resolved_source:
+            if sidecar.resolve() != resolved_source and sidecar not in keep:
                 sidecar.unlink()
                 logger.debug("Cleaned up orphaned sidecar: %s", sidecar)
     except OSError as cleanup_err:
@@ -1159,7 +1168,12 @@ def describe_vector_item(
 
 
 def _item_bbox(
-    metadata: AllMetadata, path: Path, output_path: Path, *, created_output: bool
+    metadata: AllMetadata,
+    path: Path,
+    output_path: Path,
+    *,
+    created_output: bool,
+    prior_sidecars: frozenset[Path],
 ) -> list[float]:
     """Return the WGS84 bbox of an item, or remove a new output and raise.
 
@@ -1180,7 +1194,7 @@ def _item_bbox(
         return wgs84_bbox(metadata, output_path)
     except (NoGeometryError, CRSTransformError, CRSMismatchError):
         if created_output:
-            _cleanup_orphaned_output(output_path, path.parent, path)
+            _cleanup_orphaned_output(output_path, path.parent, path, keep=prior_sidecars)
         raise
 
 
@@ -1273,6 +1287,7 @@ def prepare_item(
     # that the source did not make (claim_output).
     target = claim_output(path, handler.output_path(path, item_dir), state=state)
     created_output = not target.exists()
+    prior_sidecars = _sidecars(target)
     with in_run(state):
         output_path, metadata = _convert_and_extract_metadata(
             path,
@@ -1311,7 +1326,13 @@ def prepare_item(
             )
 
     # Step 4: Extract and transform bbox
-    bbox = _item_bbox(metadata, path, output_path, created_output=created_output)
+    bbox = _item_bbox(
+        metadata,
+        path,
+        output_path,
+        created_output=created_output,
+        prior_sidecars=prior_sidecars,
+    )
 
     # Step 5: Scan assets and compute statistics
     collection_level = is_collection_level_asset and handler.asset_level == "collection"
