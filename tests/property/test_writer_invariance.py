@@ -22,6 +22,7 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from portolan_core import writer
+from tests.integration.core.test_writer_apply import _tree
 
 pytestmark = pytest.mark.unit
 
@@ -135,14 +136,6 @@ def _parsed(plan: writer.WritePlan) -> list[tuple[str, str, Any]]:
             (op.key, op.media_type, json.loads(body) if op.key.endswith(".json") else body)
         )
     return parsed
-
-
-def _tree(root: Path) -> dict[str, bytes]:
-    return {
-        path.relative_to(root).as_posix(): path.read_bytes()
-        for path in sorted(root.rglob("*"))
-        if path.is_file()
-    }
 
 
 @given(catalog=catalogs())

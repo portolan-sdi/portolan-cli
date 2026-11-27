@@ -31,6 +31,7 @@ from hypothesis import strategies as st
 
 from portolan_cli.validation.remediation import RULE_REMEDIATION, Bucket
 from tests.conftest import CliHarness
+from tests.integration.core.test_writer_apply import _tree
 from tests.property import breakers
 from tests.property.registry import BASE_OF, BREAKERS, UNBREAKABLE
 
@@ -38,8 +39,6 @@ pytestmark = pytest.mark.integration
 
 AUTO = frozenset(rule for rule, row in RULE_REMEDIATION.items() if row.bucket is Bucket.AUTO)
 
-#: Rules whose repair ``check --fix`` does not make. Each maps to the reason,
-#: and the test runs as a strict xfail, so a fix turns it red.
 _GEOPARQUET_KEPT = (
     "check --fix classifies an existing GeoParquet as cloud-native and never rewrites it. "
     "The convert fixer is inert and points at `portolan add --force --reconvert`."
@@ -48,6 +47,8 @@ _COG_KEPT = (
     "check --fix skips a GeoTIFF that passes cog_validate. Only `check --fix --force` "
     "re-optimizes it."
 )
+#: Rules whose repair ``check --fix`` does not make. Each maps to the reason,
+#: and the test runs as a strict xfail, so a fix turns it red.
 NOT_REPAIRED: dict[str, str] = {
     "PTL-DAT-003": (
         "check --fix selects only the inert convert fixer for a type that contradicts the "
@@ -74,14 +75,6 @@ def _defects(payload: dict[str, Any]) -> set[str]:
 
 def _check(run: CliHarness, root: Path) -> set[str]:
     return _defects(json.loads(run("check", str(root), "--json", expect=None).stdout))
-
-
-def _tree(root: Path) -> dict[str, bytes]:
-    return {
-        path.relative_to(root).as_posix(): path.read_bytes()
-        for path in sorted(root.rglob("*"))
-        if path.is_file() and path.name != ".versions.lock"
-    }
 
 
 @pytest.fixture(scope="session")
