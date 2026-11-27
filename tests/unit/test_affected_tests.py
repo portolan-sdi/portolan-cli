@@ -259,7 +259,7 @@ def test_deleted_importers_find_every_import_form(tmp_path: Path) -> None:
 FOUNDATION_TESTS = {
     "tests/integration/test_generated_catalog_conformance.py",
     "tests/integration/test_catalog_invariants.py",
-    "tests/properties",
+    "tests/property",
 }
 
 
@@ -314,12 +314,12 @@ def test_missing_targets_are_dropped_with_a_note(
     (tmp_path / "tests" / "unit" / "test_here.py").write_text("", encoding="utf-8")
 
     kept = at.existing_targets(
-        tmp_path, ["tests/properties", "tests/unit/test_here.py", "tests/unit/test_gone.py"]
+        tmp_path, ["tests/property", "tests/unit/test_here.py", "tests/unit/test_gone.py"]
     )
 
     assert kept == ["tests/unit/test_here.py"]
     assert capsys.readouterr().err == (
-        "Skipped 2 missing target(s): tests/properties tests/unit/test_gone.py\n"
+        "Skipped 2 missing target(s): tests/property tests/unit/test_gone.py\n"
     )
 
 
