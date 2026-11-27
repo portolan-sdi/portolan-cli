@@ -274,6 +274,16 @@ def test_prek_vulture_hook_has_no_args() -> None:
     assert (repo["rev"], repo["hooks"]) == ("v2.16", [{"id": "vulture"}])
 
 
+def test_prek_mypy_hook_has_no_args() -> None:
+    """The hook passes no paths, so ``files`` in ``[tool.mypy]`` is the one scope."""
+    prek = PREK.read_text(encoding="utf-8")
+    (hook,) = re.findall(r'\{\s*id = "mypy",.*?\}', prek, flags=re.DOTALL)
+    assert 'entry = "uv run mypy",' in hook
+    assert "args" not in hook
+    files = _pyproject()["tool"]["mypy"]["files"]
+    assert files == ["portolan_cli", "packages/portolan-core/src", "scripts", "tests"]
+
+
 def test_jscpd_baseline_only_shrinks() -> None:
     """Delete only: lower the pinned count after a real deduplication."""
     config = json.loads(JSCPD_CONFIG.read_text(encoding="utf-8"))

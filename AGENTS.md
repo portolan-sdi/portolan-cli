@@ -97,7 +97,7 @@ uv run python scripts/affected_tests.py --run -n 4  # Run tests this change can 
 uv run pytest --cov-report=html         # Coverage report
 uv run ruff check .                     # Lint
 uv run ruff format .                    # Format
-uv run mypy portolan_cli packages/portolan-core/src  # Type check
+uv run mypy                             # Type check (scope is [tool.mypy] files)
 uv run deptry .                         # Check dependencies (unused, missing, transitive)
 uv run deptry packages/portolan-core \
   --config packages/portolan-core/pyproject.toml  # Check portolan-core dependencies
@@ -210,7 +210,7 @@ Always research before implementing:
 - **ALL** non-obvious decisions are recorded where they apply (see `.claude/rules/documentation.md`)
 - **NO** new dependencies without discussion
 
-<!-- freshness: last-verified: 2026-11-25 -->
+<!-- freshness: last-verified: 2026-11-27 -->
 ## Design Principles
 
 | Principle | Meaning |
