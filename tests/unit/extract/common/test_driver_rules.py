@@ -397,7 +397,7 @@ def test_layer_fetch_retries_only_a_transient_status(
     tmp_path: Path, status: int, fetches: int, error: str
 ) -> None:
     """#1035: the shared driver gives up at once on 401, 403, and 404, for every source."""
-    import requests  # type: ignore[import-untyped]
+    import requests
 
     response = requests.Response()
     response.status_code = status
@@ -419,7 +419,7 @@ def test_layer_fetch_retries_only_a_transient_status(
 @pytest.mark.integration
 def test_credentials_never_reach_the_catalog(fixtures_dir: Path, tmp_path: Path) -> None:
     """#981: an API key in the source URL is in no file the extraction writes."""
-    import geoparquet_io as gpio  # type: ignore[import-untyped]
+    import geoparquet_io as gpio
 
     from portolan_cli.metadata_extraction import ExtractedMetadata
 

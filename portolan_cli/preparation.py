@@ -17,7 +17,6 @@ from __future__ import annotations
 import contextlib
 import fnmatch
 import functools
-import glob
 import logging
 import shutil
 from dataclasses import dataclass, field
@@ -27,10 +26,7 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 import pystac
 from pyproj import CRS
 
-from portolan_cli import extension_registry as _reg
 from portolan_cli.collection_id import normalize_collection_id, validate_collection_id
-from portolan_cli.config import get_ignored_files, get_setting, load_merged_metadata
-from portolan_cli.constants import ROLE_VISUAL
 from portolan_cli.conversion_config import (
     VectorSettings,
     get_cog_settings,
@@ -47,8 +43,6 @@ from portolan_cli.convert import (
     with_provenance,
 )
 from portolan_cli.crs import _is_wgs84, measure_wgs84_bbox, transform_bbox_to_wgs84
-from portolan_cli.errors import AssetKeyCollisionError, NoGeometryError, RewriteFidelityError
-from portolan_cli.format_families import RASTER, VECTOR
 from portolan_cli.formats import (
     current_run,
     in_run,
@@ -81,31 +75,45 @@ from portolan_cli.metadata_yaml import (
 )
 from portolan_cli.plugins.formats import FormatContext, extension_of, handler_for
 from portolan_cli.readme import README_FILENAME
-from portolan_cli.run_state import RunState
+from portolan_cli.report import emit
 from portolan_cli.scan.detect import is_filegdb
 from portolan_cli.stac import (
     STEM_RANK_SOURCE,
+    _require_wgs84,
     add_projection_extension,
     add_raster_extension,
     add_vector_extension,
     create_item,
     stem_rank,
 )
-from portolan_cli.stac_links import GDAL_PAM_SUFFIX
 from portolan_cli.stac_parquet import (
     PARQUET_FILENAME,
     declare_extensions_in_use,
 )
-from portolan_cli.sync.checksums import (
+from portolan_cli.viz.pmtiles_links import PMTILES_MEDIA_TYPE, pmtiles_asset_key
+from portolan_cli.viz.style import enrich_cog_assets
+from portolan_core import extension_registry as _reg
+from portolan_core.checksums import (
     compute_checksum,
     compute_dir_checksum,
     compute_dir_size,
     file_fields_from,
 )
-from portolan_cli.trace import count, span
-from portolan_cli.versions import versions_asset_key
-from portolan_cli.viz.pmtiles_links import PMTILES_MEDIA_TYPE, pmtiles_asset_key
-from portolan_cli.viz.style import enrich_cog_assets
+from portolan_core.config import get_ignored_files, get_setting
+from portolan_core.constants import ROLE_VISUAL
+from portolan_core.errors import (
+    AssetKeyCollisionError,
+    CRSMismatchError,
+    CRSTransformError,
+    InvalidBboxError,
+    NoGeometryError,
+    RewriteFidelityError,
+)
+from portolan_core.format_families import RASTER, VECTOR
+from portolan_core.run_state import RunState
+from portolan_core.stac_links import GDAL_PAM_SUFFIX
+from portolan_core.trace import count, span
+from portolan_core.versions import versions_asset_key
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -113,8 +121,8 @@ if TYPE_CHECKING:
 
     import pyarrow.parquet as pq
 
-    from portolan_cli.config import ConfigSource
     from portolan_cli.plugins.formats import FormatHandler
+    from portolan_core.config import ConfigSource
 
 logger = logging.getLogger(__name__)
 
@@ -605,36 +613,29 @@ def _pre_validate_geometry(path: Path) -> None:
         return
 
 
-def _cleanup_orphaned_output(output_path: Path, item_dir: Path, source_path: Path) -> None:
-    """Clean up orphaned conversion output when geometry extraction fails.
+def _cleanup_orphaned_output(output_path: Path, source_path: Path) -> None:
+    """Remove a conversion output that gets no STAC record, and its GDAL sidecar.
 
-    Called when conversion succeeds but produces no geometry (empty bbox).
-    Removes the output file and the sidecars of the output to avoid leaving
-    orphaned files in the item directory.
-
-    A sidecar of the output carries the full output name, such as
-    ``scene.tif.aux.xml``. A file that only shares the stem belongs to the
-    user: a pre-built ``zoning.pmtiles`` or the ``.dbf`` of a shapefile
-    source. The cleanup deleted those too.
+    The only sidecar a conversion here writes is GDAL's ``.aux.xml``, such as
+    ``scene.tif.aux.xml``. Any other file that starts with the output name
+    belongs to the user or to a parallel add, such as
+    ``points.parquet.notes.txt`` or ``points.parquet.other.parquet``, so it
+    stays (#928).
 
     Args:
         output_path: Path to the converted output file.
-        item_dir: Directory containing the item files.
         source_path: Original source file path (won't be deleted if same).
     """
     if not output_path.exists() or output_path == source_path:
         return
 
-    # Resolve source_path for comparison (Issue #432: don't delete source file)
-    resolved_source = source_path.resolve()
-
+    sidecar = output_path.with_name(output_path.name + GDAL_PAM_SUFFIX)
     try:
         output_path.unlink()
         logger.debug("Cleaned up orphaned conversion output: %s", output_path)
-        for sidecar in item_dir.glob(f"{glob.escape(output_path.name)}.*"):
-            if sidecar.resolve() != resolved_source:
-                sidecar.unlink()
-                logger.debug("Cleaned up orphaned sidecar: %s", sidecar)
+        # Issue #432: never delete the source file.
+        if sidecar.resolve() != source_path.resolve():
+            sidecar.unlink(missing_ok=True)
     except OSError as cleanup_err:
         # Log but don't swallow the original error
         logger.warning("Failed to clean up orphaned file %s: %s", output_path, cleanup_err)
@@ -774,8 +775,8 @@ VectorMetadata = GeoParquetMetadata | PMTilesMetadata | FlatGeobufMetadata
 AllMetadata = VectorMetadata | COGMetadata
 
 
-def _extract_bbox_wgs84(metadata: AllMetadata, data_path: Path | None = None) -> list[float]:
-    """Extract bbox from metadata, transforming to WGS84 if needed.
+def wgs84_bbox(metadata: AllMetadata, data_path: Path | None = None) -> list[float]:
+    """Return the WGS84 bbox of a metadata object, for a STAC Item or Collection.
 
     PMTiles bbox is already in WGS84 (4326). Other formats may need
     CRS transformation.
@@ -818,12 +819,11 @@ def _extract_bbox_wgs84(metadata: AllMetadata, data_path: Path | None = None) ->
 
 def _warn_if_source_newer(source_path: Path, output_path: Path) -> None:
     """Warn if source file is newer than output (suggests --reconvert)."""
-    from portolan_cli.output import warn as warn_output
-
     if source_path.stat().st_mtime > output_path.stat().st_mtime:
-        warn_output(
+        emit(
+            "warn",
             f"Source file '{source_path.name}' is newer than converted output. "
-            "Use --reconvert to re-convert from source."
+            "Use --reconvert to re-convert from source.",
         )
 
 
@@ -1152,7 +1152,41 @@ def describe_vector_item(
     add_vector_extension(item, metadata)
 
 
-def prepare_item(
+def _item_bbox(
+    metadata: AllMetadata,
+    path: Path,
+    output_path: Path,
+    *,
+    created_output: bool,
+    collection_level: bool,
+) -> list[float]:
+    """Return the WGS84 bbox of an item, or remove a new output and raise.
+
+    The add stops here before any STAC write, so a file this run converted
+    goes too.
+
+    Raises:
+        NoGeometryError: The file has no bbox.
+        CRSTransformError: The bbox cannot be transformed to WGS84.
+        CRSMismatchError: The bbox does not match the declared CRS.
+        InvalidBboxError: The transformed bbox is not valid WGS84.
+    """
+    try:
+        if not metadata.bbox:
+            raise NoGeometryError(
+                path=metadata.id if hasattr(metadata, "id") else path.stem,
+                reason="The source file may have no valid geometry.",
+            )
+        bbox = wgs84_bbox(metadata, output_path)
+        # Collection extents filter invalid asset bboxes when they aggregate (#516).
+        return bbox if collection_level else _require_wgs84(bbox)
+    except (NoGeometryError, CRSTransformError, CRSMismatchError, InvalidBboxError):
+        if created_output:
+            _cleanup_orphaned_output(output_path, path)
+        raise
+
+
+def prepare_item(  # noqa: PLR0914 - the whole per-file pipeline in one sequence
     *,
     path: Path,
     catalog_root: Path,
@@ -1198,6 +1232,9 @@ def prepare_item(
         ValueError: If the format is unsupported or collection_id is invalid.
         FileNotFoundError: If the source file doesn't exist.
         NoGeometryError: If the file has no valid geometry.
+        CRSTransformError: The bbox cannot be transformed to WGS84.
+        CRSMismatchError: The bbox does not match the declared CRS.
+        InvalidBboxError: The transformed bbox is not valid WGS84.
         OutputExistsError: Both output names hold a file that the source did
             not write.
     """
@@ -1252,17 +1289,13 @@ def prepare_item(
         )
     created_output = created_output and output_path == target
     source_paths = {output_path: versions_asset_key(path, collection_dir)}
-    if state is not None and isinstance(metadata, GeoParquetMetadata) and output_path.is_file():
+    if isinstance(metadata, GeoParquetMetadata) and output_path.is_file():
         # The handler API takes no state. Give the run the footer the handler
         # read, so finalization does not read it again.
         state.memo("geoparquet.metadata", output_path, lambda _path: metadata)
 
     # Step 3b: Load metadata.yaml defaults (for temporal/nodata when source lacks them)
-    metadata_yaml = (
-        state.metadata(collection_dir)
-        if state is not None
-        else load_merged_metadata(collection_dir, catalog_root)
-    )
+    metadata_yaml = state.metadata(collection_dir)
     defaults = metadata_yaml.get("defaults", {})
 
     # Validate defaults section if present (fail fast on invalid config)
@@ -1277,17 +1310,16 @@ def prepare_item(
             )
 
     # Step 4: Extract and transform bbox
-    if not metadata.bbox:
-        if created_output:
-            _cleanup_orphaned_output(output_path, item_dir, path)
-        raise NoGeometryError(
-            path=metadata.id if hasattr(metadata, "id") else path.stem,
-            reason="The source file may have no valid geometry.",
-        )
-    bbox = _extract_bbox_wgs84(metadata, output_path)
+    collection_level = is_collection_level_asset and handler.asset_level == "collection"
+    bbox = _item_bbox(
+        metadata,
+        path,
+        output_path,
+        created_output=created_output,
+        collection_level=collection_level,
+    )
 
     # Step 5: Scan assets and compute statistics
-    collection_level = is_collection_level_asset and handler.asset_level == "collection"
     try:
         stac_assets, asset_files, _asset_paths = _scan_item_assets(
             item_dir=item_dir,
@@ -1419,9 +1451,9 @@ def _needs_spatial_rewrite(
       conformant file would cost time and change nothing.
 
     The footer says nothing about row order, so a file with the column but
-    unordered rows still fails PTL-DAT-006. ``reconvert`` is the operator's
-    answer to that, and to a sort-only configuration: ``add --force
-    --reconvert`` rewrites the file whatever its footer says.
+    unordered rows still fails PTL-DAT-006. ``check --fix`` rewrites a file
+    that check reports, and ``add --force --reconvert`` rewrites the file
+    whatever its footer says.
 
     Args:
         source: Source Parquet file, or the file open for its footer.
@@ -1447,6 +1479,7 @@ def convert_vector(
     catalog_root: Path | None = None,
     *,
     reconvert: bool = False,
+    strict: bool = False,
     settings: VectorSettings | None = None,
     partition_dir: Path | None = None,
 ) -> Path:
@@ -1470,6 +1503,7 @@ def convert_vector(
             None uses the built-in defaults.
         reconvert: True when the operator asked to re-convert from source, which
             rewrites a Parquet file whatever its footer already declares.
+        strict: Raise when a Parquet rewrite fails, and do not keep the file with a warning.
         settings: Explicit vector settings. None reads them from the catalog.
         partition_dir: Directory for Hive partitions by the configured spatial
             index. It applies only to a non-Parquet source, when the settings
@@ -1479,7 +1513,7 @@ def convert_vector(
         Path to the output GeoParquet file, or ``partition_dir`` when the
         table was written as partitions.
     """
-    import geoparquet_io as gpio  # type: ignore[import-untyped]
+    import geoparquet_io as gpio
 
     from portolan_cli.convert import _write_partitioned, repair_shapefile_encoding_sidecar
 
@@ -1522,7 +1556,7 @@ def convert_vector(
             # so there is no separate destination to write to. Write a sibling
             # and swap it in, because geoparquet-io cannot write the file it
             # reads.
-            _rewrite_or_keep(source, settings, before)
+            _rewrite_or_keep(source, settings, before, strict=strict)
         else:
             # Copy first, then rewrite the copy. Converting straight into
             # `output_path` would skip `_assert_rewrite_kept_everything`, so a
@@ -1530,7 +1564,7 @@ def convert_vector(
             # the same file kept it on the path above.
             shutil.copy2(source, output_path)
             invalidate(output_path)
-            _rewrite_or_keep(output_path, settings, before)
+            _rewrite_or_keep(output_path, settings, before, strict=strict)
         return output_path
 
     # A non-Parquet source. Convert with the geoparquet-io fluent API, wrapped
@@ -1575,25 +1609,24 @@ def _announce_rewrite(source: Path, reason: str) -> None:
         reason: Why the rewrite runs, in the operator's terms.
     """
     # A rewrite changes the operator's file, so the notice is user-facing and
-    # shows by default. It goes through the output writer, which sends it to
-    # stderr in JSON mode (#1005). Do not demote it to logging.info.
-    from portolan_cli.output import info as info_output
-    from portolan_cli.output import warn
+    # shows by default. The CLI prints it through the output writer, which sends
+    # it to stderr in JSON mode (#1005). Do not demote it to logging.info.
     from portolan_cli.utils import format_size
 
     size_bytes = source.stat().st_size
     size = format_size(size_bytes)
-    info_output(f"Rewriting {source.name} ({size}): {reason}")
+    emit("info", f"Rewriting {source.name} ({size}): {reason}")
     if size_bytes >= LARGE_REWRITE_WARN_BYTES:
-        warn(
+        emit(
+            "warn",
             f"{source.name} is {size}. The rewrite reads, sorts, and writes the "
             f"whole file, and needs {size} of free space while it runs. Set "
-            f"add_bbox: false in .portolan/config.yaml to skip it."
+            f"add_bbox: false in .portolan/config.yaml to skip it.",
         )
 
 
 def _rewrite_or_keep(
-    source: Path, settings: VectorSettings, before: RewriteFidelity | None
+    source: Path, settings: VectorSettings, before: RewriteFidelity | None, *, strict: bool = False
 ) -> None:
     """Rewrite a GeoParquet in place, or keep it and say why the rewrite failed.
 
@@ -1609,16 +1642,19 @@ def _rewrite_or_keep(
         source: GeoParquet file to rewrite.
         settings: Vector conversion settings to apply.
         before: The fidelity fields of the bytes in ``source``, read before.
+        strict: Raise the failure, and keep the file with no warning.
     """
-    from portolan_cli.output import warn
-
     try:
         _rewrite_parquet_in_place(source, settings, before)
     except RewriteFidelityError as err:
-        warn(f"Kept {source.name} as it is: it would lose {err.lost}")
-    except Exception as err:  # noqa: BLE001 - a copy is better than a failed add
+        if strict:
+            raise
+        emit("warn", f"Kept {source.name} as it is: it would lose {err.lost}")
+    except Exception as err:  # a copy is better than a failed add
+        if strict:
+            raise
         logger.info("Rewrite of %s failed: %s", source, err, exc_info=True)
-        warn(f"Kept {source.name} as it is: geoparquet-io could not rewrite it ({err})")
+        emit("warn", f"Kept {source.name} as it is: geoparquet-io could not rewrite it ({err})")
 
 
 def _rewrite_parquet_in_place(
@@ -1700,7 +1736,7 @@ def _same_crs(before: Any, after: Any) -> bool:
         return True
     try:
         return bool(CRS.from_user_input(before) == CRS.from_user_input(after))
-    except Exception:  # noqa: BLE001 - an unparsable CRS is not a proven match
+    except Exception:  # an unparsable CRS is not a proven match
         return False
 
 
@@ -1723,7 +1759,7 @@ def _means_wgs84(crs: Any) -> bool:
     """
     try:
         return _is_wgs84(CRS.from_user_input(crs))
-    except Exception:  # noqa: BLE001 - an unparsable CRS is not provably WGS84
+    except Exception:  # an unparsable CRS is not provably WGS84
         return False
 
 
@@ -1916,7 +1952,6 @@ def convert_raster(
 
     from portolan_cli.conversion_config import get_cog_settings
     from portolan_cli.convert import place_cog, read_cog, remember_cog, write_cog
-    from portolan_cli.output import warn as warn_output
 
     claim_state = (
         RunState.open(catalog_root) if catalog_root is not None and current_run() is None else None
@@ -1937,10 +1972,11 @@ def convert_raster(
     if scratch is not None and _warn_on_failure(source, lambda: place_cog(scratch, output_path)):
         return output_path
     if embedded == "lossy":
-        warn_output(
+        emit(
+            "warn",
             f"{source.name} has no band statistics in the file (PTL-DAT-009). "
             "Portolan keeps it as it is, because its tiles use lossy compression "
-            "and a rewrite would re-encode them."
+            "and a rewrite would re-encode them.",
         )
     if source.resolve() != output_path.resolve():
         shutil.copy2(source, output_path)
@@ -2016,14 +2052,13 @@ def _embed_statistics(src: Any, source: Path, output: Path) -> Path | None:
 
 def _warn_on_failure(source: Path, step: Callable[[], Path]) -> Path | None:
     """Run one step of the statistics rewrite. On failure, warn and return None."""
-    from portolan_cli.output import warn as warn_output
-
     try:
         with span("convert.embed_statistics", file=source.name):
             return step()
-    except Exception as err:  # noqa: BLE001 - the original file stays usable
-        warn_output(
+    except Exception as err:  # the original file stays usable
+        emit(
+            "warn",
             f"{source.name} has no band statistics in the file (PTL-DAT-009), "
-            f"and the rewrite that adds them failed: {err}"
+            f"and the rewrite that adds them failed: {err}",
         )
         return None

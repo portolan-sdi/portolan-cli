@@ -43,8 +43,8 @@ from portolan_cli.extract.common.urls import (
     merge_query,
     redact_credentials,
 )
-from portolan_cli.json_io import write_json_atomic
 from portolan_cli.utils import CREDENTIAL_QUERY_PARAMS
+from portolan_core.json_io import write_json_atomic
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -332,7 +332,7 @@ def extract_wms_style(
     # Build source layer name
     if source_layer is None:
         # Strip workspace prefix like "geonode:"
-        source_layer = layer_name.split(":")[-1] if ":" in layer_name else layer_name
+        source_layer = layer_name.rsplit(":", maxsplit=1)[-1] if ":" in layer_name else layer_name
 
     # Build WMS URL
     wms_url = _build_wms_getstyles_url(wfs_url, layer_name)

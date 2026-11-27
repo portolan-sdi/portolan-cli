@@ -39,7 +39,7 @@ class TestInitCommandAutoMode:
             catalog_file = Path("catalog.json")
             assert catalog_file.exists()
 
-            data = json.loads(catalog_file.read_text())
+            data = json.loads(catalog_file.read_text(encoding="utf-8"))
             assert data["type"] == "Catalog"
             assert data["stac_version"] in ("1.0.0", "1.1.0")  # pystac default
             assert "id" in data

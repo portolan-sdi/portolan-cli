@@ -1,6 +1,7 @@
 ---
 paths:
   - "portolan_cli/**/*.py"
+  - "packages/portolan-core/**/*.py"
 ---
 
 # Python source rules
@@ -66,17 +67,28 @@ All code must have type annotations (`mypy --strict`). The CLI is a thin Click l
   layer (`cli`, `cli_types`, `emit`, `add_progress`, `scan.progress`) imports
   Click. A Click parameter type goes in `cli_types.py`. Check
   `[tool.importlinter]` before adding any cross-module import.
-- **Ruff rule sets**: see `select` in `[tool.ruff.lint]`. It holds 37 groups.
-  Read the comment on each one before you suppress it. Line length 100, double
-  quotes (ruff format applies both).
+- **Ruff rule sets**: see `select` in `[tool.ruff.lint]`. Read the comment on
+  each one before you suppress it. Line length 100, double quotes (ruff format
+  applies both).
+- **`PT`, `RUF`, and `PL`** are selected. `PT` checks pytest style, and a
+  `pytest.raises` of a broad Portolan error needs a `match`. `RUF` and `PL` add
+  the Ruff-specific and the pylint rules.
+- **Pylint size limits** sit in `[tool.ruff.lint.pylint]`. Mark a real outlier of
+  `PLR0913`, `PLR0914`, `PLR0915`, or `PLR0917` with a line `# noqa` and a short
+  reason. The `*cli.py` files have a per-file ignore for Click arguments.
+- **`PLC0415` is ignored everywhere.** A function-level import of a heavy
+  geospatial library keeps CLI startup fast.
+- **Preview rules** opt in by name (`explicit-preview-rules`). `select` lists
+  each one: `PLR0914`, `PLR0916`, `PLR0917`, `PLR1702`, `PLR6104`, `PLW1514`,
+  and `RUF052`. Any other preview rule stays off.
 - **Complexity ceiling is `C901` at 15.** Ruff counts every decision point in a
   function, and a nested function adds to the function that holds it. When the
   rule fires, extract the reporting code first. That is the largest win in this
   repo, because a command interleaves the work with the report of the work.
 - **Fix a rule category in the config, not at each site.** `ignore`,
   `per-file-ignores`, `builtins-ignorelist`, and `extend-ignore-names` are the
-  knobs. Each entry carries the reason it exists. Add a `# noqa` only when the
-  finding is a false positive that no config knob covers.
+  knobs. Each entry carries the reason it exists. Add a `# noqa` only for a
+  false positive or a size-limit outlier that no config knob covers.
 - **Security rules come from `S` (flake8-bandit).** Write `# noqa: Sxxx`, not
   `# nosec Bxxx`. The old `# nosec` comments do nothing now.
 - **`PLC0415` (import-outside-top-level) stays off, and this was measured.**

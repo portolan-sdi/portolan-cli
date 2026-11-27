@@ -9,22 +9,23 @@ collection directory made them disagree.
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 import pytest
 from click.testing import CliRunner
-from rashid_core.catalog import CatalogGraph
+from rashid_core import validate
+from rashid_core.api import CatalogGraph, ValidationOptions
 
 from portolan_cli.cli import cli
-from portolan_cli.stac_links import (
+from portolan_cli.validation.fixers import apply_fixers
+from portolan_core.stac_links import (
     catalog_collections,
     iter_links,
     iter_stac_objects,
+    owned_item_hrefs,
+    published_tree,
     resolve_href,
 )
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 _EXTENT = {"spatial": {"bbox": [[0, 0, 1, 1]]}, "temporal": {"interval": [[None, None]]}}
 
@@ -209,6 +210,23 @@ class TestResolveHref:
         """A bare href joins base_dir."""
         assert resolve_href(tmp_path, "item.json") == tmp_path / "item.json"
 
+    @pytest.mark.unit
+    def test_percent_encoded_href_names_the_decoded_file(self, tmp_path: Path) -> None:
+        """rashid writes link hrefs as URI references, so ``%20`` is a space."""
+        assert resolve_href(tmp_path, "./%C3%A9t%C3%A9%202024.json") == tmp_path / "été 2024.json"
+
+    @pytest.mark.unit
+    def test_encoded_percent_sign_round_trips(self, tmp_path: Path) -> None:
+        """A real ``%`` in a filename is ``%25`` in the href."""
+        assert resolve_href(tmp_path, "./100%25.json") == tmp_path / "100%.json"
+
+    @pytest.mark.unit
+    def test_absolute_href_is_not_decoded(self, tmp_path: Path) -> None:
+        """Only a relative href names a file below the catalog."""
+        # The anchor is "/" on POSIX and the drive of tmp_path on Windows.
+        expected = Path(tmp_path.anchor) / "data" / "a%20b.json"
+        assert resolve_href(tmp_path, "/data/a%20b.json") == expected
+
 
 class TestCommandsAgree:
     """``list``, ``status``, and ``check`` report the same collections."""
@@ -264,7 +282,7 @@ class TestStatusMatchesPush:
     @pytest.mark.unit
     def test_versioned_collections(self, tmp_path: Path) -> None:
         """Every visible directory below the root that holds versions.json."""
-        from portolan_cli.stac_links import versioned_collections
+        from portolan_core.stac_links import versioned_collections
 
         for rel in ("orphan", "a/nested", ".portolan/backup", ""):
             (tmp_path / rel).mkdir(parents=True, exist_ok=True)
@@ -336,3 +354,94 @@ class TestManagedFiles:
             ("README.md", "tracked"),
             ("data.parquet", "tracked"),
         ]
+
+
+# A name with a space and a non-ASCII character, and its URI spelling.
+_NAME = "été 2024"
+_ENCODED = "%C3%A9t%C3%A9%202024"
+_COG = "image/tiff; application=geotiff; profile=cloud-optimized"
+
+
+def _encoded_item_catalog(root: Path, *, item_link: bool) -> Path:
+    """A catalog whose one item and its COG sit in ``roads/été 2024/``.
+
+    The item asset href is percent-encoded. With ``item_link`` the collection
+    links the item by its encoded href too. Returns the collection directory.
+    """
+    _stac(root / "catalog.json", "Catalog", "./roads/collection.json")
+    links = [{"rel": "item", "href": f"./{_ENCODED}/{_ENCODED}.json"}] if item_link else []
+    _stac(root / "roads" / "collection.json", "Collection", links=links)
+    item_dir = root / "roads" / _NAME
+    item_dir.mkdir()
+    (item_dir / f"{_NAME}.tif").write_bytes(b"II*\x00")
+    item = {
+        "type": "Feature",
+        "stac_version": "1.1.0",
+        "id": "ete-2024",
+        "collection": "roads",
+        "geometry": {"type": "Point", "coordinates": [0.5, 0.5]},
+        "bbox": [0.5, 0.5, 0.5, 0.5],
+        "properties": {"datetime": "2024-01-01T00:00:00Z"},
+        "assets": {"data": {"href": f"./{_ENCODED}.tif", "type": _COG, "roles": ["data"]}},
+        "links": [],
+    }
+    (item_dir / f"{_NAME}.json").write_text(json.dumps(item), encoding="utf-8")
+    return root / "roads"
+
+
+class TestEncodedItemHrefs:
+    """The walkers read the percent-encoded hrefs that the links fixer writes.
+
+    rashid's ``expected_links`` spells ``été 2024.json`` as
+    ``%C3%A9t%C3%A9%202024.json``. A walker that joined the href as a literal
+    filename found no file, so the mirror reported a stale link and push did not
+    publish the item or its assets.
+    """
+
+    @pytest.mark.unit
+    def test_owned_item_hrefs_finds_the_file(self, tmp_path: Path) -> None:
+        roads = _encoded_item_catalog(tmp_path, item_link=True)
+
+        assert owned_item_hrefs(roads / "collection.json") == [
+            (f"./{_ENCODED}/{_ENCODED}.json", roads / _NAME / f"{_NAME}.json")
+        ]
+
+    @pytest.mark.integration
+    def test_the_mirror_loads_the_item(self, tmp_path: Path) -> None:
+        from portolan_cli.stac_parquet import generate_items_parquet
+
+        roads = _encoded_item_catalog(tmp_path, item_link=True)
+
+        assert generate_items_parquet(roads) == roads / "items.parquet"
+
+    @pytest.mark.unit
+    def test_published_tree_includes_the_item_and_its_assets(self, tmp_path: Path) -> None:
+        _encoded_item_catalog(tmp_path, item_link=True)
+
+        published = published_tree(tmp_path, ["roads/collection.json"])
+
+        item_dir = f"roads/{_NAME}"
+        assert published == {
+            "roads/collection.json",
+            "roads/README.md",
+            "roads/AGENTS.md",
+            f"{item_dir}/{_NAME}.json",
+            f"{item_dir}/{_NAME}.tif",
+            f"{item_dir}/{_NAME}.tif.aux.xml",
+            f"{item_dir}/README.md",
+            f"{item_dir}/AGENTS.md",
+        }
+
+    @pytest.mark.integration
+    def test_the_walkers_read_what_check_fix_writes(self, tmp_path: Path) -> None:
+        """``apply_fixers`` writes the encoded item link, and the walkers follow it."""
+        roads = _encoded_item_catalog(tmp_path, item_link=False)
+        options = ValidationOptions(structural=False, extensions=False, data=False)
+
+        apply_fixers(tmp_path, validate(tmp_path, options=options).findings, dry_run=False)
+
+        item_json = roads / _NAME / f"{_NAME}.json"
+        assert owned_item_hrefs(roads / "collection.json") == [
+            (f"./{_ENCODED}/{_ENCODED}.json", item_json)
+        ]
+        assert f"roads/{_NAME}/{_NAME}.json" in published_tree(tmp_path, ["roads/collection.json"])

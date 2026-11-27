@@ -8,9 +8,9 @@ from typing import TYPE_CHECKING, Any
 import pytest
 
 from portolan_cli.catalog import CollectionSummary, update_catalog_index
-from portolan_cli.run_state import RunState
 from portolan_cli.version_ops import commit_run, owned_run
-from portolan_cli.versions import Asset, read_versions
+from portolan_core.run_state import RunState
+from portolan_core.versions import Asset, read_versions
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -50,8 +50,8 @@ class TestCommitRunFileBackend:
         self, catalog: Path, counters: Callable[[str], int], monkeypatch: pytest.MonkeyPatch
     ) -> None:
         import portolan_cli.catalog as catalog_mod
-        import portolan_cli.versions as versions_mod
-        from portolan_cli.json_io import write_json_atomic
+        import portolan_core.versions as versions_mod
+        from portolan_core.json_io import write_json_atomic
 
         writes: list[str] = []
 
@@ -126,8 +126,8 @@ class TestCommitRunFileBackend:
         self, catalog: Path, monkeypatch: pytest.MonkeyPatch, failure: type[BaseException]
     ) -> None:
         """A failed second write must retain retryable work and index the first write."""
-        import portolan_cli.versions as versions_mod
-        from portolan_cli.versions import VersionsFile
+        import portolan_core.versions as versions_mod
+        from portolan_core.versions import VersionsFile
 
         state = RunState.open(catalog)
         for collection_id in ("a", "b", "c"):
@@ -159,8 +159,8 @@ class TestCommitRunFileBackend:
         self, catalog: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """A stage made during a failed write supersedes the restored older stage."""
-        import portolan_cli.versions as versions_mod
-        from portolan_cli.versions import VersionsFile
+        import portolan_core.versions as versions_mod
+        from portolan_core.versions import VersionsFile
 
         state = RunState.open(catalog)
         state.stage("c", assets={"old.bin": _asset(catalog, "c/old.bin", b"old")})
@@ -231,7 +231,7 @@ class TestCommitRunPluginBackend:
     def test_one_publish_per_collection(
         self, catalog: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        import portolan_cli.version_ops as version_ops
+        from portolan_cli import version_ops
 
         (catalog / ".portolan" / "config.yaml").write_text("backend: fake\n")
         calls: list[tuple[str, dict[str, str], set[str] | None, str]] = []
@@ -267,9 +267,13 @@ class TestOwnedRun:
         assert (catalog / "c" / "versions.json").exists()
 
     def test_exception_commits_nothing(self, catalog: Path) -> None:
-        with pytest.raises(RuntimeError), owned_run(catalog) as state:
-            state.stage("c", assets={"a.bin": _asset(catalog, "c/a.bin", b"a")})
-            raise RuntimeError("boom")
+        def fail_after_stage() -> None:
+            with owned_run(catalog) as state:
+                state.stage("c", assets={"a.bin": _asset(catalog, "c/a.bin", b"a")})
+                raise RuntimeError("boom")
+
+        with pytest.raises(RuntimeError, match="boom"):
+            fail_after_stage()
         assert not (catalog / "c" / "versions.json").exists()
 
     def test_caller_state_is_not_committed(self, catalog: Path) -> None:

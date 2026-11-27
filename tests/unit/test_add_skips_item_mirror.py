@@ -17,6 +17,7 @@ import pytest
 from portolan_cli.add import _collect_files_for_add
 
 if TYPE_CHECKING:
+    from datetime import datetime
     from pathlib import Path
 
 
@@ -66,12 +67,13 @@ class TestAddSkipsItemMirror:
         collection_dir.mkdir()
         pq.write_table(pa.table({"id": [1, 2]}), collection_dir / "items.parquet")
 
+        open_interval: list[list[datetime | None]] = [[None, None]]
         collection = pystac.Collection(
             id="sites",
             description="d",
             extent=pystac.Extent(
-                spatial=pystac.SpatialExtent([[0, 0, 1, 1]]),
-                temporal=pystac.TemporalExtent([[None, None]]),
+                spatial=pystac.SpatialExtent([[0.0, 0.0, 1.0, 1.0]]),
+                temporal=pystac.TemporalExtent(open_interval),
             ),
         )
         collection.add_asset(

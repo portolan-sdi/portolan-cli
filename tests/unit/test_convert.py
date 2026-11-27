@@ -8,9 +8,11 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import Any, Self
+from typing import Any, ClassVar, Literal, Self
 
 import pytest
+
+from portolan_core.errors import CRSMismatchError, CRSTransformError, InvalidBboxError
 
 # =============================================================================
 # Phase 1: ConversionStatus Enum Tests
@@ -85,7 +87,8 @@ class TestConversionStatus:
         from portolan_cli.convert import ConversionStatus
 
         assert ConversionStatus.SUCCESS == ConversionStatus.SUCCESS
-        assert ConversionStatus.SUCCESS != ConversionStatus.FAILED
+        # The test compares two distinct members on purpose.
+        assert ConversionStatus.SUCCESS != ConversionStatus.FAILED  # type: ignore[comparison-overlap]
 
     @pytest.mark.unit
     def test_can_use_as_dict_key(self) -> None:
@@ -416,7 +419,7 @@ class TestClaimOutput:
         import pyarrow.parquet as pq
 
         from portolan_cli.convert import PROVENANCE_KEY
-        from portolan_cli.sync.checksums import compute_checksum
+        from portolan_core.checksums import compute_checksum
 
         table = pa.table({"a": [1]}).replace_schema_metadata(
             {
@@ -468,13 +471,13 @@ class TestClaimOutput:
     @pytest.mark.unit
     def test_no_free_name_raises(self, tmp_path: Path) -> None:
         from portolan_cli.convert import claim_output
-        from portolan_cli.errors import OutputExistsError
+        from portolan_core.errors import OutputExistsError
 
         (tmp_path / "a.csv").write_text("x\n")
         (tmp_path / "a.parquet").write_bytes(b"operator data")
         (tmp_path / "a-csv.parquet").write_bytes(b"more operator data")
 
-        with pytest.raises(OutputExistsError, match="would replace a.parquet"):
+        with pytest.raises(OutputExistsError, match=r"would replace a.parquet"):
             claim_output(tmp_path / "a.csv", tmp_path / "a.parquet")
 
 
@@ -1160,7 +1163,7 @@ class TestConvertDirectoryPoolFallback:
             def __enter__(self) -> Self:
                 return self
 
-            def __exit__(self, *args: object) -> bool:
+            def __exit__(self, *args: object) -> Literal[False]:
                 return False
 
             def submit(self, *args: object, **kwargs: object) -> object:
@@ -1203,7 +1206,7 @@ class TestConvertDirectoryPoolFallback:
                 self._source = source
                 self._ok = ok
 
-            def result(self) -> tuple[ConversionResult, dict[str, int]]:
+            def result(self) -> tuple[ConversionResult, dict[str, int], list[tuple[str, str]]]:
                 if not self._ok:
                     raise BrokenProcessPool("pool died after first file")
                 # A sentinel status the serial path never produces, so we can
@@ -1217,7 +1220,7 @@ class TestConvertDirectoryPoolFallback:
                     error=None,
                     duration_ms=0,
                 )
-                return result, {}
+                return result, {}, []
 
         class _PartialPool:
             """First submitted file succeeds; the pool then dies."""
@@ -1228,7 +1231,7 @@ class TestConvertDirectoryPoolFallback:
             def __enter__(self) -> Self:
                 return self
 
-            def __exit__(self, *args: object) -> bool:
+            def __exit__(self, *args: object) -> Literal[False]:
                 return False
 
             def submit(self, _fn: object, source: Path, **_kw: object) -> _Future:
@@ -1237,7 +1240,7 @@ class TestConvertDirectoryPoolFallback:
 
         monkeypatch.setattr(concurrent.futures, "ProcessPoolExecutor", _PartialPool)
         # as_completed must yield the futures; identity keeps submission order.
-        monkeypatch.setattr(concurrent.futures, "as_completed", lambda fs: list(fs))
+        monkeypatch.setattr(concurrent.futures, "as_completed", list)
 
         progressed: list[Path] = []
         report = convert_directory(
@@ -1440,7 +1443,7 @@ class TestConvertFileErrorTypes:
         a conversion error.
         """
         from portolan_cli.convert import ConversionStatus, convert_file
-        from portolan_cli.errors import UnsupportedFormatError
+        from portolan_core.errors import UnsupportedFormatError
 
         # Create a NetCDF file (unsupported format)
         netcdf = tmp_path / "data.nc"
@@ -1469,7 +1472,7 @@ class TestConvertFileErrorTypes:
         function should catch it and use ConversionFailedError for context.
         """
         from portolan_cli.convert import ConversionStatus, convert_file
-        from portolan_cli.errors import ConversionFailedError
+        from portolan_core.errors import ConversionFailedError
 
         # Create a malformed GeoJSON that will fail conversion
         bad_file = tmp_path / "bad.geojson"
@@ -1512,7 +1515,7 @@ class TestConvertFileErrorTypes:
     @pytest.mark.unit
     def test_error_codes_match_portolan_error_pattern(self) -> None:
         """All conversion error types should have correct PRTLN-CNV* codes."""
-        from portolan_cli.errors import (
+        from portolan_core.errors import (
             ConversionError,
             ConversionFailedError,
             UnsupportedFormatError,
@@ -1655,10 +1658,7 @@ class TestConvertFileEdgeCases:
 
         for name, content in files:
             file_path = tmp_path / name
-            if isinstance(content, str):
-                file_path.write_text(content)
-            else:
-                file_path.write_bytes(content.encode() if isinstance(content, str) else content)
+            file_path.write_text(content)
 
             result = convert_file(file_path, output_dir=tmp_path)
 
@@ -2366,7 +2366,7 @@ class TestVectorConversionRetriesTransientInterrupt:
                 return self
 
             def write(self, path: str) -> None:
-                Path(path).write_text("parquet-bytes")
+                Path(path).write_text("parquet-bytes", encoding="utf-8")
 
         calls = {"n": 0}
 
@@ -2657,7 +2657,7 @@ class TestPartitionedOutputWithGeoparquetIO:
     library. These tests write real partitions.
     """
 
-    _COLUMNS = {
+    _COLUMNS: ClassVar[dict[str, str]] = {
         "h3": "h3_cell",
         "s2": "s2_cell",
         "quadkey": "quadkey_prefix",
@@ -2666,7 +2666,7 @@ class TestPartitionedOutputWithGeoparquetIO:
     }
     # Coarse cells over a small cluster keep every partition above the
     # 100-row floor that geoparquet-io enforces ("Tiny partitions").
-    _EXPLICIT = {"h3": 3, "s2": 5, "quadkey": 6, "a5": 3, "kdtree": 1}
+    _EXPLICIT: ClassVar[dict[str, int]] = {"h3": 3, "s2": 5, "quadkey": 6, "a5": 3, "kdtree": 1}
 
     @staticmethod
     def _points(tmp_path: Path) -> Path:
@@ -2808,7 +2808,7 @@ class TestPartitionedOutputWithGeoparquetIO:
         the same directory would lose the rows in each shared cell.
         """
         from portolan_cli import partitioning
-        from portolan_cli.errors import PartitionCollisionError
+        from portolan_core.errors import PartitionCollisionError
 
         (tmp_path / "kdtree_cell=0000").mkdir()
         (tmp_path / "kdtree_cell=0000" / "0000.parquet").write_bytes(b"PAR1")
@@ -2816,9 +2816,12 @@ class TestPartitionedOutputWithGeoparquetIO:
         converted.write_bytes(b"PAR1")
         called: list[str] = []
         monkeypatch.setattr(partitioning, "partition_strategy", lambda *_, **__: "kdtree")
-        monkeypatch.setattr(
-            partitioning, "partition_geoparquet", lambda **_: called.append("write") or []
-        )
+
+        def _partition(**_: object) -> list[Path]:
+            called.append("write")
+            return []
+
+        monkeypatch.setattr(partitioning, "partition_geoparquet", _partition)
 
         with pytest.raises(PartitionCollisionError, match="kdtree_cell=0000"):
             partitioning.partition_vector_file(converted, tmp_path)
@@ -2856,7 +2859,7 @@ class TestPartitionedOutputWithGeoparquetIO:
         """
         from portolan_cli import partitioning
         from portolan_cli.add import _maybe_partition_large_file
-        from portolan_cli.errors import PartitionCollisionError
+        from portolan_core.errors import PartitionCollisionError
 
         coll = tmp_path / "coll"
         (coll / "kdtree_cell=0000").mkdir(parents=True)
@@ -2915,12 +2918,73 @@ class TestPartitionedOutputWithGeoparquetIO:
         assert skips == {}
         assert layer.exists() is existed
 
-    @pytest.mark.integration
-    def test_prepare_item_reports_a_new_output(self, tmp_path: Path) -> None:
-        """`created_output` is True for a new conversion and False for a kept output."""
-        import shutil
+    @pytest.mark.unit
+    @pytest.mark.parametrize(
+        "failure",
+        [
+            CRSTransformError("EPSG:999999", "crs not found"),
+            InvalidBboxError("south (10.0) > north (-10.0)"),
+        ],
+        ids=["transform", "invalid-bbox"],
+    )
+    def test_a_failed_layer_cleanup_keeps_the_other_layers(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: Exception
+    ) -> None:
+        """An OSError on the removal of a failed layer file stops nothing (#928).
 
-        from portolan_cli.preparation import prepare_item
+        The add reports the real layer error and prepares the other layers.
+        """
+        from portolan_cli import add
+        from portolan_cli.convert import LayerConversionResult
+
+        coll = tmp_path / "coll"
+        coll.mkdir()
+        gpkg = coll / "multi.gpkg"
+        gpkg.write_bytes(b"x")
+        roads, rivers = coll / "roads.parquet", coll / "rivers.parquet"
+        removed: list[Path] = []
+
+        def _convert(source: Path, out: Path, settings: Any = None, **_: Any) -> list[Any]:
+            roads.write_bytes(b"PAR1")
+            rivers.write_bytes(b"PAR1")
+            return [
+                LayerConversionResult(source, "roads", roads, True),
+                LayerConversionResult(source, "rivers", rivers, True),
+            ]
+
+        def _prepare(path: Path, **_: Any) -> Any:
+            if path == roads:
+                raise failure
+            return self._prepared(path, created_output=False)
+
+        def _locked(self: Path, *_args: Any, **_kwargs: Any) -> None:
+            removed.append(self)
+            raise PermissionError(13, "locked", str(self))
+
+        monkeypatch.setattr(add, "convert_multilayer_file", _convert)
+        monkeypatch.setattr(add, "prepare_item", _prepare)
+        monkeypatch.setattr(Path, "unlink", _locked)
+        opts = add._PrepareOptions(
+            catalog_root=tmp_path,
+            item_id=None,
+            item_datetime=None,
+            force=True,
+            reconvert=False,
+            skip_partitioning=True,
+            batch_exclude_names=frozenset(),
+        )
+
+        prepared, failures, skips = add._prepare_multilayer_file(gpkg, "coll", opts)
+
+        assert [p.item_id for p in prepared] == ["rivers"]
+        assert removed == [roads]
+        assert [(f.path, f.error) for f in failures] == [(roads, f"Layer roads: {failure}")]
+        assert skips == {}
+
+    @staticmethod
+    def _points_catalog(tmp_path: Path) -> tuple[Path, Path]:
+        """Make a catalog with one GeoJSON source in collection ``coll``."""
+        import shutil
 
         (tmp_path / ".portolan").mkdir()
         (tmp_path / ".portolan" / "config.yaml").write_text("{}\n", encoding="utf-8")
@@ -2929,12 +2993,103 @@ class TestPartitionedOutputWithGeoparquetIO:
         fixtures = Path(__file__).parents[1] / "fixtures" / "vector" / "valid"
         source = coll / "points.geojson"
         shutil.copy(fixtures / "points.geojson", source)
+        return coll, source
+
+    @pytest.mark.integration
+    def test_prepare_item_reports_a_new_output(self, tmp_path: Path) -> None:
+        """`created_output` is True for a new conversion and False for a kept output."""
+        from portolan_cli.preparation import prepare_item
+
+        _coll, source = self._points_catalog(tmp_path)
 
         first = prepare_item(path=source, catalog_root=tmp_path, collection_id="coll")
         kept = prepare_item(path=source, catalog_root=tmp_path, collection_id="coll", force=True)
 
         assert first.created_output is True
         assert kept.created_output is False
+
+    @pytest.mark.integration
+    @pytest.mark.parametrize(
+        "failure",
+        [
+            CRSTransformError("EPSG:999999", "crs not found"),
+            CRSMismatchError("EPSG:32610", (-122.5, 37.5, -122.0, 38.0)),
+        ],
+        ids=["transform", "mismatch"],
+    )
+    def test_prepare_item_removes_a_new_output_when_the_crs_fails(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: Exception
+    ) -> None:
+        """A CRS that cannot transform stops the add and leaves no converted file (#928)."""
+        from portolan_cli import preparation
+
+        coll, source = self._points_catalog(tmp_path)
+
+        def unreadable(*_args: object) -> list[float]:
+            raise failure
+
+        monkeypatch.setattr(preparation, "wgs84_bbox", unreadable)
+
+        with pytest.raises(type(failure)):
+            preparation.prepare_item(path=source, catalog_root=tmp_path, collection_id="coll")
+
+        assert sorted(p.name for p in coll.iterdir()) == ["points.geojson"]
+
+    @pytest.mark.integration
+    def test_prepare_item_removes_a_new_raster_with_an_invalid_bbox(self, tmp_path: Path) -> None:
+        """Builder validation must run before a new output leaves the bbox cleanup guard."""
+        import numpy as np
+        import rasterio
+        from rasterio.transform import from_origin
+
+        from portolan_cli.preparation import prepare_item
+
+        (tmp_path / ".portolan").mkdir()
+        (tmp_path / ".portolan" / "config.yaml").write_text("{}\n", encoding="utf-8")
+        item_dir = tmp_path / "coll" / "scene"
+        item_dir.mkdir(parents=True)
+        source = item_dir / "scene.jp2"
+        with rasterio.open(
+            source, "w", driver="JP2OpenJPEG", width=32, height=32, count=1, dtype="uint8",
+            crs="EPSG:4326", transform=from_origin(1e10, 50, 0.1, 0.1),
+        ) as dst:  # fmt: skip
+            dst.write(np.ones((1, 32, 32), dtype="uint8"))
+
+        with pytest.raises(InvalidBboxError, match="exceeds sane magnitude"):
+            prepare_item(path=source, catalog_root=tmp_path, collection_id="coll")
+
+        assert source.exists()
+        assert not (item_dir / "scene.tif").exists()
+        assert not (item_dir / "scene.json").exists()
+        assert not (tmp_path / "coll" / "versions.json").exists()
+
+    @pytest.mark.integration
+    def test_a_failed_add_keeps_the_user_files_beside_the_output(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The cleanup removes only the sidecars this run made, not a user's notes (#928)."""
+        from portolan_cli import preparation
+
+        coll, source = self._points_catalog(tmp_path)
+        (coll / "points.parquet.notes.txt").write_text("keep me\n", encoding="utf-8")
+
+        def unreadable(_metadata: object, output_path: Path) -> list[float]:
+            # A sidecar that the conversion wrote, after the run started.
+            output_path.with_name(output_path.name + ".aux.xml").write_text("<x/>")
+            # A parallel add of points.parquet.other.geojson writes this one.
+            output_path.with_name(output_path.name + ".other.parquet").write_bytes(b"PAR1")
+            raise CRSTransformError("EPSG:999999", "crs not found")
+
+        monkeypatch.setattr(preparation, "wgs84_bbox", unreadable)
+
+        with pytest.raises(CRSTransformError):
+            preparation.prepare_item(path=source, catalog_root=tmp_path, collection_id="coll")
+
+        assert sorted(p.name for p in coll.iterdir()) == [
+            "points.geojson",
+            "points.parquet.notes.txt",
+            "points.parquet.other.parquet",
+        ]
 
     @pytest.mark.integration
     def test_single_file_kdtree_index(self, tmp_path: Path) -> None:

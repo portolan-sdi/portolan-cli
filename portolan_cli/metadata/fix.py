@@ -19,8 +19,6 @@ from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from portolan_cli.constants import LEGACY_MANAGED_FIELD, REMOVED_PORTOLAN_FIELDS
-from portolan_cli.json_io import write_json_atomic
 from portolan_cli.metadata.models import (
     MetadataCheckResult,
     MetadataReport,
@@ -31,13 +29,15 @@ from portolan_cli.metadata.update import (
     update_item_metadata,
     update_versions_tracking,
 )
-from portolan_cli.stac_links import visible_stac_files
+from portolan_core.constants import LEGACY_MANAGED_FIELD, REMOVED_PORTOLAN_FIELDS
+from portolan_core.json_io import write_json_atomic
+from portolan_core.stac_links import contained_link_target, visible_stac_files
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
     from portolan_cli.preparation import PreparedItem
-    from portolan_cli.run_state import RunState
+    from portolan_core.run_state import RunState
 
 
 class FixAction(Enum):
@@ -297,7 +297,7 @@ def repair_titles_and_links(
 
         # Repair item titles referenced by this collection's item links so the
         # link-title backfill below has a title to copy.
-        results.extend(_repair_item_titles(stac_file, data, dry_run=dry_run))
+        results.extend(_repair_item_titles(catalog_root, stac_file, data, dry_run=dry_run))
 
     # Issue #815: a title a human wrote in metadata.yaml wins over the derived
     # one above. The sweep runs after the loop for that reason. A user who
@@ -331,7 +331,7 @@ def _every_stac_object(catalog_root: Path) -> Iterator[Path]:
     the sweep reports nothing about it rather than raising over a file some
     other check already flags.
     """
-    from portolan_cli.stac_links import owned_item_hrefs
+    from portolan_core.stac_links import owned_item_hrefs
 
     seen: set[Path] = set()
     for path in visible_stac_files(catalog_root):
@@ -534,45 +534,8 @@ def _repair_pmtiles_collection(collection_json: Path, *, dry_run: bool) -> FixRe
     )
 
 
-def repair_agents_md(catalog_root: Path, *, dry_run: bool = False) -> list[FixResult]:
-    """Backfill missing ``AGENTS.md`` files and ``rel="agents"`` links (rashid PTL-FIL-001/-002).
-
-    Repairs what rashid PTL-FIL-001 (required files) and PTL-FIL-002
-    (``rel="agents"`` link) flag: a
-    catalog or collection missing its ``AGENTS.md`` file or the link that
-    references it. For each affected STAC object the file is scaffolded (never
-    overwriting an existing, human-authored one) and the link is added or
-    normalized. Compliant objects are left untouched.
-
-    Args:
-        catalog_root: Root directory of the catalog.
-        dry_run: If True, report what would change without writing.
-
-    Returns:
-        FixResults for each catalog/collection that was (or would be) modified.
-    """
-    from portolan_cli.agents_md import agents_md_gap, ensure_agents_md
-
-    results: list[FixResult] = []
-
-    for stac_json in visible_stac_files(catalog_root):
-        if agents_md_gap(stac_json) is None:
-            continue
-        if not dry_run:
-            ensure_agents_md(stac_json)
-        results.append(
-            FixResult(
-                file_path=stac_json,
-                action=FixAction.UPDATED,
-                success=True,
-                message="Scaffolded AGENTS.md and added rel='agents' link",
-            )
-        )
-
-    return results
-
-
 def _repair_item_titles(
+    catalog_root: Path,
     stac_file: Path,
     data: dict[str, Any],
     *,
@@ -592,8 +555,9 @@ def _repair_item_titles(
         href = link.get("href")
         if not isinstance(href, str) or not href:
             continue
-        item_file = (stac_file.parent / href).resolve()
-        if not item_file.exists():
+        # The repair writes only inside the catalog, after symlinks resolve.
+        item_file = contained_link_target(catalog_root, stac_file.parent, href)
+        if item_file is None or not item_file.exists():
             continue
         try:
             item_data = json.loads(item_file.read_text(encoding="utf-8"))

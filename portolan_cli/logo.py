@@ -38,13 +38,13 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from portolan_cli.errors import (
+from portolan_core.errors import (
     CatalogNotFoundError,
     LogoSourceNotFoundError,
     RemoteLogoSourceError,
     UnsupportedLogoFormatError,
 )
-from portolan_cli.json_io import write_json_atomic
+from portolan_core.json_io import write_json_atomic
 
 #: STAC link relation that carries the catalog logo (PORTO-CORE-074).
 LOGO_LINK_REL = "icon"
@@ -98,6 +98,20 @@ class LogoResult:
     path: Path
     changed: bool
     warnings: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return the envelope data of ``portolan logo``.
+
+        The ``path`` value is relative to the catalog root. The data has no
+        ``changed`` field.
+        """
+        return {
+            "href": self.href,
+            "type": self.media_type,
+            "title": self.title,
+            "path": f"{LOGO_ASSETS_DIRNAME}/{self.path.name}",
+            "warnings": self.warnings,
+        }
 
 
 def logo_media_type(source: Path) -> str:

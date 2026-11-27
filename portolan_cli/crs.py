@@ -17,11 +17,14 @@ import antimeridian
 from pyproj import CRS, Transformer
 from pyproj.exceptions import CRSError
 
-from portolan_cli.errors import CRSMismatchError
-from portolan_cli.trace import count
+from portolan_core.errors import CRSMismatchError, CRSTransformError
+from portolan_core.trace import count
 
 if TYPE_CHECKING:
     from pathlib import Path
+from portolan_core.bbox import LAT_MAX, LAT_MIN, LON_MAX, LON_MIN
+
+_WGS84_EPSG = 4326
 
 logger = logging.getLogger(__name__)
 
@@ -109,6 +112,8 @@ def transform_bbox_to_wgs84(
 
     Raises:
         CRSMismatchError: When a CRS mismatch is detected and allow_guess=False.
+        CRSTransformError: When pyproj cannot read the CRS or the transform
+            fails.
         ValueError: When input bbox contains inf/nan values (issue #516).
     """
     # Validate input bbox for inf/nan (issue #516)
@@ -128,15 +133,13 @@ def transform_bbox_to_wgs84(
     label = describe_crs(source_crs)
 
     # Parse source CRS with specific exception handling
+    # An unreadable CRS or a failed transform leaves the bbox in the source
+    # CRS, which must not pass as WGS84 (#928).
     try:
         src_crs = CRS.from_user_input(source_crs)
-    except CRSError as e:
-        logger.warning("Could not parse CRS '%s': %s. Returning bbox unchanged.", label, e)
-        return bbox
-    except TypeError as e:
+    except (CRSError, TypeError) as e:
         # CRS.from_user_input can raise TypeError for invalid input types
-        logger.warning("Invalid CRS type '%s': %s. Returning bbox unchanged.", type(source_crs), e)
-        return bbox
+        raise CRSTransformError(label, str(e)) from e
 
     # Check if already WGS84
     if _is_wgs84(src_crs):
@@ -167,13 +170,7 @@ def transform_bbox_to_wgs84(
         return _snapped(_transform_and_compute_bbox(bbox, src_crs))
     except Exception as e:
         # Catch transformation errors (e.g., coordinates outside projection bounds)
-        logger.warning(
-            "CRS transformation failed for bbox %s from %s: %s. Returning bbox unchanged.",
-            bbox,
-            label,
-            e,
-        )
-        return bbox
+        raise CRSTransformError(label, str(e)) from e
 
 
 def _snapped(bbox: tuple[float, float, float, float]) -> tuple[float, float, float, float]:
@@ -183,7 +180,7 @@ def _snapped(bbox: tuple[float, float, float, float]) -> tuple[float, float, flo
     a bbox union, and the STAC extent this bbox becomes has to stay inside the
     range (issue #882).
     """
-    from portolan_cli.bbox import snap_to_wgs84_range
+    from portolan_core.bbox import snap_to_wgs84_range
 
     west, south, east, north = snap_to_wgs84_range(list(bbox))
     return (west, south, east, north)
@@ -204,7 +201,7 @@ def _reject_non_wgs84_magnitudes(
     The comparison carries a tolerance, because a coordinate that rounds past a
     bound is that bound rather than a projected value (issue #882).
     """
-    from portolan_cli.bbox import WGS84_EDGE_TOLERANCE
+    from portolan_core.bbox import WGS84_EDGE_TOLERANCE
 
     minx, miny, maxx, maxy = bbox
     lon_limit = 180 + WGS84_EDGE_TOLERANCE
@@ -219,7 +216,7 @@ def _reject_non_wgs84_magnitudes(
     # "Effectively infinite" sentinels (issue #516, e.g. WFS-served ±1.79e308)
     # are not projected coordinates; leave them to the existing invalid-bbox
     # filtering so their error message stays about invalid values, not CRS.
-    from portolan_cli.bbox import MAX_SANE_COORD
+    from portolan_core.bbox import MAX_SANE_COORD
 
     if any(abs(c) > MAX_SANE_COORD for c in bbox):
         return
@@ -245,7 +242,7 @@ def _is_wgs84(crs: CRS) -> bool:
     Both should be treated as WGS84 for coordinate transformation purposes.
     """
     epsg = crs.to_epsg()
-    if epsg == 4326:
+    if epsg == _WGS84_EPSG:
         return True
 
     # Check for CRS84 by name (pyproj recognizes it)
@@ -372,12 +369,12 @@ def is_likely_wgs84_bbox(bbox: tuple[float, float, float, float]) -> bool:
     minx, miny, maxx, maxy = bbox
 
     # Check latitude bounds (y coordinates must be -90 to 90)
-    if not (-90.0 <= miny <= 90.0 and -90.0 <= maxy <= 90.0):
+    if not (LAT_MIN <= miny <= LAT_MAX and LAT_MIN <= maxy <= LAT_MAX):
         return False
 
     # Check longitude bounds (x coordinates must be -180 to 180)
     # Note: for antimeridian crossing, minx > maxx is valid
-    return -180.0 <= minx <= 180.0 and -180.0 <= maxx <= 180.0
+    return LON_MIN <= minx <= LON_MAX and LON_MIN <= maxx <= LON_MAX
 
 
 def _sample_bbox_edges(
@@ -551,7 +548,7 @@ def _stream_wgs84_bounds(
                 if not finite.any():
                     continue
                 bounds.update(lon[finite], lat[finite], np=np)
-    except Exception as exc:  # noqa: BLE001 - measurement is best-effort
+    except Exception as exc:  # measurement is best-effort
         logger.debug("Cannot measure bbox from %s: %s", data_path, exc)
         return None
 
@@ -566,7 +563,7 @@ def _bbox_from_bounds(bounds: _MeasuredBounds) -> tuple[float, float, float, flo
     plain frame, so data that does not cross is unaffected.
     """
     if bounds.shifted_span() < bounds.plain_span():
-        west = bounds.min_shifted - 360.0 if bounds.min_shifted >= 180.0 else bounds.min_shifted
-        east = bounds.max_shifted - 360.0 if bounds.max_shifted > 180.0 else bounds.max_shifted
+        west = bounds.min_shifted - 360.0 if bounds.min_shifted >= LON_MAX else bounds.min_shifted
+        east = bounds.max_shifted - 360.0 if bounds.max_shifted > LON_MAX else bounds.max_shifted
         return (west, bounds.miny, east, bounds.maxy)
     return (bounds.minx, bounds.miny, bounds.maxx, bounds.maxy)

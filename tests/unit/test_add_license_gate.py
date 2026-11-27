@@ -17,10 +17,10 @@ from pathlib import Path
 
 import pytest
 import yaml
-from click.testing import CliRunner
+from click.testing import CliRunner, Result
 
 from portolan_cli.cli import cli
-from portolan_cli.constants import TODO_MARKER
+from portolan_core.constants import TODO_MARKER
 
 pytestmark = pytest.mark.unit
 
@@ -64,7 +64,7 @@ def _source(root: Path, name: str = "roads.parquet", collection: str = "roads") 
     return source
 
 
-def _add(runner: CliRunner, root: Path, source: Path) -> object:
+def _add(runner: CliRunner, root: Path, source: Path) -> Result:
     return runner.invoke(cli, ["add", "--portolan-dir", str(root), str(source)])
 
 

@@ -77,10 +77,10 @@ EXTRACTIONS = {
     "token_gated-data": Extraction("arcgis/token_gated", "arcgis", PUBLIC, ("--retries", "3")),
     "layer_gone": Extraction("arcgis/transient_error", "arcgis", CLOSED, ("--retries", "3")),
     "workspace_layer-exclude": Extraction(
-        "wfs/workspace_layer", "wfs", "/geoserver/wfs", ("--exclude-layers", "states")
+        "wfs/workspace_layer", "wfs", "/geoserver/wfs", ("--exclude-layers", "us_states")
     ),
     "workspace_layer-layers": Extraction(
-        "wfs/workspace_layer", "wfs", "/geoserver/wfs", ("--layers", "topp:states")
+        "wfs/workspace_layer", "wfs", "/geoserver/wfs", ("--layers", "gs:us_states")
     ),
     "empty_collection": Extraction(
         "wfs/empty_collection",
@@ -216,7 +216,7 @@ def test_arcgis_author_is_a_producer_and_never_the_contact(tmp_path: Path, run_c
     """The service author names a producer. The contact and the host stay with the mirror."""
     import yaml
 
-    from portolan_cli.constants import TODO_MARKER
+    from portolan_core.constants import TODO_MARKER
 
     result, server, out = _run("layer_url", tmp_path, run_cli)
 
@@ -296,7 +296,7 @@ def test_permanent_error_is_not_retried(
 
 @GPIO_WFS_OOM
 def test_wfs_exclude_layers_matches_the_leaf_name(tmp_path: Path, run_cli: RunCli) -> None:
-    """``--exclude-layers states`` excludes ``topp:states``."""
+    """``--exclude-layers us_states`` excludes ``gs:us_states``."""
     result, server, out = _run("workspace_layer-exclude", tmp_path, run_cli)
 
     assert server.unmatched == []
@@ -306,12 +306,12 @@ def test_wfs_exclude_layers_matches_the_leaf_name(tmp_path: Path, run_cli: RunCl
 
 @GPIO_WFS_OOM
 def test_wfs_layers_matches_the_qualified_name(tmp_path: Path, run_cli: RunCli) -> None:
-    """``--layers topp:states`` extracts that layer only. This is the control for #768."""
+    """``--layers gs:us_states`` extracts that layer only. This is the control for #768."""
     result, server, out = _run("workspace_layer-layers", tmp_path, run_cli)
 
     assert server.unmatched == []
     assert result.exit_code == 0, result.output
-    assert _wfs_layers(out) == [("topp:states", "success", 2)]
+    assert _wfs_layers(out) == [("gs:us_states", "success", 2)]
 
 
 def _index_mismatches(out: Path) -> dict[str, tuple[Any, Any]]:
@@ -410,17 +410,17 @@ def test_discovery_failure_names_the_host_and_not_the_credential(
 def test_wfs_layer_that_add_skips_is_named(tmp_path: Path, run_cli: RunCli) -> None:
     """A layer file that ``ignored_files`` matches is skipped with a warning, not in silence."""
     from portolan_cli.catalog import init_catalog
-    from portolan_cli.config import set_setting
+    from portolan_core.config import set_setting
 
     init_catalog(tmp_path / "out", catalog_id="recorded", license_id="CC-BY-4.0")
-    set_setting(tmp_path / "out", "ignored_files", ["topp_states*"])
+    set_setting(tmp_path / "out", "ignored_files", ["gs_us_states*"])
     result, server, out = _run("workspace_layer-layers", tmp_path, run_cli)
 
     assert server.unmatched == []
     assert result.exit_code == 0, result.output
-    assert not (out / "topp_states" / "collection.json").exists()
+    assert not (out / "gs_us_states" / "collection.json").exists()
     assert (
-        "Skipping topp_states.parquet: it matches ignored_files pattern 'topp_states*'"
+        "Skipping gs_us_states.parquet: it matches ignored_files pattern 'gs_us_states*'"
         in result.output
     )
 
@@ -437,3 +437,58 @@ def test_scenario_is_documented_small_and_has_no_stray_file(scenario: Path) -> N
     bodies = {route.body_file for route in ReplayServer(scenario).routes}
     stray = {path.name for path in scenario.iterdir()} - bodies - {"README.md", "routes.json"}
     assert sorted(stray) == []
+
+
+def _carto_with(tmp_path: Path, run_cli: RunCli, *flags: str) -> tuple[Result, Path]:
+    """Run ``extract carto`` on the phl_zoning recording with root flags before ``extract``."""
+    extraction = EXTRACTIONS["phl_zoning"]
+    out = tmp_path / "out"
+    server = ReplayServer(NETWORK / extraction.scenario)
+    with server as base_url:
+        result = run_cli(
+            *flags,
+            "extract",
+            "carto",
+            base_url + extraction.path,
+            str(out),
+            "--auto",
+            "--license",
+            "CC-BY-4.0",
+            *extraction.args,
+            expect=0,
+        )
+    assert server.unmatched == []
+    return result, out
+
+
+def _host_warning(out: Path) -> str:
+    path = out / "<collection>" / ".portolan" / "metadata.yaml"
+    return (
+        f"⚠ No host provider: set contact.name and contact.email in {path}, then run "
+        "'portolan add --force <collection>'. Until then, check reports PTL-PRV-002."
+    )
+
+
+def test_seeded_metadata_line_prints_without_verbose(tmp_path: Path, run_cli: RunCli) -> None:
+    """A default human run prints the seed line and the provider warnings (#1133)."""
+    result, out = _carto_with(tmp_path, run_cli)
+
+    assert "→ Seeded metadata.yaml from carto\n" in result.stdout
+    assert _host_warning(out) in result.stderr.splitlines()
+
+
+def test_quiet_keeps_the_seeded_metadata_line(tmp_path: Path, run_cli: RunCli) -> None:
+    """``--quiet`` sets the log level only. The extract messages print as before."""
+    result, out = _carto_with(tmp_path, run_cli, "--quiet")
+
+    assert "→ Seeded metadata.yaml from carto\n" in result.stdout
+    assert _host_warning(out) in result.stderr.splitlines()
+
+
+def test_json_run_sends_the_seeded_metadata_line_to_stderr(tmp_path: Path, run_cli: RunCli) -> None:
+    """A JSON run keeps stdout for the envelope. The messages go to stderr."""
+    result, out = _carto_with(tmp_path, run_cli, "--format", "json")
+
+    assert json.loads(result.stdout)["success"] is True
+    assert "→ Seeded metadata.yaml from carto" in result.stderr.splitlines()
+    assert _host_warning(out) in result.stderr.splitlines()

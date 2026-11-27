@@ -254,7 +254,7 @@ class TestStacGeoparquetCatalogLevel:
         Discovery accepted only a collection carrying its own ``rel="item"``
         links, so this layout was skipped silently and never got a mirror.
         """
-        from portolan_cli.cli import _discover_collections_with_items
+        from portolan_cli.stac_parquet import collections_with_items
 
         collection_dir = tmp_path / "landsat"
         (collection_dir / "2024").mkdir(parents=True)
@@ -288,12 +288,12 @@ class TestStacGeoparquetCatalogLevel:
             encoding="utf-8",
         )
 
-        assert _discover_collections_with_items(tmp_path) == ["landsat"]
+        assert collections_with_items(tmp_path) == ["landsat"]
 
     @pytest.mark.unit
     def test_discovery_skips_a_collection_with_no_items(self, tmp_path: Path) -> None:
         """Descending must not turn an genuinely empty collection into a hit."""
-        from portolan_cli.cli import _discover_collections_with_items
+        from portolan_cli.stac_parquet import collections_with_items
 
         collection_dir = tmp_path / "empty"
         collection_dir.mkdir(parents=True)
@@ -315,7 +315,7 @@ class TestStacGeoparquetCatalogLevel:
             encoding="utf-8",
         )
 
-        assert _discover_collections_with_items(tmp_path) == []
+        assert collections_with_items(tmp_path) == []
 
     @pytest.mark.unit
     def test_generate_all_collections_json(

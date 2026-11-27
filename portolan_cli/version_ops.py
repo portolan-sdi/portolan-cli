@@ -1,26 +1,28 @@
 """Version operations middle layer.
 
 Bridges CLI commands and versioning backends. All imports of
-portolan_cli.backends and portolan_cli.config are lazy (inside function
+portolan_cli.backends and portolan_core.config are lazy (inside function
 bodies) to keep the module lightweight and avoid circular imports.
 """
 
 from __future__ import annotations
 
 import logging
+import re
 from contextlib import contextmanager
+from dataclasses import dataclass, field, replace
 from functools import partial
 from typing import TYPE_CHECKING, Any
 
-from portolan_cli.trace import count
+from portolan_core.trace import count
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterator
     from pathlib import Path
 
     from portolan_cli.backends.protocol import SchemaFingerprint
-    from portolan_cli.run_state import RunState, StagedVersion
-    from portolan_cli.versions import Version
+    from portolan_core.run_state import RunState, StagedVersion
+    from portolan_core.versions import Version
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +48,7 @@ def _resolve_backend_name(
         # collection's configuration rather than silently selecting file.
         resolved = _collection_setting("backend", catalog_root or Path.cwd(), collection, None)
     else:
-        from portolan_cli.config import get_setting
+        from portolan_core.config import get_setting
 
         resolved = get_setting("backend", catalog_path=catalog_root, collection=collection)
     if resolved is not None:
@@ -60,7 +62,7 @@ def _collection_setting(
 ) -> Any | None:
     """Read a setting for a collection through the run state."""
     if state is None:
-        from portolan_cli.run_state import RunState
+        from portolan_core.run_state import RunState
 
         state = RunState.open(catalog_path)
     collection_dir = state.collection_dir(collection) if collection else None
@@ -82,6 +84,44 @@ def get_current_version(
     return backend.get_current_version(collection)
 
 
+def _version_dict(ver: Version) -> dict[str, Any]:
+    """Summarize a version for the JSON envelope: an ISO timestamp and an asset count."""
+    return {
+        "version": ver.version,
+        "created": ver.created.isoformat(),
+        "breaking": ver.breaking,
+        "message": ver.message,
+        "assets": len(ver.assets),
+        "changes": ver.changes,
+    }
+
+
+@dataclass(frozen=True)
+class CurrentVersionResult:
+    """The current version of a collection, the result of ``portolan version current``."""
+
+    collection: str
+    version: Version
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return the envelope data of ``portolan version current``."""
+        return {"collection": self.collection, **_version_dict(self.version)}
+
+
+def describe_current_version(
+    collection: str, *, catalog_root: Path | None = None
+) -> CurrentVersionResult:
+    """Return the current version of ``collection`` through the active backend.
+
+    Raises:
+        FileNotFoundError: If the collection has no versions.
+        ValueError: If the backend or the versions.json is not valid.
+    """
+    return CurrentVersionResult(
+        collection, get_current_version(collection, catalog_root=catalog_root)
+    )
+
+
 def list_versions(
     collection: str,
     *,
@@ -95,6 +135,32 @@ def list_versions(
     name = _resolve_backend_name(backend_name, catalog_root, state, collection=collection)
     backend = get_backend(name, catalog_root=state.catalog_root if state else catalog_root)
     return backend.list_versions(collection)
+
+
+@dataclass(frozen=True)
+class VersionHistoryResult:
+    """Each version of a collection, oldest first, the result of ``portolan version list``."""
+
+    collection: str
+    versions: list[Version]
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return the envelope data of ``portolan version list``."""
+        return {
+            "collection": self.collection,
+            "versions": [_version_dict(v) for v in self.versions],
+        }
+
+
+def describe_version_history(
+    collection: str, *, catalog_root: Path | None = None
+) -> VersionHistoryResult:
+    """Return each version of ``collection`` through the active backend.
+
+    Raises:
+        ValueError: If the backend or the versions.json is not valid.
+    """
+    return VersionHistoryResult(collection, list_versions(collection, catalog_root=catalog_root))
 
 
 def publish_version(
@@ -142,6 +208,142 @@ def publish_version(
     # projection of a staged change never counts as a publish.
     count("versions.published")
     return published
+
+
+_SEMVER = re.compile(r"^\d+\.\d+\.\d+(-[a-zA-Z0-9.-]+)?(\+[a-zA-Z0-9.-]+)?$")
+
+
+def semver_error(version: str) -> str | None:
+    """Return the message that rejects ``version``, or None for a valid semver string."""
+    if _SEMVER.match(version):
+        return None
+    return f"Invalid semver: '{version}'. Expected format: MAJOR.MINOR.PATCH (e.g., '1.2.0')"
+
+
+@dataclass(frozen=True)
+class VersionBumpResult:
+    """The outcome of ``portolan version bump``.
+
+    ``error`` reports a failure as data: the type and the message that the
+    command reports in its envelope. It is a plain tuple, because this module
+    is on the import path of push and must not load ``json_output``.
+    ``published`` is None when nothing changed, when the confirmation declined,
+    or on an error.
+    """
+
+    collection: str
+    previous_version: str | None = None
+    modified: list[str] = field(default_factory=list)
+    deleted: list[str] = field(default_factory=list)
+    published: Version | None = None
+    error: tuple[str, str] | None = None
+
+    @property
+    def changed(self) -> bool:
+        """True when a file of the collection changed since the current version."""
+        return bool(self.modified or self.deleted)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return the envelope data of ``portolan version bump``.
+
+        Raises:
+            ValueError: On an error or a declined confirmation. The command
+                reports those outcomes without success data.
+        """
+        if self.error is not None or (self.published is None and self.changed):
+            raise ValueError(f"A failed or declined bump of {self.collection} has no envelope data")
+        if self.published is None:
+            return {
+                "collection": self.collection,
+                "message": "No changes detected",
+                "created": False,
+            }
+        return {
+            "collection": self.collection,
+            "version": self.published.version,
+            "previous_version": self.previous_version,
+            "created": self.published.created.isoformat(),
+            "breaking": self.published.breaking,
+            "message": self.published.message,
+            "modified_files": self.modified,
+            "deleted_files": self.deleted,
+        }
+
+
+def bump_collection_version(
+    collection: str,
+    new_version: str,
+    *,
+    catalog_root: Path,
+    notes: str | None = None,
+    breaking: bool = False,
+    confirm: Callable[[VersionBumpResult], bool] | None = None,
+) -> VersionBumpResult:
+    """Publish ``new_version`` of ``collection`` from the files on disk.
+
+    The function compares the files with the checksums of the current version
+    in versions.json. It publishes the modified files and drops the deleted
+    ones. With no change, it publishes nothing.
+
+    Args:
+        collection: Collection identifier, relative to ``catalog_root``.
+        new_version: Explicit semver string, such as ``"1.2.0"``.
+        catalog_root: Root directory of the catalog.
+        notes: Message of the new version.
+        breaking: Whether the new version has breaking changes.
+        confirm: Receives the planned bump before the publish. A False return
+            publishes nothing. The CLI asks the user here.
+
+    Returns:
+        The planned bump, with the published version or the error.
+    """
+    from portolan_core.status import detect_deleted_files, detect_modified_files
+    from portolan_core.versions import read_versions
+
+    def failed(error_type: str, message: str) -> VersionBumpResult:
+        return VersionBumpResult(collection, error=(error_type, message))
+
+    invalid = semver_error(new_version)
+    if invalid is not None:
+        return failed("ValidationError", invalid)
+    collection_path = catalog_root / collection
+    versions_path = collection_path / "versions.json"
+    if not versions_path.exists():
+        return failed("NotFoundError", f"No versions.json in {collection}")
+    try:
+        versions_file = read_versions(versions_path)
+    except ValueError as e:
+        return failed("ParseError", f"Invalid versions.json: {e}")
+    if new_version in {v.version for v in versions_file.versions}:
+        return failed("DuplicateVersionError", f"Version '{new_version}' already exists")
+
+    plan = VersionBumpResult(
+        collection,
+        versions_file.current_version,
+        detect_modified_files(collection_path, versions_file),
+        detect_deleted_files(collection_path, versions_file),
+    )
+    if not plan.changed or (confirm is not None and not confirm(plan)):
+        return plan
+    assets = {
+        name: str(collection_path / name)
+        for name in plan.modified
+        if (collection_path / name).exists()
+    }
+    try:
+        published = publish_version(
+            collection,
+            assets=assets,
+            breaking=breaking,
+            message=notes or "",
+            removed=set(plan.deleted) if plan.deleted else None,
+            version=new_version,
+            catalog_root=catalog_root,
+        )
+    # A plugin backend can raise any exception, and the result reports each one.
+    except Exception as e:
+        return replace(plan, error=(type(e).__name__, f"Failed to create version: {e}"))
+    return replace(plan, published=published)
 
 
 def _schema_fingerprint(staged: StagedVersion) -> SchemaFingerprint | None:
@@ -206,7 +408,7 @@ def commit_run(state: RunState) -> dict[str, Version]:
         Collection id to the version written, for each collection that got one.
     """
     from portolan_cli.catalog import CollectionSummary, collection_summaries, update_catalog_index
-    from portolan_cli.versions import write_versions
+    from portolan_core.versions import write_versions
 
     pending = state.take_staged()
     reconcile_index = not pending
@@ -275,7 +477,7 @@ def owned_run(catalog_root: Path, state: RunState | None = None) -> Iterator[Run
     if state is not None:
         yield state
         return
-    from portolan_cli.run_state import RunState
+    from portolan_core.run_state import RunState
 
     own = RunState.open(catalog_root)
     yield own
@@ -306,8 +508,8 @@ def check_backend_supports_push(
     blocking message if push is not supported.
     """
     from portolan_cli.backends import get_backend
-    from portolan_cli.run_state import RunState
-    from portolan_cli.stac_links import catalog_collections, versioned_collections
+    from portolan_core.run_state import RunState
+    from portolan_core.stac_links import catalog_collections, versioned_collections
 
     if state is None:
         state = RunState.open(catalog_path)
@@ -373,8 +575,8 @@ def try_backend_pull(
     turn, and the result sums them (issue #977).
     """
     from portolan_cli.backends import get_backend
-    from portolan_cli.run_state import RunState
-    from portolan_cli.stac_links import catalog_collections
+    from portolan_core.run_state import RunState
+    from portolan_core.stac_links import catalog_collections
 
     if state is None:
         state = RunState.open(catalog_path)

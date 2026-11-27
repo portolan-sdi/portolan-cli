@@ -15,10 +15,10 @@ from pathlib import Path
 
 import pytest
 
-from portolan_cli.constants import STAC_VERSION
-from portolan_cli.models.catalog import CatalogModel
-from portolan_cli.models.collection import CollectionModel
-from portolan_cli.models.item import ItemModel
+from portolan_core.constants import STAC_VERSION
+from portolan_core.models.catalog import CatalogModel
+from portolan_core.models.collection import CollectionModel
+from portolan_core.models.item import ItemModel
 
 # Fixture directory paths
 FIXTURES_DIR = Path(__file__).parent.parent / "fixtures" / "metadata" / "stac"
@@ -109,7 +109,7 @@ class TestValidCatalogFixtures:
     def test_catalog_minimal_is_valid_json(self) -> None:
         """catalog_minimal.json should be valid JSON."""
         path = VALID_DIR / "catalog_minimal.json"
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             data = json.load(f)
         assert isinstance(data, dict)
         assert data.get("type") == "Catalog"
@@ -118,7 +118,7 @@ class TestValidCatalogFixtures:
     def test_catalog_minimal_loads_into_model(self) -> None:
         """catalog_minimal.json should load into CatalogModel."""
         path = VALID_DIR / "catalog_minimal.json"
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             data = json.load(f)
         catalog = CatalogModel.from_dict(data)
         assert catalog.id == "test-catalog"
@@ -130,7 +130,7 @@ class TestValidCatalogFixtures:
     def test_catalog_minimal_has_required_links(self) -> None:
         """catalog_minimal.json should have self and root links."""
         path = VALID_DIR / "catalog_minimal.json"
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             data = json.load(f)
         catalog = CatalogModel.from_dict(data)
         link_rels = {link.rel for link in catalog.links}
@@ -141,7 +141,7 @@ class TestValidCatalogFixtures:
     def test_catalog_minimal_roundtrip(self) -> None:
         """catalog_minimal.json should round-trip through model."""
         path = VALID_DIR / "catalog_minimal.json"
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             original = json.load(f)
         catalog = CatalogModel.from_dict(original)
         result = catalog.to_dict()
@@ -155,7 +155,7 @@ class TestValidCatalogFixtures:
     def test_catalog_full_loads_with_extensions(self) -> None:
         """catalog_full.json should load with timestamps and title."""
         path = VALID_DIR / "catalog_full.json"
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             data = json.load(f)
         catalog = CatalogModel.from_dict(data)
         assert catalog.title is not None
@@ -166,7 +166,7 @@ class TestValidCatalogFixtures:
     def test_catalog_full_has_child_links(self) -> None:
         """catalog_full.json should have child collection links."""
         path = VALID_DIR / "catalog_full.json"
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             data = json.load(f)
         catalog = CatalogModel.from_dict(data)
         link_rels = {link.rel for link in catalog.links}
@@ -180,7 +180,7 @@ class TestValidCollectionFixtures:
     def test_collection_vector_is_valid_json(self) -> None:
         """collection_vector.json should be valid JSON."""
         path = VALID_DIR / "collection_vector.json"
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             data = json.load(f)
         assert isinstance(data, dict)
         assert data.get("type") == "Collection"
@@ -189,7 +189,7 @@ class TestValidCollectionFixtures:
     def test_collection_vector_loads_into_model(self) -> None:
         """collection_vector.json should load into CollectionModel."""
         path = VALID_DIR / "collection_vector.json"
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             data = json.load(f)
         collection = CollectionModel.from_dict(data)
         assert collection.id is not None
@@ -201,7 +201,7 @@ class TestValidCollectionFixtures:
     def test_collection_vector_has_valid_extent(self) -> None:
         """collection_vector.json should have valid spatial extent."""
         path = VALID_DIR / "collection_vector.json"
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             data = json.load(f)
         collection = CollectionModel.from_dict(data)
         bbox = collection.extent.spatial.bbox[0]
@@ -217,7 +217,7 @@ class TestValidCollectionFixtures:
     def test_collection_vector_roundtrip(self) -> None:
         """collection_vector.json should round-trip through model."""
         path = VALID_DIR / "collection_vector.json"
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             original = json.load(f)
         collection = CollectionModel.from_dict(original)
         result = collection.to_dict()
@@ -229,7 +229,7 @@ class TestValidCollectionFixtures:
     def test_collection_raster_loads_into_model(self) -> None:
         """collection_raster.json should load into CollectionModel."""
         path = VALID_DIR / "collection_raster.json"
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             data = json.load(f)
         collection = CollectionModel.from_dict(data)
         assert collection.id is not None
@@ -241,7 +241,7 @@ class TestValidCollectionFixtures:
     def test_collection_raster_has_temporal_extent(self) -> None:
         """collection_raster.json should have temporal extent."""
         path = VALID_DIR / "collection_raster.json"
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             data = json.load(f)
         collection = CollectionModel.from_dict(data)
         interval = collection.extent.temporal.interval
@@ -256,7 +256,7 @@ class TestValidItemFixtures:
     def test_item_geoparquet_is_valid_json(self) -> None:
         """item_geoparquet.json should be valid JSON."""
         path = VALID_DIR / "item_geoparquet.json"
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             data = json.load(f)
         assert isinstance(data, dict)
         assert data.get("type") == "Feature"
@@ -265,7 +265,7 @@ class TestValidItemFixtures:
     def test_item_geoparquet_loads_into_model(self) -> None:
         """item_geoparquet.json should load into ItemModel."""
         path = VALID_DIR / "item_geoparquet.json"
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             data = json.load(f)
         item = ItemModel.from_dict(data)
         assert item.id is not None
@@ -278,7 +278,7 @@ class TestValidItemFixtures:
     def test_item_geoparquet_has_assets(self) -> None:
         """item_geoparquet.json should have assets with parquet file."""
         path = VALID_DIR / "item_geoparquet.json"
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             data = json.load(f)
         item = ItemModel.from_dict(data)
         assert len(item.assets) > 0
@@ -290,7 +290,7 @@ class TestValidItemFixtures:
     def test_item_geoparquet_has_datetime(self) -> None:
         """item_geoparquet.json should have datetime in properties."""
         path = VALID_DIR / "item_geoparquet.json"
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             data = json.load(f)
         item = ItemModel.from_dict(data)
         # STAC requires datetime or start_datetime/end_datetime
@@ -302,7 +302,7 @@ class TestValidItemFixtures:
     def test_item_geoparquet_roundtrip(self) -> None:
         """item_geoparquet.json should round-trip through model."""
         path = VALID_DIR / "item_geoparquet.json"
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             original = json.load(f)
         item = ItemModel.from_dict(original)
         result = item.to_dict()
@@ -315,7 +315,7 @@ class TestValidItemFixtures:
     def test_item_cog_loads_into_model(self) -> None:
         """item_cog.json should load into ItemModel."""
         path = VALID_DIR / "item_cog.json"
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             data = json.load(f)
         item = ItemModel.from_dict(data)
         assert item.id is not None
@@ -326,7 +326,7 @@ class TestValidItemFixtures:
     def test_item_cog_has_tiff_asset(self) -> None:
         """item_cog.json should have COG/TIFF asset."""
         path = VALID_DIR / "item_cog.json"
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             data = json.load(f)
         item = ItemModel.from_dict(data)
         # Check for TIFF/COG media type
@@ -345,7 +345,7 @@ class TestInvalidCatalogFixtures:
     def test_catalog_missing_id_is_valid_json(self) -> None:
         """catalog_missing_id.json should be valid JSON (just malformed STAC)."""
         path = INVALID_DIR / "catalog_missing_id.json"
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             data = json.load(f)
         assert isinstance(data, dict)
         # Should NOT have 'id' field
@@ -355,7 +355,7 @@ class TestInvalidCatalogFixtures:
     def test_catalog_missing_id_raises_on_load(self) -> None:
         """CatalogModel.from_dict should raise for missing 'id'."""
         path = INVALID_DIR / "catalog_missing_id.json"
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             data = json.load(f)
         with pytest.raises(KeyError):
             CatalogModel.from_dict(data)
@@ -368,7 +368,7 @@ class TestInvalidCollectionFixtures:
     def test_collection_bad_extent_is_valid_json(self) -> None:
         """collection_bad_extent.json should be valid JSON (just malformed extent)."""
         path = INVALID_DIR / "collection_bad_extent.json"
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             data = json.load(f)
         assert isinstance(data, dict)
 
@@ -376,7 +376,7 @@ class TestInvalidCollectionFixtures:
     def test_collection_bad_extent_raises_on_load(self) -> None:
         """CollectionModel.from_dict should raise for bad extent."""
         path = INVALID_DIR / "collection_bad_extent.json"
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             data = json.load(f)
         with pytest.raises((ValueError, KeyError)):
             CollectionModel.from_dict(data)
@@ -389,7 +389,7 @@ class TestInvalidItemFixtures:
     def test_item_no_geometry_is_valid_json(self) -> None:
         """item_no_geometry.json should be valid JSON."""
         path = INVALID_DIR / "item_no_geometry.json"
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             data = json.load(f)
         assert isinstance(data, dict)
 
@@ -397,7 +397,7 @@ class TestInvalidItemFixtures:
     def test_item_no_geometry_raises_on_load(self) -> None:
         """Item with null geometry should fail to load (Portolan requires bbox)."""
         path = INVALID_DIR / "item_no_geometry.json"
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             data = json.load(f)
         # STAC spec allows null geometry in some cases, but our ItemModel
         # requires a valid bbox for spatial operations. This is intentional -
@@ -410,7 +410,7 @@ class TestInvalidItemFixtures:
     def test_item_wrong_type_is_valid_json(self) -> None:
         """item_wrong_type.json should be valid JSON."""
         path = INVALID_DIR / "item_wrong_type.json"
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             data = json.load(f)
         assert isinstance(data, dict)
         # Should have wrong type (not "Feature")
@@ -420,7 +420,7 @@ class TestInvalidItemFixtures:
     def test_item_wrong_type_loads_but_incorrect(self) -> None:
         """Item with wrong type loads but has incorrect type field."""
         path = INVALID_DIR / "item_wrong_type.json"
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             data = json.load(f)
         # ItemModel has type as init=False field, so it always sets "Feature"
         # But the original data has wrong type - validation should catch this

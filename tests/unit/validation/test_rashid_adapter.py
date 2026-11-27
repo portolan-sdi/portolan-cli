@@ -7,12 +7,12 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 import yaml
-from rashid_core.model import Severity
+from rashid_core.api import Severity
 
-from portolan_cli.errors import InvalidLiveUrlError
 from portolan_cli.validation import run_check
 from portolan_cli.validation.config import load_public_url, load_rules_config
 from portolan_cli.validation.runner import validate_live_base_url
+from portolan_core.errors import InvalidLiveUrlError
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -60,7 +60,7 @@ class TestLoadRulesConfig:
                 "check": {"disabled": ["PTL-TMP-001"]},
             },
         )
-        with pytest.warns(DeprecationWarning):
+        with pytest.warns(DeprecationWarning, match=r"is ignored"):
             config = load_rules_config(tmp_path)
         assert config.disabled == frozenset({"PTL-TMP-001"})
 
@@ -111,7 +111,7 @@ class TestLiveBaseUrl:
         nested = tmp_path / "roads"
         nested.mkdir()
         with pytest.raises(
-            InvalidLiveUrlError, match="Set publish.public_url to a valid https URL"
+            InvalidLiveUrlError, match=r"Set publish.public_url to a valid https URL"
         ):
             validate_live_base_url(nested, None)
 
@@ -244,7 +244,7 @@ def _capture_options(monkeypatch: Any) -> dict[str, Any]:
 
     def fake_validate(root: Path, **kwargs: Any) -> Any:
         captured.update(vars(kwargs["options"]))
-        from rashid_core import Report
+        from rashid_core.api import Report
 
         return Report(findings=[], files_checked=0)
 
@@ -262,7 +262,7 @@ class TestDataScope:
         assert captured["data_reader_factory"] is None
 
     def test_scope_local_uses_the_local_only_reader(self, tmp_path: Path, monkeypatch: Any) -> None:
-        from rashid_core.data.reader import LocalOnlyReader
+        from rashid_core.api import LocalOnlyReader
 
         _minimal_catalog(tmp_path)
         captured = _capture_options(monkeypatch)

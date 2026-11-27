@@ -8,22 +8,22 @@ the new module's seam, independent of the full add() orchestration.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from portolan_cli.errors import AssetKeyCollisionError
 from portolan_cli.plugins.builtin.formats import COG, FLATGEOBUF, GEOPARQUET, PMTILES
 from portolan_cli.preparation import (
     _add_statistics_to_properties,
     _convert_and_extract_metadata,
-    _extract_bbox_wgs84,
     _extract_statistics_best_effort,
     _get_asset_role,
     _scan_item_assets,
     _validate_collection_id,
+    wgs84_bbox,
 )
+from portolan_core.errors import AssetKeyCollisionError
 
 pytestmark = pytest.mark.unit
 
@@ -448,7 +448,7 @@ class TestValidateCollectionId:
 
     @pytest.mark.parametrize("bad", ["", "..", "a\\b", "a/../b"])
     def test_rejects_unsafe_ids(self, bad: str) -> None:
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match=r"Invalid collection"):
             _validate_collection_id(bad)
 
 
@@ -488,7 +488,7 @@ class TestScanItemAssetsSymlinks:
 
 
 class TestExtractBboxWgs84:
-    """_extract_bbox_wgs84 CRS handling."""
+    """wgs84_bbox CRS handling."""
 
     def test_projjson_dict_crs_is_passed_through(self) -> None:
         """A PROJJSON dict reaches the CRS layer rather than raising.
@@ -506,7 +506,7 @@ class TestExtractBboxWgs84:
             "portolan_cli.preparation.transform_bbox_to_wgs84",
             return_value=(-58.06, -34.94, -57.95, -34.87),
         ) as transform:
-            result = _extract_bbox_wgs84(meta)
+            result = wgs84_bbox(meta)
         assert result == [-58.06, -34.94, -57.95, -34.87]
         transform.assert_called_once_with(meta.bbox, projjson)
 
@@ -518,7 +518,7 @@ class TestExtractBboxWgs84:
             "portolan_cli.preparation.transform_bbox_to_wgs84",
             return_value=(-1.0, -1.0, 2.0, 2.0),
         ) as transform:
-            result = _extract_bbox_wgs84(meta)
+            result = wgs84_bbox(meta)
         assert result == [-1.0, -1.0, 2.0, 2.0]
         transform.assert_called_once_with(meta.bbox, "EPSG:3857")
 
@@ -550,7 +550,7 @@ class TestConvertVectorRetriesTransientInterrupt:
                 return self
 
             def write(self, path: str) -> None:
-                Path(path).write_text("parquet-bytes")
+                Path(path).write_text("parquet-bytes", encoding="utf-8")
 
         calls = {"n": 0}
 
@@ -598,7 +598,7 @@ class TestConvertVectorRetriesTransientInterrupt:
             geometry_column = None
 
             def write(self, path: str) -> None:
-                Path(path).write_text("parquet-bytes")
+                Path(path).write_text("parquet-bytes", encoding="utf-8")
 
         calls = {"n": 0}
 
@@ -647,13 +647,15 @@ class TestConvertTabularKeepsAForeignFile:
 
         from portolan_cli.convert import PROVENANCE_KEY
         from portolan_cli.preparation import convert_tabular
-        from portolan_cli.sync.checksums import compute_checksum
+        from portolan_core.checksums import compute_checksum
 
         (tmp_path / "t.csv").write_text("id\n1\n")
 
         out = convert_tabular(tmp_path / "t.csv", tmp_path)
 
-        recorded = pq.read_metadata(out).metadata[PROVENANCE_KEY.encode()]
+        file_metadata = pq.read_metadata(out).metadata
+        assert file_metadata is not None
+        recorded = file_metadata[PROVENANCE_KEY.encode()]
         assert json.loads(recorded) == {
             "base": "absolute",
             "path": (tmp_path / "t.csv").resolve().as_posix(),
@@ -803,9 +805,9 @@ class TestAssertRewriteKeptEverything:
         """A projected CRS that vanishes relabels every coordinate."""
         from pyproj import CRS
 
-        from portolan_cli.errors import RewriteFidelityError
         from portolan_cli.metadata import RewriteFidelity
         from portolan_cli.preparation import _assert_rewrite_kept_everything
+        from portolan_core.errors import RewriteFidelityError
 
         projected = CRS.from_epsg(3857).to_json_dict()
         before = RewriteFidelity(row_count=10, crs=projected, columns=frozenset({"geometry"}))
@@ -820,9 +822,9 @@ class TestAssertRewriteKeptEverything:
     @pytest.mark.unit
     def test_it_refuses_an_unparsable_lost_crs(self, tmp_path: Path) -> None:
         """A CRS pyproj cannot read is not provably WGS84, so the gate holds."""
-        from portolan_cli.errors import RewriteFidelityError
         from portolan_cli.metadata import RewriteFidelity
         from portolan_cli.preparation import _assert_rewrite_kept_everything
+        from portolan_core.errors import RewriteFidelityError
 
         before = RewriteFidelity(row_count=10, crs={"id": 1}, columns=frozenset({"geometry"}))
         after = RewriteFidelity(row_count=10, crs=None, columns=frozenset({"geometry", "bbox"}))
@@ -858,9 +860,9 @@ class TestAssertRewriteKeptEverything:
     @pytest.mark.unit
     def test_it_refuses_a_changed_row_count(self, tmp_path: Path) -> None:
         """A rewrite that drops rows destroys data."""
-        from portolan_cli.errors import RewriteFidelityError
         from portolan_cli.metadata import RewriteFidelity
         from portolan_cli.preparation import _assert_rewrite_kept_everything
+        from portolan_core.errors import RewriteFidelityError
 
         before = RewriteFidelity(row_count=10, crs=None, columns=frozenset({"geometry"}))
         after = RewriteFidelity(row_count=9, crs=None, columns=frozenset({"geometry"}))
@@ -874,9 +876,9 @@ class TestAssertRewriteKeptEverything:
     @pytest.mark.unit
     def test_it_refuses_a_dropped_column(self, tmp_path: Path) -> None:
         """An attribute column must survive. A new one may appear."""
-        from portolan_cli.errors import RewriteFidelityError
         from portolan_cli.metadata import RewriteFidelity
         from portolan_cli.preparation import _assert_rewrite_kept_everything
+        from portolan_core.errors import RewriteFidelityError
 
         before = RewriteFidelity(row_count=1, crs=None, columns=frozenset({"geometry", "name"}))
         after = RewriteFidelity(row_count=1, crs=None, columns=frozenset({"geometry", "bbox"}))
@@ -890,9 +892,9 @@ class TestAssertRewriteKeptEverything:
     @pytest.mark.unit
     def test_it_refuses_a_dropped_schema_key(self, tmp_path: Path) -> None:
         """A publisher key on the operator's file must survive the rewrite."""
-        from portolan_cli.errors import RewriteFidelityError
         from portolan_cli.metadata import RewriteFidelity
         from portolan_cli.preparation import _assert_rewrite_kept_everything
+        from portolan_core.errors import RewriteFidelityError
 
         columns = frozenset({"geometry"})
         before = RewriteFidelity(1, None, columns, extra_keys=frozenset({b"source"}))
@@ -927,15 +929,15 @@ class TestTheGateSeesWhatTheRewriteDrops:
     def _geoparquet(path: Path, case: str) -> Path:
         import json
 
-        import geopandas as gpd
+        import geopandas
         import pyarrow as pa
         import pyarrow.parquet as pq
         from shapely.geometry import Point
 
-        frame = gpd.GeoDataFrame(
+        frame = geopandas.GeoDataFrame(
             {"a": [1, 2, 3]}, geometry=[Point(0, 0), Point(1, 1), Point(2, 2)], crs=3857
         )
-        frame["g2"] = gpd.GeoSeries([Point(0, 0)] * 3).to_wkb()
+        frame["g2"] = geopandas.GeoSeries([Point(0, 0)] * 3).to_wkb()
         frame.to_parquet(path)
         table = pq.read_table(path)
         metadata = dict(table.schema.metadata or {})
@@ -954,24 +956,26 @@ class TestTheGateSeesWhatTheRewriteDrops:
             else field
             for field in table.schema
         ]
-        pq.write_table(table.cast(pa.schema(fields, metadata=metadata)), path)
+        # The pyarrow stub types the metadata as an invariant dict of bytes or str.
+        schema_metadata = cast("dict[bytes | str, bytes | str]", metadata)
+        pq.write_table(table.cast(pa.schema(fields, metadata=schema_metadata)), path)
         return path
 
     @pytest.mark.unit
     @pytest.mark.parametrize("case", ["epoch", "orientation", "undefined-crs", "field-metadata"])
-    def test_the_file_is_kept(
-        self, tmp_path: Path, case: str, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_the_file_is_kept(self, tmp_path: Path, case: str) -> None:
         from portolan_cli.preparation import convert_vector
+        from portolan_cli.report import reporting
 
         source = self._geoparquet(tmp_path / "f.parquet", case)
         before = source.read_bytes()
 
-        convert_vector(source, tmp_path)
+        lines: list[tuple[str, str]] = []
+        with reporting(lambda level, message: lines.append((level, message))):
+            convert_vector(source, tmp_path)
 
         assert source.read_bytes() == before
-        captured = capsys.readouterr()
-        assert "Kept f.parquet as it is" in captured.out + captured.err
+        assert [level for level, m in lines if m.startswith("Kept f.parquet as it is")] == ["warn"]
 
     @pytest.mark.unit
     def test_a_file_with_nothing_to_lose_is_rewritten(self, tmp_path: Path) -> None:
@@ -996,23 +1000,23 @@ class TestTheRewrittenFooterIsReadOnce:
 
     @pytest.mark.unit
     def test_an_in_place_rewrite_opens_two_footers(self, tmp_path: Path) -> None:
-        import geopandas as gpd
+        import geopandas
         from click.testing import CliRunner
         from shapely.geometry import Point
 
-        from portolan_cli import trace
         from portolan_cli.cli import cli
         from portolan_cli.metadata.geoparquet import extract_geoparquet_metadata
         from portolan_cli.preparation import prepare_item
-        from portolan_cli.run_state import RunState
+        from portolan_core import trace
+        from portolan_core.run_state import RunState
 
         init = CliRunner().invoke(cli, ["init", str(tmp_path), "--auto", "--license", "CC-BY-4.0"])
         assert init.exit_code == 0, init.output
         (tmp_path / "c1").mkdir()
         source = tmp_path / "c1" / "c1.parquet"
-        gpd.GeoDataFrame({"a": [1, 2]}, geometry=[Point(0, 0), Point(1, 1)], crs=4326).to_parquet(
-            source
-        )
+        geopandas.GeoDataFrame(
+            {"a": [1, 2]}, geometry=[Point(0, 0), Point(1, 1)], crs=4326
+        ).to_parquet(source)
         state = RunState.open(tmp_path)
 
         with trace.tracing():
@@ -1040,11 +1044,11 @@ class TestRasterAddCountsGdalReads:
     def _opens(catalog: Path, source: Path) -> int:
         from click.testing import CliRunner
 
-        from portolan_cli import trace
         from portolan_cli.cli import cli
         from portolan_cli.metadata.cog import extract_cog_metadata
         from portolan_cli.preparation import prepare_item
-        from portolan_cli.run_state import RunState
+        from portolan_core import trace
+        from portolan_core.run_state import RunState
 
         init = CliRunner().invoke(cli, ["init", str(catalog), "--auto", "--license", "CC-BY-4.0"])
         assert init.exit_code == 0, init.output
@@ -1097,39 +1101,47 @@ class TestRasterAddCountsGdalReads:
 class TestRewriteOrKeep:
     """A failed rewrite keeps the file. It never fails the whole `add`."""
 
-    @pytest.mark.unit
-    def test_a_fidelity_failure_keeps_the_file(self, tmp_path: Path, capsys: Any) -> None:
-        """The operator reads what the rewrite would have lost."""
+    @staticmethod
+    def _kept(tmp_path: Path, error: Exception) -> list[tuple[str, str]]:
+        """Run ``_rewrite_or_keep`` with a rewrite that raises ``error``, and return its lines."""
         from portolan_cli.conversion_config import VectorSettings
-        from portolan_cli.errors import RewriteFidelityError
         from portolan_cli.preparation import _rewrite_or_keep
+        from portolan_cli.report import reporting
 
         source = tmp_path / "roads.parquet"
         source.write_bytes(b"PAR1")
+        lines: list[tuple[str, str]] = []
+        with (
+            patch("portolan_cli.preparation._rewrite_parquet_in_place", side_effect=error),
+            reporting(lambda level, message: lines.append((level, message))),
+        ):
+            _rewrite_or_keep(source, VectorSettings(), None)
+        assert source.read_bytes() == b"PAR1"
+        return lines
+
+    @pytest.mark.unit
+    def test_a_fidelity_failure_keeps_the_file(self, tmp_path: Path) -> None:
+        """The operator reads what the rewrite would have lost."""
+        from portolan_core.errors import RewriteFidelityError
+
         error = RewriteFidelityError("roads.parquet", "the CRS it declared")
 
-        with patch("portolan_cli.preparation._rewrite_parquet_in_place", side_effect=error):
-            _rewrite_or_keep(source, VectorSettings(), None)
-
-        captured = capsys.readouterr()
-        assert "Kept roads.parquet as it is" in captured.out + captured.err
-        assert "the CRS it declared" in captured.out + captured.err
+        assert self._kept(tmp_path, error) == [
+            ("warn", "Kept roads.parquet as it is: it would lose the CRS it declared")
+        ]
 
     @pytest.mark.unit
-    def test_any_other_failure_also_keeps_the_file(self, tmp_path: Path, capsys: Any) -> None:
+    def test_any_other_failure_also_keeps_the_file(self, tmp_path: Path) -> None:
         """A malformed geometry must not turn `add` into a failure."""
-        from portolan_cli.conversion_config import VectorSettings
-        from portolan_cli.preparation import _rewrite_or_keep
-
-        source = tmp_path / "roads.parquet"
-        source.write_bytes(b"PAR1")
         error = RuntimeError("Invalid Input Error: Skipping beyond end of binary data")
 
-        with patch("portolan_cli.preparation._rewrite_parquet_in_place", side_effect=error):
-            _rewrite_or_keep(source, VectorSettings(), None)
-
-        captured = capsys.readouterr()
-        assert "Kept roads.parquet as it is" in captured.out + captured.err
+        assert self._kept(tmp_path, error) == [
+            (
+                "warn",
+                "Kept roads.parquet as it is: geoparquet-io could not rewrite it "
+                "(Invalid Input Error: Skipping beyond end of binary data)",
+            )
+        ]
 
 
 class TestAnAddedCogCarriesItsStatistics:
@@ -1254,8 +1266,9 @@ class TestAnAddedCogCarriesItsStatistics:
         tmp_path: Path,
         fixtures_dir: Path,
         monkeypatch: pytest.MonkeyPatch,
-        capsys: pytest.CaptureFixture[str],
     ) -> None:
+        from portolan_cli.report import reporting
+
         """GDAL re-encodes JPEG and WEBP tiles on every copy, so a rewrite loses quality."""
         from rio_cogeo.cogeo import cog_translate
         from rio_cogeo.profiles import cog_profiles
@@ -1272,13 +1285,20 @@ class TestAnAddedCogCarriesItsStatistics:
         before = cog.read_bytes()
         calls = self._spy_rewrite(monkeypatch)
 
-        convert_raster(cog, tmp_path)
+        lines: list[tuple[str, str]] = []
+        with reporting(lambda level, message: lines.append((level, message))):
+            convert_raster(cog, tmp_path)
 
         assert calls == []
         assert cog.read_bytes() == before
-        out = capsys.readouterr()
-        assert "PTL-DAT-009" in out.out + out.err
-        assert "photo.tif" in out.out + out.err
+        assert lines == [
+            (
+                "warn",
+                "photo.tif has no band statistics in the file (PTL-DAT-009). "
+                "Portolan keeps it as it is, because its tiles use lossy compression "
+                "and a rewrite would re-encode them.",
+            )
+        ]
 
     @pytest.mark.unit
     def test_a_lossy_codec_setting_keeps_the_pixels_of_a_lossless_cog(

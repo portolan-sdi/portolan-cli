@@ -6,11 +6,9 @@ All business logic lives in the library; the CLI handles user interaction.
 
 from __future__ import annotations
 
-import json
 import os
 import sys
 import warnings
-from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NoReturn, TextIO
 
@@ -20,63 +18,37 @@ if TYPE_CHECKING:
     from portolan_cli.add import AddFailure
     from portolan_cli.convert import ConversionResult
     from portolan_cli.metadata.fix import FixReport
-    from portolan_cli.query import ItemInfo
-    from portolan_cli.run_state import RunState
     from portolan_cli.sync.pull import PullResult
+    from portolan_core.query import ItemInfo
+    from portolan_core.run_state import RunState
+    from portolan_core.status import CollectionStatus
 
 import click
-from rashid_core.model import Severity as RashidSeverity
+from rashid_core.api import Severity as RashidSeverity
 
-from portolan_cli import trace
 from portolan_cli.add_progress import AddProgressReporter, count_files
 from portolan_cli.catalog import find_catalog_root
-from portolan_cli.catalog_list import (
-    AssetInfo,
-    AssetStatus,
-    CatalogListResult,
-    list_catalog_contents,
-)
 from portolan_cli.cli_types import FLEXIBLE_DATETIME
 from portolan_cli.collection_id import resolve_collection_id
 from portolan_cli.discovery import get_sidecars
 from portolan_cli.emit import emit_error, emit_success
-from portolan_cli.errors import (
-    AssetKeyCollisionError,
-    ConfigError,
-    InvalidLiveUrlError,
-    MissingLicenseError,
-    PortolanError,
-    UnknownFormatHandlerError,
-)
-from portolan_cli.input_hardening import InputValidationError, validate_safe_path
+from portolan_cli.input_hardening import InputValidationError
 from portolan_cli.json_output import ErrorDetail, error_envelope, success_envelope
-from portolan_cli.licensing import (
-    CLI_LICENSE_REMEDIATION,
-    METADATA_LICENSE_REMEDIATION,
-    OTHER_LICENSE,
-    license_gap,
-)
 from portolan_cli.logging_setup import configure_logging
 from portolan_cli.output import detail, error, set_writer, stdout_to_stderr, success, warn
 from portolan_cli.output import info as info_output
 from portolan_cli.plugins.commands import ExtractGroup, PluginGroup
 from portolan_cli.plugins.manager import PluginWarning
-from portolan_cli.remove import _resolve_collection_dir, remove_files
 from portolan_cli.scan.core import (
     IssueType,
     ScanIssue,
-    ScanOptions,
     ScanResult,
-    scan_directory,
 )
 from portolan_cli.scan.core import (
     Severity as ScanSeverity,
 )
-from portolan_cli.scan.fix import ProposedFix, apply_safe_fixes
-from portolan_cli.scan.infer import infer_collections
 from portolan_cli.scan.output import (
     format_collection_suggestion,
-    format_fix_commands_json,
     generate_next_steps,
     get_category_display_name,
     get_fixability,
@@ -84,8 +56,31 @@ from portolan_cli.scan.output import (
     render_tree_view,
 )
 from portolan_cli.scan.progress import ScanProgressReporter, count_directories
-from portolan_cli.status import CollectionStatus, get_collection_status
-from portolan_cli.utils import format_size
+from portolan_cli.utils import format_size as format_size
+from portolan_core import trace
+from portolan_core.bbox import BBOX_2D_LEN
+from portolan_core.catalog_list import (
+    AssetInfo,
+    AssetStatus,
+    CatalogListResult,
+    list_catalog_contents,
+)
+from portolan_core.errors import (
+    AssetKeyCollisionError,
+    ConfigError,
+    InvalidLiveUrlError,
+    MissingLicenseError,
+    PortolanError,
+    UnknownFormatHandlerError,
+)
+from portolan_core.licensing import (
+    CLI_LICENSE_REMEDIATION,
+    METADATA_LICENSE_REMEDIATION,
+    OTHER_LICENSE,
+    license_gap,
+)
+
+_MAX_LARGE_FILES_SHOWN = 5
 
 
 def click_writer(
@@ -259,6 +254,37 @@ def output_json_envelope(envelope: Any) -> None:
     click.echo(envelope.to_json())
 
 
+def load_dotenv_from_catalog(catalog_path: Path | None = None) -> bool:
+    """Load environment variables from .env file in catalog root.
+
+    It lives in the CLI layer because python-dotenv is a portolan-cli
+    dependency. portolan-core does not install it (#1133).
+
+    Searches for .env file in catalog root directory and loads it using
+    python-dotenv. Does NOT override existing environment variables.
+
+    This enables storing sensitive settings (remote, profile, region) in
+    a .env file that won't be pushed to remote storage.
+
+    Args:
+        catalog_path: Path to catalog root. If None, attempts to find it.
+
+    Returns:
+        True if a .env file was found and loaded, False otherwise.
+    """
+    from dotenv import load_dotenv
+
+    if catalog_path is None:
+        return False
+
+    env_file = catalog_path / ".env"
+    if not env_file.is_file():
+        return False
+
+    load_dotenv(env_file, override=False)
+    return True
+
+
 def load_dotenv_and_warn_sensitive(catalog_path: Path, *, state: RunState | None = None) -> None:
     """Load .env from catalog and warn if config.yaml has sensitive settings.
 
@@ -270,7 +296,7 @@ def load_dotenv_and_warn_sensitive(catalog_path: Path, *, state: RunState | None
         catalog_path: Resolved catalog root path.
         state: The run state, which parses config.yaml once per run.
     """
-    from portolan_cli.config import check_sensitive_settings_in_config, load_dotenv_from_catalog
+    from portolan_core.config import check_sensitive_settings_in_config
 
     load_dotenv_from_catalog(catalog_path)
 
@@ -331,7 +357,7 @@ def resolve_remote(
     Returns:
         Resolved destination URL or None if not configured.
     """
-    from portolan_cli.config import get_setting
+    from portolan_core.config import get_setting
 
     return get_setting(
         "remote",
@@ -361,7 +387,7 @@ def resolve_aws_profile(
     Returns:
         The profile name, or None when nothing here names one.
     """
-    from portolan_cli.config import get_setting
+    from portolan_core.config import get_setting
 
     return get_setting(
         "aws_profile",
@@ -603,12 +629,11 @@ def init(
         portolan init --auto --license CC-BY-4.0 --logo brand.png
     """
     from portolan_cli.catalog import CatalogState, detect_state, init_catalog
-    from portolan_cli.errors import (
+    from portolan_core.errors import (
         CatalogAlreadyExistsError,
         LogoError,
         UnmanagedStacCatalogError,
     )
-    from portolan_cli.logo import find_logo_link
 
     use_json = should_output_json(ctx, json_output)
 
@@ -625,7 +650,7 @@ def init(
         license_id = _validated_cli_license("init", license_id, license_url, use_json=use_json)
 
     try:
-        catalog_file, warnings = init_catalog(
+        result = init_catalog(
             path,
             catalog_id=catalog_id,
             title=title,
@@ -637,27 +662,13 @@ def init(
             logo_title=logo_title,
         )
 
-        # Read back catalog ID for display
-        catalog_data = json.loads(catalog_file.read_text(encoding="utf-8"))
-        catalog_id = catalog_data.get("id", "unknown")
-        logo_link = find_logo_link(catalog_data.get("links", []))
-
-        if not emit_success(
-            "init",
-            {
-                "path": str(path.resolve()),
-                "catalog_file": "catalog.json",
-                "catalog_id": catalog_id,
-                "logo": logo_link["href"] if logo_link else None,
-                "warnings": warnings,
-            },
-            use_json=use_json,
-        ):
-            success(f"Initialized Portolan catalog in {path.resolve()}")
-            info_output(f"Catalog ID: {catalog_id}")
-            if logo_link:
-                info_output(f"Logo: {logo_link['href']}")
-            for w in warnings:
+        data = result.to_dict()
+        if not emit_success("init", data, use_json=use_json):
+            success(f"Initialized Portolan catalog in {data['path']}")
+            info_output(f"Catalog ID: {data['catalog_id']}")
+            if data["logo"]:
+                info_output(f"Logo: {data['logo']}")
+            for w in result.warnings:
                 warn(w)
 
     except InputValidationError as err:
@@ -708,49 +719,13 @@ def _get_format_display_name(format_type: str | None) -> str:
         Human-readable format name (e.g., "GeoParquet", "COG"). A family
         from a plugin format shows as written.
     """
-    from portolan_cli.format_families import RASTER, VECTOR
+    from portolan_core.format_families import RASTER, VECTOR
 
     if format_type == VECTOR:
         return "GeoParquet"
     if format_type == RASTER:
         return "COG"
     return format_type or "Unknown"
-
-
-def _apply_list_status_filter(
-    result: CatalogListResult,
-    tracked_only: bool,
-    untracked_only: bool,
-) -> None:
-    """Apply status filters to catalog list result in-place.
-
-    Args:
-        result: CatalogListResult to filter (modified in-place).
-        tracked_only: If True, keep only tracked assets.
-        untracked_only: If True, keep only untracked assets.
-    """
-    if not (tracked_only or untracked_only):
-        return
-
-    keep = AssetStatus.TRACKED if tracked_only else AssetStatus.UNTRACKED
-    for col in result.collections:
-        for item in col.items:
-            item.assets = [a for a in item.assets if a.status == keep]
-        col.assets = [a for a in col.assets if a.status == keep]
-        # Remove empty items after filtering
-        col.items = [item for item in col.items if item.assets]
-    # Remove empty collections after filtering
-    result.collections = [col for col in result.collections if col.items or col.assets]
-
-
-def _list_asset_json(asset: AssetInfo) -> dict[str, Any]:
-    """Serialize one ``list`` asset for the JSON envelope."""
-    return {
-        "path": asset.path,
-        "status": asset.status.value,
-        "format": asset.format_name,
-        "size": asset.size_bytes,
-    }
 
 
 def _list_tree_output_with_status(result: CatalogListResult) -> None:
@@ -904,52 +879,14 @@ def list_cmd(
     if catalog_path is None:
         catalog_path = require_catalog_root(use_json, "list")
 
-    # Get all catalog contents with status
-    result = list_catalog_contents(catalog_path, collection_id=collection)
+    result = list_catalog_contents(
+        catalog_path,
+        collection_id=collection,
+        tracked_only=tracked_only,
+        untracked_only=untracked_only,
+    )
 
-    # Apply status filters (modifies result in-place)
-    _apply_list_status_filter(result, tracked_only, untracked_only)
-
-    if use_json:
-        # Build JSON output with status information
-        collections_data = []
-        for col in result.collections:
-            items_data = []
-            for item in col.items:
-                assets_data = [_list_asset_json(a) for a in item.assets]
-                items_data.append(
-                    {
-                        "id": item.item_id,
-                        "tracked": item.tracked_count,
-                        "untracked": item.untracked_count,
-                        "modified": item.modified_count,
-                        "deleted": item.deleted_count,
-                        "assets": assets_data,
-                    }
-                )
-            collections_data.append(
-                {
-                    "id": col.collection_id,
-                    "is_initialized": col.is_initialized,
-                    "assets": [_list_asset_json(a) for a in col.assets],
-                    "items": items_data,
-                }
-            )
-
-        envelope = success_envelope(
-            "list",
-            {
-                "collections": collections_data,
-                "summary": {
-                    "total_tracked": result.total_tracked,
-                    "total_untracked": result.total_untracked,
-                    "total_modified": result.total_modified,
-                    "total_deleted": result.total_deleted,
-                },
-            },
-        )
-        output_json_envelope(envelope)
-    else:
+    if not emit_success("list", result.to_dict(), use_json=use_json):
         if result.is_empty():
             info_output("No tracked items")
             info_output("")
@@ -1024,34 +961,25 @@ def status_cmd(
     if not offline:
         remote_url = resolve_remote(None, catalog_path, collection)
 
-    # The collections `check` sees and the ones `push` uploads (#944)
-    from portolan_cli.status import status_collections
-
-    collections = [collection] if collection else status_collections(catalog_path)
-
-    if not collections:
-        if not emit_success("status", {"collections": []}, use_json=use_json):
-            info_output("No collections found")
-        return
+    from functools import partial
 
     from portolan_cli.sync.pull import fetch_remote_versions
+    from portolan_core.status import get_catalog_status
 
-    # Get status for each collection
-    statuses: list[CollectionStatus] = []
-    for coll in collections:
-        status = get_collection_status(
-            catalog_root=catalog_path,
-            collection=coll,
-            offline=offline,
-            remote_url=remote_url,
-            fetch_remote_versions=fetch_remote_versions,
-        )
-        statuses.append(status)
+    result = get_catalog_status(
+        catalog_path,
+        collection,
+        offline=offline,
+        remote_url=remote_url,
+        # The download lines print as they did before the move to the library.
+        fetch_remote_versions=partial(fetch_remote_versions, report=_report),
+    )
 
-    if not emit_success(
-        "status", {"collections": [s.to_dict() for s in statuses]}, use_json=use_json
-    ):
-        _output_status_human(statuses)
+    if not emit_success("status", result.to_dict(), use_json=use_json):
+        if not result.collections:
+            info_output("No collections found")
+        else:
+            _output_status_human(result.collections)
 
 
 def _output_status_human(statuses: list[CollectionStatus]) -> None:
@@ -1149,44 +1077,12 @@ def info_cmd(
         portolan info                              # Catalog info
         portolan info demographics/census.parquet --json  # JSON output
     """
-    from portolan_cli.inspect import (
-        inspect_catalog,
-        inspect_collection,
-        inspect_file,
-    )
+    from portolan_cli.inspect import inspect_target
 
     use_json = should_output_json(ctx, json_output)
 
     try:
-        if target is None:
-            # Catalog-level info
-            catalog_result = inspect_catalog(catalog_path)
-            _output_catalog_info(catalog_result, use_json=use_json)
-        elif target.is_file():
-            # File-level info
-            file_result = inspect_file(target, catalog_root=catalog_path)
-            _output_file_info(file_result, use_json=use_json)
-        elif target.is_dir():
-            # Check what type of directory this is based on its contents.
-            # STAC structure is self-describing: catalog.json vs collection.json.
-            # Pattern 2, a directory CAN have both (e.g., a collection
-            # with sub-catalogs organizing items). We prefer catalog.json since it
-            # represents the organizational structure.
-            if (target / "catalog.json").exists():
-                # It's a catalog (root or subcatalog)
-                catalog_result = inspect_catalog(target)
-                _output_catalog_info(catalog_result, use_json=use_json)
-            elif (target / "collection.json").exists():
-                # It's a collection
-                collection_result = inspect_collection(target)
-                _output_collection_info(collection_result, use_json=use_json)
-            else:
-                # Directory exists but isn't a catalog or collection
-                raise ValueError(f"Directory is not a catalog or collection: {target}")
-        else:
-            # Path doesn't exist
-            raise FileNotFoundError(f"Path not found: {target}")
-
+        result = inspect_target(target, catalog_root=catalog_path)
     except FileNotFoundError as err:
         emit_error("info", "FileNotFoundError", str(err), use_json=use_json)
         raise SystemExit(1) from err
@@ -1194,23 +1090,6 @@ def info_cmd(
         emit_error("info", "ValueError", str(err), use_json=use_json)
         raise SystemExit(1) from err
 
-
-def _output_file_info(result: Any, *, use_json: bool) -> None:
-    """Output file info in human or JSON format."""
-    if not emit_success("info", result.to_dict(), use_json=use_json):
-        for line in result.format_human():
-            info_output(line)
-
-
-def _output_collection_info(result: Any, *, use_json: bool) -> None:
-    """Output collection info in human or JSON format."""
-    if not emit_success("info", result.to_dict(), use_json=use_json):
-        for line in result.format_human():
-            info_output(line)
-
-
-def _output_catalog_info(result: Any, *, use_json: bool) -> None:
-    """Output catalog info in human or JSON format."""
     if not emit_success("info", result.to_dict(), use_json=use_json):
         for line in result.format_human():
             info_output(line)
@@ -1346,7 +1225,8 @@ def _output_check_json(payload: dict[str, Any], *, failed: bool) -> None:
 @click.option(
     "--fix",
     is_flag=True,
-    help="Fix issues: convert geo-assets to cloud-native, update stale metadata",
+    help="Fix issues: convert geo-assets to cloud-native, rewrite the data files that a "
+    "finding names, update stale metadata",
 )
 @click.option(
     "--dry-run",
@@ -1361,8 +1241,8 @@ def _output_check_json(payload: dict[str, Any], *, failed: bool) -> None:
 @click.option(
     "--force",
     is_flag=True,
-    help="Re-optimize already-valid COGs by re-applying current COG settings, "
-    "e.g. to add missing overviews (use with --fix; rasters only)",
+    help="Re-optimize every valid COG by re-applying current COG settings, also the COGs "
+    "that no finding names (use with --fix; rasters only)",
 )
 @click.option(
     "--workers",
@@ -1514,64 +1394,77 @@ def check(
     if data_scope != "all" and no_data:
         warn("--data-scope has no effect with --no-data")
 
-    # Resolve worker count: auto-detect from CPU count when unset, so a large
-    # --fix run parallelizes by default (issue #530). An explicit value wins.
-    resolved_workers = workers if workers is not None else (os.cpu_count() or 1)
+    from portolan_cli.validation.workflow import run_check_workflow
+    from portolan_core.errors import NotACatalogError
 
-    # Determine which checks to run based on scope flags
-    run_metadata, run_geo_assets, mode = _determine_check_mode(metadata, geo_assets)
+    def show_conversion_progress(result: ConversionResult) -> None:
+        info_output(f"Converting: {result.source.name}")
 
-    # Execute the appropriate check workflow
-    _execute_check_workflow(
-        path=path,
-        run_metadata=run_metadata,
-        run_geo_assets=run_geo_assets,
-        mode=mode,
-        fix=fix,
-        dry_run=dry_run,
-        remove_legacy=remove_legacy,
-        force=force,
-        workers=resolved_workers,
-        use_json=use_json,
-        verbose=verbose,
-        strict=strict,
-        live=live,
-        public_url=public_url,
-        data=not no_data,
-        data_scope=data_scope,
-        structural=not no_structural,
-        schema=schema,
-    )
+    def show_fix_report(report: FixReport | None, conversion: Any) -> None:
+        _output_fix_human(
+            metadata_fix_report=report,
+            format_fix_report=conversion,
+            verbose=verbose,
+            dry_run=dry_run,
+        )
+
+    from portolan_cli.extract.common.cli_helpers import print_message
+    from portolan_cli.report import reporting
+
+    try:
+        # The conversion steps report their notices through this scope.
+        with reporting(print_message):
+            result = run_check_workflow(
+                path,
+                fix=fix,
+                dry_run=dry_run,
+                remove_legacy=remove_legacy,
+                force=force,
+                workers=workers,
+                metadata=metadata,
+                geo_assets=geo_assets,
+                strict=strict,
+                live=live,
+                public_url=public_url,
+                data=not no_data,
+                data_scope=data_scope,
+                structural=not no_structural,
+                schema=schema,
+                # Per-file progress only in verbose human mode.
+                on_progress=show_conversion_progress if verbose and not use_json else None,
+                # Each fix report prints as its pass ends, so a later failure cannot hide it.
+                on_fix_report=None if use_json else show_fix_report,
+            )
+    except InvalidLiveUrlError as err:
+        emit_error("check", type(err).__name__, str(err), use_json=use_json, code=err.code)
+        raise SystemExit(2) from err
+    except NotACatalogError as err:
+        # The envelope keeps its shape from before the error class existed: no code.
+        emit_error("check", "NotACatalogError", err.message, use_json=use_json)
+        raise SystemExit(1) from err
+    _output_check_result(result, use_json=use_json, verbose=verbose, strict=strict, dry_run=dry_run)
 
 
-def _fix_json_section(
-    *,
-    metadata_fix_report: FixReport | None,
-    format_fix_report: Any,
-) -> dict[str, Any]:
-    """Build the ``fix`` section of the check payload.
+def _output_check_result(
+    result: Any, *, use_json: bool, verbose: bool, strict: bool, dry_run: bool
+) -> None:
+    """Render the check result, then exit 1 when it failed.
 
-    Args:
-        metadata_fix_report: Results from metadata fix (if run).
-        format_fix_report: Results from geo-asset fix (if run).
-
-    Returns:
-        The fix results, keyed by which repair produced them.
+    The exit code follows ``passed``: a blocking finding fails the command,
+    whatever ``--fix`` repaired. ``result.failed`` sets the envelope's ``success``.
     """
-    from portolan_cli.metadata.fix import FixReport
+    payload = result.to_dict()
+    fixed = "fix" in payload
+    if use_json:
+        _output_check_json(payload, failed=result.failed)
+    else:
+        post_fix = fixed and not dry_run
+        _render_check(result.outcome, payload, verbose=verbose, strict=strict, post_fix=post_fix)
+        if fixed:
+            _print_fix_split(payload, dry_run=dry_run)
 
-    data: dict[str, Any] = {}
-
-    if metadata_fix_report is not None:
-        if not isinstance(metadata_fix_report, FixReport):
-            raise TypeError(f"Expected FixReport, got {type(metadata_fix_report).__name__}")
-        data["metadata_fix"] = metadata_fix_report.to_dict()
-
-    if format_fix_report is not None:
-        # Use "conversion" key for backward compatibility with existing tests
-        data["conversion"] = format_fix_report.to_dict()
-
-    return data
+    if result.failed or not payload["passed"]:
+        raise SystemExit(1)
 
 
 def _output_fix_human(
@@ -1629,175 +1522,6 @@ def _handle_path_not_found(path: Path, use_json: bool) -> None:
     """Handle path not found error and exit."""
     emit_error("check", "PathNotFoundError", f"Path does not exist: {path}", use_json=use_json)
     raise SystemExit(1)
-
-
-def _determine_check_mode(metadata: bool, geo_assets: bool) -> tuple[bool, bool, str]:
-    """Determine which checks to run and the mode string.
-
-    The scope flags (--metadata, --geo-assets) determine WHAT to check/fix:
-    - Neither flag: check/fix both (default)
-    - --metadata: check/fix metadata only
-    - --geo-assets: check/fix geo-assets only
-    - Both flags: check/fix both (explicit)
-
-    The --fix flag separately controls WHETHER to apply fixes (orthogonal).
-
-    Returns:
-        Tuple of (run_metadata, run_geo_assets, mode_string).
-    """
-    explicit_flags = metadata or geo_assets
-
-    if explicit_flags:
-        run_metadata = metadata
-        run_geo_assets = geo_assets
-    else:
-        # No explicit flags: run both
-        run_metadata = True
-        run_geo_assets = True
-
-    # Determine mode string
-    if run_metadata and not run_geo_assets:
-        mode = "metadata"
-    elif run_geo_assets and not run_metadata:
-        mode = "geo-assets"
-    else:
-        mode = "all"
-
-    return run_metadata, run_geo_assets, mode
-
-
-def _execute_check_workflow(
-    *,
-    path: Path,
-    run_metadata: bool,
-    run_geo_assets: bool,
-    mode: str,
-    fix: bool,
-    dry_run: bool,
-    remove_legacy: bool,
-    use_json: bool,
-    verbose: bool,
-    strict: bool = False,
-    force: bool = False,
-    workers: int | None = None,
-    live: bool = False,
-    public_url: str | None = None,
-    data: bool = True,
-    data_scope: str = "all",
-    structural: bool = True,
-    schema: bool = False,
-) -> None:
-    """Execute the check workflow based on flags.
-
-    Without --fix this validates once and renders the result.
-
-    With --fix the run is check → fix → re-check **exactly once**, never a
-    loop. The first check produces the findings; the AUTO ones dispatch the
-    fixer registry; the second check reports what is left. An AUTO finding that
-    survives the re-check is a fixer that did not resolve it, so it is listed
-    under "Action required" and annotated as such — an agent that kept calling
-    `--fix` on it would spin forever otherwise.
-
-    ``--dry-run`` reports what the fixers would change, writes nothing, and
-    skips the re-check: with no writes there is nothing new to find.
-    """
-    from portolan_cli.validation import annotate_survivors, build_check_payload, run_check
-    from portolan_cli.validation.runner import validate_live_base_url
-
-    validate_metadata = _should_validate(path, run_metadata=run_metadata, fix=fix)
-    if live and validate_metadata:
-        try:
-            validate_live_base_url(path, public_url)
-        except InvalidLiveUrlError as err:
-            emit_error("check", type(err).__name__, str(err), use_json=use_json, code=err.code)
-            raise SystemExit(2) from err
-    check_kwargs: dict[str, Any] = {
-        "data": data,
-        "data_scope": data_scope,
-        "structural": structural,
-        "schema": schema,
-        "metadata": validate_metadata,
-        "public_url": public_url,
-        "workers": workers,
-    }
-
-    fix_data: dict[str, Any] | None = None
-    fix_failed = False
-    pre_outcome = None
-    state: RunState | None = None
-    if fix:
-        from portolan_cli.scan.check import resolve_catalog_root_for_check
-        from portolan_cli.version_ops import owned_run
-
-        # One run state for the check, the fix, and the re-check. Each pass
-        # parses the config through it and stages its versions in it. The block
-        # commits once, before the re-check reads the result (issue #995).
-        with owned_run(resolve_catalog_root_for_check(path) or path) as state:
-            with trace.span("check.pre"):
-                pre_outcome = run_check(
-                    path, live=False, geo_assets=False, state=state, **check_kwargs
-                )
-            with trace.span("check.fix", dry_run=dry_run):
-                fix_data, fix_failed = _run_fix_and_repairs(
-                    path=path,
-                    findings=list(pre_outcome.report.findings) if pre_outcome.report else [],
-                    run_metadata=run_metadata,
-                    run_geo_assets=run_geo_assets,
-                    dry_run=dry_run,
-                    remove_legacy=remove_legacy,
-                    use_json=use_json,
-                    verbose=verbose,
-                    force=force,
-                    workers=workers,
-                    state=state,
-                )
-
-    if fix and dry_run and pre_outcome is not None:
-        outcome = pre_outcome
-    else:
-        with trace.span("check.recheck" if fix else "check.run"):
-            outcome = run_check(
-                path,
-                live=live,
-                # --fix already ran the geo-asset conversion; re-scanning would repeat it.
-                geo_assets=run_geo_assets and not fix,
-                state=state,
-                **check_kwargs,
-            )
-    payload = build_check_payload(outcome, mode=mode, fix_failed=fix_failed)
-    if fix_data is not None:
-        if dry_run:
-            # A survivor is only knowable from a re-check, and a dry run wrote
-            # nothing to re-check. Annotating here compares the pre-fix findings
-            # against themselves, so every AUTO defect reads as having outlived
-            # a pass that never ran, and `fixed_count` lands on 0 next to the
-            # fixers the same catalog really does repair. Null reports what a
-            # preview knows: nothing was measured.
-            fix_data["survivors"] = None
-            fix_data["fixed_count"] = None
-        else:
-            annotate_survivors(
-                fix_data,
-                outcome,
-                pre_findings=list(pre_outcome.report.findings)
-                if pre_outcome is not None and pre_outcome.report is not None
-                else [],
-            )
-        payload["fix"] = fix_data
-    failed = fix_failed or _check_failed(payload, strict=strict, refresh=fix and mode == "metadata")
-
-    if use_json:
-        _output_check_json(payload, failed=failed)
-    else:
-        post_fix = fix_data is not None and not dry_run
-        _render_check(outcome, payload, verbose=verbose, strict=strict, post_fix=post_fix)
-        if fix_data is not None:
-            _print_fix_split(payload, dry_run=dry_run)
-
-    # The exit code follows ``passed``: a blocking finding fails the command,
-    # whatever ``--fix`` repaired. ``failed`` sets the envelope's ``success``.
-    if failed or not payload["passed"]:
-        raise SystemExit(1)
 
 
 def _print_fix_skips(skipped: dict[str, list[str]]) -> None:
@@ -1865,62 +1589,6 @@ def _print_fix_split(payload: dict[str, Any], *, dry_run: bool = False) -> None:
         detail(f"  {line}")
 
 
-def _should_validate(path: Path, *, run_metadata: bool, fix: bool) -> bool:
-    """Decide whether to validate, given a path that may not be a catalog at all.
-
-    Mirrors the rule ``check.run_fix_workflow`` already applies to its metadata
-    repair: a mixed-scope ``--fix`` over a directory with no catalog.json still
-    converts the source files and skips metadata, rather than failing on a
-    catalog the user never claimed to have. The re-check has to make the same
-    allowance or ``--fix`` would report PTL-GEN-000 on work that succeeded.
-
-    Without ``--fix``, a missing catalog is reported: `check` on a
-    non-catalog directory has always exited non-zero.
-    """
-    if not run_metadata or not fix:
-        return run_metadata
-
-    from portolan_cli.scan.check import resolve_catalog_root_for_check
-
-    return resolve_catalog_root_for_check(path) is not None
-
-
-def _check_failed(payload: dict[str, Any], *, strict: bool, refresh: bool = False) -> bool:
-    """Decide the envelope's ``success`` from the findings the mode owns.
-
-    A default run fails on any error. Under ``--strict``, where a catalog is
-    asserted to be publishable, it also fails on a warning or on the workflow
-    notice (unregistered or vanished data files). The notice is not a
-    conformance defect, so on its own it never flips a default run.
-
-    ``refresh`` is ``--fix --metadata`` without ``--strict``: the metadata
-    refresh (#853). It fails on an AUTO error that is still in the findings,
-    which is a repair the refresh did not make. It also fails on a document
-    that does not parse or breaks the STAC schema, because the refresh cannot
-    use it. The findings keep the two cases apart by rule id. Any other
-    INSTRUCT or EXTERNAL error is work for a person or a host. The refresh
-    did its job, so ``success`` stays true. The caller still exits 1, because
-    the error leaves ``passed`` false. A fixer that could not write fails the
-    run through ``fix_failed`` in the caller.
-    """
-    if strict:
-        return any(payload.get(key) for key in ("error_count", "warning_count", "workflow"))
-    if refresh:
-        return any(
-            finding["severity"] == "error"
-            and (finding["remediation"] == "auto" or finding["rule_id"] in _UNUSABLE_DOCUMENT_RULES)
-            for finding in payload.get("findings", [])
-        )
-    return bool(payload.get("error_count"))
-
-
-#: rashid rules for a document the refresh cannot use. PTL-GEN-000 and
-#: PTL-GEN-001 report a syntax error: a catalog.json or an object file that
-#: does not parse. PTL-STR-001 reports a schema violation: the file parses but
-#: breaks the STAC schema. Each one fails the refresh.
-_UNUSABLE_DOCUMENT_RULES = frozenset({"PTL-GEN-000", "PTL-GEN-001", "PTL-STR-001"})
-
-
 def _render_check(
     outcome: Any,
     payload: dict[str, Any],
@@ -1956,252 +1624,18 @@ def _render_check(
         info_output(outcome.live_hint.message)
 
 
-def _run_fix_and_repairs(
-    *,
-    path: Path,
-    findings: list[Any],
-    run_metadata: bool,
-    run_geo_assets: bool,
-    dry_run: bool,
-    remove_legacy: bool,
-    use_json: bool,
-    verbose: bool,
-    force: bool = False,
-    workers: int | None = None,
-    state: RunState,
-) -> tuple[dict[str, Any], bool]:
-    """Apply the fixer registry, then the metadata/geo-asset fix workflow.
-
-    Two halves that do not overlap. The registry
-    (:func:`portolan_cli.validation.fixers.apply_fixers`) owns everything a
-    rashid finding names — titles, links, schema URI, README/AGENTS.md,
-    checksums, extents. ``check.run_fix_workflow`` owns item freshness, which no
-    rule reports because it compares the catalog against files on disk rather
-    than against the spec. Conversion belongs to both, so the registry's
-    ``convert`` key is skipped whenever the geo-asset pass is in scope.
-
-    Args:
-        path: Directory to check/fix.
-        findings: Findings from the pre-fix check; the AUTO ones pick fixers.
-        run_metadata: Whether to fix metadata issues.
-        run_geo_assets: Whether to fix geo-asset format issues.
-        dry_run: Preview changes without applying them.
-        remove_legacy: Remove source files after successful conversion.
-        use_json: Suppress human rendering; return the data instead.
-        verbose: Show detailed output.
-        force: Re-optimize already-valid COGs (raster-scoped, issue #530).
-        workers: Parallel worker processes for conversion.
-        state: The run state of the command. Every pass stages in it, and the
-            caller commits it once.
-
-    Returns:
-        The JSON ``fix`` section and whether a fix failed.
-    """
-    from portolan_cli.metadata.fix import FixReport
-    from portolan_cli.validation import build_fix_payload
-
-    fixer_report, applied, selected, skip_reasons = _run_fixer_registry(
-        findings=findings,
-        run_metadata=run_metadata,
-        run_geo_assets=run_geo_assets,
-        dry_run=dry_run,
-        state=state,
-    )
-
-    with trace.span("check.fix.freshness"):
-        legacy_data, legacy_failed, written_items = _run_legacy_fix_workflow(
-            path=path,
-            run_metadata=run_metadata,
-            run_geo_assets=run_geo_assets,
-            dry_run=dry_run,
-            remove_legacy=remove_legacy,
-            use_json=use_json,
-            verbose=verbose,
-            force=force,
-            workers=workers,
-            state=state,
-        )
-
-    # The registry above ran against findings from the pre-fix check, so it
-    # never saw an item the freshness pass has only just written. Repair
-    # those now, or `--fix` publishes an item with no links and no checksums
-    # and reports more defects than it started with (#709).
-    if run_metadata and written_items:
-        from portolan_cli.validation.fixers import repair_written_items
-
-        with trace.span("check.fix.repair", items=len(written_items)):
-            repairs = repair_written_items(
-                state.catalog_root, written_items, dry_run=dry_run, state=state
-            )
-        if repairs:
-            fixer_report = FixReport(results=[*fixer_report.results, *repairs])
-
-    if not use_json:
-        _output_fix_human(
-            metadata_fix_report=fixer_report,
-            format_fix_report=None,
-            verbose=verbose,
-            dry_run=dry_run,
-        )
-
-    fix_data = build_fix_payload(
-        legacy=legacy_data,
-        fixer_report=fixer_report,
-        applied=applied,
-        selected=selected,
-        skipped=skip_reasons,
-        pre_findings=findings,
-        dry_run=dry_run,
-    )
-    return fix_data, legacy_failed or fixer_report.failure_count > 0
-
-
-def _run_fixer_registry(
-    *,
-    findings: list[Any],
-    run_metadata: bool,
-    run_geo_assets: bool,
-    dry_run: bool,
-    state: RunState,
-) -> tuple[FixReport, list[str], list[str], dict[str, list[str]]]:
-    """Run the title sweep and the fixers that the AUTO findings call for.
-
-    Returns:
-        The fixer report, the applied and selected fixer keys, and the reasons
-        that the fixers which changed nothing gave.
-    """
-    from portolan_cli.catalog import apply_catalog_human_titles
-    from portolan_cli.metadata.fix import FixAction, FixReport, FixResult
-    from portolan_cli.validation.fixers import apply_fixers
-
-    if not run_metadata:
-        return FixReport(), [], [], {}
-    catalog_root = state.catalog_root
-    # Issue #815: a catalog publishes the title and description a human wrote
-    # in its own metadata.yaml. No rashid rule reports the drift, because
-    # rashid grades catalog.json alone and never reads metadata.yaml. The
-    # sweep therefore runs on its own, like the item-freshness pass, and not
-    # through the finding-driven registry.
-    with trace.span("check.fix.title_sweep"):
-        title_results = [
-            FixResult(
-                file_path=catalog_path,
-                action=FixAction.UPDATED,
-                success=True,
-                message="Applied the metadata.yaml title/description",
-            )
-            for catalog_path in apply_catalog_human_titles(
-                catalog_root, dry_run=dry_run, state=state
-            )
-        ]
-    if not findings:
-        return FixReport(results=title_results), [], [], {}
-    skip = {"convert"} if run_geo_assets else set()
-    with trace.span("check.fix.fixers", findings=len(findings)):
-        run = apply_fixers(catalog_root, findings, dry_run=dry_run, skip=skip, state=state)
-    # The report holds what the fixers did, not what the findings asked for. A
-    # fixer that ran and changed nothing is a skip with a reason.
-    report = FixReport(results=[*title_results, *run.report.results])
-    return report, run.applied, run.selected, run.skip_reasons
-
-
-def _run_legacy_fix_workflow(
-    *,
-    path: Path,
-    run_metadata: bool,
-    run_geo_assets: bool,
-    dry_run: bool,
-    remove_legacy: bool,
-    use_json: bool,
-    verbose: bool,
-    force: bool = False,
-    workers: int | None = None,
-    state: RunState | None = None,
-) -> tuple[dict[str, Any], bool, list[Path]]:
-    """Run item-freshness and geo-asset conversion, and render their results.
-
-    Delegates the orchestration to ``check.run_fix_workflow`` and only wires up
-    the progress callback and output rendering here.
-
-    Returns:
-        The fix reports as JSON data, whether a fix failed, and the data files
-        whose items the freshness pass updated. The caller repairs those items,
-        which the finding-driven registry ran too early to see (#709).
-    """
-    from portolan_cli.metadata.fix import FixAction
-    from portolan_cli.scan.check import run_fix_workflow
-
-    # Progress callback for conversion (skip for JSON mode: per-file only in verbose)
-    def show_conversion_progress(result: ConversionResult) -> None:
-        if not use_json and verbose and result.source:
-            info_output(f"Converting: {result.source.name}")
-
-    outcome = run_fix_workflow(
-        path=path,
-        run_metadata=run_metadata,
-        run_geo_assets=run_geo_assets,
-        dry_run=dry_run,
-        remove_legacy=remove_legacy,
-        force=force,
-        workers=workers,
-        on_progress=show_conversion_progress,
-        state=state,
-    )
-
-    # Metadata-only fix that found no catalog root: surface and exit (issue #384).
-    if outcome.fatal_error is not None:
-        emit_error("check", "NotACatalogError", outcome.fatal_error, use_json=use_json)
-        raise SystemExit(1)
-
-    metadata_fix_report = outcome.metadata_fix_report
-    format_fix_report = outcome.format_fix_report
-
-    conversion_failed = bool(
-        format_fix_report
-        and format_fix_report.conversion_report
-        and format_fix_report.conversion_report.failed > 0
-    )
-    failed = outcome.has_failures or conversion_failed
-
-    if not use_json:
-        _output_fix_human(
-            metadata_fix_report=metadata_fix_report,
-            format_fix_report=format_fix_report,
-            verbose=verbose,
-            dry_run=dry_run,
-        )
-
-    # A created item went through finalize_items and the mirror writer, as after
-    # add, so it needs no repair. A repair would run the catalog-wide sweeps again.
-    written_items = [
-        result.file_path
-        for result in (metadata_fix_report.results if metadata_fix_report else [])
-        if result.success and result.action is FixAction.UPDATED
-    ]
-
-    return (
-        _fix_json_section(
-            metadata_fix_report=metadata_fix_report,
-            format_fix_report=format_fix_report,
-        ),
-        failed,
-        written_items,
-    )
-
-
 def _print_check_fix_preview(report: Any) -> None:
-    """Print preview of what would be converted."""
-    from portolan_cli.formats import CloudNativeStatus
+    """Print preview of what would be converted or rewritten in place."""
+    previews = report.conversion_report.results if report.conversion_report else []
 
-    convertible = [f for f in report.files if f.status == CloudNativeStatus.CONVERTIBLE]
-
-    if not convertible:
+    if not previews:
         info_output("No files need conversion")
         return
 
-    info_output(f"Dry run: {len(convertible)} file(s) would be converted")
-    for f in convertible:
-        detail(f"  {f.relative_path} ({f.display_name}) -> {f.target_format}")
+    info_output(f"Dry run: {len(previews)} file(s) would be converted")
+    for r in previews:
+        relative = r.source.relative_to(report.root).as_posix()
+        detail(f"  {relative} ({r.format_from}) -> {r.format_to}")
 
 
 def _print_legacy_removal_results(removal: Any, *, verbose: bool = False) -> None:
@@ -2268,55 +1702,36 @@ def _print_check_fix_results(report: Any, *, verbose: bool = False) -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def _handle_fix_mode(
-    result: ScanResult,
-    *,
-    dry_run: bool,
-    use_json: bool,
-) -> tuple[list[ProposedFix], list[ProposedFix]]:
-    """Handle --fix mode for scan command.
+def _print_fix_report(result: ScanResult, *, dry_run: bool) -> None:
+    """Print the fixes that scan --fix proposed and applied.
 
     Args:
-        result: Scan result with issues to fix.
-        dry_run: If True, preview fixes without applying.
-        use_json: If True, suppress human output.
-
-    Returns:
-        Tuple of (proposed_fixes, applied_fixes).
+        result: Scan result with the proposed and applied fixes.
+        dry_run: If True, the fixes are a preview and none were applied.
     """
-    # Dry-run mode: compute and show what would be done
+    proposed = result.proposed_fixes
+    if not proposed:
+        info_output("No issues to fix")
+        return
+
     if dry_run:
-        proposed, _ = apply_safe_fixes(result.issues, dry_run=True)
-        if not use_json:
-            if not proposed:
-                info_output("No issues to fix")
-            else:
-                info_output(f"Dry run: {len(proposed)} fix(es) would be applied")
-                for fix in proposed:
-                    detail(f"  {fix.preview}")
-        return proposed, []
+        info_output(f"Dry run: {len(proposed)} fix(es) would be applied")
+        for fix in proposed:
+            detail(f"  {fix.preview}")
+        return
 
-    # Apply fixes
-    proposed, applied = apply_safe_fixes(result.issues, dry_run=False)
+    applied = result.applied_fixes
+    if applied:
+        success(f"Applied {len(applied)} fix(es)")
+        for fix in applied:
+            detail(f"  {fix.preview}")
 
-    if not use_json:
-        if not proposed:
-            info_output("No issues to fix")
-        else:
-            # Show successful fixes
-            if applied:
-                success(f"Applied {len(applied)} fix(es)")
-                for fix in applied:
-                    detail(f"  {fix.preview}")
-
-            # Show any that failed to apply (collisions)
-            failed = [p for p in proposed if p not in applied]
-            if failed:
-                warn(f"{len(failed)} fix(es) could not be applied (collision):")
-                for fix in failed:
-                    detail(f"  {fix.preview}")
-
-    return proposed, applied
+    # A fix that did not apply hit a name collision.
+    failed = [p for p in proposed if p not in applied]
+    if failed:
+        warn(f"{len(failed)} fix(es) could not be applied (collision):")
+        for fix in failed:
+            detail(f"  {fix.preview}")
 
 
 @cli.command()
@@ -2432,32 +1847,11 @@ def scan(
     """
     use_json = should_output_json(ctx, json_output)
 
-    # Validate path exists and is a directory (handle in code for JSON envelope support)
-    if not path.exists():
-        emit_error(
-            "scan", "PathNotFoundError", f"Directory does not exist: {path}", use_json=use_json
-        )
-        raise SystemExit(1)
-
-    if not path.is_dir():
-        emit_error(
-            "scan", "NotADirectoryError", f"Path is not a directory: {path}", use_json=use_json
-        )
-        raise SystemExit(1)
-
-    # Build options from CLI flags
-    options = ScanOptions(
-        recursive=not no_recursive,
-        max_depth=max_depth,
-        include_hidden=include_hidden,
-        follow_symlinks=follow_symlinks,
-        show_all=show_all,
-        suggest_collections=suggest_collections,
-        strict=strict,
-    )
+    from portolan_cli.scan.workflow import run_scan
 
     # Pre-count directories only when progress will be displayed
     # ScanProgressReporter displays progress when: not json_mode AND stderr is TTY
+    # count_directories returns 0 for a bad path, and run_scan then reports it.
     should_show_progress = not use_json and sys.stderr.isatty()
     total_dirs = 0
     if should_show_progress:
@@ -2478,52 +1872,46 @@ def scan(
 
     try:
         with progress_reporter:
-            result = scan_directory(path, options, progress_callback=progress_reporter.advance)
-    except FileNotFoundError as err:
-        emit_error("scan", "FileNotFoundError", str(err), use_json=use_json)
+            outcome = run_scan(
+                path,
+                recursive=not no_recursive,
+                max_depth=max_depth,
+                include_hidden=include_hidden,
+                follow_symlinks=follow_symlinks,
+                show_all=show_all,
+                suggest_collections=suggest_collections,
+                strict=strict,
+                fix=fix,
+                dry_run=dry_run,
+                progress_callback=progress_reporter.advance,
+            )
+    except (FileNotFoundError, NotADirectoryError) as err:
+        # The class name is the error type: PathNotFoundError for a missing path.
+        emit_error("scan", type(err).__name__, str(err), use_json=use_json)
         raise SystemExit(1) from err
-    except NotADirectoryError as err:
-        emit_error("scan", "NotADirectoryError", str(err), use_json=use_json)
-        raise SystemExit(1) from err
-
-    # Run collection inference if requested
-    if suggest_collections and result.ready:
-        result.collection_suggestions = infer_collections(result.ready)
 
     # Warn if --dry-run is used without --fix (no effect)
     if dry_run and not fix:
         warn("--dry-run has no effect without --fix")
 
-    # Handle fix mode
-    if fix:
-        proposed, applied = _handle_fix_mode(
-            result,
-            dry_run=dry_run,
-            use_json=use_json,
-        )
-        result.proposed_fixes = proposed
-        result.applied_fixes = applied
-
-    # Determine if we should fail based on strict mode
-    # Strict mode: errors OR warnings → failure
-    # Normal mode: errors only → failure (but scan is informational, so still exit 0)
-    has_strict_failure = strict and (result.has_errors or result.warning_count > 0)
+    if fix and not use_json:
+        _print_fix_report(outcome.result, dry_run=dry_run)
 
     # Output results in appropriate format
-    _output_scan_results(
-        result,
-        use_json=use_json,
-        manual_only=manual_only,
-        show_all=show_all,
-        show_tree=show_tree,
-        strict=strict,
-        has_strict_failure=has_strict_failure,
-        elapsed_seconds=progress_reporter.elapsed_seconds,
-    )
+    if use_json:
+        _output_scan_json(outcome.to_dict(), outcome.failing_issues)
+    else:
+        _output_scan_results(
+            outcome.result,
+            manual_only=manual_only,
+            show_all=show_all,
+            show_tree=show_tree,
+            elapsed_seconds=progress_reporter.elapsed_seconds,
+        )
 
-    # Handle strict mode exit code
-    if has_strict_failure:
-        _handle_strict_mode_exit(result, use_json=use_json)
+    # Strict mode: errors OR warnings fail the command.
+    if outcome.strict_failure:
+        _handle_strict_mode_exit(outcome.result, use_json=use_json)
 
     # Normal mode: scan is informational — exit 0 even with errors
 
@@ -2554,29 +1942,21 @@ def _handle_strict_mode_exit(result: ScanResult, *, use_json: bool) -> NoReturn:
 def _output_scan_results(
     result: ScanResult,
     *,
-    use_json: bool,
     manual_only: bool,
     show_all: bool,
     show_tree: bool,
-    strict: bool,
-    has_strict_failure: bool,
     elapsed_seconds: float = 0.0,
 ) -> None:
-    """Output scan results in the appropriate format.
+    """Print human-readable scan results.
 
     Args:
         result: The scan result.
-        use_json: If True, output JSON envelope.
         manual_only: If True, show only manual-resolution issues.
         show_all: If True, show all issues without truncation.
         show_tree: If True, show directory tree view.
-        strict: If True, treat warnings as errors in JSON output.
-        has_strict_failure: If True, the scan has failed in strict mode.
         elapsed_seconds: Time elapsed during scan (for progress reporting).
     """
-    if use_json:
-        _output_scan_json(result, strict=strict, has_strict_failure=has_strict_failure)
-    elif manual_only:
+    if manual_only:
         from portolan_cli.scan.output import format_scan_output
 
         output = format_scan_output(result, manual_only=True)
@@ -2590,38 +1970,22 @@ def _output_scan_results(
         )
 
 
-def _output_scan_json(result: ScanResult, *, strict: bool, has_strict_failure: bool) -> None:
+def _output_scan_json(data: dict[str, Any], failing_issues: list[ScanIssue]) -> None:
     """Output scan results as JSON envelope.
 
+    A scan with failing issues still returns its data, in an error envelope.
+
     Args:
-        result: The scan result.
-        strict: If True, include warnings as errors.
-        has_strict_failure: If True, mark as not successful.
+        data: The envelope data, from ScanOutcome.to_dict.
+        failing_issues: The errors, plus the warnings in strict mode.
     """
-    data = result.to_dict()
-    data["summary"] = {
-        "ready_count": len(result.ready),
-        "error_count": result.error_count,
-        "warning_count": result.warning_count,
-        "skipped_count": len(result.skipped),
-    }
-    # Add fix_commands for agent consumption
-    data["fix_commands"] = format_fix_commands_json(result)
-
-    if has_strict_failure or result.has_errors:
-        # Still return data, but mark as not successful
-        # In strict mode, include warnings as errors too
-        errors = [
-            ErrorDetail(type=issue.issue_type.value, message=issue.message)
-            for issue in result.issues
-            if issue.severity == ScanSeverity.ERROR
-            or (strict and issue.severity == ScanSeverity.WARNING)
-        ]
-        envelope = error_envelope("scan", errors, data=data)
-    else:
-        envelope = success_envelope("scan", data)
-
-    output_json_envelope(envelope)
+    if not failing_issues:
+        emit_success("scan", data, use_json=True)
+        return
+    errors = [
+        ErrorDetail(type=issue.issue_type.value, message=issue.message) for issue in failing_issues
+    ]
+    output_json_envelope(error_envelope("scan", errors, data=data))
 
 
 def _print_scan_header(result: ScanResult, *, elapsed_seconds: float = 0.0) -> None:
@@ -2874,29 +2238,25 @@ def _print_next_steps(result: ScanResult) -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def _output_add_json(
-    added: list[ItemInfo],
-    skipped: list[tuple[Path, str]],
-    failures: list[AddFailure],
-) -> None:
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+
+    from portolan_cli.add import AddOutcome
+    from portolan_cli.extract.common.progress import MessageCallback
+    from portolan_cli.stac_parquet import MirrorReport
+    from portolan_cli.viz.pmtiles import PMTilesOutcome, PMTilesResult
+
+
+def _output_add_json(outcome: AddOutcome) -> None:
     """Output add command results as JSON."""
-    data = {
-        "added": [
-            {
-                "item_id": ds.item_id,
-                "collection_id": ds.collection_id,
-                "format_type": ds.format_type or "unknown",
-                "bbox": ds.bbox,
-            }
-            for ds in added
-        ],
-        "skipped": [{"path": str(p), "reason": reason} for p, reason in skipped],
-        "failures": [{"path": str(f.path), "error": f.error} for f in failures],
-    }
-    if failures:
+    data = outcome.to_dict()
+    if outcome.failures:
         envelope = error_envelope(
             "add",
-            [ErrorDetail(type="AddError", message=f"{str(f.path)}: {f.error}") for f in failures],
+            [
+                ErrorDetail(type="AddError", message=f"{f.path!s}: {f.error}")
+                for f in outcome.failures
+            ],
             data=data,
         )
     else:
@@ -3062,57 +2422,90 @@ def _output_add_human(
         _print_add_failures_batched(failures)
 
 
-def _report_skips_and_find_collections(
-    added: list[ItemInfo], skips: list[tuple[Path, str]], catalog_root: Path
-) -> tuple[set[str], set[str]]:
-    """Warn about each file that stayed out of the catalog, and find the collections to refresh.
+def _add_report(*, verbose: bool) -> MessageCallback:
+    """Return the callback that prints each library line of ``add`` as before.
 
-    The warning goes to stderr in both modes. The affected set holds the
-    collections of the added files and of the skips still in the catalog, so
-    --pmtiles works on already-tracked files. An ignored file has no
-    collection to refresh.
-
-    The versioned set holds the collections this run wrote a version for. A
-    side-step's derived asset folds into that snapshot instead of bumping a
-    second version, so one `add` stays one version. A skipped collection is
-    absent, so its backfill gets a version of its own rather than editing a
-    published snapshot.
+    A detail line is per-file detail, so it shows with --verbose only.
     """
-    from portolan_cli.add import SKIPS_THAT_TRACK
+    printers = {"success": success, "info": info_output, "warn": warn, "error": error}
 
-    affected: set[str] = set()
-    versioned: set[str] = set()
-    for a in added:
-        if a.collection_id:
-            affected.add(a.collection_id)
-            versioned.add(a.collection_id)
-    for p, reason in skips:
-        if reason not in SKIPS_THAT_TRACK:
-            warn(f"Skipping {p.name}: {reason}")
-            continue
-        # A nested collection id spans several path segments.
-        collection_dir = _resolve_collection_dir(p, catalog_root)
-        if collection_dir is not None:
-            affected.add(collection_dir.relative_to(catalog_root.resolve()).as_posix())
-    return affected, versioned
+    def report(level: str, message: str) -> None:
+        if level == "detail":
+            if verbose:
+                detail(message)
+        else:
+            printers[level](message)
+
+    return report
 
 
-def _output_add_results(
-    added: list[ItemInfo],
-    skipped: list[tuple[Path, str]],
-    failures: list[AddFailure],
-    verbose: bool,
-    use_json: bool,
-) -> None:
+def _report_add_step(step: MirrorReport | PMTilesOutcome, *, verbose: bool, use_json: bool) -> None:
+    """Print one finished side step of ``add``: the mirrors, or one collection's PMTiles."""
+    from portolan_cli.stac_parquet import MirrorReport
+
+    if isinstance(step, MirrorReport):
+        if verbose:
+            for coll_id in step.generated:
+                info_output(f"Generated items.parquet for '{coll_id}'")
+        for coll_id, exc in step.failed.items():
+            warn(f"Failed to generate parquet for '{coll_id}': {exc}")
+    elif not use_json:
+        _report_pmtiles(step, verbose=verbose)
+
+
+def _report_pmtiles(outcome: PMTilesOutcome, *, verbose: bool) -> None:
+    """Print the PMTiles of one collection, and the explicit request that failed."""
+    from portolan_cli.viz.pmtiles import PMTilesNotAvailableError
+
+    if outcome.result is not None:
+        _report_pmtiles_result(outcome.result, verbose=verbose, requested=outcome.requested)
+    elif outcome.requested:
+        pass
+    elif not isinstance(outcome.missing, PMTilesNotAvailableError):
+        warn(f"Skipping PMTiles for '{outcome.collection_id}': tippecanoe not installed")
+    elif outcome.config_enabled:
+        warn(
+            f"PMTiles enabled for '{outcome.collection_id}' "
+            "but geoparquet-io has no PMTiles support"
+        )
+    elif verbose:
+        info_output(
+            f"Skipping PMTiles for '{outcome.collection_id}': geoparquet-io has no PMTiles support"
+        )
+    if outcome.failure is not None:
+        error(outcome.failure)
+
+
+def _report_pmtiles_result(result: PMTilesResult, *, verbose: bool, requested: bool) -> None:
+    """Print the PMTiles of one collection. A failure of a request prints as the failure."""
+    for p in result.generated:
+        if p in result.older:
+            success(f"Rebuilt PMTiles: {p.name} was older than {result.sources[p].name}")
+        else:
+            success(f"Generated PMTiles: {p.name}")
+    for p in result.skipped:
+        if p in result.older:
+            warn(
+                f"Kept PMTiles: {p.name} is older than {result.sources[p].name}. "
+                "Pass --pmtiles to rebuild it."
+            )
+        elif verbose:
+            info_output(f"Skipped PMTiles: {p.name} is not older than {result.sources[p].name}")
+    if not requested:
+        for path, error_msg in result.failed:
+            warn(f"Failed to generate PMTiles for '{path}': {error_msg}")
+
+
+def _output_add_results(outcome: AddOutcome, verbose: bool, use_json: bool) -> None:
     """Output results for add command.
 
     Per Issue #175: Shows both successes and failures, enabling users to see
     all issues at once rather than stopping on the first error.
     """
     if use_json:
-        _output_add_json(added, skipped, failures)
+        _output_add_json(outcome)
     else:
-        _output_add_human(added, skipped, failures, verbose)
+        _output_add_human(outcome.added, outcome.skipped, outcome.failures, verbose)
 
 
 def _resolve_catalog_root_for_add(
@@ -3230,7 +2623,7 @@ def _check_partition_prompt(
     warn(f"Found {len(large_files)} file(s) exceeding {decision.threshold_gb} GB threshold:")
     for lf, size in large_files[:5]:  # Show first 5
         detail(f"  {lf.name} ({size:.2f} GB)")
-    if len(large_files) > 5:
+    if len(large_files) > _MAX_LARGE_FILES_SHOWN:
         detail(f"  ... and {len(large_files) - 5} more")
 
     if not click.confirm("Partition large files into spatial chunks?", default=True):
@@ -3238,32 +2631,6 @@ def _check_partition_prompt(
         return True
 
     return False
-
-
-def _generate_add_mirrors(
-    catalog_root: Path,
-    affected: set[str],
-    *,
-    generate_parquet: bool,
-    verbose: bool,
-    versioned_collections: set[str],
-    state: RunState | None = None,
-) -> None:
-    """Generate the item mirrors after ``add`` and report the outcome."""
-    from portolan_cli.stac_parquet import generate_parquet_mirrors
-
-    mirrors = generate_parquet_mirrors(
-        catalog_root,
-        affected,
-        generate_parquet=generate_parquet,
-        versioned_collections=versioned_collections,
-        state=state,
-    )
-    if verbose:
-        for coll_id in mirrors.generated:
-            info_output(f"Generated items.parquet for '{coll_id}'")
-    for coll_id, exc in mirrors.failed.items():
-        warn(f"Failed to generate parquet for '{coll_id}': {exc}")
 
 
 @cli.command("add")
@@ -3448,8 +2815,9 @@ def add_cmd(
             partitioning.prompt: true/false (default: true)
             partitioning.threshold_gb: size in GB (default: 2.0)
     """
-    from portolan_cli.add import SKIP_UNCHANGED, add_files
-    from portolan_cli.stac import MergeStrategy
+    import contextlib
+
+    from portolan_cli.add import run_add
 
     use_json = should_output_json(ctx, json_output)
 
@@ -3461,10 +2829,10 @@ def add_cmd(
     # Resolve and validate catalog root (git-style auto-detection)
     catalog_root = _resolve_catalog_root_for_add(catalog_path, use_json)
 
-    from portolan_cli.run_state import RunState
-    from portolan_cli.version_ops import commit_run
+    from portolan_core.run_state import RunState
 
     # One state for the whole command: each YAML file parses once (issue #994).
+    # run_add commits it.
     state = RunState.open(catalog_root)
 
     # Load .env so PORTOLAN_REMOTE (and other sensitive settings) reach the
@@ -3481,25 +2849,11 @@ def add_cmd(
     # For single-file adds, validate that the file is in a collection subdirectory.
     # This catches the error early with a clear message, matching pre-batch behavior.
     if len(resolved_paths) == 1 and not resolved_paths[0].is_dir():
-        single_path = resolved_paths[0]
         try:
-            resolve_collection_id(single_path, catalog_root)
+            resolve_collection_id(resolved_paths[0], catalog_root)
         except ValueError as err:
             emit_error("add", "PathError", str(err), use_json=use_json)
             raise SystemExit(1) from err
-
-    # Call add_files once with all resolved paths.
-    # We pass collection_id=None so that add_files infers the collection per-file
-    # from directory structure. This handles:
-    # - `portolan add .` (catalog-root add, multiple collections)
-    # - `portolan add file1 file2` (files from different collections)
-    # - `portolan add file1 file2` (files from same collection)
-    # Add_files deduplicates paths internally.
-    #
-    # NOTE: We intentionally do NOT do per-path collection inference in the CLI.
-    # add_files already does this correctly when collection_id=None, and batching
-    # avoids duplicate item writes when the same item directory appears via
-    # multiple CLI arguments (e.g. `portolan add. foo/data.parquet`).
 
     # Pre-count files for progress bar (unified progress output)
     # Only count when progress will be displayed:
@@ -3526,99 +2880,62 @@ def add_cmd(
         _check_partition_prompt(resolved_paths, catalog_root, state) if not use_json else False
     )
 
-    # item_datetime is parsed by Click via FLEXIBLE_DATETIME type
-    skip_reasons: dict[Path, str] = {}
-    try:
-        with progress_reporter:
-            all_added, all_skipped, all_failures = add_files(
-                paths=resolved_paths,
-                catalog_root=catalog_root,
-                collection_id=None,
-                item_id=item_id,
-                item_datetime=item_datetime,
-                on_progress=on_file_progress,
-                workers=workers,
-                force=force,
-                reconvert=reconvert,
-                skip_partitioning=skip_partitioning,
-                merge_strategy=MergeStrategy(merge_strategy),
-                skip_reasons=skip_reasons,
-                state=state,
-            )
-    except MissingLicenseError as err:
-        # Issue #686: a collection with no license fails PTL-LIC-001/002 the moment
-        # check reads it, so add refuses the write and names what to supply.
-        _fail_on_missing_license("add", err, use_json=use_json)
-    except (
-        ValueError,
-        FileNotFoundError,
-        AssetKeyCollisionError,
-        ConfigError,
-        UnknownFormatHandlerError,
-    ) as err:
-        # Issue #933: AssetKeyCollisionError is add refusing to replace one
-        # file's asset with another file. A ConfigError is a config.yaml key
-        # that add reads, such as a malformed ignored_files (#1044). An
-        # UnknownFormatHandlerError is a conversion.handlers pin to a handler
-        # that no plugin provides. Its message names the known handlers.
-        _fail_on_add_error(err, resolved_paths, use_json=use_json)
-    trace.current_span().set(elapsed_seconds=progress_reporter.elapsed_seconds)
-    # add_files gives every skip a reason. A path without one reads as unchanged.
-    skips = [(p, skip_reasons.get(p, SKIP_UNCHANGED)) for p in all_skipped]
-    affected, versioned = _report_skips_and_find_collections(all_added, skips, catalog_root)
+    @contextlib.contextmanager
+    def adding() -> Iterator[None]:
+        # Only an error from adding the files becomes an error report. An error
+        # from a side step propagates, as it always did.
+        try:
+            with progress_reporter:
+                yield
+        except MissingLicenseError as err:
+            # Issue #686: a collection with no license fails PTL-LIC-001/002 the moment
+            # check reads it, so add refuses the write and names what to supply.
+            _fail_on_missing_license("add", err, use_json=use_json)
+        except (
+            ValueError,
+            FileNotFoundError,
+            AssetKeyCollisionError,
+            ConfigError,
+            UnknownFormatHandlerError,
+        ) as err:
+            # Issue #933: AssetKeyCollisionError is add refusing to replace one
+            # file's asset with another file. A ConfigError is a config.yaml key
+            # that add reads, such as a malformed ignored_files (#1044). An
+            # UnknownFormatHandlerError is a conversion.handlers pin to a handler
+            # that no plugin provides. Its message names the known handlers.
+            _fail_on_add_error(err, resolved_paths, use_json=use_json)
+        trace.current_span().set(elapsed_seconds=progress_reporter.elapsed_seconds)
 
-    # The side steps may exit, as --pmtiles does without tippecanoe. The files
-    # that add_files finalized keep their version, so the commit runs in any case.
-    # A side step stages an asset only after it writes the file.
-    try:
-        # Handle stac-geoparquet generation BEFORE output (so JSON reflects final state).
-        # Always run it when --stac-geoparquet was passed, in every output mode.
-        with trace.span("add.mirrors"):
-            _generate_add_mirrors(
-                catalog_root,
-                affected,
-                generate_parquet=generate_parquet,
-                verbose=verbose,
-                versioned_collections=versioned,
-                state=state,
-            )
-
-        # Handle PMTiles generation BEFORE output (so JSON reflects final state)
-        from portolan_cli.viz.pmtiles import generate_or_suggest_pmtiles
-
-        with trace.span("add.pmtiles"):
-            generate_or_suggest_pmtiles(
-                catalog_root,
-                affected,
-                generate_pmtiles=generate_pmtiles,
-                force=force_pmtiles,
-                verbose=verbose,
-                use_json=use_json,
-                state=state,
-            )
-
-        # Thumbnails last, so a higher-fidelity render from the PMTiles above is
-        # adopted rather than replaced. Every geospatial collection needs a
-        # thumbnail asset to satisfy PTL-VIZ-001 (Issue #683).
-        from portolan_cli.collection_thumbnail import ensure_collection_thumbnails
-
-        ensure_collection_thumbnails(
-            catalog_root,
-            affected,
-            generate=generate_thumbnails,
-            force=force_thumbnails,
-            versioned_collections=versioned,
-            verbose=verbose,
-            state=state,
-        )
-    finally:
-        commit_run(state)
+    outcome = run_add(
+        resolved_paths,
+        catalog_root,
+        item_id=item_id,
+        item_datetime=item_datetime,
+        workers=workers,
+        generate_parquet=generate_parquet,
+        generate_pmtiles=generate_pmtiles,
+        force_pmtiles=force_pmtiles,
+        generate_thumbnails=generate_thumbnails,
+        force_thumbnails=force_thumbnails,
+        force=force,
+        reconvert=reconvert,
+        merge_strategy=merge_strategy,
+        skip_partitioning=skip_partitioning,
+        on_progress=on_file_progress,
+        adding=adding(),
+        on_message=_add_report(verbose=verbose),
+        on_step=lambda step: _report_add_step(step, verbose=verbose, use_json=use_json),
+        state=state,
+    )
+    # An explicit PMTiles request that failed exits 1 with no envelope, as before.
+    if outcome.pmtiles.failure is not None:
+        raise SystemExit(1)
 
     # Output combined results (after all processing complete)
-    _output_add_results(all_added, skips, all_failures, verbose, use_json)
+    _output_add_results(outcome, verbose, use_json)
 
     # Exit with non-zero code if any failures occurred
-    if all_failures:
+    if outcome.failures:
         raise SystemExit(1)
 
 
@@ -3730,7 +3047,7 @@ def add_external_cmd(
         except ValueError as err:
             emit_error("add-external", "UsageError", f"Invalid --bbox: {err}", use_json=use_json)
             raise SystemExit(1) from err
-        if len(parsed_bbox) != 4:
+        if len(parsed_bbox) != BBOX_2D_LEN:
             emit_error(
                 "add-external",
                 "UsageError",
@@ -3761,18 +3078,7 @@ def add_external_cmd(
         emit_error("add-external", type(err).__name__, str(err), use_json=use_json)
         raise SystemExit(1) from err
 
-    if not emit_success(
-        "add-external",
-        {
-            "collection_id": result.collection_id,
-            "collection_path": str(result.collection_path),
-            "href": result.href,
-            "media_type": result.media_type,
-            "via": result.via_url,
-            "managed": False,
-        },
-        use_json=use_json,
-    ):
+    if not emit_success("add-external", result.to_dict(), use_json=use_json):
         success(f"Registered external collection '{result.collection_id}'")
         info_output(f"  href: {result.href}")
         info_output(f"  type: {result.media_type} (external, not managed)")
@@ -3904,47 +3210,36 @@ def rm_cmd(
         portolan rm -f demographics/census.parquet  # Force delete and untrack
         portolan rm -f vectors/                     # Force remove entire directory
     """
+    from portolan_cli.remove import SafetyError, remove_path, require_force
+
     use_json = should_output_json(ctx, json_output)
 
-    # Require --force for destructive operations (unless --keep or --dry-run)
-    if not keep and not dry_run and not force:
-        emit_error(
-            "rm",
-            "SafetyError",
-            "Destructive rm requires --force flag. Use --keep to preserve files, or --dry-run to preview.",
-            use_json=use_json,
-        )
+    # Refuse a destructive rm before the catalog root lookup, as before.
+    try:
+        require_force(keep=keep, dry_run=dry_run, force=force)
+    except SafetyError as err:
+        emit_error("rm", "SafetyError", str(err), use_json=use_json)
         if not use_json:
             detail("Examples:")
             detail("  portolan rm --keep myfile.parquet  # Untrack but keep file")
             detail("  portolan rm --dry-run myfile.parquet  # Preview removal")
             detail("  portolan rm -f myfile.parquet  # Force delete")
-        raise SystemExit(1)
+        raise SystemExit(1) from err
 
     # Auto-detect catalog root (git-style)
     catalog_root = _resolve_rm_catalog_root(catalog_path, use_json)
 
+    from portolan_cli.extract.common.cli_helpers import print_message
+    from portolan_cli.report import reporting
+
     try:
-        target_path = path.resolve()
-
-        removed, skipped = remove_files(
-            paths=[target_path],
-            catalog_root=catalog_root,
-            keep=keep,
-            dry_run=dry_run,
-        )
-
-        if use_json:
-            data = {
-                "removed": [str(p) for p in removed],
-                "skipped": [str(p) for p in skipped],
-                "kept_on_disk": keep,
-                "dry_run": dry_run,
-            }
-            envelope = success_envelope("rm", data)
-            output_json_envelope(envelope)
-        else:
-            _render_rm_result(path, removed, skipped, keep, dry_run, verbose)
+        # The catalog index update reports its warnings through this scope.
+        with reporting(print_message):
+            result = remove_path(
+                path, catalog_root=catalog_root, keep=keep, dry_run=dry_run, force=force
+            )
+        if not emit_success("rm", result.to_dict(), use_json=use_json):
+            _render_rm_result(path, result.removed, result.skipped, keep, dry_run, verbose)
 
     except ValueError as err:
         emit_error("rm", "ValueError", str(err), use_json=use_json)
@@ -3999,7 +3294,7 @@ def _resolve_push_settings(
     Raises:
         SystemExit: If config.yaml contains stale sensitive settings
     """
-    from portolan_cli.config import resolve_push_settings
+    from portolan_core.config import resolve_push_settings
 
     try:
         return resolve_push_settings(destination, profile, catalog_path, collection)
@@ -4008,37 +3303,23 @@ def _resolve_push_settings(
         raise SystemExit(1) from None
 
 
-def _prepare_push_concurrency(
+def _warn_push_footprint(
     concurrency: int,
     chunk_concurrency: int,
     max_connections: int | None,
     workers: int | None,
     collection: str | None,
-    use_json: bool,
-) -> tuple[int, int]:
-    """Compute effective concurrency and warn if too high (Issue #344).
+) -> None:
+    """Warn when the connection footprint of a push is high (Issue #344)."""
+    from portolan_cli.async_utils import MAX_SAFE_CONNECTIONS, calculate_connection_footprint
+    from portolan_cli.sync.push import effective_push_concurrency
 
-    Returns:
-        Tuple of (effective_file_concurrency, effective_chunk_concurrency).
-    """
-    from portolan_cli.async_utils import (
-        MAX_SAFE_CONNECTIONS,
-        adjust_concurrency_for_max_connections,
-        calculate_connection_footprint,
+    effective_file, effective_chunk = effective_push_concurrency(
+        concurrency, chunk_concurrency, max_connections
     )
-
-    # Apply max_connections cap
-    effective_file = concurrency
-    effective_chunk = chunk_concurrency
-    if max_connections is not None:
-        effective_file, effective_chunk = adjust_concurrency_for_max_connections(
-            concurrency, chunk_concurrency, max_connections
-        )
-
-    # Warn if footprint exceeds safe threshold
     eff_workers = workers if workers is not None else (4 if collection is None else 1)
     footprint = calculate_connection_footprint(effective_file, effective_chunk, eff_workers)
-    if footprint > MAX_SAFE_CONNECTIONS and not use_json:
+    if footprint > MAX_SAFE_CONNECTIONS:
         worker_part = f"{eff_workers} workers × " if eff_workers > 1 else ""
         warn(
             f"High connection count: {footprint} concurrent connections "
@@ -4046,28 +3327,47 @@ def _prepare_push_concurrency(
             "This may overwhelm home networks. Consider using --max-connections to limit."
         )
 
-    return effective_file, effective_chunk
 
+def _report_push_error(err: Exception, *, collection: str | None, use_json: bool) -> bool:
+    """Report an error that a push raised.
 
-def _verify_payload(result: Any) -> dict[str, Any]:
-    """Return the ``--verify`` counts for a JSON envelope.
-
-    Args:
-        result: PushResult or PushAllResult.
+    A catalog-wide push reports every error by its class name. A push of one
+    collection reports its known errors, and it names any other ValueError
+    by the base class.
 
     Returns:
-        A dict with a ``verify`` key when push verified, otherwise an empty dict.
+        False when the caller must re-raise the error.
     """
-    if result.verify is None:
-        return {}
-    return {"verify": {"checked": result.verify.checked, "mismatched": result.verify.mismatched}}
+    from portolan_cli.sync.push import PushConflictError
+    from portolan_core.errors import ProfileCredentialsError, PushVerifyError
+
+    if isinstance(err, PushConflictError):
+        if use_json:
+            envelope = error_envelope(
+                "push",
+                [ErrorDetail(type="PushConflictError", message=str(err))],
+            )
+            output_json_envelope(envelope)
+        else:
+            error(f"Push conflict: {err}")
+            info_output("Use --force to overwrite, or pull remote changes first")
+        return True
+    known = (ProfileCredentialsError, PushVerifyError, FileNotFoundError, NotImplementedError)
+    if collection is not None and not isinstance(err, known):
+        if not isinstance(err, ValueError):
+            return False
+        emit_error("push", "ValueError", str(err), use_json=use_json)
+        return True
+    code = getattr(err, "code", None)
+    emit_error("push", type(err).__name__, str(err), use_json=use_json, code=code)
+    return True
 
 
 def _report_push_all_result(all_result: Any, *, use_json: bool) -> None:
     """Report the outcome of a push that covered every collection.
 
-    push_all_collections already wrote the terminal output, so this adds the
-    JSON envelope and the exit code.
+    The report lines of the run already wrote the terminal output, so this adds
+    the JSON envelope and the exit code.
 
     Args:
         all_result: PushAllResult from push_all_collections.
@@ -4077,18 +3377,7 @@ def _report_push_all_result(all_result: Any, *, use_json: bool) -> None:
         SystemExit: If any collection failed.
     """
     if use_json:
-        data = {
-            "total_collections": all_result.total_collections,
-            "successful_collections": all_result.successful_collections,
-            "failed_collections": all_result.failed_collections,
-            "total_files_uploaded": all_result.total_files_uploaded,
-            "total_versions_pushed": all_result.total_versions_pushed,
-            "dry_run": all_result.dry_run,
-            "total_would_push_files": all_result.total_would_push_files,
-            "total_would_push_versions": all_result.total_would_push_versions,
-            "collection_errors": all_result.collection_errors,
-            **_verify_payload(all_result),
-        }
+        data = all_result.to_dict()
         # A failed push returns success=false, with one error per message.
         errors: list[ErrorDetail] = []
         for name, messages in all_result.collection_errors.items():
@@ -4118,7 +3407,7 @@ def _report_push_result(result: Any, *, dry_run: bool, use_json: bool) -> None:
     """Report the outcome of a single-collection push.
 
     Args:
-        result: PushResult from push_async.
+        result: PushResult from run_push.
         dry_run: If True, the run wrote nothing.
         use_json: If True, emit a JSON envelope.
 
@@ -4133,7 +3422,7 @@ def _report_push_result(result: Any, *, dry_run: bool, use_json: bool) -> None:
             envelope = error_envelope(
                 "push",
                 [ErrorDetail(type="PushError", message=msg) for msg in err_msgs],
-                data=_verify_payload(result),
+                data=result.to_dict(),
             )
             output_json_envelope(envelope)
         else:
@@ -4141,17 +3430,7 @@ def _report_push_result(result: Any, *, dry_run: bool, use_json: bool) -> None:
                 error(err_msg)
         raise SystemExit(1)
 
-    if emit_success(
-        "push",
-        {
-            "files_uploaded": result.files_uploaded,
-            "versions_pushed": result.versions_pushed,
-            "conflicts": result.conflicts,
-            "errors": result.errors,
-            **_verify_payload(result),
-        },
-        use_json=use_json,
-    ):
+    if emit_success("push", result.to_dict(), use_json=use_json):
         return
 
     if result.versions_pushed > 0:
@@ -4292,23 +3571,32 @@ def push(
     assets and keeps the remote versions.json as is. The check compares
     sizes only. It cannot find a wrong object of the same size.
 
+    On Source Cooperative, use the repository as the bucket and put the
+    account in the endpoint. With the account as the bucket, push cannot
+    delete its backup objects, and the push fails.
+
     \b
     Examples:
+        # Push to Source Cooperative
+        export AWS_ENDPOINT_URL_S3=https://data.source.coop/my-account
+        portolan push s3://my-repository/catalog --profile source-coop
+
+    \b
         # Push a single collection
         portolan push s3://mybucket/catalog --collection demographics
         portolan push gs://mybucket/catalog -c imagery --dry-run
 
+    \b
         # Push all collections
         portolan push s3://mybucket/catalog
         portolan push --dry-run  # Uses configured remote
 
+    \b
         # Repair objects that disagree with the manifest
         portolan push s3://mybucket/catalog -c demographics --verify
     """
-    import asyncio
-
-    from portolan_cli.errors import ProfileCredentialsError, PushVerifyError
-    from portolan_cli.sync.push import PushConflictError, push_all_collections, push_async
+    from portolan_cli.sync.push import PushAllResult, run_push
+    from portolan_core.errors import ProfileCredentialsError
 
     use_json = should_output_json(ctx, json_output)
 
@@ -4356,86 +3644,51 @@ def push(
         if not credentials_ok:
             warn(credential_hint)
 
-    # Apply max_connections cap and warn about high connection count (Issue #344)
-    effective_file_conc, effective_chunk_conc = _prepare_push_concurrency(
-        concurrency, chunk_concurrency, max_connections, workers, collection, use_json
-    )
-
-    # If no collection specified, push all collections
-    if collection is None:
-        try:
-            all_result = push_all_collections(
-                catalog_root=catalog_path,
-                destination=resolved_destination,
-                force=force,
-                dry_run=dry_run,
-                profile=resolved_profile,
-                region=resolved_region,
-                workers=workers,
-                file_concurrency=effective_file_conc,
-                chunk_concurrency=effective_chunk_conc,
-                max_connections=max_connections,
-                adaptive=adaptive,
-                verbose=verbose,
-                json_mode=use_json,
-                verify=verify,
-            )
-
-            _report_push_all_result(all_result, use_json=use_json)
-            return
-
-        except Exception as err:
-            code = getattr(err, "code", None)
-            emit_error("push", type(err).__name__, str(err), use_json=use_json, code=code)
-            raise SystemExit(1) from err
+    if not use_json:
+        _warn_push_footprint(concurrency, chunk_concurrency, max_connections, workers, collection)
 
     try:
-        # Use async push for single-collection push (concurrent uploads)
-        # max_connections already applied above via effective_*_conc
-        result = asyncio.run(
-            push_async(
-                catalog_root=catalog_path,
-                collection=collection,
-                destination=resolved_destination,
-                force=force,
-                dry_run=dry_run,
-                profile=resolved_profile,
-                region=resolved_region,
-                concurrency=effective_file_conc,
-                chunk_concurrency=effective_chunk_conc,
-                adaptive=adaptive,
-                json_mode=use_json,
-                verify=verify,
-            )
+        result = run_push(
+            catalog_path,
+            resolved_destination,
+            collection=collection,
+            force=force,
+            dry_run=dry_run,
+            profile=resolved_profile,
+            region=resolved_region,
+            workers=workers,
+            concurrency=concurrency,
+            chunk_concurrency=chunk_concurrency,
+            max_connections=max_connections,
+            adaptive=adaptive,
+            verify=verify,
+            # As before #1133, only a catalog-wide push prints the per-file lines of -v.
+            verbose=verbose and collection is None,
+            report=_report,
+            # As before #1133, the bar draws on a terminal unless the output is JSON.
+            show_progress=not use_json,
         )
+    except Exception as err:
+        if not _report_push_error(err, collection=collection, use_json=use_json):
+            raise
+        raise SystemExit(1) from err
 
+    if isinstance(result, PushAllResult):
+        _report_push_all_result(result, use_json=use_json)
+    else:
         _report_push_result(result, dry_run=dry_run, use_json=use_json)
-
-    except PushConflictError as err:
-        if use_json:
-            envelope = error_envelope(
-                "push",
-                [ErrorDetail(type="PushConflictError", message=str(err))],
-            )
-            output_json_envelope(envelope)
-        else:
-            error(f"Push conflict: {err}")
-            info_output("Use --force to overwrite, or pull remote changes first")
-        raise SystemExit(1) from err
-
-    except (ProfileCredentialsError, PushVerifyError, FileNotFoundError) as err:
-        code = getattr(err, "code", None)
-        emit_error("push", type(err).__name__, str(err), use_json=use_json, code=code)
-        raise SystemExit(1) from err
-
-    except ValueError as err:
-        emit_error("push", "ValueError", str(err), use_json=use_json)
-        raise SystemExit(1) from err
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Pull command
 # ─────────────────────────────────────────────────────────────────────────────
+
+
+def _report(level: str, message: str) -> None:
+    """Print one progress line of the sync library through output.py."""
+    from portolan_cli import output
+
+    getattr(output, level)(message)
 
 
 def _output_pull_human(result: PullResult, *, dry_run: bool) -> None:
@@ -4448,74 +3701,25 @@ def _output_pull_human(result: PullResult, *, dry_run: bool) -> None:
         else:
             success(f"Pulled {result.files_downloaded} file(s)")
             detail(f"  Local: {result.local_version} -> {result.remote_version}")
+    elif result.uncommitted_changes:
+        error("Pull blocked by uncommitted changes:")
+        for filename in result.uncommitted_changes:
+            detail(f"  {filename}")
+        warn("Use --force to discard local changes")
     else:
-        if result.uncommitted_changes:
-            error("Pull blocked by uncommitted changes:")
-            for filename in result.uncommitted_changes:
-                detail(f"  {filename}")
-            warn("Use --force to discard local changes")
-        else:
-            error("Pull failed")
+        error("Pull failed")
 
 
-def _try_backend_pull(
-    catalog_path: Path,
-    remote_url: str,
-    collection: str | None,
-    dry_run: bool,
-    use_json: bool,
-) -> bool:
-    """Attempt a pull via the active non-file backend.
-
-    Returns True if the backend handled the pull (caller should return).
-    Returns False if the backend has no pull() method and the file-based pull
-    should proceed as normal.
-    """
-    from portolan_cli.version_ops import try_backend_pull
-
-    result = try_backend_pull(catalog_path, remote_url, collection, dry_run)
-    if not result.handled:
-        return False
-
-    if use_json:
-        data = {
-            "files_downloaded": result.files_downloaded,
-            "files_skipped": result.files_skipped,
-            "local_version": result.local_version,
-            "remote_version": result.remote_version,
-            "up_to_date": result.up_to_date,
-        }
-        if result.success:
-            envelope = success_envelope("pull", data)
-        else:
-            envelope = error_envelope(
-                "pull",
-                [ErrorDetail(type="PullError", message="Pull failed")],
-                data=data,
+def _single_pull_errors(result: PullResult) -> list[ErrorDetail]:
+    """Return the envelope errors of a failed pull of one collection."""
+    if result.uncommitted_changes:
+        return [
+            ErrorDetail(
+                type="UncommittedChangesError",
+                message=f"Uncommitted changes: {', '.join(result.uncommitted_changes)}",
             )
-        output_json_envelope(envelope)
-    else:
-        # Create a minimal PullResult-like object for _output_pull_human
-        from types import SimpleNamespace
-        from typing import cast
-
-        pull_result = cast(
-            "PullResult",
-            SimpleNamespace(
-                success=result.success,
-                files_downloaded=result.files_downloaded,
-                files_skipped=result.files_skipped,
-                local_version=result.local_version,
-                remote_version=result.remote_version,
-                up_to_date=result.up_to_date,
-                uncommitted_changes=[],
-            ),
-        )
-        _output_pull_human(pull_result, dry_run=dry_run)
-
-    if not result.success:
-        raise SystemExit(1)
-    return True
+        ]
+    return [ErrorDetail(type="PullError", message="Pull failed")]
 
 
 @cli.command()
@@ -4613,8 +3817,7 @@ def pull_command(
         portolan pull s3://mybucket/catalog
         portolan pull s3://mybucket/catalog --workers 4
     """
-    from portolan_cli.sync.pull import pull as pull_fn
-    from portolan_cli.sync.pull import pull_all_collections
+    from portolan_cli.sync.pull import BackendPull, PullAllResult, pull_catalog
 
     use_json = should_output_json(ctx, json_output)
 
@@ -4633,110 +3836,50 @@ def pull_command(
         emit_error("pull", "ConfigError", str(e), use_json=use_json)
         raise SystemExit(1) from None
 
-    # Route to backend-specific pull if using non-file backend
-    if collection is not None and _try_backend_pull(
-        catalog_path, remote_url, collection, dry_run, use_json
-    ):
-        return
-
-    # Catalog-wide pull (no --collection specified)
-    if collection is None:
-        try:
-            all_result = pull_all_collections(
-                remote_url=remote_url,
-                local_root=catalog_path,
-                force=force,
-                dry_run=dry_run,
-                restore=restore,
-                profile=resolved_profile,
-                workers=workers,
-                file_concurrency=concurrency,
-            )
-
-            if use_json:
-                data = {
-                    "total_collections": all_result.total_collections,
-                    "successful_collections": all_result.successful_collections,
-                    "failed_collections": all_result.failed_collections,
-                    "total_files_downloaded": all_result.total_files_downloaded,
-                    "collection_errors": all_result.collection_errors,
-                }
-
-                if all_result.success:
-                    envelope = success_envelope("pull", data)
-                else:
-                    errors = [
-                        ErrorDetail(
-                            type="PullError",
-                            message=f"{coll}: {', '.join(errs)}",
-                        )
-                        for coll, errs in all_result.collection_errors.items()
-                    ]
-                    envelope = error_envelope("pull", errors, data=data)
-
-                output_json_envelope(envelope)
-
-            if not all_result.success:
-                raise SystemExit(1)
-
-            return
-
-        except Exception as err:
-            emit_error("pull", type(err).__name__, str(err), use_json=use_json)
-            raise SystemExit(1) from err
-
-    # Single collection pull
+    # A catalog-wide pull reports any error. A one-collection pull reports
+    # these two and lets the others propagate.
+    caught: tuple[type[Exception], ...] = (
+        (Exception,) if collection is None else (FileNotFoundError, ValueError)
+    )
     try:
-        single_result = pull_fn(
-            remote_url=remote_url,
-            local_root=catalog_path,
-            collection=collection,
+        result = pull_catalog(
+            remote_url,
+            catalog_path,
+            collection,
             force=force,
             dry_run=dry_run,
             restore=restore,
             profile=resolved_profile,
+            workers=workers,
             concurrency=concurrency,
+            report=_report,
+            show_progress=True,  # As before #1133: the bar draws on a terminal in every output mode.
         )
+    except caught as err:
+        error_type = type(err).__name__
+        if collection is not None:
+            error_type = "FileNotFoundError" if isinstance(err, FileNotFoundError) else "ValueError"
+        emit_error("pull", error_type, str(err), use_json=use_json)
+        raise SystemExit(1) from err
 
-        if use_json:
-            data = {
-                "files_downloaded": single_result.files_downloaded,
-                "files_skipped": single_result.files_skipped,
-                "files_restored": single_result.files_restored,
-                "local_version": single_result.local_version,
-                "remote_version": single_result.remote_version,
-                "up_to_date": single_result.up_to_date,
-            }
-
-            if single_result.success:
-                envelope = success_envelope("pull", data)
-            else:
-                errors = []
-                if single_result.uncommitted_changes:
-                    errors.append(
-                        ErrorDetail(
-                            type="UncommittedChangesError",
-                            message=f"Uncommitted changes: {', '.join(single_result.uncommitted_changes)}",
-                        )
-                    )
-                else:
-                    errors.append(ErrorDetail(type="PullError", message="Pull failed"))
-                envelope = error_envelope("pull", errors, data=data)
-
-            output_json_envelope(envelope)
+    outcome = result.result if isinstance(result, BackendPull) else result
+    if outcome.success:
+        emit_success("pull", result.to_dict(), use_json=use_json)
+    elif use_json:
+        if isinstance(outcome, PullAllResult):
+            errors = [
+                ErrorDetail(type="PullError", message=f"{coll}: {', '.join(errs)}")
+                for coll, errs in outcome.collection_errors.items()
+            ]
         else:
-            _output_pull_human(single_result, dry_run=dry_run)
+            errors = _single_pull_errors(outcome)
+        output_json_envelope(error_envelope("pull", errors, data=result.to_dict()))
 
-        if not single_result.success:
-            raise SystemExit(1)
+    if not use_json and not isinstance(outcome, PullAllResult):
+        _output_pull_human(outcome, dry_run=dry_run)
 
-    except FileNotFoundError as err:
-        emit_error("pull", "FileNotFoundError", str(err), use_json=use_json)
-        raise SystemExit(1) from err
-
-    except ValueError as err:
-        emit_error("pull", "ValueError", str(err), use_json=use_json)
-        raise SystemExit(1) from err
+    if not outcome.success:
+        raise SystemExit(1)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -4807,8 +3950,8 @@ def sync(
         portolan sync s3://mybucket/catalog -c data --profile prod
         portolan sync --collection demographics  # Uses configured remote
     """
-    from portolan_cli.errors import ProfileCredentialsError
     from portolan_cli.sync.core import sync as sync_fn
+    from portolan_core.errors import ProfileCredentialsError
 
     use_json = should_output_json(ctx, json_output)
 
@@ -4844,53 +3987,31 @@ def sync(
             fix=fix,
             profile=resolved_profile,
             region=resolved_region,
+            report=_report,
+            show_progress=True,  # As before #1133: the bar draws on a terminal in every output mode.
         )
     except ProfileCredentialsError as err:
         emit_error("sync", type(err).__name__, str(err), use_json=use_json, code=err.code)
         raise SystemExit(1) from err
 
     if use_json:
-        data: dict[str, Any] = {
-            "init_performed": result.init_performed,
-            "errors": result.errors,
-        }
-
-        # Include pull results if available
-        if result.pull_result is not None:
-            data["pull"] = {
-                "files_downloaded": result.pull_result.files_downloaded,
-                "files_skipped": result.pull_result.files_skipped,
-                "up_to_date": result.pull_result.up_to_date,
-                "local_version": result.pull_result.local_version,
-                "remote_version": result.pull_result.remote_version,
-            }
-
-        # Include push results if available
-        if result.push_result is not None:
-            data["push"] = {
-                "files_uploaded": result.push_result.files_uploaded,
-                "versions_pushed": result.push_result.versions_pushed,
-                "conflicts": result.push_result.conflicts,
-            }
-
         if result.success:
-            envelope = success_envelope("sync", data)
+            envelope = success_envelope("sync", result.to_dict())
         else:
             errors = [ErrorDetail(type="SyncError", message=err_msg) for err_msg in result.errors]
-            envelope = error_envelope("sync", errors, data=data)
+            envelope = error_envelope("sync", errors, data=result.to_dict())
 
         output_json_envelope(envelope)
-    else:
-        # Human-readable output is already printed by sync()
-        # Just handle the final status
-        if result.success:
-            if dry_run:
-                info_output("[DRY RUN] Sync completed successfully")
-            else:
-                success("Sync completed successfully")
+    # sync() reported each step through _report.
+    # Just handle the final status
+    elif result.success:
+        if dry_run:
+            info_output("[DRY RUN] Sync completed successfully")
         else:
-            # Errors already logged by sync() - just emit final status
-            error("Sync failed")
+            success("Sync completed successfully")
+    else:
+        # Errors already logged by sync() - just emit final status
+        error("Sync failed")
 
     if not result.success:
         raise SystemExit(1)
@@ -4961,8 +4082,8 @@ def clone(
         # Clone specific collection with profile
         portolan clone s3://mybucket/catalog ./data -c imagery --profile prod
     """
-    from portolan_cli.sync.core import clone as clone_fn
-    from portolan_cli.sync.core import infer_local_path_from_url
+    from portolan_cli.sync.transport import clone as clone_fn
+    from portolan_cli.sync.transport import infer_local_path_from_url
 
     use_json = should_output_json(ctx, json_output)
 
@@ -4989,23 +4110,13 @@ def clone(
         local_path=local_path,
         collection=collection,
         profile=resolved_profile,
+        report=_report,
+        show_progress=True,  # As before #1133: the bar draws on a terminal in every output mode.
     )
 
     if use_json:
-        data: dict[str, Any] = {
-            "local_path": str(result.local_path),
-            "collections_cloned": result.collections_cloned,
-            "total_files_downloaded": result.total_files_downloaded,
-        }
-
-        if result.pull_result is not None:
-            data["pull"] = {
-                "files_downloaded": result.pull_result.files_downloaded,
-                "remote_version": result.pull_result.remote_version,
-            }
-
         if result.success:
-            envelope = success_envelope("clone", data)
+            envelope = success_envelope("clone", result.to_dict())
         else:
             errors = [
                 ErrorDetail(type="CloneError", message=err, code="CLONE_FAILED")
@@ -5014,21 +4125,20 @@ def clone(
             envelope = error_envelope("clone", errors)
 
         output_json_envelope(envelope)
-    else:
-        if result.success:
-            if result.collections_cloned:
-                success(
-                    f"Clone completed: {result.local_path} "
-                    f"({len(result.collections_cloned)} collection(s), "
-                    f"{result.total_files_downloaded} file(s))"
-                )
-            else:
-                success(f"Clone completed: {result.local_path}")
+    elif result.success:
+        if result.collections_cloned:
+            success(
+                f"Clone completed: {result.local_path} "
+                f"({len(result.collections_cloned)} collection(s), "
+                f"{result.total_files_downloaded} file(s))"
+            )
         else:
-            if result.errors:
-                for err_msg in result.errors:
-                    error(err_msg)
-            error("Clone failed")
+            success(f"Clone completed: {result.local_path}")
+    else:
+        if result.errors:
+            for err_msg in result.errors:
+                error(err_msg)
+        error("Clone failed")
 
     if not result.success:
         raise SystemExit(1)
@@ -5097,7 +4207,7 @@ def config_set(
         portolan config set conversion.vector.sort none
         portolan config set pmtiles.enabled false --collection demographics
     """
-    from portolan_cli.config import set_setting
+    from portolan_core.config import store_setting
 
     use_json = should_output_json(ctx, json_output)
 
@@ -5116,30 +4226,24 @@ def config_set(
         raise SystemExit(1)
 
     try:
-        stored = set_setting(catalog_path, key, value, collection=collection)
-
+        result = store_setting(catalog_path, key, value, collection)
+    except (ConfigError, OSError, ValueError) as e:
         if use_json:
-            data = {"key": key, "value": stored}
-            if collection:
-                data["collection"] = collection
-            envelope = success_envelope("config set", data)
-            output_json_envelope(envelope)
-        else:
-            if collection:
-                success(f"Set {key}={value} for collection '{collection}'")
-            else:
-                success(f"Set {key}={value}")
-
-    except Exception as e:
-        if use_json:
+            code = e.code if isinstance(e, ConfigError) else None
             envelope = error_envelope(
                 "config set",
-                [ErrorDetail(type=type(e).__name__, message=str(e))],
+                [ErrorDetail(type=type(e).__name__, message=str(e), code=code)],
             )
             output_json_envelope(envelope)
         else:
             error(f"Failed to set config: {e}")
         raise SystemExit(1) from e
+
+    if not emit_success("config set", result.to_dict(), use_json=use_json):
+        if collection:
+            success(f"Set {key}={value} for collection '{collection}'")
+        else:
+            success(f"Set {key}={value}")
 
 
 def _config_catalog_root(command: str, *, use_json: bool) -> Path:
@@ -5182,8 +4286,8 @@ def config_get(ctx: click.Context, json_output: bool, key: str, collection: str 
         portolan config get remote
         portolan config get aws_profile --collection restricted
     """
-    from portolan_cli.config import _get_env_var_name, get_setting, get_setting_source
-    from portolan_cli.run_state import RunState
+    from portolan_core.config import _get_env_var_name, read_setting
+    from portolan_core.run_state import RunState
 
     use_json = should_output_json(ctx, json_output)
 
@@ -5193,27 +4297,19 @@ def config_get(ctx: click.Context, json_output: bool, key: str, collection: str 
         # Load .env for credential precedence
         state = RunState.open(catalog_path)
         load_dotenv_and_warn_sensitive(catalog_path, state=state)
-        value = get_setting(key, catalog_path=catalog_path, collection=collection, state=state)
-        source = get_setting_source(key, catalog_path, collection, state=state)
-    except (ConfigError, ValueError) as e:
-        error_type = type(e).__name__ if isinstance(e, ConfigError) else "ConfigError"
-        emit_error("config get", error_type, str(e), use_json=use_json)
+        result = read_setting(key, catalog_path, collection, state=state)
+    except ConfigError as e:
+        emit_error("config get", type(e).__name__, str(e), use_json=use_json, code=e.code)
+        raise SystemExit(1) from None
+    except ValueError as e:
+        # A sensitive key in config.yaml. The envelope reports it as a
+        # ConfigError with the plain message, as before the move.
+        emit_error("config get", "ConfigError", str(e), use_json=use_json)
         raise SystemExit(1) from None
 
-    if use_json:
-        data = {
-            "key": key,
-            "value": value,
-            "source": source,
-        }
-        if collection:
-            data["collection"] = collection
-        envelope = success_envelope("config get", data)
-        output_json_envelope(envelope)
-    else:
-        if value is not None:
-            source_label = f"(from {source})"
-            success(f"{key}={value} {source_label}")
+    if not emit_success("config get", result.to_dict(), use_json=use_json):
+        if result.value is not None:
+            success(f"{key}={result.value} (from {result.source})")
         else:
             info_output(f"{key} is not set")
             detail(f"  Set via: portolan config set {key} <value>")
@@ -5240,8 +4336,8 @@ def config_list(ctx: click.Context, json_output: bool, collection: str | None) -
         portolan config list
         portolan config list --collection demographics
     """
-    from portolan_cli.config import list_settings
-    from portolan_cli.run_state import RunState
+    from portolan_core.config import read_settings
+    from portolan_core.run_state import RunState
 
     use_json = should_output_json(ctx, json_output)
 
@@ -5251,18 +4347,13 @@ def config_list(ctx: click.Context, json_output: bool, collection: str | None) -
         # Load .env for credential precedence
         state = RunState.open(catalog_path)
         load_dotenv_and_warn_sensitive(catalog_path, state=state)
-        settings = list_settings(catalog_path, collection=collection, state=state)
+        result = read_settings(catalog_path, collection, state=state)
     except ConfigError as e:
-        emit_error("config list", type(e).__name__, str(e), use_json=use_json)
+        emit_error("config list", type(e).__name__, str(e), use_json=use_json, code=e.code)
         raise SystemExit(1) from None
 
-    if use_json:
-        data: dict[str, Any] = {"settings": settings}
-        if collection:
-            data["collection"] = collection
-        envelope = success_envelope("config list", data)
-        output_json_envelope(envelope)
-    else:
+    settings = result.settings
+    if not emit_success("config list", result.to_dict(), use_json=use_json):
         if not settings:
             info_output("No configuration settings found")
             detail("  Set values with: portolan config set <key> <value>")
@@ -5300,7 +4391,7 @@ def config_unset(ctx: click.Context, json_output: bool, key: str, collection: st
         portolan config unset remote
         portolan config unset aws_profile --collection restricted
     """
-    from portolan_cli.config import unset_setting
+    from portolan_core.config import clear_setting
 
     use_json = should_output_json(ctx, json_output)
 
@@ -5319,28 +4410,21 @@ def config_unset(ctx: click.Context, json_output: bool, key: str, collection: st
         raise SystemExit(1)
 
     try:
-        removed = unset_setting(catalog_path, key, collection=collection)
+        result = clear_setting(catalog_path, key, collection)
     except ConfigError as e:
-        emit_error("config unset", type(e).__name__, str(e), use_json=use_json)
+        emit_error("config unset", type(e).__name__, str(e), use_json=use_json, code=e.code)
         raise SystemExit(1) from None
 
-    if use_json:
-        data = {"key": key, "removed": removed}
-        if collection:
-            data["collection"] = collection
-        envelope = success_envelope("config unset", data)
-        output_json_envelope(envelope)
-    else:
-        if removed:
+    if not emit_success("config unset", result.to_dict(), use_json=use_json):
+        if result.removed:
             if collection:
                 success(f"Removed {key} from collection '{collection}' config")
             else:
                 success(f"Removed {key} from config")
+        elif collection:
+            info_output(f"{key} was not set in collection '{collection}' config")
         else:
-            if collection:
-                info_output(f"{key} was not set in collection '{collection}' config")
-            else:
-                info_output(f"{key} was not set in config")
+            info_output(f"{key} was not set in config")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -5395,7 +4479,7 @@ def clean(ctx: click.Context, json_output: bool, dry_run: bool) -> None:
         portolan clean           # Remove all metadata
         portolan clean --dry-run # Preview what would be removed
     """
-    from portolan_cli.clean import clean_catalog
+    from portolan_cli.clean import clean_metadata
 
     use_json = should_output_json(ctx, json_output)
 
@@ -5419,44 +4503,7 @@ def clean(ctx: click.Context, json_output: bool, dry_run: bool) -> None:
         raise SystemExit(1)
 
     try:
-        if dry_run:
-            # Preview mode - use clean_catalog with dry_run=True
-            files_to_remove, dirs_to_remove, data_files = clean_catalog(catalog_path, dry_run=True)
-
-            if use_json:
-                data: dict[str, Any] = {
-                    "would_remove_files": [
-                        str(f.relative_to(catalog_path)) for f in files_to_remove
-                    ],
-                    "would_remove_directories": [
-                        str(d.relative_to(catalog_path)) for d in dirs_to_remove
-                    ],
-                    "data_files_preserved": data_files,
-                    "dry_run": True,
-                }
-                envelope = success_envelope("clean", data)
-                output_json_envelope(envelope)
-            else:
-                _print_clean_preview(catalog_path, files_to_remove, dirs_to_remove, data_files)
-        else:
-            # Actually clean
-            files_removed, dirs_removed, data_files = clean_catalog(catalog_path)
-
-            if use_json:
-                data = {
-                    "files_removed": [str(f.relative_to(catalog_path)) for f in files_removed],
-                    "directories_removed": [str(d.relative_to(catalog_path)) for d in dirs_removed],
-                    "data_files_preserved": data_files,
-                }
-                envelope = success_envelope("clean", data)
-                output_json_envelope(envelope)
-            else:
-                if files_removed or dirs_removed:
-                    success(f"Removed {len(files_removed)} files, {len(dirs_removed)} directories")
-                    detail(f"  Data files preserved: {data_files}")
-                else:
-                    info_output("Nothing to clean - no metadata files found")
-
+        result = clean_metadata(catalog_path, dry_run=dry_run)
     except OSError as e:
         if use_json:
             envelope = error_envelope(
@@ -5467,6 +4514,18 @@ def clean(ctx: click.Context, json_output: bool, dry_run: bool) -> None:
         else:
             error(f"Failed to clean catalog: {e}")
         raise SystemExit(1) from e
+
+    if emit_success("clean", result.to_dict(), use_json=use_json):
+        return
+    if dry_run:
+        _print_clean_preview(
+            catalog_path, result.files, result.directories, result.data_files_preserved
+        )
+    elif result.files or result.directories:
+        success(f"Removed {len(result.files)} files, {len(result.directories)} directories")
+        detail(f"  Data files preserved: {result.data_files_preserved}")
+    else:
+        info_output("Nothing to clean - no metadata files found")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -5530,75 +4589,26 @@ def metadata_init(
         portolan metadata init --no-recursive     # Only at catalog root
         portolan metadata init demographics --no-recursive  # Only for collection
     """
-    from portolan_cli.metadata_yaml import generate_metadata_template
+    from portolan_cli.metadata.yaml_tree import init_metadata_templates
+    from portolan_core.errors import PathNotFoundError
 
     use_json = should_output_json(ctx, json_output)
-
-    # Find catalog root
-    catalog_path = find_catalog_root()
-    if catalog_path is None:
-        if use_json:
-            envelope = error_envelope(
-                "metadata init",
-                [
-                    ErrorDetail(
-                        type="CatalogNotFoundError",
-                        message="Not inside a Portolan catalog. Run 'portolan init' first.",
-                    )
-                ],
-            )
-            output_json_envelope(envelope)
-        else:
-            error("Not inside a Portolan catalog")
-            info_output("Run 'portolan init' to create one")
-        raise SystemExit(1)
-
-    # Handle recursive mode (default) vs single-path mode
-    if not no_recursive:
-        _metadata_init_recursive(catalog_path, path, use_json, force)
-        return
-
-    # Determine target directory (rejecting paths that escape the catalog)
-    target_dir = _validate_path_within_catalog(catalog_path, path, use_json, "metadata init")
-
-    # Create .portolan directory if needed
-    portolan_dir = target_dir / ".portolan"
-    portolan_dir.mkdir(parents=True, exist_ok=True)
-
-    # Check for existing file
-    metadata_file = portolan_dir / "metadata.yaml"
-    file_existed = metadata_file.exists()
-    if file_existed and not force:
-        if use_json:
-            envelope = error_envelope(
-                "metadata init",
-                [
-                    ErrorDetail(
-                        type="FileExistsError",
-                        message=f"metadata.yaml already exists at {metadata_file}. Use --force to overwrite.",
-                    )
-                ],
-            )
-            output_json_envelope(envelope)
-        else:
-            warn(f"metadata.yaml already exists at {metadata_file}")
-            info_output("Use --force to overwrite")
-        raise SystemExit(1)
-
-    # Generate and write template
-    template = generate_metadata_template()
-    metadata_file.write_text(template, encoding="utf-8")
-
-    if use_json:
-        relative_path = str(metadata_file.relative_to(catalog_path))
-        envelope = success_envelope(
-            "metadata init",
-            {"path": relative_path, "overwritten": force and file_existed},
+    catalog_path = _metadata_catalog_root("metadata init", use_json)
+    try:
+        result = init_metadata_templates(
+            catalog_path, path, force=force, recursive=not no_recursive
         )
-        output_json_envelope(envelope)
-    else:
-        success(f"Created {metadata_file.relative_to(catalog_path)}")
-        info_output("Edit the file to add your catalog's metadata")
+    except FileExistsError as err:
+        if use_json:
+            emit_error("metadata init", type(err).__name__, str(err), use_json=True)
+        else:
+            warn(str(err))
+        raise SystemExit(1) from err
+    except (InputValidationError, PathNotFoundError, NotADirectoryError, PermissionError) as err:
+        _fail_walk("metadata init", err, use_json)
+
+    if not emit_success("metadata init", result.to_dict(), use_json=use_json):
+        _print_metadata_init(result)
 
 
 @metadata.command("validate")
@@ -5634,17 +4644,44 @@ def metadata_validate(
         portolan metadata validate --no-recursive     # Only at catalog root
         portolan metadata validate demographics --no-recursive  # Only for collection
     """
-    from portolan_cli.errors import ConfigInvalidStructureError
-    from portolan_cli.metadata_yaml import load_and_validate_metadata
+    from portolan_cli.metadata.yaml_tree import validate_metadata_files
+    from portolan_core.errors import ConfigInvalidStructureError, PathNotFoundError
 
     use_json = should_output_json(ctx, json_output)
+    catalog_path = _metadata_catalog_root("metadata validate", use_json)
+    try:
+        result = validate_metadata_files(catalog_path, path, recursive=not no_recursive)
+    except ConfigInvalidStructureError as err:
+        _fail_invalid_yaml("metadata validate", err, use_json)
+    except (InputValidationError, PathNotFoundError, NotADirectoryError, PermissionError) as err:
+        _fail_walk("metadata validate", err, use_json)
 
-    # Find catalog root
+    if use_json:
+        _emit_metadata_validate(result)
+    else:
+        _print_metadata_validate(result)
+    if not result.valid:
+        raise SystemExit(1)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# README Command
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+if TYPE_CHECKING:
+    from portolan_cli.metadata.yaml_tree import MetadataInitResult, MetadataValidateResult
+    from portolan_cli.readme import ReadmeRunResult
+    from portolan_core.errors import ConfigInvalidStructureError
+
+
+def _metadata_catalog_root(command: str, use_json: bool) -> Path:
+    """Find the catalog root for a metadata or readme command, or exit 1."""
     catalog_path = find_catalog_root()
     if catalog_path is None:
         if use_json:
             envelope = error_envelope(
-                "metadata validate",
+                command,
                 [
                     ErrorDetail(
                         type="CatalogNotFoundError",
@@ -5657,650 +4694,109 @@ def metadata_validate(
             error("Not inside a Portolan catalog")
             info_output("Run 'portolan init' to create one")
         raise SystemExit(1)
+    return catalog_path
 
-    # Handle recursive mode (default) vs single-path mode
-    if not no_recursive:
-        _metadata_validate_recursive(catalog_path, path, use_json)
-        return
 
-    # Single-path validation (--no-recursive)
-    target_dir = _validate_path_within_catalog(catalog_path, path, use_json, "metadata validate")
+def _fail_walk(command: str, err: Exception, use_json: bool) -> NoReturn:
+    """Report an error that stopped a catalog walk, and exit 1."""
+    emit_error(command, type(err).__name__, str(err), use_json=use_json)
+    raise SystemExit(1) from err
 
-    # Load and validate
-    try:
-        _metadata, errors = load_and_validate_metadata(target_dir, catalog_path)
-    except ConfigInvalidStructureError as err:
-        if use_json:
-            envelope = error_envelope(
-                "metadata validate",
-                [ErrorDetail(type="InvalidYAMLError", message=str(err))],
-            )
-            output_json_envelope(envelope)
-        else:
-            error(f"Invalid YAML in metadata.yaml: {err}")
-        raise SystemExit(1) from err
 
+def _fail_invalid_yaml(command: str, err: ConfigInvalidStructureError, use_json: bool) -> NoReturn:
+    """Report a metadata.yaml that does not parse, and exit 1."""
     if use_json:
-        if errors:
-            envelope = error_envelope(
-                "metadata validate",
-                [ErrorDetail(type="ValidationError", message=e) for e in errors],
-                data={"valid": False, "errors": errors, "path": str(path or ".")},
-            )
-            output_json_envelope(envelope)
-            raise SystemExit(1)
-        envelope = success_envelope(
-            "metadata validate",
-            {"valid": True, "errors": [], "path": str(path or ".")},
+        output_json_envelope(
+            error_envelope(command, [ErrorDetail(type="InvalidYAMLError", message=str(err))])
         )
-        output_json_envelope(envelope)
     else:
+        error(f"Invalid YAML in metadata.yaml: {err}")
+    raise SystemExit(1) from err
+
+
+def _print_metadata_init(result: MetadataInitResult) -> None:
+    """Print what a metadata init run created, skipped, and could not write."""
+    if not result.recursive:
+        success(f"Created {result.created[0]}")
+        info_output("Edit the file to add your catalog's metadata")
+        return
+    if result.created:
+        success(f"Created {len(result.created)} metadata.yaml template(s)")
+        for path in result.created:
+            detail(f"  {path}")
+    if result.skipped:
+        info_output(f"Skipped {len(result.skipped)} existing file(s)")
+    if result.permission_errors:
+        warn(f"Permission denied for {len(result.permission_errors)} location(s)")
+        for path in result.permission_errors:
+            detail(f"  {path}")
+    if not result.created and not result.skipped and not result.permission_errors:
+        warn("No catalogs or collections found")
+
+
+def _emit_metadata_validate(result: MetadataValidateResult) -> None:
+    """Emit the JSON envelope of a metadata validate run."""
+    if result.valid:
+        output_json_envelope(success_envelope("metadata validate", result.to_dict()))
+        return
+    prefix = "{path}: " if result.recursive else ""
+    errors = [
+        ErrorDetail(type="ValidationError", message=prefix.format(path=v.path) + e)
+        for v in result.validations
+        for e in v.errors
+    ]
+    output_json_envelope(error_envelope("metadata validate", errors, data=result.to_dict()))
+
+
+def _print_metadata_validate(result: MetadataValidateResult) -> None:
+    """Print the outcome of a metadata validate run."""
+    if not result.recursive:
+        errors = result.validations[0].errors
         if errors:
             error(f"Validation failed with {len(errors)} error(s):")
             for validation_err in errors:
                 detail(f"  - {validation_err}")
-            raise SystemExit(1)
-        success("Metadata is valid")
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# README Command
-# ─────────────────────────────────────────────────────────────────────────────
-
-
-def _verbose_readme(msg: str, verbose: bool, use_json: bool) -> None:
-    """Output verbose message for readme command (if enabled and not JSON mode)."""
-    if verbose and not use_json:
-        info_output(msg)
-
-
-def _verbose_readme_files(
-    dirpath: Path,
-    rel_dir: str,
-    stac_file: str,
-    verbose: bool,
-    use_json: bool,
-) -> None:
-    """Output verbose file-read messages for a STAC directory."""
-    dir_suffix = "/" if rel_dir != "catalog root" else ""
-    _verbose_readme(f"Reading {stac_file} from {rel_dir}{dir_suffix}", verbose, use_json)
-    if (dirpath / ".portolan" / "metadata.yaml").exists():
-        metadata_loc = ".portolan/" if rel_dir == "catalog root" else f"{rel_dir}/.portolan/"
-        _verbose_readme(f"Reading metadata.yaml from {metadata_loc}", verbose, use_json)
-
-
-def _generate_readme_content(
-    target_dir: Path,
-    catalog_path: Path,
-    use_json: bool,
-    verbose: bool = False,
-) -> tuple[str, bool]:
-    """Generate README content for a target directory.
-
-    Args:
-        target_dir: Directory to generate README for.
-        catalog_path: Root catalog path.
-        use_json: Whether to output errors as JSON.
-        verbose: Whether to show detailed output.
-
-    Returns:
-        Tuple of (readme_content, is_catalog_root).
-
-    Raises:
-        SystemExit: On YAML parse errors.
-    """
-    from portolan_cli.config import load_merged_metadata
-    from portolan_cli.errors import ConfigInvalidStructureError
-    from portolan_cli.readme import (
-        generate_catalog_readme,
-        generate_readme,
-        load_collection_stac,
-    )
-
-    # Compute relative path for display
-    try:
-        rel_dir = target_dir.relative_to(catalog_path)
-        display_dir = str(rel_dir) if str(rel_dir) != "." else ""
-    except ValueError:
-        display_dir = str(target_dir)
-    dir_prefix = f"{display_dir}/" if display_dir else ""
-
-    # Check if at catalog root (has catalog.json, not collection.json)
-    is_catalog_root = (target_dir / "catalog.json").exists() and not (
-        target_dir / "collection.json"
-    ).exists()
-
-    if is_catalog_root:
-        _verbose_readme(
-            f"Reading catalog.json from {dir_prefix or 'catalog root'}", verbose, use_json
-        )
-        if (target_dir / ".portolan" / "metadata.yaml").exists():
-            _verbose_readme(f"Reading metadata.yaml from {dir_prefix}.portolan/", verbose, use_json)
-        _verbose_readme("Generating README.md", verbose, use_json)
-        return generate_catalog_readme(target_dir), True
-
-    # Load STAC (collection.json, with its items, or catalog.json)
-    stac: dict[str, Any] = {}
-    for stac_file in ["collection.json", "catalog.json"]:
-        stac_path = target_dir / stac_file
-        if stac_path.exists():
-            _verbose_readme(
-                f"Reading {stac_file} from {dir_prefix or 'catalog root'}", verbose, use_json
-            )
-            # Collections load through load_collection_stac so their items come
-            # too; the README renders band and file metadata that lives only on
-            # item assets (issue #713).
-            if stac_file == "collection.json":
-                stac = load_collection_stac(target_dir)
-            else:
-                stac = json.loads(stac_path.read_text(encoding="utf-8"))
-            break
-
-    # Load merged metadata
-    try:
-        if (target_dir / ".portolan" / "metadata.yaml").exists():
-            _verbose_readme(f"Reading metadata.yaml from {dir_prefix}.portolan/", verbose, use_json)
-        metadata_dict = load_merged_metadata(target_dir, catalog_path)
-    except ConfigInvalidStructureError as err:
-        if use_json:
-            envelope = error_envelope(
-                "readme",
-                [ErrorDetail(type="InvalidYAMLError", message=str(err))],
-            )
-            output_json_envelope(envelope)
         else:
-            error(f"Invalid YAML in metadata.yaml: {err}")
-        raise SystemExit(1) from err
-
-    _verbose_readme("Generating README.md", verbose, use_json)
-
-    return generate_readme(stac=stac, metadata=metadata_dict), False
-
-
-def _recursive_init_error(use_json: bool, command: str, error_type: str, message: str) -> None:
-    """Output error for a recursive command and exit.
-
-    ``command`` is the CLI command label (e.g. "metadata init", "readme") so
-    JSON error envelopes report the command that actually failed.
-    """
-    emit_error(command, error_type, message, use_json=use_json)
-    raise SystemExit(1)
-
-
-def _validate_path_within_catalog(
-    catalog_path: Path, path: str | None, use_json: bool, command: str
-) -> Path:
-    """Resolve a user-supplied PATH within the catalog, rejecting traversal.
-
-    Returns the target directory (``catalog_path / path``) when safe, or the
-    catalog root when no path is given. Exits with an error envelope if the
-    path escapes the catalog root (input hardening).
-    """
-    if not path:
-        return catalog_path
-    try:
-        validate_safe_path(Path(path), catalog_path)
-    except InputValidationError as err:
-        if use_json:
-            output_json_envelope(
-                error_envelope(
-                    command,
-                    [ErrorDetail(type="InputValidationError", message=str(err))],
-                )
-            )
-        else:
-            error(str(err))
-        raise SystemExit(1) from err
-    return catalog_path / path
-
-
-def _validate_recursive_start_path(
-    catalog_path: Path, start_path: str | None, use_json: bool, command: str
-) -> Path:
-    """Validate and return the starting directory for a recursive command."""
-    if not start_path:
-        return catalog_path
-
-    # Reject paths that escape the catalog root (input hardening).
-    try:
-        validate_safe_path(Path(start_path), catalog_path)
-    except InputValidationError as err:
-        _recursive_init_error(use_json, command, "InputValidationError", str(err))
-
-    base_dir = catalog_path / start_path
-    if not base_dir.exists():
-        _recursive_init_error(
-            use_json,
-            command,
-            "PathNotFoundError",
-            f"Path '{start_path}' does not exist in catalog.",
-        )
-    if not base_dir.is_dir():
-        _recursive_init_error(
-            use_json, command, "NotADirectoryError", f"Path '{start_path}' is not a directory."
-        )
-    return base_dir
-
-
-def _should_process_directory(dirpath: Path, catalog_path: Path) -> bool:
-    """Check if directory should be processed for metadata creation."""
-    if not dirpath.is_dir() or dirpath.is_symlink():
-        return False
-    # Skip hidden directories
-    if any(part.startswith(".") for part in dirpath.relative_to(catalog_path).parts):
-        return False
-    # Skip items (directories with item.json)
-    if (dirpath / "item.json").exists():
-        return False
-    # Only process STAC entities (catalogs/collections)
-    return (dirpath / "catalog.json").exists() or (dirpath / "collection.json").exists()
-
-
-def _report_metadata_init(
-    created_paths: list[str],
-    skipped_paths: list[str],
-    permission_errors: list[str],
-    *,
-    use_json: bool,
-) -> None:
-    """Report what a recursive metadata init created, skipped, and could not write.
-
-    Args:
-        created_paths: Catalog-relative paths the run wrote.
-        skipped_paths: Catalog-relative paths that already held a file.
-        permission_errors: Catalog-relative paths the run could not write.
-        use_json: If True, emit a JSON envelope instead of terminal output.
-    """
-    if emit_success(
-        "metadata init",
-        {
-            "mode": "recursive",
-            "created": created_paths,
-            "skipped": skipped_paths,
-            "permission_errors": permission_errors,
-            "count": len(created_paths),
-        },
-        use_json=use_json,
-    ):
+            success("Metadata is valid")
         return
-
-    if created_paths:
-        success(f"Created {len(created_paths)} metadata.yaml template(s)")
-        for path in created_paths:
-            detail(f"  {path}")
-    if skipped_paths:
-        info_output(f"Skipped {len(skipped_paths)} existing file(s)")
-    if permission_errors:
-        warn(f"Permission denied for {len(permission_errors)} location(s)")
-        for path in permission_errors:
-            detail(f"  {path}")
-    if not created_paths and not skipped_paths and not permission_errors:
-        warn("No catalogs or collections found")
-
-
-def _report_readme_recursive(
-    generated_paths: list[str],
-    stale_paths: list[str],
-    *,
-    use_json: bool,
-    check: bool,
-) -> None:
-    """Report what a recursive readme run generated or found stale.
-
-    Args:
-        generated_paths: Catalog-relative paths the run wrote or verified.
-        stale_paths: Catalog-relative paths whose README is out of date.
-        use_json: If True, emit a JSON envelope instead of terminal output.
-        check: If True, the run only checked freshness.
-
-    Raises:
-        SystemExit: In check mode, when any README is stale.
-    """
-    if use_json:
-        if check:
-            envelope = success_envelope(
-                "readme",
-                {
-                    "fresh": len(stale_paths) == 0,
-                    "checked": generated_paths + stale_paths,
-                    "stale": stale_paths,
-                },
-            )
-        else:
-            envelope = success_envelope(
-                "readme",
-                {"generated": generated_paths, "count": len(generated_paths)},
-            )
-        output_json_envelope(envelope)
-        if check and stale_paths:
-            raise SystemExit(1)
-        return
-
-    if not check:
-        success(f"Generated {len(generated_paths)} README(s)")
-        for path in generated_paths:
-            detail(f"  {path}")
-        return
-
-    if stale_paths:
-        error(f"{len(stale_paths)} README(s) are stale:")
-        for path in stale_paths:
-            detail(f"  {path}")
-        info_output("Run 'portolan readme' to regenerate")
-        raise SystemExit(1)
-    success(f"All {len(generated_paths)} README(s) are up-to-date")
-
-
-def _metadata_init_recursive(
-    catalog_path: Path,
-    start_path: str | None,
-    use_json: bool,
-    force: bool,
-) -> None:
-    """Create metadata.yaml templates at all STAC levels recursively.
-
-    Walks the catalog tree and creates .portolan/metadata.yaml at each level
-    that contains a catalog.json or collection.json. Skips items (item.json)
-    and directories that already have metadata.yaml (unless force=True).
-
-    Args:
-        catalog_path: Path to catalog root.
-        start_path: Optional subdirectory to start from (relative to catalog root).
-        use_json: Output JSON format.
-        force: Overwrite existing metadata.yaml files.
-
-    Raises:
-        SystemExit: If start_path doesn't exist or permission errors occur.
-    """
-    from portolan_cli.metadata_yaml import generate_metadata_template
-
-    base_dir = _validate_recursive_start_path(catalog_path, start_path, use_json, "metadata init")
-
-    created_paths: list[str] = []
-    skipped_paths: list[str] = []
-    permission_errors: list[str] = []
-
-    def _create_metadata_at(dirpath: Path) -> bool:
-        """Create metadata.yaml at directory. Returns True if created."""
-        portolan_dir = dirpath / ".portolan"
-        metadata_file = portolan_dir / "metadata.yaml"
-        if metadata_file.exists() and not force:
-            return False
-        portolan_dir.mkdir(parents=True, exist_ok=True)
-        metadata_file.write_text(generate_metadata_template(), encoding="utf-8")
-        return True
-
-    def _process_dir(dirpath: Path, rel_path: str) -> None:
-        """Process a directory: create metadata or record skip/error."""
-        try:
-            if _create_metadata_at(dirpath):
-                created_paths.append(rel_path)
-            else:
-                skipped_paths.append(rel_path)
-        except PermissionError:
-            permission_errors.append(rel_path)
-
-    # Process base directory first (if it's a STAC entity or is catalog root)
-    is_catalog_root = base_dir == catalog_path
-    is_stac = (base_dir / "catalog.json").exists() or (base_dir / "collection.json").exists()
-    if is_catalog_root or is_stac:
-        rel_path = (
-            ".portolan/metadata.yaml"
-            if is_catalog_root
-            else str(base_dir.relative_to(catalog_path) / ".portolan/metadata.yaml")
-        )
-        _process_dir(base_dir, rel_path)
-
-    # Walk tree for subdirectories with permission error handling
-    try:
-        dir_iterator = sorted(base_dir.rglob("*"))
-    except PermissionError as e:
-        _recursive_init_error(
-            use_json, "metadata init", "PermissionError", f"Permission denied during scan: {e}"
-        )
-
-    for dirpath in dir_iterator:
-        if not _should_process_directory(dirpath, catalog_path):
-            continue
-        rel_path = str(dirpath.relative_to(catalog_path) / ".portolan/metadata.yaml")
-        _process_dir(dirpath, rel_path)
-
-    _report_metadata_init(created_paths, skipped_paths, permission_errors, use_json=use_json)
-
-
-def _validate_metadata_at_path(dirpath: Path, rel_path: str, catalog_path: Path) -> dict[str, Any]:
-    """Validate metadata at a single directory."""
-    from portolan_cli.errors import ConfigInvalidStructureError
-    from portolan_cli.metadata_yaml import load_and_validate_metadata
-
-    metadata_file = dirpath / ".portolan" / "metadata.yaml"
-    if not metadata_file.exists():
-        return {"path": rel_path, "valid": True, "errors": [], "skipped": True}
-
-    try:
-        _metadata, errors = load_and_validate_metadata(dirpath, catalog_path)
-        return {"path": rel_path, "valid": len(errors) == 0, "errors": errors}
-    except ConfigInvalidStructureError as err:
-        return {"path": rel_path, "valid": False, "errors": [f"Invalid YAML: {err}"]}
-
-
-def _output_validate_results_json(
-    results: list[dict[str, Any]], valid_count: int, invalid_count: int
-) -> None:
-    """Output validation results as JSON."""
-    all_valid = invalid_count == 0
-    data = {
-        "mode": "recursive",
-        "results": [
-            {"path": r["path"], "valid": r["valid"], "errors": r["errors"]} for r in results
-        ],
-        "summary": {"total": len(results), "valid": valid_count, "invalid": invalid_count},
-    }
-    if all_valid:
-        envelope = success_envelope("metadata validate", data)
-    else:
-        envelope = error_envelope(
-            "metadata validate",
-            [
-                ErrorDetail(type="ValidationError", message=f"{r['path']}: {e}")
-                for r in results
-                if not r["valid"]
-                for e in r["errors"]
-            ],
-            data=data,
-        )
-    output_json_envelope(envelope)
-    if not all_valid:
-        raise SystemExit(1)
-
-
-def _output_validate_results_text(
-    results: list[dict[str, Any]], valid_count: int, invalid_count: int
-) -> None:
-    """Output validation results as text."""
-    if invalid_count == 0:
-        if len(results) == 0:
+    total = len(result.validations)
+    invalid = [v for v in result.validations if not v.valid]
+    if not invalid:
+        if total == 0:
             warn("No metadata.yaml files found to validate")
         else:
-            success(f"Validated {valid_count} metadata.yaml file(s) - all valid")
+            success(f"Validated {total} metadata.yaml file(s) - all valid")
         return
-
-    error(f"Validation failed: {invalid_count}/{len(results)} file(s) invalid")
-    for r in results:
-        if not r["valid"]:
-            detail(f"  {r['path']}:")
-            for e in r["errors"]:
-                detail(f"    - {e}")
-    raise SystemExit(1)
+    error(f"Validation failed: {len(invalid)}/{total} file(s) invalid")
+    for v in invalid:
+        detail(f"  {v.path}:")
+        for e in v.errors:
+            detail(f"    - {e}")
 
 
-def _metadata_validate_recursive(
-    catalog_path: Path,
-    start_path: str | None,
-    use_json: bool,
-) -> None:
-    """Validate metadata.yaml files at all STAC levels recursively."""
-    base_dir = _validate_recursive_start_path(
-        catalog_path, start_path, use_json, "metadata validate"
-    )
-    results: list[dict[str, Any]] = []
-
-    # Process base directory first (if it's a STAC entity or is catalog root)
-    is_catalog_root = base_dir == catalog_path
-    is_stac = (base_dir / "catalog.json").exists() or (base_dir / "collection.json").exists()
-    if is_catalog_root or is_stac:
-        rel_path = "." if is_catalog_root else str(base_dir.relative_to(catalog_path))
-        result = _validate_metadata_at_path(base_dir, rel_path, catalog_path)
-        if not result.get("skipped"):
-            results.append(result)
-
-    # Walk tree for subdirectories
-    try:
-        dir_iterator = sorted(base_dir.rglob("*"))
-    except PermissionError as e:
-        _recursive_init_error(
-            use_json, "metadata validate", "PermissionError", f"Permission denied during scan: {e}"
-        )
-
-    for dirpath in dir_iterator:
-        if not _should_process_directory(dirpath, catalog_path):
-            continue
-        rel_path = str(dirpath.relative_to(catalog_path))
-        result = _validate_metadata_at_path(dirpath, rel_path, catalog_path)
-        if not result.get("skipped"):
-            results.append(result)
-
-    # Calculate summary and output
-    valid_count = sum(1 for r in results if r["valid"])
-    invalid_count = len(results) - valid_count
-
-    if use_json:
-        _output_validate_results_json(results, valid_count, invalid_count)
-    else:
-        _output_validate_results_text(results, valid_count, invalid_count)
-
-
-def _process_readme_entry(
-    readme_path: Path,
-    content: str,
-    rel_path: str,
-    check: bool,
-    generated: list[str],
-    stale: list[str],
-) -> None:
-    """Process a single README: check freshness or write.
-
-    Args:
-        readme_path: Absolute path to README.md.
-        content: Generated content to write/check.
-        rel_path: Relative path for reporting.
-        check: If True, check freshness only.
-        generated: List to append fresh/generated paths.
-        stale: List to append stale paths.
-    """
-    if check:
-        is_fresh = readme_path.exists() and readme_path.read_text(encoding="utf-8") == content
-        (generated if is_fresh else stale).append(rel_path)
-    else:
-        from portolan_cli.readme import write_readme
-
-        write_readme(readme_path, content)
-        generated.append(rel_path)
-
-
-def _readme_recursive(
-    catalog_path: Path,
-    start_path: str | None,
-    use_json: bool,
-    check: bool,
-    stdout: bool,
-    verbose: bool = False,
-) -> None:
-    """Generate READMEs for catalog and all collections recursively.
-
-    Walks the catalog tree (or the subtree under ``start_path`` when given)
-    and generates:
-    1. Catalog/subcatalog READMEs (directories with catalog.json)
-    2. Collection READMEs (directories with collection.json)
-
-    Args:
-        catalog_path: Path to catalog root.
-        start_path: Optional subdirectory to scope generation to (relative to
-            the catalog root). When None, the whole catalog is processed.
-        use_json: Output JSON format.
-        check: CI mode - check freshness only.
-        stdout: Print to stdout (not supported in recursive mode).
-        verbose: Whether to show detailed output.
-    """
-    from portolan_cli.readme import (
-        generate_catalog_readme,
-        generate_readme_for_collection,
-    )
-
-    if stdout:
-        msg = "--stdout is not supported in recursive mode"
-        if use_json:
-            output_json_envelope(
-                error_envelope("readme", [ErrorDetail(type="UnsupportedOptionError", message=msg)])
-            )
+def _print_readme(result: ReadmeRunResult) -> None:
+    """Print what a readme run wrote or found stale."""
+    if not result.recursive:
+        if not result.check:
+            success(f"Generated {result.fresh[0]}")
+        elif result.fresh:
+            success("README is up-to-date")
         else:
-            error(msg)
-        raise SystemExit(1)
-
-    base_dir = _validate_recursive_start_path(catalog_path, start_path, use_json, "readme")
-
-    generated_paths: list[str] = []
-    stale_paths: list[str] = []
-
-    def _process_stac_dir(dirpath: Path) -> None:
-        """Generate a README for a single catalog/subcatalog/collection dir."""
-        is_root = dirpath == catalog_path
-        rel_dir = dirpath.relative_to(catalog_path)
-        readme_path = dirpath / "README.md"
-        rel_path = "README.md" if is_root else str(rel_dir / "README.md")
-
-        if (dirpath / "collection.json").exists():
-            _verbose_readme(f"Processing collection: {rel_dir}/", verbose, use_json)
-            _verbose_readme_files(dirpath, str(rel_dir), "collection.json", verbose, use_json)
-            content = generate_readme_for_collection(dirpath, catalog_path)
-            _process_readme_entry(
-                readme_path, content, rel_path, check, generated_paths, stale_paths
-            )
-        elif (dirpath / "catalog.json").exists():
-            label = "catalog root" if is_root else f"subcatalog: {rel_dir}/"
-            file_label = "catalog root" if is_root else str(rel_dir)
-            _verbose_readme(f"Processing {label}", verbose, use_json)
-            _verbose_readme_files(dirpath, file_label, "catalog.json", verbose, use_json)
-            content = generate_catalog_readme(dirpath)
-            _process_readme_entry(
-                readme_path, content, rel_path, check, generated_paths, stale_paths
-            )
-
-    # Process the base directory itself (catalog root or a scoped STAC entity)
-    if (
-        base_dir == catalog_path
-        or (base_dir / "collection.json").exists()
-        or (base_dir / "catalog.json").exists()
-    ):
-        _process_stac_dir(base_dir)
-
-    # Walk the subtree to find nested catalogs and collections
-    for dirpath in sorted(base_dir.rglob("*")):
-        if not dirpath.is_dir():
-            continue
-        if any(part.startswith(".") for part in dirpath.relative_to(catalog_path).parts):
-            continue
-        _process_stac_dir(dirpath)
-
-    # Move root to front of list
-    if "README.md" in generated_paths:
-        generated_paths.remove("README.md")
-        generated_paths.insert(0, "README.md")
-    if "README.md" in stale_paths:
-        stale_paths.remove("README.md")
-        stale_paths.insert(0, "README.md")
-
-    _report_readme_recursive(generated_paths, stale_paths, use_json=use_json, check=check)
+            error("README is stale or missing")
+            info_output("Run 'portolan readme' to regenerate")
+        return
+    if not result.check:
+        success(f"Generated {len(result.fresh)} README(s)")
+        for path in result.fresh:
+            detail(f"  {path}")
+        return
+    if result.stale:
+        error(f"{len(result.stale)} README(s) are stale:")
+        for path in result.stale:
+            detail(f"  {path}")
+        info_output("Run 'portolan readme' to regenerate")
+        return
+    success(f"All {len(result.fresh)} README(s) are up-to-date")
 
 
 @cli.command()
@@ -6358,78 +4854,36 @@ def readme(
         portolan readme demographics --no-recursive  # Only for collection
         portolan readme --stdout --no-recursive      # Print single README
     """
+    from portolan_cli.readme import UnsupportedOptionError, generate_readmes
+    from portolan_core.errors import ConfigInvalidStructureError, PathNotFoundError
+
     use_json = should_output_json(ctx, json_output)
-
-    # Find catalog root
-    catalog_path = find_catalog_root()
-    if catalog_path is None:
-        if use_json:
-            envelope = error_envelope(
-                "readme",
-                [
-                    ErrorDetail(
-                        type="CatalogNotFoundError",
-                        message="Not inside a Portolan catalog. Run 'portolan init' first.",
-                    )
-                ],
-            )
-            output_json_envelope(envelope)
-        else:
-            error("Not inside a Portolan catalog")
-            info_output("Run 'portolan init' to create one")
-        raise SystemExit(1)
-
-    # Handle recursive mode (default) vs single-path mode
-    if not no_recursive:
-        _readme_recursive(catalog_path, path, use_json, check, stdout, verbose)
-        return
-
-    # Determine target directory (rejecting paths that escape the catalog)
-    target_dir = _validate_path_within_catalog(catalog_path, path, use_json, "readme")
-
-    # Generate README content
-    readme_content, is_catalog_root = _generate_readme_content(
-        target_dir, catalog_path, use_json, verbose
-    )
-
-    # Determine output path
-    readme_path = target_dir / "README.md"
-
-    if check:
-        # Compare existing README against freshly generated content
-        is_fresh = (
-            readme_path.exists() and readme_path.read_text(encoding="utf-8") == readme_content
+    catalog_path = _metadata_catalog_root("readme", use_json)
+    try:
+        result = generate_readmes(
+            catalog_path,
+            path,
+            check=check,
+            stdout=stdout,
+            recursive=not no_recursive,
+            on_progress=info_output if verbose and not use_json else None,
         )
+    except ConfigInvalidStructureError as err:
+        _fail_invalid_yaml("readme", err, use_json)
+    except (
+        UnsupportedOptionError,
+        InputValidationError,
+        PathNotFoundError,
+        NotADirectoryError,
+    ) as err:
+        _fail_walk("readme", err, use_json)
 
-        if use_json:
-            envelope = success_envelope(
-                "readme",
-                {"fresh": is_fresh, "path": str(readme_path.relative_to(catalog_path))},
-            )
-            output_json_envelope(envelope)
-            if not is_fresh:
-                raise SystemExit(1)
-        else:
-            if is_fresh:
-                success("README is up-to-date")
-            else:
-                error("README is stale or missing")
-                info_output("Run 'portolan readme' to regenerate")
-                raise SystemExit(1)
-    elif stdout:
-        # Print to stdout
-        click.echo(readme_content)
-    else:
-        # Write to file, and re-stamp an asset that points at it (issue #930)
-        from portolan_cli.readme import write_readme
-
-        write_readme(readme_path, readme_content)
-        if not emit_success(
-            "readme",
-            {"path": str(readme_path.relative_to(catalog_path)), "generated": True},
-            use_json=use_json,
-        ):
-            success(f"Generated {readme_path.relative_to(catalog_path)}")
+    if result.content is not None:
+        click.echo(result.content)
+    elif not emit_success("readme", result.to_dict(), use_json=use_json):
+        _print_readme(result)
+    if result.stale:
+        raise SystemExit(1)
 
 
 @cli.command("logo")
@@ -6466,8 +4920,8 @@ def logo_cmd(
       portolan logo brand.png                     # Title from the catalog
       portolan logo brand.png --title "Acme GIS"  # Explicit title
     """
-    from portolan_cli.errors import LogoError
     from portolan_cli.logo import set_catalog_logo
+    from portolan_core.errors import LogoError
 
     use_json = should_output_json(ctx, json_output)
     catalog_root = require_catalog_root(use_json, "logo")
@@ -6481,18 +4935,9 @@ def logo_cmd(
         emit_error("logo", "OSError", f"Cannot write catalog logo: {err}", use_json=use_json)
         raise SystemExit(1) from err
 
-    if not emit_success(
-        "logo",
-        {
-            "href": result.href,
-            "type": result.media_type,
-            "title": result.title,
-            "path": result.path.relative_to(catalog_root).as_posix(),
-            "warnings": result.warnings,
-        },
-        use_json=use_json,
-    ):
-        success(f"Logo published at {result.path.relative_to(catalog_root).as_posix()}")
+    data = result.to_dict()
+    if not emit_success("logo", data, use_json=use_json):
+        success(f"Logo published at {data['path']}")
         info_output(f'Linked as rel="icon" ({result.media_type}), titled "{result.title}"')
         for message in result.warnings:
             warn(message)
@@ -6581,8 +5026,8 @@ def partition(
         # Custom target rows
         portolan partition buildings.parquet output/ --target-rows 50000
     """
-    from portolan_cli.config import get_setting
-    from portolan_cli.partitioning import partition_geoparquet, should_partition
+    from portolan_cli.partitioning import PartitionPreview, partition_file
+    from portolan_core.errors import PartitionError
 
     use_json = should_output_json(ctx)
 
@@ -6591,37 +5036,8 @@ def partition(
         emit_error("partition", "FormatError", "Input must be a .parquet file", use_json=use_json)
         raise SystemExit(1)
 
-    # Preview mode: show analysis without creating files
-    if preview:
-        file_size_gb = input_file.stat().st_size / (1024 * 1024 * 1024)
-        threshold_gb = get_setting("partitioning.threshold_gb") or 2.0
-        part_enabled = get_setting("partitioning.enabled")
-        should_part = should_partition(
-            input_file, threshold_gb=float(threshold_gb), enabled=part_enabled is not False
-        )
-
-        if use_json:
-            result = {
-                "file": str(input_file),
-                "size_gb": round(file_size_gb, 2),
-                "recommended_partition": should_part,
-                "strategy": strategy,
-                "target_rows": target_rows,
-            }
-            output_json_envelope(success_envelope("partition", result))
-        else:
-            info_output(f"File: {input_file}")
-            info_output(f"Size: {file_size_gb:.2f} GB")
-            if should_part:
-                success("Partitioning recommended (> 2GB threshold)")
-            else:
-                info_output("File is under 2GB threshold - partitioning optional")
-            info_output(f"Strategy: {strategy}")
-            info_output(f"Target rows per partition: {target_rows:,}")
-        return
-
     # Require output_dir for actual partitioning
-    if output_dir is None:
+    if output_dir is None and not preview:
         emit_error(
             "partition",
             "UsageError",
@@ -6630,45 +5046,42 @@ def partition(
         )
         raise SystemExit(1)
 
-    # Create output directory
-    output_dir.mkdir(parents=True, exist_ok=True)
+    if not use_json and not preview:
+        info_output(f"Partitioning {input_file.name} with {strategy} strategy...")
 
     try:
-        if not use_json:
-            info_output(f"Partitioning {input_file.name} with {strategy} strategy...")
-
-        partition_files = partition_geoparquet(
-            input_path=input_file,
-            output_dir=output_dir,
+        result = partition_file(
+            input_file,
+            output_dir,
             strategy=strategy,
             target_rows=target_rows,
+            preview=preview,
             verbose=verbose,
         )
-
+    except PartitionError as e:
         if use_json:
-            result = {
-                "input": str(input_file),
-                "output_dir": str(output_dir),
-                "partitions": len(partition_files),
-                "files": [str(p) for p in partition_files],
-            }
-            output_json_envelope(success_envelope("partition", result))
+            # The envelope has never carried a code for this error, so it stays without one.
+            emit_error("partition", "PartitionError", e.message, use_json=True)
         else:
-            success(f"Created {len(partition_files)} partitions in {output_dir}")
-            if verbose:
-                for pf in partition_files:
-                    detail(f"  {pf.parent.name}/{pf.name}")
-
-    except Exception as e:
-        if use_json:
-            envelope = error_envelope(
-                "partition",
-                [ErrorDetail(type="PartitionError", message=str(e))],
-            )
-            output_json_envelope(envelope)
-        else:
-            error(f"Partitioning failed: {e}")
+            error(f"Partitioning failed: {e.message}")
         raise SystemExit(1) from None
+
+    if emit_success("partition", result.to_dict(), use_json=use_json):
+        return
+    if isinstance(result, PartitionPreview):
+        info_output(f"File: {result.file}")
+        info_output(f"Size: {result.size_gb:.2f} GB")
+        if result.recommended:
+            success("Partitioning recommended (> 2GB threshold)")
+        else:
+            info_output("File is under 2GB threshold - partitioning optional")
+        info_output(f"Strategy: {strategy}")
+        info_output(f"Target rows per partition: {target_rows:,}")
+        return
+    success(f"Created {len(result.files)} partitions in {output_dir}")
+    if verbose:
+        for pf in result.files:
+            detail(f"  {pf.parent.name}/{pf.name}")
 
 
 @cli.group()
@@ -6713,7 +5126,7 @@ def current(
         portolan version current boundaries
         portolan version current boundaries --json
     """
-    from portolan_cli.version_ops import get_current_version
+    from portolan_cli.version_ops import describe_current_version
 
     use_json = should_output_json(ctx, json_output)
 
@@ -6721,24 +5134,14 @@ def current(
         catalog_path = require_catalog_root(use_json, "version current")
 
     try:
-        ver = get_current_version(collection, catalog_root=catalog_path)
-    except (FileNotFoundError, Exception) as e:
+        result = describe_current_version(collection, catalog_root=catalog_path)
+    # A plugin backend can raise any exception, and the envelope reports each one.
+    except Exception as e:
         emit_error("version current", type(e).__name__, str(e), use_json=use_json)
         raise SystemExit(1) from None
 
-    if not emit_success(
-        "version current",
-        {
-            "collection": collection,
-            "version": ver.version,
-            "created": ver.created.isoformat(),
-            "breaking": ver.breaking,
-            "message": ver.message,
-            "assets": len(ver.assets),
-            "changes": ver.changes,
-        },
-        use_json=use_json,
-    ):
+    if not emit_success("version current", result.to_dict(), use_json=use_json):
+        ver = result.version
         breaking_flag = " [BREAKING]" if ver.breaking else ""
         timestamp = ver.created.strftime("%Y-%m-%d %H:%M:%S")
         msg = f" — {ver.message}" if ver.message else ""
@@ -6773,7 +5176,7 @@ def version_list_cmd(
         portolan version list boundaries
         portolan version list boundaries --json
     """
-    from portolan_cli.version_ops import list_versions
+    from portolan_cli.version_ops import describe_version_history
 
     use_json = should_output_json(ctx, json_output)
 
@@ -6781,29 +5184,14 @@ def version_list_cmd(
         catalog_path = require_catalog_root(use_json, "version list")
 
     try:
-        versions = list_versions(collection, catalog_root=catalog_path)
-    except (FileNotFoundError, Exception) as e:
+        result = describe_version_history(collection, catalog_root=catalog_path)
+    # A plugin backend can raise any exception, and the envelope reports each one.
+    except Exception as e:
         emit_error("version list", type(e).__name__, str(e), use_json=use_json)
         raise SystemExit(1) from None
 
-    if use_json:
-        versions_data = [
-            {
-                "version": v.version,
-                "created": v.created.isoformat(),
-                "breaking": v.breaking,
-                "message": v.message,
-                "assets": len(v.assets),
-                "changes": v.changes,
-            }
-            for v in versions
-        ]
-        envelope = success_envelope(
-            "version list",
-            {"collection": collection, "versions": versions_data},
-        )
-        output_json_envelope(envelope)
-    else:
+    if not emit_success("version list", result.to_dict(), use_json=use_json):
+        versions = result.versions
         if not versions:
             info_output(f"No versions found for collection '{collection}'")
             return
@@ -6849,14 +5237,6 @@ def _bump_error(use_json: bool, error_type: str, message: str) -> None:
     """Output a version bump error and exit."""
     emit_error("version bump", error_type, message, use_json=use_json)
     raise SystemExit(1)
-
-
-def _validate_semver(version: str) -> bool:
-    """Validate semver format (major.minor.patch with optional prerelease/build)."""
-    import re
-
-    semver_pattern = r"^\d+\.\d+\.\d+(-[a-zA-Z0-9.-]+)?(\+[a-zA-Z0-9.-]+)?$"
-    return bool(re.match(semver_pattern, version))
 
 
 @version.command()
@@ -6910,99 +5290,44 @@ def bump(
         portolan version bump demographics 2.0.0 --breaking -m "Schema change"
         portolan version bump demographics 1.4.0 -y  # Skip confirmation
     """
-    from portolan_cli.status import detect_deleted_files, detect_modified_files
-    from portolan_cli.version_ops import publish_version
-    from portolan_cli.versions import read_versions
+    from portolan_cli.version_ops import bump_collection_version, semver_error
 
     use_json = should_output_json(ctx, json_output)
 
-    # Validate semver format
-    if not _validate_semver(new_version):
-        msg = f"Invalid semver: '{new_version}'. Expected format: MAJOR.MINOR.PATCH (e.g., '1.2.0')"
-        _bump_error(use_json, "ValidationError", msg)
+    # A bad version string fails before the catalog lookup, as it always has.
+    invalid = semver_error(new_version)
+    if invalid is not None:
+        _bump_error(use_json, "ValidationError", invalid)
 
     if catalog_path is None:
         catalog_path = require_catalog_root(use_json, "version bump")
 
-    collection_path = catalog_path / collection
-    versions_path = collection_path / "versions.json"
+    def confirm(plan: Any) -> bool:
+        return _bump_show_changes(
+            collection, new_version, plan.previous_version, plan.modified, plan.deleted
+        )
 
-    # Read current versions
-    if not versions_path.exists():
-        _bump_error(use_json, "NotFoundError", f"No versions.json in {collection}")
-
-    try:
-        versions_file = read_versions(versions_path)
-    except ValueError as e:
-        _bump_error(use_json, "ParseError", f"Invalid versions.json: {e}")
-
-    current_version = versions_file.current_version
-
-    # Check for duplicate version
-    existing_versions = {v.version for v in versions_file.versions}
-    if new_version in existing_versions:
-        _bump_error(use_json, "DuplicateVersionError", f"Version '{new_version}' already exists")
-
-    # Detect changes
-    modified = detect_modified_files(collection_path, versions_file)
-    deleted = detect_deleted_files(collection_path, versions_file)
-
-    if not modified and not deleted:
-        if not emit_success(
-            "version bump",
-            {"collection": collection, "message": "No changes detected", "created": False},
-            use_json=use_json,
-        ):
-            info_output(f"No changes detected in '{collection}'")
-        return
-
-    # Show what will be versioned and get confirmation
-    if (
-        not use_json
-        and not yes
-        and not _bump_show_changes(collection, new_version, current_version, modified, deleted)
-    ):
+    result = bump_collection_version(
+        collection,
+        new_version,
+        catalog_root=catalog_path,
+        notes=notes,
+        breaking=breaking,
+        confirm=None if use_json or yes else confirm,
+    )
+    if result.error is not None:
+        _bump_error(use_json, *result.error)
+    if result.published is None and result.changed:
         info_output("Aborted")
         return
 
-    # Compute checksums for modified files
-    assets: dict[str, str] = {}
-    for filename in modified:
-        file_path = collection_path / filename
-        if file_path.exists():
-            assets[filename] = str(file_path)
-
-    # Publish the version
-    try:
-        ver = publish_version(
-            collection,
-            assets=assets,
-            breaking=breaking,
-            message=notes or "",
-            removed=set(deleted) if deleted else None,
-            version=new_version,
-            catalog_root=catalog_path,
-        )
-    except Exception as e:
-        _bump_error(use_json, type(e).__name__, f"Failed to create version: {e}")
-
-    if not emit_success(
-        "version bump",
-        {
-            "collection": collection,
-            "version": ver.version,
-            "previous_version": current_version,
-            "created": ver.created.isoformat(),
-            "breaking": ver.breaking,
-            "message": ver.message,
-            "modified_files": modified,
-            "deleted_files": deleted,
-        },
-        use_json=use_json,
-    ):
-        success(f"Created version {ver.version}")
-        if ver.message:
-            detail(f"  {ver.message}")
+    if not emit_success("version bump", result.to_dict(), use_json=use_json):
+        if result.published is None:
+            info_output(f"No changes detected in '{collection}'")
+            return
+        success(f"Created version {result.published.version}")
+        if result.published.message:
+            detail(f"  {result.published.message}")
 
 
 # =============================================================================
@@ -7010,140 +5335,30 @@ def bump(
 # =============================================================================
 
 
-def _discover_collections_with_items(catalog_root: Path) -> list[str]:
-    """Find all collections that own STAC items.
-
-    Ownership includes the items an organizing catalog groups beneath a
-    collection (core.md:168-170).
-
-    Args:
-        catalog_root: Path to the catalog root directory.
-
-    Returns:
-        Sorted list of collection IDs relative to catalog_root.
-    """
-    from portolan_cli.stac_links import catalog_collections
-    from portolan_cli.stac_parquet import count_items
-
-    collections: list[str] = []
-    for collection_id in catalog_collections(catalog_root):
-        try:
-            if count_items(catalog_root / collection_id) > 0:
-                collections.append(collection_id)
-        except (json.JSONDecodeError, OSError):
-            continue
-
-    return collections
+def _report_parquet_collection(outcome: Any) -> None:
+    """Print the outcome of one collection of stac-geoparquet."""
+    if outcome.error is not None:
+        error(outcome.error_summary)
+        return
+    if outcome.dry_run:
+        info_output(f"[DRY RUN] Would generate items.parquet for '{outcome.collection}'")
+    else:
+        success(f"Generated items.parquet for '{outcome.collection}'")
+    detail(f"    Items: {outcome.item_count}")
+    detail(f"    Output: {outcome.parquet_path}")
 
 
-@dataclass
-class _ParquetResult:
-    """Result of processing one collection for stac-geoparquet."""
-
-    collection: str
-    item_count: int
-    parquet_path: str
-    dry_run: bool = False
-    error: ErrorDetail | None = None
-
-
-def _process_collection_for_parquet(
-    coll_id: str,
-    catalog_path: Path,
-    dry_run: bool,
-    is_bulk: bool,
-    use_json: bool,
-) -> _ParquetResult | None:
-    """Process a single collection for stac-geoparquet generation.
-
-    Args:
-        coll_id: Collection ID to process.
-        catalog_path: Path to catalog root.
-        dry_run: If True, don't actually generate files.
-        is_bulk: If True, suppress per-collection output.
-        use_json: If True, suppress non-JSON output.
-
-    Returns:
-        _ParquetResult on success/dry-run, None on skip (empty collection in bulk mode),
-        or _ParquetResult with error field set on failure.
-    """
-    from portolan_cli.stac_parquet import (
-        count_items,
-        generate_items_parquet,
-        register_mirror_asset,
-        track_parquet_in_versions,
-    )
-    from portolan_cli.version_ops import owned_run
-
-    collection_path = catalog_path / coll_id
-
-    if not (collection_path / "collection.json").exists():
-        err = ErrorDetail(
-            type="CollectionNotFoundError",
-            message=f"Collection '{coll_id}' not found at {collection_path}",
-        )
-        if not use_json and not is_bulk:
-            error(f"Collection '{coll_id}' not found")
-        return _ParquetResult(coll_id, 0, "", error=err)
-
-    # Count items
-    try:
-        item_count = count_items(collection_path)
-    except Exception as e:
-        err = ErrorDetail(type=type(e).__name__, message=f"{coll_id}: {e}")
-        if not use_json and not is_bulk:
-            error(f"Failed to count items in '{coll_id}': {e}")
-        return _ParquetResult(coll_id, 0, "", error=err)
-
-    if item_count == 0:
-        # For bulk processing, skip silently; for explicit, return error
-        if is_bulk:
-            return None
-        err = ErrorDetail(
-            type="EmptyCollectionError",
-            message=f"No items found in collection '{coll_id}'",
-        )
-        if not use_json:
-            error(f"No items found in collection '{coll_id}'")
-        return _ParquetResult(coll_id, 0, "", error=err)
-
-    parquet_path = collection_path / "items.parquet"
-
-    if dry_run:
-        if not use_json and not is_bulk:
-            info_output(f"[DRY RUN] Would generate items.parquet for '{coll_id}'")
-            detail(f"    Items: {item_count}")
-            detail(f"    Output: {parquet_path}")
-        return _ParquetResult(coll_id, item_count, str(parquet_path), dry_run=True)
-
-    # Generate parquet
-    try:
-        with owned_run(catalog_path) as run:
-            parquet_path = generate_items_parquet(collection_path, state=run)
-            register_mirror_asset(collection_path, state=run)
-            track_parquet_in_versions(collection_path, catalog_path, state=run)
-        if not use_json and not is_bulk:
-            success(f"Generated items.parquet for '{coll_id}'")
-            detail(f"    Items: {item_count}")
-            detail(f"    Output: {parquet_path}")
-        return _ParquetResult(coll_id, item_count, str(parquet_path))
-    except Exception as e:
-        err = ErrorDetail(type=type(e).__name__, message=f"{coll_id}: {e}")
-        if not use_json and not is_bulk:
-            error(f"Failed to generate parquet for '{coll_id}': {e}")
-        return _ParquetResult(coll_id, 0, "", error=err)
-
-
-def _output_parquet_results(
-    results: list[dict[str, Any]],
-    errors_list: list[ErrorDetail],
-    total_items: int,
-    is_bulk: bool,
-    dry_run: bool,
-    use_json: bool,
-) -> None:
+def _output_parquet_results(result: Any, is_bulk: bool, dry_run: bool, use_json: bool) -> None:
     """Output results of stac-geoparquet command."""
+    results = result.results
+    errors_list = result.errors
     had_errors = bool(errors_list)
+    total_items = sum(r.item_count for r in results)
+
+    # Per-collection output for a single collection
+    if not use_json and not is_bulk:
+        for outcome in result.outcomes:
+            _report_parquet_collection(outcome)
 
     # Summary output for bulk operations
     if not use_json and is_bulk and results:
@@ -7163,17 +5378,10 @@ def _output_parquet_results(
     # JSON output
     if use_json:
         if had_errors and not results:
-            envelope = error_envelope("stac-geoparquet", errors_list)
+            details = [ErrorDetail(type=t, message=m) for t, m in errors_list]
+            output_json_envelope(error_envelope("stac-geoparquet", details))
         else:
-            envelope = success_envelope(
-                "stac-geoparquet",
-                {
-                    "collections_processed": len(results),
-                    "results": results,
-                    "errors": [{"type": e.type, "message": e.message} for e in errors_list],
-                },
-            )
-        output_json_envelope(envelope)
+            emit_success("stac-geoparquet", result.to_dict(), use_json=True)
 
     if had_errors:
         raise SystemExit(1)
@@ -7225,6 +5433,8 @@ def stac_geoparquet(
         portolan stac-geoparquet -c imagery --dry-run  # Preview without creating
         portolan stac-geoparquet --json             # JSON output for all collections
     """
+    from portolan_cli.stac_parquet import generate_stac_geoparquet
+
     use_json = should_output_json(ctx, json_output)
 
     # Find catalog root
@@ -7247,45 +5457,17 @@ def stac_geoparquet(
                 info_output("Run 'portolan init' to create one")
             raise SystemExit(1)
 
-    # Determine which collections to process
-    if collection is not None:
-        collections_to_process = [collection]
-    else:
-        # Discover all collections with items
-        collections_to_process = _discover_collections_with_items(catalog_path)
-        if not collections_to_process:
-            emit_error(
-                "stac-geoparquet",
-                "NoCollectionsError",
-                "No collections with items found in catalog",
-                use_json=use_json,
-            )
-            raise SystemExit(1)
+    from portolan_cli.extract.common.cli_helpers import print_message
+    from portolan_cli.report import reporting
 
-    # Process each collection
-    results: list[dict[str, Any]] = []
-    errors_list: list[ErrorDetail] = []
-    total_items = 0
-    is_bulk = collection is None  # Catalog-level operation
+    # The catalog index update reports its warnings through this scope.
+    with reporting(print_message):
+        result = generate_stac_geoparquet(catalog_path, collection, dry_run=dry_run)
+    if result.error is not None:
+        emit_error("stac-geoparquet", *result.error, use_json=use_json)
+        raise SystemExit(1)
 
-    for coll_id in collections_to_process:
-        result = _process_collection_for_parquet(coll_id, catalog_path, dry_run, is_bulk, use_json)
-        if result is None:
-            continue  # Skipped (empty collection in bulk mode)
-        if result.error:
-            errors_list.append(result.error)
-        else:
-            results.append(
-                {
-                    "collection": result.collection,
-                    "item_count": result.item_count,
-                    "parquet_path": result.parquet_path,
-                    **({"dry_run": True} if result.dry_run else {}),
-                }
-            )
-            total_items += result.item_count
-
-    _output_parquet_results(results, errors_list, total_items, is_bulk, dry_run, use_json)
+    _output_parquet_results(result, collection is None, dry_run, use_json)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -7306,12 +5488,13 @@ def skills() -> None:
 @click.pass_context
 def skills_list_cmd(ctx: click.Context, json_output: bool) -> None:
     """List available skills."""
-    from portolan_cli.skills import SKILLS_REPO, get_install_instructions
+    from portolan_cli.skills import list_skill_entries
 
     use_json = should_output_json(ctx, json_output)
 
-    if not emit_success("skills list", {"skills": [], "url": SKILLS_REPO}, use_json=use_json):
-        click.echo(get_install_instructions())
+    result = list_skill_entries()
+    if not emit_success("skills list", result.to_dict(), use_json=use_json):
+        click.echo(result.instructions)
 
 
 @skills.command("show")
@@ -7320,11 +5503,10 @@ def skills_list_cmd(ctx: click.Context, json_output: bool) -> None:
 @click.pass_context
 def skills_show_cmd(ctx: click.Context, name: str, json_output: bool) -> None:
     """View a skill."""
-    from portolan_cli.skills import SKILLS_REPO, get_install_instructions
+    from portolan_cli.skills import show_skill
 
     use_json = should_output_json(ctx, json_output)
 
-    if not emit_success(
-        "skills show", {"name": name, "content": None, "url": SKILLS_REPO}, use_json=use_json
-    ):
-        click.echo(get_install_instructions())
+    result = show_skill(name)
+    if not emit_success("skills show", result.to_dict(), use_json=use_json):
+        click.echo(result.instructions)

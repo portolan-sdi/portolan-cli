@@ -11,8 +11,8 @@ from typing import TYPE_CHECKING, Any, Literal, overload
 
 import rasterio
 
-from portolan_cli.models.schema import BandSchema, SchemaModel
-from portolan_cli.trace import count
+from portolan_core.models.schema import BandSchema, SchemaModel
+from portolan_core.trace import count
 
 if TYPE_CHECKING:
     from pathlib import Path

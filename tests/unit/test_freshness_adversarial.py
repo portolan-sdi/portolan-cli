@@ -13,8 +13,8 @@ import pytest
 from portolan_cli.metadata.detection import detect_changes, is_stale, judge_staleness
 from portolan_cli.metadata.models import FileMetadataState, MetadataCheckResult, MetadataStatus
 from portolan_cli.metadata.update import update_versions_tracking
-from portolan_cli.run_state import RunState
-from portolan_cli.versions import Asset, Version, VersionsFile, read_versions, write_versions
+from portolan_core.run_state import RunState
+from portolan_core.versions import Asset, Version, VersionsFile, read_versions, write_versions
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -28,8 +28,8 @@ def test_repair_refreshes_content_record(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, contents: bytes, caller: str
 ) -> None:
     """A new mtime must never certify an old hash or size as the current bytes."""
-    from portolan_cli import trace
     from portolan_cli.metadata.fix import _fix_single_file
+    from portolan_core import trace
 
     collection = tmp_path / "scenes"
     path = collection / "scene" / "data.bin"
@@ -155,8 +155,8 @@ def test_item_freshness_reuses_run_checksum(tmp_path: Path, valid_points_parquet
     """The fallback hash check must share the hash already read by this run."""
     import shutil
 
-    from portolan_cli import trace
     from portolan_cli.metadata.detection import check_file_metadata
+    from portolan_core import trace
 
     path = tmp_path / "scene/data.parquet"
     path.parent.mkdir()

@@ -11,11 +11,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from portolan_cli import extension_registry as _reg
 from portolan_cli.crs import transform_bbox_to_wgs84
-from portolan_cli.json_io import write_json_atomic
 from portolan_cli.metadata.geoparquet import extract_geoparquet_metadata
-from portolan_cli.models.item import AssetModel, ItemModel
+from portolan_core import extension_registry as _reg
+from portolan_core.json_io import write_json_atomic
+from portolan_core.models.item import AssetModel, ItemModel
 
 # Sourced from the registry so this cannot drift from what `add` writes. A COG
 # missing "profile=cloud-optimized" is invisible to rashid's COG detection gate.
@@ -136,7 +136,7 @@ def _bbox_to_polygon(bbox: list[float]) -> dict[str, Any]:
     """
     # A 6-element bbox is [west, south, min_z, east, north, max_z]; reduce to 2D
     # so the polygon uses the correct easting/northing (issue #592).
-    from portolan_cli.bbox import to_2d_bbox
+    from portolan_core.bbox import to_2d_bbox
 
     west, south, east, north = to_2d_bbox(bbox)
 

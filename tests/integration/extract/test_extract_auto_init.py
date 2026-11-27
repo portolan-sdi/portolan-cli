@@ -20,7 +20,7 @@ from portolan_cli.extract.common.report import (
     LayerResult,
     MetadataExtracted,
 )
-from portolan_cli.licensing import ResolvedLicense
+from portolan_core.licensing import ResolvedLicense
 from tests.support.extract import build_arcgis_catalog
 from tests.support.extract import make_layer_result as shared_layer_result
 from tests.support.extract import make_report as shared_make_report

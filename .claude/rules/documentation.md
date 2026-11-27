@@ -84,7 +84,7 @@ If AGENTS.md names a command, enforce that the command exists with a script. If 
 **Pattern:**
 1. Write guidance in AGENTS.md
 2. Ask: "Can I validate this automatically?"
-3. If yes, write a script in `scripts/` and add a pre-commit hook
+3. If yes, write a script in `scripts/` and add a prek hook
 
 **Example:** The command surface in the root `AGENTS.md` is validated by `scripts/validate_agents_md.py`, which re-reads the Click decorators in `cli.py`. Commits that rename a command without updating AGENTS.md are blocked.
 

@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from portolan_cli import trace
+from portolan_core import trace
 
 if TYPE_CHECKING:
     from pathlib import Path

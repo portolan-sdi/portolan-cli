@@ -11,7 +11,7 @@ from pathlib import PurePosixPath, PureWindowsPath
 
 import pytest
 
-from portolan_cli.catalog_list import _by_name
+from portolan_core.catalog_list import _by_name
 
 pytestmark = pytest.mark.unit
 

@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, Any
 
-import geopandas as gpd
+import geopandas
 import pystac
 import pytest
 import shapely
@@ -22,15 +22,15 @@ from portolan_cli.finalization import (
 )
 from portolan_cli.metadata.detection import get_current_metadata
 from portolan_cli.preparation import PreparedItem
-from portolan_cli.run_state import RunState
 from portolan_cli.stac import create_collection
-from portolan_cli.sync.checksums import compute_checksum
 from portolan_cli.version_ops import commit_run
+from portolan_core.checksums import compute_checksum
+from portolan_core.run_state import RunState
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from portolan_cli.versions import Version
+    from portolan_core.versions import Version
 
 pytestmark = pytest.mark.unit
 
@@ -44,7 +44,7 @@ def _collection_with_asset(root: Path, extent: list[float]) -> Path:
     """A saved collection with one GeoParquet asset at lon 1..2, lat 1..2."""
     collection_dir = root / "coll"
     collection_dir.mkdir(parents=True)
-    gpd.GeoDataFrame(
+    geopandas.GeoDataFrame(
         {"id": [1, 2]}, geometry=[shapely.Point(1, 1), shapely.Point(2, 2)], crs="EPSG:4326"
     ).to_parquet(collection_dir / "data.parquet")
     collection = create_collection(collection_id="coll", description="d", bbox=extent)
@@ -135,9 +135,9 @@ class TestStageItems:
     def test_a_changed_file_gets_the_next_version(self, tmp_path: Path) -> None:
         collection_dir = _collection_with_asset(tmp_path, [1.0, 1.0, 2.0, 2.0])
         _commit(collection_dir, [_prepared(collection_dir)])
-        gpd.GeoDataFrame({"id": [1]}, geometry=[shapely.Point(1, 1)], crs="EPSG:4326").to_parquet(
-            collection_dir / "data.parquet"
-        )
+        geopandas.GeoDataFrame(
+            {"id": [1]}, geometry=[shapely.Point(1, 1)], crs="EPSG:4326"
+        ).to_parquet(collection_dir / "data.parquet")
 
         published = _commit(collection_dir, [_prepared(collection_dir)])
 

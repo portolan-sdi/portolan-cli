@@ -41,7 +41,8 @@ class TestUnsupportedFormatDetection:
         result = get_cloud_native_status(nc_file)
         assert result.status == CloudNativeStatus.UNSUPPORTED
         assert result.display_name == "NetCDF"
-        assert "not yet supported" in result.error_message  # type: ignore
+        assert result.error_message is not None
+        assert "not yet supported" in result.error_message
 
     @pytest.mark.unit
     def test_hdf5_returns_unsupported(self, tmp_path: Path) -> None:
@@ -62,7 +63,8 @@ class TestUnsupportedFormatDetection:
         result = get_cloud_native_status(hdf5_file)
         assert result.status == CloudNativeStatus.UNSUPPORTED
         assert result.display_name == "HDF5"
-        assert "not yet supported" in result.error_message  # type: ignore
+        assert result.error_message is not None
+        assert "not yet supported" in result.error_message
 
     @pytest.mark.unit
     def test_las_returns_unsupported_with_copc_guidance(self, tmp_path: Path) -> None:
@@ -73,8 +75,9 @@ class TestUnsupportedFormatDetection:
         assert result.status == CloudNativeStatus.UNSUPPORTED
         assert result.display_name == "LAS"
         assert result.target_format is None
-        assert "COPC" in result.error_message  # type: ignore
-        assert "pdal" in result.error_message.lower()  # type: ignore
+        assert result.error_message is not None
+        assert "COPC" in result.error_message
+        assert "pdal" in result.error_message.lower()
 
     @pytest.mark.unit
     def test_laz_returns_unsupported_with_copc_guidance(self, tmp_path: Path) -> None:
@@ -85,7 +88,8 @@ class TestUnsupportedFormatDetection:
         assert result.status == CloudNativeStatus.UNSUPPORTED
         assert result.display_name == "LAZ"
         assert result.target_format is None
-        assert "COPC" in result.error_message  # type: ignore
+        assert result.error_message is not None
+        assert "COPC" in result.error_message
 
 
 class TestCOPCvsLAZ:

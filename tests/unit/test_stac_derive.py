@@ -12,7 +12,6 @@ from datetime import UTC, datetime
 import pystac
 import pytest
 
-from portolan_cli.errors import InvalidBboxError
 from portolan_cli.stac import (
     CollectionMember,
     apply_collection_fields,
@@ -22,6 +21,7 @@ from portolan_cli.stac import (
     derive_collection_fields,
     summarize_properties,
 )
+from portolan_core.errors import InvalidBboxError
 
 pytestmark = pytest.mark.unit
 

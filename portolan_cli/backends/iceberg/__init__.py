@@ -27,7 +27,7 @@ if TYPE_CHECKING:
 
 __version__ = "0.1.0"
 
-__all__ = ["__version__", "IcebergBackend"]
+__all__ = ["IcebergBackend", "__version__"]
 
 
 def __getattr__(name: str) -> Any:

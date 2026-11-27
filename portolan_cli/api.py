@@ -36,6 +36,10 @@ Groups:
   inspect helpers, thumbnails, validation, and partitioning that the built-in
   format handlers in ``portolan_cli.formats_builtin`` use. A plugin handler
   for a similar format can use them too.
+- STAC builders: ``create_item``, ``create_collection``,
+  ``add_projection_extension``, ``add_vector_extension``,
+  ``add_raster_extension``, ``add_table_extension``, ``wgs84_bbox``. They
+  build pystac objects with no catalog folder (#928).
 """
 
 from __future__ import annotations
@@ -54,13 +58,11 @@ if TYPE_CHECKING:
         VersioningBackend,
     )
     from portolan_cli.catalog import find_catalog_root
-    from portolan_cli.config import get_setting
     from portolan_cli.convert import (
         validate_cog,
         validate_geoparquet,
         write_raster_thumbnail,
     )
-    from portolan_cli.errors import InvalidOutputError
     from portolan_cli.extract.common.report import ExtractionReport
     from portolan_cli.extract.common.source import (
         Discovery,
@@ -75,11 +77,9 @@ if TYPE_CHECKING:
     )
     from portolan_cli.extract.common.urls import sanitize_published_string
     from portolan_cli.finalization import aggregate_table_extension
-    from portolan_cli.format_families import RASTER_EXTENSIONS, VECTOR_EXTENSIONS, is_geojson
     from portolan_cli.formats import is_geoparquet
     from portolan_cli.hookspecs import EnrichContext, hookimpl
     from portolan_cli.inspect import FileInfo, inspect_cog, inspect_geoparquet
-    from portolan_cli.json_io import write_json_atomic
     from portolan_cli.json_output import ErrorDetail, error_envelope, success_envelope
     from portolan_cli.metadata.cog import extract_cog_metadata
     from portolan_cli.metadata.flatgeobuf import extract_flatgeobuf_metadata
@@ -96,15 +96,30 @@ if TYPE_CHECKING:
         convert_vector,
         describe_raster_item,
         describe_vector_item,
+        wgs84_bbox,
     )
-    from portolan_cli.sync.checksums import compute_checksum
+    from portolan_cli.stac import (
+        add_projection_extension,
+        add_raster_extension,
+        add_table_extension,
+        add_vector_extension,
+        create_collection,
+        create_item,
+    )
     from portolan_cli.sync.download import download_file
     from portolan_cli.sync.pull import PullResult
     from portolan_cli.sync.upload import upload_file
-    from portolan_cli.trace import span
-    from portolan_cli.versions import Asset, SchemaInfo, Version, parse_version
+    from portolan_core.checksums import compute_checksum
+    from portolan_core.config import get_setting
+    from portolan_core.errors import InvalidOutputError
+    from portolan_core.format_families import RASTER_EXTENSIONS, VECTOR_EXTENSIONS, is_geojson
+    from portolan_core.json_io import write_json_atomic
+    from portolan_core.trace import span
+    from portolan_core.versions import Asset, SchemaInfo, Version, parse_version
 
 __all__ = [
+    "RASTER_EXTENSIONS",
+    "VECTOR_EXTENSIONS",
     "Asset",
     "Discovery",
     "DriftReport",
@@ -127,17 +142,21 @@ __all__ = [
     "PostAddContext",
     "PostAddItemContext",
     "PullResult",
-    "RASTER_EXTENSIONS",
     "SchemaFingerprint",
     "SchemaInfo",
     "SourceLink",
-    "VECTOR_EXTENSIONS",
     "Version",
     "VersioningBackend",
+    "add_projection_extension",
+    "add_raster_extension",
+    "add_table_extension",
+    "add_vector_extension",
     "aggregate_table_extension",
     "compute_checksum",
     "convert_raster",
     "convert_vector",
+    "create_collection",
+    "create_item",
     "describe_raster_item",
     "describe_vector_item",
     "detail",
@@ -169,12 +188,13 @@ __all__ = [
     "validate_cog",
     "validate_geoparquet",
     "warn",
+    "wgs84_bbox",
     "write_json_atomic",
     "write_raster_thumbnail",
 ]
 
 _EXPORTS = {
-    "Asset": "portolan_cli.versions",
+    "Asset": "portolan_core.versions",
     "Discovery": "portolan_cli.extract.common.source",
     "DriftReport": "portolan_cli.backends.protocol",
     "EmptyLayerError": "portolan_cli.extract.common.source",
@@ -187,7 +207,7 @@ _EXPORTS = {
     "FormatContext": "portolan_cli.plugins.formats",
     "FormatHandler": "portolan_cli.plugins.formats",
     "FormatMetadata": "portolan_cli.plugins.formats",
-    "InvalidOutputError": "portolan_cli.errors",
+    "InvalidOutputError": "portolan_core.errors",
     "LayerMetadata": "portolan_cli.extract.common.source",
     "LayerRef": "portolan_cli.extract.common.source",
     "LayerSource": "portolan_cli.extract.common.source",
@@ -196,17 +216,23 @@ _EXPORTS = {
     "PostAddContext": "portolan_cli.backends.protocol",
     "PostAddItemContext": "portolan_cli.backends.protocol",
     "PullResult": "portolan_cli.sync.pull",
-    "RASTER_EXTENSIONS": "portolan_cli.format_families",
+    "RASTER_EXTENSIONS": "portolan_core.format_families",
     "SchemaFingerprint": "portolan_cli.backends.protocol",
-    "SchemaInfo": "portolan_cli.versions",
+    "SchemaInfo": "portolan_core.versions",
     "SourceLink": "portolan_cli.extract.common.source",
-    "VECTOR_EXTENSIONS": "portolan_cli.format_families",
-    "Version": "portolan_cli.versions",
+    "VECTOR_EXTENSIONS": "portolan_core.format_families",
+    "Version": "portolan_core.versions",
     "VersioningBackend": "portolan_cli.backends.protocol",
+    "add_projection_extension": "portolan_cli.stac",
+    "add_raster_extension": "portolan_cli.stac",
+    "add_table_extension": "portolan_cli.stac",
+    "add_vector_extension": "portolan_cli.stac",
     "aggregate_table_extension": "portolan_cli.finalization",
-    "compute_checksum": "portolan_cli.sync.checksums",
+    "compute_checksum": "portolan_core.checksums",
     "convert_raster": "portolan_cli.preparation",
     "convert_vector": "portolan_cli.preparation",
+    "create_collection": "portolan_cli.stac",
+    "create_item": "portolan_cli.stac",
     "describe_raster_item": "portolan_cli.preparation",
     "describe_vector_item": "portolan_cli.preparation",
     "detail": "portolan_cli.output",
@@ -220,25 +246,26 @@ _EXPORTS = {
     "extractor_from": "portolan_cli.extract.common.source",
     "find_catalog_root": "portolan_cli.catalog",
     "get_backend": "portolan_cli.backends",
-    "get_setting": "portolan_cli.config",
+    "get_setting": "portolan_core.config",
     "hookimpl": "portolan_cli.hookspecs",
     "info": "portolan_cli.output",
     "inspect_cog": "portolan_cli.inspect",
     "inspect_geoparquet": "portolan_cli.inspect",
-    "is_geojson": "portolan_cli.format_families",
+    "is_geojson": "portolan_core.format_families",
     "is_geoparquet": "portolan_cli.formats",
-    "parse_version": "portolan_cli.versions",
+    "parse_version": "portolan_core.versions",
     "partition_vector_file": "portolan_cli.partitioning",
     "run_layer_extraction": "portolan_cli.extract.common.source",
     "sanitize_published_string": "portolan_cli.extract.common.urls",
-    "span": "portolan_cli.trace",
+    "span": "portolan_core.trace",
     "success": "portolan_cli.output",
     "success_envelope": "portolan_cli.json_output",
     "upload_file": "portolan_cli.sync.upload",
     "validate_cog": "portolan_cli.convert",
     "validate_geoparquet": "portolan_cli.convert",
     "warn": "portolan_cli.output",
-    "write_json_atomic": "portolan_cli.json_io",
+    "wgs84_bbox": "portolan_cli.preparation",
+    "write_json_atomic": "portolan_core.json_io",
     "write_raster_thumbnail": "portolan_cli.convert",
 }
 

@@ -58,7 +58,11 @@ $ portolan add roads/data.parquet
 ✓ Added 1 file to 1 collection
 ```
 
-`add` does not inspect row order. To reorder a file that has the column but is
-not sorted, run `portolan add <path> --force --reconvert`. That is also the
-way to apply `sort` to an existing file when you set `add_bbox: false`,
-because the footer then shows nothing `add` can act on.
+`add` does not inspect row order. `portolan check --fix` rewrites each
+GeoParquet file that `check` reports as not sorted (`PTL-DAT-006`), without
+row-group statistics (`PTL-DAT-007`), or with row groups that are too large
+(`PTL-DAT-008`). To apply `sort` to a file that `check` does not report, for
+example when you set `add_bbox: false`, run
+`portolan add <path> --force --reconvert`.
+`check --fix` keeps a file when the settings cannot clear the rule, for
+example `PTL-DAT-006` under `sort: none`, and names the setting to change.

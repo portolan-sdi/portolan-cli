@@ -10,47 +10,17 @@ pyiceberg.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, NoReturn
+from typing import NoReturn
 
 import click
 
 from portolan_cli import api
-
-if TYPE_CHECKING:
-    from portolan_cli.api import VersioningBackend
-
-
-class BackendRequiredError(Exception):
-    """Raised when a required backend is not configured."""
-
-    def __init__(self, command_name: str, required: str, current: str | None) -> None:
-        self.command_name = command_name
-        self.required = required
-        self.current = current or "file"
-        super().__init__(
-            f"'portolan version {command_name}' requires the '{required}' backend. "
-            f"Current backend: '{self.current}'"
-        )
-
-
-def require_iceberg_backend(catalog_path: Path, command_name: str) -> VersioningBackend:
-    """Load the iceberg backend or raise BackendRequiredError.
-
-    Args:
-        catalog_path: Path to catalog root.
-        command_name: Name of the command (for error messages).
-
-    Returns:
-        The iceberg VersioningBackend instance.
-
-    Raises:
-        BackendRequiredError: If the current backend is not 'iceberg'.
-    """
-    backend_name = api.get_setting("backend", catalog_path=catalog_path)
-    if backend_name != "iceberg":
-        raise BackendRequiredError(command_name, "iceberg", backend_name)
-    backend: VersioningBackend = api.get_backend("iceberg", catalog_root=catalog_path)
-    return backend
+from portolan_cli.backends.iceberg.commands import (
+    BackendRequiredError,
+    BackendUnavailableError,
+    prune_collection,
+    rollback_collection,
+)
 
 
 def _use_json(ctx: click.Context, json_flag: bool) -> bool:
@@ -69,12 +39,8 @@ def _fail(command: str, error_type: str, message: str, *, use_json: bool) -> NoR
     raise SystemExit(1)
 
 
-def _iceberg_backend(
-    ctx: click.Context, catalog_path: Path | None, json_flag: bool, name: str
-) -> Any:
-    """Resolve the catalog root and the iceberg backend, or exit with an error."""
-    command = f"version {name}"
-    use_json = _use_json(ctx, json_flag)
+def _catalog_root(catalog_path: Path | None, command: str, *, use_json: bool) -> Path:
+    """Resolve the catalog root, or exit with an error."""
     if catalog_path is None:
         catalog_path = api.find_catalog_root()
         if catalog_path is None:
@@ -84,12 +50,7 @@ def _iceberg_backend(
                 "fatal: not a portolan catalog (or any parent up to mount point)",
                 use_json=use_json,
             )
-    try:
-        return require_iceberg_backend(catalog_path, name)
-    except (BackendRequiredError, ValueError) as e:
-        # get_backend raises ValueError when the backend cannot start, for
-        # example without the iceberg extra.
-        _fail(command, "BackendError", str(e), use_json=use_json)
+    return catalog_path
 
 
 _CATALOG_OPTION = click.option(
@@ -125,22 +86,19 @@ def rollback(
         portolan version rollback boundaries 2.0.0 --json
     """
     use_json = _use_json(ctx, json_output)
-    backend = _iceberg_backend(ctx, catalog_path, json_output, "rollback")
+    root = _catalog_root(catalog_path, "version rollback", use_json=use_json)
 
     try:
-        restored = backend.rollback(collection, target_version)
-    except Exception as e:  # noqa: BLE001 - any backend failure is reported
+        result = rollback_collection(collection, target_version, catalog_root=root)
+    except (BackendRequiredError, BackendUnavailableError) as e:
+        _fail("version rollback", "BackendError", str(e), use_json=use_json)
+    except Exception as e:  # any backend failure is reported
         _fail("version rollback", type(e).__name__, str(e), use_json=use_json)
 
     if use_json:
-        data = {
-            "collection": collection,
-            "restored_version": restored.version,
-            "created": restored.created.isoformat(),
-        }
-        click.echo(api.success_envelope("version rollback", data).to_json())
+        click.echo(api.success_envelope("version rollback", result.to_dict()).to_json())
     else:
-        api.success(f"Rolled back '{collection}' to version {restored.version}")
+        api.success(f"Rolled back '{collection}' to version {result.restored.version}")
 
 
 @click.command()
@@ -178,22 +136,19 @@ def prune(
         portolan version prune boundaries --dry-run      # Preview without deleting
     """
     use_json = _use_json(ctx, json_output)
-    backend = _iceberg_backend(ctx, catalog_path, json_output, "prune")
+    root = _catalog_root(catalog_path, "version prune", use_json=use_json)
 
     try:
-        pruned = backend.prune(collection, keep=keep, dry_run=dry_run)
-    except Exception as e:  # noqa: BLE001 - any backend failure is reported
+        result = prune_collection(collection, keep=keep, dry_run=dry_run, catalog_root=root)
+    except (BackendRequiredError, BackendUnavailableError) as e:
+        _fail("version prune", "BackendError", str(e), use_json=use_json)
+    except Exception as e:  # any backend failure is reported
         _fail("version prune", type(e).__name__, str(e), use_json=use_json)
 
     if use_json:
-        data = {
-            "collection": collection,
-            "pruned": [{"version": v.version, "created": v.created.isoformat()} for v in pruned],
-            "kept": keep,
-            "dry_run": dry_run,
-        }
-        click.echo(api.success_envelope("version prune", data).to_json())
+        click.echo(api.success_envelope("version prune", result.to_dict()).to_json())
         return
+    pruned = result.pruned
     prefix = "[DRY RUN] " if dry_run else ""
     if not pruned:
         api.info(f"{prefix}Nothing to prune (≤{keep} versions exist)")

@@ -86,7 +86,8 @@ def _without_timestamps(text: str) -> str:
 
 
 def _item_json(root: Path) -> dict:
-    return json.loads((root / "imagery" / "rapidai4eo" / "rapidai4eo.json").read_text())
+    doc: dict = json.loads((root / "imagery" / "rapidai4eo" / "rapidai4eo.json").read_text())
+    return doc
 
 
 class TestFreshnessBaseline:
@@ -455,8 +456,8 @@ class TestOneFixIsOneRun:
         """
         from click.testing import CliRunner
 
-        from portolan_cli import config, json_io
         from portolan_cli.cli import cli
+        from portolan_core import config, json_io
 
         root = tmp_path / "catalog"
         runner = CliRunner()

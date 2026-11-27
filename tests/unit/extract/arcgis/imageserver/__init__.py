@@ -12,7 +12,7 @@ def _lerc_missing() -> str | None:
     fails on that platform. CI runs on x86, where the tests run.
     """
     try:
-        import lerc  # type: ignore[import-untyped]  # noqa: F401
+        import lerc
     except (ImportError, OSError) as err:
         return f"the LERC decoder does not load on this platform: {err}"
     return None

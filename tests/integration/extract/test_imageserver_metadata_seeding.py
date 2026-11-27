@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 pytestmark = [pytest.mark.integration]
 
 
-def make_imageserver_metadata_extracted(
+def make_imageserver_metadata_extracted(  # noqa: PLR0913, PLR0917 - one default per ImageServer metadata field
     source_url: str = "https://services.arcgis.com/test/ImageServer",
     service_name: str = "TestImageServer",
     description: str | None = "Test imagery service",
@@ -131,6 +131,7 @@ class TestImageServerMetadataExtractedToExtracted:
         extracted = metadata.to_extracted()
 
         # Should include both service_description and technical specs
+        assert extracted.processing_notes is not None
         assert "High-res imagery" in extracted.processing_notes
         assert "pixel_type: U16" in extracted.processing_notes
         assert "band_count: 4" in extracted.processing_notes

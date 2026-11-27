@@ -14,7 +14,6 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from portolan_cli.models.schema import ColumnSchema, SchemaModel
 from portolan_cli.schema import (
     detect_breaking_changes,
     export_schema_csv,
@@ -25,6 +24,7 @@ from portolan_cli.schema import (
     import_schema_parquet,
     is_breaking,
 )
+from portolan_core.models.schema import ColumnSchema, SchemaModel
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -73,6 +73,7 @@ class TestSchemaJsonRoundtrip:
         # Verify column details
         assert isinstance(imported.columns[0], ColumnSchema)
         assert imported.columns[0].description == "County boundary"
+        assert isinstance(imported.columns[1], ColumnSchema)
         assert imported.columns[1].semantic_type == "osi:Name"
 
     @pytest.mark.integration
@@ -97,11 +98,11 @@ class TestSchemaJsonRoundtrip:
         # Simulate edit: add description and unit
         import json
 
-        with open(json_path) as f:
+        with open(json_path, encoding="utf-8") as f:
             data = json.load(f)
         data["columns"][0]["description"] = "Total population count"
         data["columns"][0]["unit"] = "people"
-        with open(json_path, "w") as f:
+        with open(json_path, "w", encoding="utf-8") as f:
             json.dump(data, f)
 
         # Import edited schema
@@ -191,6 +192,7 @@ class TestSchemaParquetRoundtrip:
         assert isinstance(imported.columns[0], ColumnSchema)
         assert imported.columns[0].name == "geometry"
         assert imported.columns[0].type == "binary"
+        assert isinstance(imported.columns[1], ColumnSchema)
         assert imported.columns[1].name == "value"
         assert imported.columns[1].type == "float64"
 
@@ -220,10 +222,10 @@ class TestBreakingChangeWorkflow:
         # Simulate breaking edit: change type
         import json
 
-        with open(json_path) as f:
+        with open(json_path, encoding="utf-8") as f:
             data = json.load(f)
         data["columns"][0]["type"] = "string"  # Breaking change!
-        with open(json_path, "w") as f:
+        with open(json_path, "w", encoding="utf-8") as f:
             json.dump(data, f)
 
         # Import edited schema
@@ -254,10 +256,10 @@ class TestBreakingChangeWorkflow:
         # Simulate breaking edit: remove column
         import json
 
-        with open(json_path) as f:
+        with open(json_path, encoding="utf-8") as f:
             data = json.load(f)
         data["columns"] = [data["columns"][0]]  # Remove column b
-        with open(json_path, "w") as f:
+        with open(json_path, "w", encoding="utf-8") as f:
             json.dump(data, f)
 
         # Import edited schema

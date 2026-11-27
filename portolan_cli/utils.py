@@ -11,6 +11,8 @@ from pathlib import Path, PurePath
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
+_KIB = 1024
+
 
 def format_size(size_bytes: int) -> str:
     """Format a file size in human-readable format.
@@ -21,7 +23,7 @@ def format_size(size_bytes: int) -> str:
     Returns:
         Human-readable size string (e.g., "4.2MB", "100B").
     """
-    if size_bytes < 1024:
+    if size_bytes < _KIB:
         return f"{size_bytes}B"
     if size_bytes < 1024 * 1024:
         return f"{size_bytes / 1024:.1f}KB"
@@ -159,6 +161,10 @@ _URL_IN_TEXT = re.compile(
 )
 
 
+# The userinfo of a URL: the text between "://" and the first "@" before the path.
+_USERINFO = re.compile(r"(://)[^/@\s]*@")
+
+
 def redact_credentials(text: str) -> str:
     """Return ``text`` with no credential in any URL that it quotes.
 
@@ -184,8 +190,14 @@ def _sanitize_url(text: str) -> str:
     Punctuation at the end of ``text`` ends the sentence, not the URL.
     """
     url = text.rstrip(".,:;!?)")
-    parsed = urlparse(url)
-    changed = parsed.username is not None or parsed.password is not None
+    try:
+        parsed = urlparse(url)
+        changed = parsed.username is not None or parsed.password is not None
+    except ValueError:
+        # urlparse rejects a malformed host, such as "[bad". The message must
+        # still go out, so drop the userinfo here. The caller masks the
+        # credential parameter values.
+        return _USERINFO.sub(r"\1", text)
     if changed:
         parsed = parsed._replace(netloc=parsed.netloc.rsplit("@", 1)[1])
     pairs = parse_qsl(parsed.query, keep_blank_values=True)

@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -83,7 +84,7 @@ class TestEnums:
 
     def test_format_families_have_their_json_names(self) -> None:
         """Scan JSON output writes the built-in families as "vector" and "raster"."""
-        from portolan_cli.format_families import RASTER, VECTOR
+        from portolan_core.format_families import RASTER, VECTOR
 
         assert (VECTOR, RASTER) == ("vector", "raster")
 
@@ -589,7 +590,7 @@ class TestScanResult:
             directories_scanned=5,
         )
 
-        d = result.to_dict()
+        d: dict[str, Any] = result.to_dict()
 
         # Should be JSON serializable
         json_str = json.dumps(d)
@@ -655,7 +656,7 @@ class TestScanResult:
             proposed_fixes=[fix],
         )
 
-        d = result.to_dict()
+        d: dict[str, Any] = result.to_dict()
 
         # Should include proposed_fixes
         assert "proposed_fixes" in d
@@ -707,7 +708,7 @@ class TestScanResult:
             applied_fixes=[applied],
         )
 
-        d = result.to_dict()
+        d: dict[str, Any] = result.to_dict()
 
         # Should include applied_fixes
         assert "applied_fixes" in d
@@ -727,7 +728,7 @@ class TestScanResult:
             directories_scanned=1,
         )
 
-        d = result.to_dict()
+        d: dict[str, Any] = result.to_dict()
 
         # Should NOT include proposed_fixes or applied_fixes when empty
         assert "proposed_fixes" not in d
@@ -1164,7 +1165,7 @@ class TestJsonOutput:
         from portolan_cli.scan.core import scan_directory
 
         result = scan_directory(fixtures_dir / "clean_flat")
-        d = result.to_dict()
+        d: dict[str, Any] = result.to_dict()
 
         assert "root" in d
         assert "summary" in d
@@ -1182,7 +1183,7 @@ class TestJsonOutput:
         from portolan_cli.scan.core import scan_directory
 
         result = scan_directory(fixtures_dir / "incomplete_shapefile")
-        d = result.to_dict()
+        d: dict[str, Any] = result.to_dict()
 
         for issue in d["issues"]:
             assert "path" in issue
@@ -1372,6 +1373,7 @@ class TestGeoParquetDetection:
         import pyarrow as pa
         import pyarrow.parquet as pq
 
+        from portolan_cli.scan.classify import SkippedFile
         from portolan_cli.scan.core import scan_directory
 
         # Create a regular Parquet file without geo metadata
@@ -1385,6 +1387,7 @@ class TestGeoParquetDetection:
         assert len(result.ready) == 0
         # Should be in skipped files
         assert len(result.skipped) == 1
+        assert isinstance(result.skipped[0], SkippedFile)
         assert result.skipped[0].path.name == "census-data.parquet"
 
     def test_mixed_parquet_types_only_geoparquet_ready(self, tmp_path: Path) -> None:
@@ -1706,7 +1709,7 @@ class TestBrokenSymlinkEdgeCases:
 
         opts = ScanOptions(follow_symlinks=True)
         result = scan_directory(tmp_path, opts)
-        report = result.to_dict()
+        report: dict[str, Any] = result.to_dict()
 
         # Should have issues in the report
         assert report["summary"]["issue_count"] >= 1
@@ -1737,7 +1740,9 @@ class TestCollectionIdValidation:
         ]
         assert len(collection_id_issues) == 1
         assert "uppercase" in collection_id_issues[0].message.lower()
-        assert "mycollection" in collection_id_issues[0].suggestion.lower()
+        suggestion = collection_id_issues[0].suggestion
+        assert suggestion is not None
+        assert "mycollection" in suggestion.lower()
 
     def test_scan_detects_invalid_collection_id_spaces(self, tmp_path: Path) -> None:
         """Scan should detect spaces in collection directory names."""

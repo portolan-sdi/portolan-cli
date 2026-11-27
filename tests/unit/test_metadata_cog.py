@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from portolan_cli.metadata.cog import COGMetadata, extract_cog_metadata, extract_schema_from_cog
-from portolan_cli.models.schema import BandSchema, SchemaModel
+from portolan_core.models.schema import BandSchema, SchemaModel
 
 if TYPE_CHECKING:
     from pathlib import Path

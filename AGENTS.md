@@ -97,10 +97,12 @@ uv run python scripts/affected_tests.py --run -n 4  # Run tests this change can 
 uv run pytest --cov-report=html         # Coverage report
 uv run ruff check .                     # Lint
 uv run ruff format .                    # Format
-uv run mypy portolan_cli                # Type check
+uv run mypy portolan_cli packages/portolan-core/src  # Type check
 uv run deptry .                         # Check dependencies (unused, missing, transitive)
+uv run deptry packages/portolan-core \
+  --config packages/portolan-core/pyproject.toml  # Check portolan-core dependencies
 uv run vulture                          # Dead code
-uvx jscpd@5.2.1 portolan_cli tests \
+uvx jscpd@5.2.1 portolan_cli packages tests \
   --baseline .jscpd-baseline.json \
   --fail-on-new-clones 0            # Duplicate code
 
@@ -123,11 +125,13 @@ uv run pytest tests/docs/test_site_build.py  # Verify the built site
 
 ```
 portolan-cli/
-├── portolan_cli/          # Source code
+├── portolan_cli/          # Source code of the portolan-cli distribution
 │   └── backends/
 │       ├── json_file.py   # MVP file-based backend (always available)
 │       ├── protocol.py    # VersioningBackend protocol definition
 │       └── iceberg/       # Iceberg backend (requires [iceberg] extra)
+├── packages/portolan-core/  # The portolan-core distribution (uv workspace member)
+│   └── src/portolan_core/
 ├── tests/                 # Test suite
 │   ├── fixtures/          # Test data files
 │   ├── specs/             # Human-written test specifications
@@ -140,6 +144,14 @@ portolan-cli/
 ├── docs/                  # PUBLIC documentation (Zensical) - tutorials, user guides
 └── .github/workflows/     # CI/CD pipelines
 ```
+
+The repo is a uv workspace with two distributions. The root `pyproject.toml` is
+`portolan-cli`, the Click shell and the geospatial stack, in `portolan_cli/`.
+`packages/portolan-core` is `portolan-core`, the library, in
+`packages/portolan-core/src/portolan_core/`. `portolan-cli` pins
+`portolan-core==` its own version, and one `cz bump` moves both. `portolan_core`
+must not import `portolan_cli`, Click, or the geospatial stack (import-linter
+contracts `core-no-cli` and `core-no-heavy`).
 
 `docs/` is public (Zensical). Docstrings and comments next to the code record
 the internal rationale. See `.claude/rules/documentation.md` for
@@ -166,7 +178,7 @@ Always research before implementing:
 
 1. **Understand the request** — Ask clarifying questions if ambiguous
 2. **Search for patterns** — Check if similar functionality exists
-3. **Check utilities** — Review `portolan_cli/` first
+3. **Check utilities** — Review `portolan_cli/` and `packages/portolan-core/src/` first
 4. **Review existing tests** — Look at tests for the area you're modifying
 5. **Check the rationale** — Read the module docstrings and the relevant
    `.claude/rules/*.md` to understand past decisions
@@ -198,7 +210,6 @@ Always research before implementing:
 - **ALL** non-obvious decisions are recorded where they apply (see `.claude/rules/documentation.md`)
 - **NO** new dependencies without discussion
 
-<!-- freshness: last-verified: 2026-11-25 -->
 ## Design Principles
 
 | Principle | Meaning |
@@ -209,17 +220,17 @@ Always research before implementing:
 | **versions.json is truth** | Drives sync, validation, history |
 | **Plugin interface early** | Handlers follow consistent interface for future plugins |
 | **CLI wraps API** | All logic in library; CLI is thin Click layer |
-<!-- /freshness -->
 
 ## Known Issues
 
 Each upstream bug and accepted limit is recorded at its workaround, with the
 upstream issue URL where one exists. The record is a dependency pin comment in
-`pyproject.toml`, a comment or docstring at the workaround in `portolan_cli/`, a
+`pyproject.toml`, a comment or docstring at the workaround in `portolan_cli/` or
+`packages/portolan-core/src/`, a
 `skipif` reason, or an `xfail(strict=True)` reason. A strict `xfail` fails CI once
 upstream fixes the bug. List them with:
 
 ```bash
 git grep -nE "xfail\(|skipif\(|upstream" -- \
-  pyproject.toml portolan_cli tests
+  pyproject.toml portolan_cli packages/portolan-core tests
 ```

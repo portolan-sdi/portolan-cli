@@ -22,10 +22,10 @@ from click.testing import CliRunner
 
 from portolan_cli.add import (
     AddFailure,
-    ItemInfo,
     add_files,
 )
 from portolan_cli.cli import cli
+from portolan_core.query import ItemInfo
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -140,7 +140,7 @@ class TestAddFilesContinuesOnErrors:
         ):
             mock_finalize.return_value = []
             with patch("portolan_cli.add.is_current", return_value=False):
-                added, skipped, failures = add_files(
+                _added, _skipped, failures = add_files(
                     paths=[collection_dir, collection_dir2],
                     catalog_root=tmp_path,
                     collection_id="collection",
@@ -200,7 +200,7 @@ class TestAddFilesContinuesOnErrors:
         ):
             mock_finalize.return_value = []
             with patch("portolan_cli.add.is_current", return_value=False):
-                added, skipped, failures = add_files(
+                _added, _skipped, failures = add_files(
                     paths=[collection_dir, collection_dir2],
                     catalog_root=tmp_path,
                     collection_id="collection",
@@ -240,7 +240,7 @@ class TestAddFilesContinuesOnErrors:
             patch("portolan_cli.add.prepare_item", side_effect=mock_add),
             patch("portolan_cli.add.is_current", return_value=False),
         ):
-            added, skipped, failures = add_files(
+            added, _skipped, failures = add_files(
                 paths=[tmp_path / "collection"],
                 catalog_root=tmp_path,
                 collection_id="collection",

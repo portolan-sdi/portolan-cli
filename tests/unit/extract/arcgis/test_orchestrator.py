@@ -9,7 +9,7 @@ from __future__ import annotations
 import sys
 import types
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -498,7 +498,7 @@ class TestOrchestratorIntegration:
                 url=TEST_FEATURE_SERVER_URL,
                 output_dir=tmp_path,
                 options=options,
-                on_progress=lambda p: progress_events.append(p),
+                on_progress=progress_events.append,
             )
 
             # Verify extraction was called for each layer
@@ -756,10 +756,11 @@ class TestServicesRootDiscoveryResult:
         d = result.to_dict()
 
         assert d["base_url"] == TEST_SERVICES_ROOT_URL
-        assert len(d["services"]) == 2
-        assert d["services"][0]["name"] == "Census_2020"
-        assert d["services"][0]["type"] == "FeatureServer"
-        assert d["services"][0]["url"].endswith("Census_2020/FeatureServer")
+        services_out = cast("list[dict[str, str]]", d["services"])
+        assert len(services_out) == 2
+        assert services_out[0]["name"] == "Census_2020"
+        assert services_out[0]["type"] == "FeatureServer"
+        assert services_out[0]["url"].endswith("Census_2020/FeatureServer")
         assert d["folders"] == ["Archived"]
         assert d["total_services"] == 2
 
@@ -779,7 +780,7 @@ class TestServicesRootExtraction:
             ],
         )
 
-        result, mock_discover_layers, mock_extract = _extract_root(
+        result, _mock_discover_layers, mock_extract = _extract_root(
             tmp_path, mock_services, mock_census_layers
         )
 
@@ -812,7 +813,7 @@ class TestServicesRootExtraction:
             ],
         )
 
-        result, mock_discover_layers, mock_extract = _extract_root(
+        result, mock_discover_layers, _mock_extract = _extract_root(
             tmp_path, mock_services, mock_census_layers, service_filter=["Census*"]
         )
 
@@ -845,7 +846,7 @@ class TestServicesRootExtraction:
             ],
         )
 
-        result, mock_discover_layers, mock_extract = _extract_root(
+        result, _mock_discover_layers, mock_extract = _extract_root(
             tmp_path, mock_services, mock_single_layer
         )
 
@@ -890,7 +891,7 @@ class TestServicesRootExtraction:
             ],
         )
 
-        result, mock_discover_layers, mock_extract = _extract_root(
+        result, _mock_discover_layers, mock_extract = _extract_root(
             tmp_path, mock_services, mock_multi_layers
         )
 
@@ -932,7 +933,7 @@ class TestServicesRootExtraction:
             ],
         )
 
-        result, mock_discover_layers, mock_extract = _extract_root(
+        result, _mock_discover_layers, _mock_extract = _extract_root(
             tmp_path, mock_services, [mock_single, mock_multi]
         )
 
@@ -943,7 +944,7 @@ class TestServicesRootExtraction:
 
         # Single-layer service should be flattened
         # Expected: singlelayer/singlelayer.parquet (2 parts)
-        single_path = [p for p in output_paths if "singlelayer" in p][0]
+        single_path = next(p for p in output_paths if "singlelayer" in p)
         assert single_path.count("/") == 1, f"Single-layer should be flat: {single_path}"
 
         # Multi-layer service should keep nesting
@@ -1471,7 +1472,9 @@ def _read_crs(path: Path) -> object:
     # Close the reader before returning. Windows blocks a replace on the file
     # while a handle stays open.
     with pq.ParquetFile(path) as parquet_file:
-        geo = json.loads(parquet_file.metadata.metadata[b"geo"])
+        file_metadata = parquet_file.metadata.metadata
+        assert file_metadata is not None
+        geo = json.loads(file_metadata[b"geo"])
     return geo["columns"][geo["primary_column"]].get("crs")
 
 

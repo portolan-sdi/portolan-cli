@@ -993,7 +993,9 @@ class TestScanDefaultPath:
         """portolan scan with no PATH argument defaults to current directory."""
         with runner.isolated_filesystem():
             # Create a geo-asset in isolated filesystem
-            Path("data.geojson").write_text('{"type": "FeatureCollection", "features": []}')
+            Path("data.geojson").write_text(
+                '{"type": "FeatureCollection", "features": []}', encoding="utf-8"
+            )
 
             # Run scan without PATH argument (should use current directory)
             result = runner.invoke(cli, ["scan", "--json"])
@@ -1008,7 +1010,9 @@ class TestScanDefaultPath:
         """portolan scan . still works when PATH is explicitly provided."""
         with runner.isolated_filesystem():
             # Create a geo-asset
-            Path("data.geojson").write_text('{"type": "FeatureCollection", "features": []}')
+            Path("data.geojson").write_text(
+                '{"type": "FeatureCollection", "features": []}', encoding="utf-8"
+            )
 
             result = runner.invoke(cli, ["scan", ".", "--json"])
 
@@ -1033,7 +1037,9 @@ class TestScanDefaultPath:
         """portolan scan with no PATH but with --json option should work."""
         with runner.isolated_filesystem():
             # Create a geo-asset
-            Path("data.geojson").write_text('{"type": "FeatureCollection", "features": []}')
+            Path("data.geojson").write_text(
+                '{"type": "FeatureCollection", "features": []}', encoding="utf-8"
+            )
 
             result = runner.invoke(cli, ["scan", "--json"])
 
@@ -1059,7 +1065,9 @@ class TestScanDefaultPath:
         """portolan scan with default path reports issues found in current directory."""
         with runner.isolated_filesystem():
             # Create a file with naming issues (spaces in filename)
-            Path("data file.geojson").write_text('{"type": "FeatureCollection", "features": []}')
+            Path("data file.geojson").write_text(
+                '{"type": "FeatureCollection", "features": []}', encoding="utf-8"
+            )
 
             result = runner.invoke(cli, ["scan", "--json"])
 

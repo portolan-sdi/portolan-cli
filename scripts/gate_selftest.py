@@ -18,8 +18,8 @@ For each fault the script:
 
 The gates run in the copy with the caller's virtual environment.
 ``UV_PROJECT_ENVIRONMENT`` points ``uv run`` at it, ``UV_NO_SYNC`` keeps uv
-from installing the copy into it, and ``PYTHONPATH`` puts the copy ahead of
-the editable install. A symlinked ``.venv`` would work on Linux, but Windows
+from installing the copy into it, and ``PYTHONPATH`` puts the copy of each
+package ahead of the editable install. A symlinked ``.venv`` would work on Linux, but Windows
 needs extra privileges to create one, and the tools would walk into it.
 
 Usage::
@@ -98,7 +98,8 @@ def gate_env(root: Path) -> dict[str, str]:
         UV_NO_SYNC="1",
         UV_PROJECT_ENVIRONMENT=sys.prefix,
         VIRTUAL_ENV=sys.prefix,
-        PYTHONPATH=str(root),
+        # portolan_core sits under packages/, so the copy needs its own entry (#1133).
+        PYTHONPATH=os.pathsep.join((str(root), str(root / "packages" / "portolan-core" / "src"))),
     )
     return env
 
@@ -169,7 +170,7 @@ def _apply_compiled(fault: Fault, root: Path, faulty: bool) -> None:
 # Faults
 # ---------------------------------------------------------------------------
 
-BBOX = "portolan_cli/bbox.py"
+BBOX = "packages/portolan-core/src/portolan_core/bbox.py"
 
 
 def _apply_library_print(root: Path, faulty: bool) -> None:
@@ -213,7 +214,8 @@ def _apply_stale_file_size(root: Path, faulty: bool) -> None:
     raise FaultError("no asset in the catalog carries file:size")
 
 
-DUPLICATE_MODULE = "portolan_cli/_dup_selftest.py"
+# In portolan-core, so the fault proves that jscpd reads packages/ (#1133).
+DUPLICATE_MODULE = "packages/portolan-core/src/portolan_core/_dup_selftest.py"
 # About 70 jscpd tokens, above the 50-token minTokens in .jscpd.json.
 _DUPLICATE_BODY = """
     total = 0
@@ -281,7 +283,7 @@ def _apply_unreachable_branch(root: Path, faulty: bool) -> None:
 def _apply_versions_read_per_file(root: Path, faulty: bool) -> None:
     if faulty:
         _replace_once(
-            root / "portolan_cli/query.py",
+            root / "packages/portolan-core/src/portolan_core/query.py",
             "    versions_file = state.versions(collection_dir)\n",
             "    RunState.open(collection_dir.parent).versions(collection_dir)\n"
             "    versions_file = state.versions(collection_dir)\n",
@@ -292,7 +294,7 @@ def _apply_yaml_parse_per_call(root: Path, faulty: bool) -> None:
     if faulty:
         # The fault parses the file again on each read, beside the RunState memo.
         _replace_once(
-            root / "portolan_cli/run_state.py",
+            root / "packages/portolan-core/src/portolan_core/run_state.py",
             '        return self.memo("config.yaml", path, _config.parse_yaml)',
             "        _config.parse_yaml(path)\n"
             '        return self.memo("config.yaml", path, _config.parse_yaml)',
@@ -386,6 +388,17 @@ def _apply_cog_write_reopen(root: Path, faulty: bool) -> None:
         )
 
 
+def _apply_core_yaml_reopen(root: Path, faulty: bool) -> None:
+    # The open gate reads portolan_core too. The config parser moved there (#1133).
+    if faulty:
+        _replace_once(
+            root / "packages/portolan-core/src/portolan_core/config.py",
+            "    return yaml.load(text, Loader=loader)  # noqa: S506 (a safe loader, chosen above)\n",
+            "    yaml.load(text, Loader=loader)  # noqa: S506\n"
+            "    return yaml.load(text, Loader=loader)  # noqa: S506 (a safe loader, chosen above)\n",
+        )
+
+
 def _perf_gate(test_id: str) -> Gate:
     return Gate(("uv", "run", "pytest", test_id, "-q", "-p", "no:cacheprovider"))
 
@@ -426,6 +439,7 @@ FAULTS = (
                     "uvx",
                     "jscpd@5.2.1",
                     "portolan_cli",
+                    "packages",
                     "tests",
                     "--baseline",
                     ".jscpd-baseline.json",
@@ -510,6 +524,11 @@ FAULTS = (
     Fault(
         "cog-write-reopen",
         _apply_cog_write_reopen,
+        (_perf_gate(OPEN_SITES),),
+    ),
+    Fault(
+        "core-yaml-reopen",
+        _apply_core_yaml_reopen,
         (_perf_gate(OPEN_SITES),),
     ),
 )

@@ -14,11 +14,11 @@ from typing import Any
 
 import pytest
 
-from portolan_cli.constants import STAC_VERSION
-from portolan_cli.models.catalog import Link
+from portolan_core.constants import STAC_VERSION
+from portolan_core.models.catalog import Link
 
 # These will be implemented - tests first!
-from portolan_cli.models.item import AssetModel, ItemModel
+from portolan_core.models.item import AssetModel, ItemModel
 
 
 class TestAssetModel:
@@ -52,6 +52,7 @@ class TestAssetModel:
             type="image/tiff; application=geotiff; profile=cloud-optimized",
             roles=["data"],
         )
+        assert asset.type is not None
         assert "cloud-optimized" in asset.type
 
     @pytest.mark.unit

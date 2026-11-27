@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from portolan_cli.config import (
+from portolan_core.config import (
     get_setting,
     load_config,
     set_setting,
@@ -201,9 +201,9 @@ class TestConversionOverridesDataclass:
         from portolan_cli.conversion_config import ConversionOverrides
 
         overrides = ConversionOverrides(
-            extensions_convert={".fgb"},
-            extensions_preserve=set(),
-            paths_preserve=[],
+            extensions_convert=frozenset({".fgb"}),
+            extensions_preserve=frozenset(),
+            paths_preserve=(),
         )
 
         assert overrides.should_force_convert(Path("test.fgb")) is True
@@ -215,9 +215,9 @@ class TestConversionOverridesDataclass:
         from portolan_cli.conversion_config import ConversionOverrides
 
         overrides = ConversionOverrides(
-            extensions_convert=set(),
-            extensions_preserve={".gpkg", ".shp"},
-            paths_preserve=[],
+            extensions_convert=frozenset(),
+            extensions_preserve=frozenset({".gpkg", ".shp"}),
+            paths_preserve=(),
         )
 
         assert overrides.should_preserve(Path("test.gpkg")) is True
@@ -230,9 +230,9 @@ class TestConversionOverridesDataclass:
         from portolan_cli.conversion_config import ConversionOverrides
 
         overrides = ConversionOverrides(
-            extensions_convert=set(),
-            extensions_preserve=set(),
-            paths_preserve=["legacy/**", "regulatory/*.shp"],
+            extensions_convert=frozenset(),
+            extensions_preserve=frozenset(),
+            paths_preserve=("legacy/**", "regulatory/*.shp"),
         )
 
         # Files in legacy/ should be preserved
@@ -257,9 +257,9 @@ class TestConversionOverridesDataclass:
         from portolan_cli.conversion_config import ConversionOverrides
 
         overrides = ConversionOverrides(
-            extensions_convert={".fgb"},  # Normally convert FlatGeobuf
-            extensions_preserve=set(),
-            paths_preserve=["archive/**"],  # But preserve everything in archive/
+            extensions_convert=frozenset({".fgb"}),  # Normally convert FlatGeobuf
+            extensions_preserve=frozenset(),
+            paths_preserve=("archive/**",),  # But preserve everything in archive/
         )
 
         # FlatGeobuf in archive/ should be preserved (path wins)

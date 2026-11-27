@@ -10,12 +10,12 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
-from portolan_cli.models.schema import BandSchema, ColumnSchema
 from portolan_cli.schema.import_ import (
     import_schema_csv,
     import_schema_json,
     import_schema_parquet,
 )
+from portolan_core.models.schema import BandSchema, ColumnSchema
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -42,7 +42,7 @@ class TestImportSchemaJson:
             ],
         }
         path = tmp_path / "schema.json"
-        with open(path, "w") as f:
+        with open(path, "w", encoding="utf-8") as f:
             json.dump(data, f)
 
         schema = import_schema_json(path)
@@ -64,7 +64,7 @@ class TestImportSchemaJson:
             ],
         }
         path = tmp_path / "schema.json"
-        with open(path, "w") as f:
+        with open(path, "w", encoding="utf-8") as f:
             json.dump(data, f)
 
         schema = import_schema_json(path)
@@ -88,7 +88,7 @@ class TestImportSchemaCsv:
     def test_import_geoparquet_schema_from_csv(self, tmp_path: Path) -> None:
         """Can import GeoParquet schema from CSV."""
         path = tmp_path / "schema.csv"
-        with open(path, "w", newline="") as f:
+        with open(path, "w", encoding="utf-8", newline="") as f:
             writer = csv.DictWriter(
                 f,
                 fieldnames=[
@@ -128,13 +128,14 @@ class TestImportSchemaCsv:
         assert len(schema.columns) == 2
         assert isinstance(schema.columns[0], ColumnSchema)
         assert schema.columns[0].geometry_type == "Polygon"
+        assert isinstance(schema.columns[1], ColumnSchema)
         assert schema.columns[1].nullable is True
 
     @pytest.mark.unit
     def test_import_cog_schema_from_csv(self, tmp_path: Path) -> None:
         """Can import COG schema from CSV."""
         path = tmp_path / "schema.csv"
-        with open(path, "w", newline="") as f:
+        with open(path, "w", encoding="utf-8", newline="") as f:
             writer = csv.DictWriter(f, fieldnames=["name", "data_type", "nodata", "description"])
             writer.writeheader()
             writer.writerow(
@@ -150,6 +151,7 @@ class TestImportSchemaCsv:
         assert len(schema.columns) == 2
         assert isinstance(schema.columns[0], BandSchema)
         assert schema.columns[0].nodata == 0.0
+        assert isinstance(schema.columns[1], BandSchema)
         assert schema.columns[1].nodata is None
 
     @pytest.mark.unit
@@ -194,7 +196,7 @@ class TestImportSchemaParquet:
     @pytest.mark.unit
     def test_import_cog_schema_from_parquet(self, tmp_path: Path) -> None:
         """Can import COG schema from Parquet."""
-        rows = [
+        rows: list[dict[str, object]] = [
             {"name": "band_1", "data_type": "uint8", "nodata": 0},
             {"name": "band_2", "data_type": "float32", "nodata": None},
         ]

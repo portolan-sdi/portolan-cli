@@ -18,6 +18,7 @@ import json
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import obstore as obs
 import pytest
 
 if TYPE_CHECKING:
@@ -177,12 +178,11 @@ def test_failed_rollback_reports_the_key_it_could_not_restore(
     its errors. The other written keys hold the bytes of push 1 again. The
     backup of the scene stays, so the old bytes are not lost.
     """
-    from portolan_cli.sync import push as push_module
 
     after_first = bucket.keys()
     calls_before = len(fault_store.calls)
     fault_store.fail_on(2, when=_is_scene)
-    real_copy = push_module.obs.copy_async
+    real_copy = obs.copy_async
     refused: list[tuple[str, str]] = []
 
     async def copy_async(store: Any, src: str, dst: str, **kwargs: Any) -> Any:
@@ -191,7 +191,7 @@ def test_failed_rollback_reports_the_key_it_could_not_restore(
             raise PermissionError("injected restore fault")
         return await real_copy(store, src, dst, **kwargs)
 
-    monkeypatch.setattr(push_module.obs, "copy_async", copy_async)
+    monkeypatch.setattr(obs, "copy_async", copy_async)
 
     second = _push(run_cli, pushed, bucket, *mode)
 
@@ -469,7 +469,7 @@ def test_cancelled_backup_leaves_no_backup_key(
     from portolan_cli.sync import push as push_module
 
     before = bucket.keys()
-    real_copy = push_module.obs.copy_async
+    real_copy = obs.copy_async
     copies: list[str] = []
 
     async def copy_once_then_cancel(store: Any, src: str, dst: str, **kwargs: Any) -> Any:
@@ -486,7 +486,7 @@ def test_cancelled_backup_leaves_no_backup_key(
             await asyncio.shield(landed)
         return landed.result()
 
-    monkeypatch.setattr(push_module.obs, "copy_async", copy_once_then_cancel)
+    monkeypatch.setattr(obs, "copy_async", copy_once_then_cancel)
 
     with pytest.raises(asyncio.CancelledError):
         asyncio.run(push_module.push_async(pushed, "imagery", bucket.url))
@@ -638,20 +638,20 @@ SMALL_COPY_LIMIT = 16
 @pytest.fixture
 def refuse_large_copies(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     """Make CopyObject refuse a source above ``SMALL_COPY_LIMIT``, as S3 does above 5 GB."""
-    from portolan_cli.sync import push as push_module
+    from portolan_cli.sync import upload as upload_module
 
-    monkeypatch.setattr(push_module, "COPY_SOURCE_LIMIT", SMALL_COPY_LIMIT)
-    real_copy = push_module.obs.copy_async
+    monkeypatch.setattr(upload_module, "COPY_SOURCE_LIMIT", SMALL_COPY_LIMIT)
+    real_copy = obs.copy_async
     refused: list[str] = []
 
     async def copy_async(store: Any, src: str, dst: str, **kwargs: Any) -> Any:
-        meta = await push_module.obs.head_async(store, src)
+        meta = await obs.head_async(store, src)
         if int(meta["size"]) > SMALL_COPY_LIMIT:
             refused.append(src)
             raise ValueError("InvalidRequest: The specified copy source is larger than the limit")
         return await real_copy(store, src, dst, **kwargs)
 
-    monkeypatch.setattr(push_module.obs, "copy_async", copy_async)
+    monkeypatch.setattr(obs, "copy_async", copy_async)
     return refused
 
 

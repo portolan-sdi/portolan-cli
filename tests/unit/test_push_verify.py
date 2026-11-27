@@ -32,6 +32,8 @@ if TYPE_CHECKING:
 
     from click.testing import Result
 
+    from portolan_cli.sync.report import Report
+
 PREFIX = "catalog"
 REMOTE = "s3://bucket/catalog"
 COLLECTION: dict[str, Any] = {
@@ -236,7 +238,7 @@ class TestVerifySkippedAssets:
     @pytest.mark.unit
     def test_mismatched_object_without_etag_fails_closed(self) -> None:
         """An existing object without an ETag cannot be safely repaired."""
-        from portolan_cli.errors import PushVerifyError
+        from portolan_core.errors import PushVerifyError
 
         data = _versions("1.0.0", _snapshot("1.0.0", {"a.parquet": b"good"}))
 
@@ -252,7 +254,7 @@ class TestVerifySkippedAssets:
     @pytest.mark.unit
     def test_head_error_other_than_not_found_fails_the_verify(self) -> None:
         """A HEAD that fails for another reason raises, and it does not pass as a match."""
-        from portolan_cli.errors import PushVerifyError
+        from portolan_core.errors import PushVerifyError
 
         data = _versions("1.0.0", _snapshot("1.0.0", {"a.parquet": b"x"}))
 
@@ -261,7 +263,7 @@ class TestVerifySkippedAssets:
 
         with (
             patch("portolan_cli.sync.push.obs.head_async", denied_head),
-            pytest.raises(PushVerifyError, match="test/a.parquet"),
+            pytest.raises(PushVerifyError, match=r"test/a.parquet"),
         ):
             self._run(MemoryStore(), data, data)
 
@@ -327,7 +329,7 @@ class TestPushAsyncVerify:
     @pytest.mark.unit
     def test_verify_with_matching_store_uploads_no_asset(self, tmp_path: Path) -> None:
         """When every object matches, the no-version path stays metadata only."""
-        root, store, good, _ = self._seeded(tmp_path, b"good bytes of version 1.0.5")
+        root, store, _good, _ = self._seeded(tmp_path, b"good bytes of version 1.0.5")
         puts: list[str] = []
         real_put = obs.put_async
 
@@ -353,7 +355,7 @@ class TestPushAsyncVerify:
         self, tmp_path: Path, failure: str | None
     ) -> None:
         """Repair uses the normal transaction and restores overwritten bytes on failure."""
-        from portolan_cli.sync.push import put_object_async
+        from portolan_cli.sync.upload import put_object_async
 
         a = b"unchanged bytes of a"
         b_old, b_new = b"old b", b"new bytes of b"
@@ -418,7 +420,7 @@ class TestPushAsyncVerify:
         """A conflict stops the push before any HEAD request."""
         from portolan_cli.sync.push import PushConflictError
 
-        root, store, good, data = self._seeded(tmp_path, b"stale")
+        root, store, _good, data = self._seeded(tmp_path, b"stale")
         remote = dict(data)
         remote["versions"] = [*data["versions"], _snapshot("1.0.6", {"a.parquet": b"z"})]
         remote["current_version"] = "1.0.6"
@@ -521,7 +523,7 @@ class TestRepairOnlyPath:
     @pytest.mark.unit
     @pytest.mark.parametrize("force", [False, True], ids=["repair-only", "force"])
     def test_repaired_count_excludes_a_skipped_optional_derivative(
-        self, tmp_path: Path, force: bool, capsys: pytest.CaptureFixture[str]
+        self, print_report: Report, tmp_path: Path, force: bool, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """A flagged optional derivative that is missing on disk does not count as repaired."""
         a = b"a bytes"
@@ -532,7 +534,7 @@ class TestRepairOnlyPath:
         store = MemoryStore()
         obs.put(store, f"{PREFIX}/test/versions.json", json.dumps(data).encode())
 
-        result = self._push(root, store, verify=True, force=force)
+        result = self._push(root, store, verify=True, force=force, report=print_report)
 
         assert result.success is True, result.errors
         assert result.verify == VerifyReport(checked=2, mismatched=2)
@@ -593,7 +595,7 @@ class TestPushAllVerifyCounts:
         """A collection that verified and then failed its upload still adds its counts."""
         from portolan_cli.sync.push import _push_all_process_result
 
-        stats: dict[str, Any] = {"failed": 0, "errors": {}, "verify": VerifyReport()}
+        stats: dict[str, Any] = {"failed": 0, "landed": 0, "errors": {}, "verify": VerifyReport()}
         failed = PushResult(
             success=False,
             files_uploaded=0,
@@ -717,7 +719,7 @@ class TestCliVerifyFlag:
     @pytest.mark.unit
     def test_catalog_verification_error_keeps_type_and_code(self, tmp_path: Path) -> None:
         """An exception from a collection retains its identity through aggregation."""
-        from portolan_cli.errors import PushVerifyError
+        from portolan_core.errors import PushVerifyError
 
         failure = PushVerifyError(["test/a.parquet: HEAD denied"])
         with patch("portolan_cli.sync.push.push_async", side_effect=failure):
@@ -741,7 +743,7 @@ class TestRepairSafety:
     @pytest.mark.unit
     def test_edited_local_file_aborts_before_any_upload(self, tmp_path: Path) -> None:
         """Preflight checks every flagged file, including a same-size local edit."""
-        from portolan_cli.errors import PushVerifyError
+        from portolan_core.errors import PushVerifyError
 
         data = _versions("1.0.0", _snapshot("1.0.0", {"a.parquet": b"one", "b.parquet": b"two"}))
         root = tmp_path / "catalog"
@@ -752,7 +754,7 @@ class TestRepairSafety:
 
         with (
             patch("portolan_cli.sync.push.put_object_async") as upload,
-            pytest.raises(PushVerifyError, match="b.parquet.*checksum"),
+            pytest.raises(PushVerifyError, match=r"b.parquet.*checksum"),
         ):
             TestPushAsyncVerify._push(root, store, verify=True)
 

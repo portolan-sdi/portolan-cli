@@ -33,11 +33,6 @@ from portolan_cli.collection_id import (
     infer_nested_collection_id,
     resolve_collection_id,  # noqa: F401
 )
-from portolan_cli.config import get_ignored_files, load_merged_metadata
-from portolan_cli.constants import (
-    GEOSPATIAL_EXTENSIONS,
-    TABULAR_EXTENSIONS,
-)
 from portolan_cli.conversion_config import (
     VectorSettings,
     get_vector_settings,
@@ -46,12 +41,6 @@ from portolan_cli.conversion_config import (
 )
 from portolan_cli.convert import convert_multilayer_file
 from portolan_cli.discovery import get_sidecars, iter_files_with_sidecars, iter_geospatial_files
-from portolan_cli.errors import (
-    AssetKeyCollisionError,
-    MissingLicenseError,
-    NoGeometryError,
-    PartitionCollisionError,
-)
 from portolan_cli.finalization import (
     CompanionAsset,
     add_companion_assets,
@@ -68,34 +57,33 @@ from portolan_cli.finalization import (
 # ``portolan_cli.add.finalize_items`` effective) and the test-suite keeps
 # importing them from this module. The edge is one-directional (add ->
 # finalization); finalization imports nothing from add.
-from portolan_cli.finalization import (  # noqa: F401
-    _asset_freshness_fields as _asset_freshness_fields,  # noqa: PLC0414
-)
-from portolan_cli.finalization import (  # noqa: F401
-    _ensure_partition_metadata as _ensure_partition_metadata,  # noqa: PLC0414
-)
-from portolan_cli.finalization import (  # noqa: F401
-    _finalize_with_backend as _finalize_with_backend,  # noqa: PLC0414
-)
-from portolan_cli.finalization import (  # noqa: F401
-    _fix_collection_links as _fix_collection_links,  # noqa: PLC0414
-)
-from portolan_cli.finalization import (  # noqa: F401
-    _get_or_create_collection as _get_or_create_collection,  # noqa: PLC0414
-)
-from portolan_cli.finalization import (  # noqa: F401
-    _save_collection_with_links as _save_collection_with_links,  # noqa: PLC0414
+from portolan_cli.finalization import (
+    _asset_freshness_fields as _asset_freshness_fields,
 )
 from portolan_cli.finalization import (
-    _update_catalog_links as _update_catalog_links,  # noqa: PLC0414
+    _ensure_partition_metadata as _ensure_partition_metadata,
 )
 from portolan_cli.finalization import (
-    apply_human_metadata as apply_human_metadata,  # noqa: PLC0414
+    _finalize_with_backend as _finalize_with_backend,
 )
 from portolan_cli.finalization import (
-    finalize_items as finalize_items,  # noqa: PLC0414
+    _fix_collection_links as _fix_collection_links,
 )
-from portolan_cli.format_families import VECTOR
+from portolan_cli.finalization import (
+    _get_or_create_collection as _get_or_create_collection,
+)
+from portolan_cli.finalization import (
+    _save_collection_with_links as _save_collection_with_links,
+)
+from portolan_cli.finalization import (
+    _update_catalog_links as _update_catalog_links,
+)
+from portolan_cli.finalization import (
+    apply_human_metadata as apply_human_metadata,
+)
+from portolan_cli.finalization import (
+    finalize_items as finalize_items,
+)
 from portolan_cli.formats import (
     in_run,
     is_geoparquet,
@@ -104,14 +92,12 @@ from portolan_cli.formats import (
 )
 from portolan_cli.hookspecs import EnrichContext
 from portolan_cli.humanize import humanize_slug
-from portolan_cli.json_io import write_json_atomic
-from portolan_cli.licensing import LICENSE_REL, license_gap, resolve_license
 from portolan_cli.plugins.formats import handler_for, plugin_extensions
 from portolan_cli.preparation import (
-    _MEDIA_TYPE_MAP as _MEDIA_TYPE_MAP,  # noqa: PLC0414
+    _MEDIA_TYPE_MAP as _MEDIA_TYPE_MAP,
 )
 from portolan_cli.preparation import (
-    _ROLE_MAP as _ROLE_MAP,  # noqa: PLC0414
+    _ROLE_MAP as _ROLE_MAP,
 )
 
 # Per-item preparation and conversion routing were extracted to preparation.py
@@ -120,55 +106,56 @@ from portolan_cli.preparation import (
 # re-exported so external callers (external.py) and the test-suite keep importing
 # them from this module. The dependency edge is one-directional (add ->
 # preparation); preparation imports nothing from add.
-from portolan_cli.preparation import (  # noqa: F401
-    IGNORED_FILES as IGNORED_FILES,  # noqa: PLC0414
+from portolan_cli.preparation import (
+    IGNORED_FILES as IGNORED_FILES,
 )
 from portolan_cli.preparation import (
     ROLE_SOURCE,
+    _cleanup_orphaned_output,
     ignored_by,
     is_rewrite_temp,
 )
 from portolan_cli.preparation import (
-    PreparedItem as PreparedItem,  # noqa: PLC0414
+    PreparedItem as PreparedItem,
 )
 from portolan_cli.preparation import (
-    _convert_and_extract_metadata as _convert_and_extract_metadata,  # noqa: PLC0414
+    _convert_and_extract_metadata as _convert_and_extract_metadata,
 )
 from portolan_cli.preparation import (
-    _create_and_save_item as _create_and_save_item,  # noqa: PLC0414
+    _create_and_save_item as _create_and_save_item,
 )
 from portolan_cli.preparation import (
-    _derive_item_id_and_asset_level as _derive_item_id_and_asset_level,  # noqa: PLC0414
+    _derive_item_id_and_asset_level as _derive_item_id_and_asset_level,
 )
 from portolan_cli.preparation import (
-    _get_asset_role as _get_asset_role,  # noqa: PLC0414
+    _get_asset_role as _get_asset_role,
 )
 from portolan_cli.preparation import (
-    _get_media_type as _get_media_type,  # noqa: PLC0414
+    _get_media_type as _get_media_type,
 )
 from portolan_cli.preparation import (
-    _pre_validate_geometry as _pre_validate_geometry,  # noqa: PLC0414
+    _pre_validate_geometry as _pre_validate_geometry,
 )
 from portolan_cli.preparation import (
-    _scan_item_assets as _scan_item_assets,  # noqa: PLC0414
+    _scan_item_assets as _scan_item_assets,
 )
 from portolan_cli.preparation import (
-    _warn_if_source_newer as _warn_if_source_newer,  # noqa: PLC0414
+    _warn_if_source_newer as _warn_if_source_newer,
 )
 from portolan_cli.preparation import (
-    convert_raster as convert_raster,  # noqa: PLC0414
+    convert_raster as convert_raster,
 )
 from portolan_cli.preparation import (
-    convert_tabular as convert_tabular,  # noqa: PLC0414
+    convert_tabular as convert_tabular,
 )
 from portolan_cli.preparation import (
-    convert_vector as convert_vector,  # noqa: PLC0414
+    convert_vector as convert_vector,
 )
 from portolan_cli.preparation import (
-    prepare_item as prepare_item,  # noqa: PLC0414
+    prepare_item as prepare_item,
 )
-from portolan_cli.query import ItemInfo, get_item_info, is_current, list_items  # noqa: F401
 from portolan_cli.remove import remove_files  # noqa: F401
+from portolan_cli.report import emit
 from portolan_cli.stac import (
     MergeStrategy,
     create_collection,
@@ -176,16 +163,38 @@ from portolan_cli.stac import (
 )
 from portolan_cli.stac_enrich import enrich_collection_file, enrich_item_file
 from portolan_cli.stac_parquet import PARQUET_FILENAME
-from portolan_cli.trace import span, submit
-from portolan_cli.versions import Asset, versions_asset_key
 from portolan_cli.viz.pmtiles_links import PMTILES_SUFFIX
 from portolan_cli.viz.style import enrich_cog_assets
+from portolan_core.config import get_ignored_files, load_merged_metadata
+from portolan_core.constants import (
+    GEOSPATIAL_EXTENSIONS,
+    TABULAR_EXTENSIONS,
+)
+from portolan_core.errors import (
+    AssetKeyCollisionError,
+    CRSMismatchError,
+    CRSTransformError,
+    InvalidBboxError,
+    MissingLicenseError,
+    NoGeometryError,
+    PartitionCollisionError,
+)
+from portolan_core.format_families import VECTOR
+from portolan_core.json_io import write_json_atomic
+from portolan_core.licensing import LICENSE_REL, license_gap, resolve_license
+from portolan_core.query import ItemInfo, get_item_info, is_current, list_items  # noqa: F401
+from portolan_core.trace import span, submit
+from portolan_core.versions import Asset, versions_asset_key
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from contextlib import AbstractContextManager
     from datetime import datetime
 
-    from portolan_cli.run_state import RunState
+    from portolan_cli.extract.common.progress import MessageCallback
+    from portolan_cli.stac_parquet import MirrorReport
+    from portolan_cli.viz.pmtiles import PMTilesOutcome, PMTilesReport
+    from portolan_core.run_state import RunState
 
 
 logger = logging.getLogger(__name__)
@@ -542,13 +551,13 @@ def _sweep_catalog(catalog_root: Path, state: RunState) -> None:
     AGENTS.md and README.md files with their links and the profile schema URI
     (issue #654), and the root sync stamp of an all-mirror tree (issue #684).
     """
-    from portolan_cli.agents_md import ensure_agents_md_tree
     from portolan_cli.catalog import (
         apply_catalog_human_titles,
         ensure_link_titles,
         ensure_schema_uris,
     )
     from portolan_cli.readme import ensure_readmes
+    from portolan_core.agents_md import ensure_agents_md_tree
 
     apply_catalog_human_titles(catalog_root, state=state)
     ensure_link_titles(catalog_root)
@@ -613,7 +622,7 @@ def add_directory(
 # Sidecar auto-detection (per issue #97)
 # ─────────────────────────────────────────────────────────────────────────────
 
-# Note: SIDECAR_PATTERNS imported from portolan_cli.constants
+# Note: SIDECAR_PATTERNS imported from portolan_core.constants
 
 
 def _copy_non_geo_to_item_dir(
@@ -758,12 +767,11 @@ def _collect_files_for_add(
     ignored_patterns = get_ignored_files(catalog_root, state=state)
 
     for path in paths:
-        files = iter_files_with_sidecars(path) if path.is_dir() else [path] + get_sidecars(path)
+        files = iter_files_with_sidecars(path) if path.is_dir() else [path, *get_sidecars(path)]
 
-        for file_path in files:
+        for listed_path in files:
             # Resolve symlinks to track the real file
-            if file_path.is_symlink():
-                file_path = file_path.resolve()
+            file_path = listed_path.resolve() if listed_path.is_symlink() else listed_path
 
             if file_path in processed_paths:
                 continue
@@ -914,6 +922,10 @@ class _ProcessResult:
     source_to_collection_dir: dict[Path, tuple[Path, str]] = field(default_factory=dict)
 
 
+#: The errors on which prepare_item removes a new output that has no bbox.
+_NO_BBOX_ERRORS = (NoGeometryError, CRSTransformError, CRSMismatchError, InvalidBboxError)
+
+
 def _prepare_multilayer_file(
     file_path: Path,
     coll_id: str,
@@ -979,6 +991,12 @@ def _prepare_multilayer_file(
                     result.output.unlink(missing_ok=True)
                 skips[result.output] = err.message
             except Exception as err:
+                # prepare_item cannot tell a new layer file from an old one, so
+                # a layer file this run wrote goes here, with no STAC record.
+                # The cleanup logs an OSError, so the layer error stays and the
+                # other layers go on.
+                if isinstance(err, _NO_BBOX_ERRORS) and result.output not in existing:
+                    _cleanup_orphaned_output(result.output, file_path)
                 failure_list.append(
                     AddFailure(path=result.output, error=f"Layer {result.layer}: {err}")
                 )
@@ -1103,14 +1121,13 @@ def _record_prepared(
         if prepared.is_collection_level_asset:
             # Collection-level: map source to collection dir (Issue #383)
             result.source_to_collection_dir[source_dir] = (collection_dir, coll_id)
-        else:
-            # The document location is independent of --item-id.
-            if prepared.item_json_path is not None:
-                result.source_to_item_dir[source_dir] = (
-                    prepared.item_json_path,
-                    coll_id,
-                    prepared.item_id,
-                )
+        # The document location is independent of --item-id.
+        elif prepared.item_json_path is not None:
+            result.source_to_item_dir[source_dir] = (
+                prepared.item_json_path,
+                coll_id,
+                prepared.item_id,
+            )
 
 
 def _phase_process(
@@ -1247,7 +1264,7 @@ def _require_licenses(
             raise MissingLicenseError(f"collection '{coll_id}'", gap)
 
 
-def add_files(
+def add_files(  # noqa: PLR0913 - each add option is a keyword argument
     *,
     paths: list[Path],
     catalog_root: Path,
@@ -1319,7 +1336,7 @@ def add_files(
     from portolan_cli.version_ops import owned_run
 
     # Every footer read of the run goes through the run memo (formats.in_run).
-    with owned_run(catalog_root, state) as state, in_run(state):
+    with owned_run(catalog_root, state) as run_state, in_run(run_state):
         skipped: list[Path] = []
 
         # Track which nested collections have had their catalogs set up
@@ -1336,7 +1353,7 @@ def add_files(
                 setup_collections,
                 force=force,
                 skip_reasons=reasons,
-                state=state,
+                state=run_state,
             )
             stage.set(files=len(files_to_process), skipped=len(skipped))
         if not files_to_process:
@@ -1345,7 +1362,7 @@ def add_files(
         # Phase 1.5: refuse the add before any GDAL work when a target collection would
         # end up with no usable license (issue #686).
         with span("add.licenses"):
-            _require_licenses(catalog_root, {coll_id for _, coll_id in files_to_process}, state)
+            _require_licenses(catalog_root, {coll_id for _, coll_id in files_to_process}, run_state)
 
         # Issue #465: filenames of every batch item (sources + converted outputs) so a
         # collection-level asset scan can skip siblings that are tracked as their own
@@ -1358,8 +1375,8 @@ def add_files(
             reconvert=reconvert,
             skip_partitioning=skip_partitioning,
             batch_exclude_names=_batch_sibling_names([fp for fp, _ in files_to_process]),
-            state=state,
-            vector_settings=get_vector_settings(catalog_root, state=state),
+            state=run_state,
+            vector_settings=get_vector_settings(catalog_root, state=run_state),
         )
 
         # Phase 2: Prepare each file (GDAL work), accumulating prepared items (Issue #281).
@@ -1382,7 +1399,7 @@ def add_files(
 
         # Phase 2.5: plan the deferred non-geo files, so that a collection that
         # finalize writes takes its companions in the same write.
-        plan = _plan_deferred(proc, catalog_root, failures, state)
+        plan = _plan_deferred(proc, catalog_root, failures, run_state)
 
         # Phase 2.6: finalize writes each collection once (Issue #281).
         with span("add.finalize", items=len(proc.prepared_items)):
@@ -1390,7 +1407,7 @@ def add_files(
                 catalog_root,
                 proc.prepared_items,
                 merge_strategy,
-                state=state,
+                state=run_state,
                 companions=plan.companions,
             )
 
@@ -1406,7 +1423,7 @@ def add_files(
                 merge_strategy=merge_strategy,
                 touched_items=touched_items,
                 skip_reasons=reasons,
-                state=state,
+                state=run_state,
             )
 
         # Phase 4: run the enrichment hooks on the documents phase 3 changed (#947).
@@ -1418,6 +1435,205 @@ def add_files(
         for path in skipped:
             reasons.setdefault(path, SKIP_COMPANION)
         return added, skipped, failures
+
+
+@dataclass(frozen=True)
+class AddOutcome:
+    """The result of one ``portolan add`` run (:func:`run_add`).
+
+    Attributes:
+        added: The items this run added or updated.
+        skipped: Each skipped path with its reason. A reason in
+            ``SKIPS_THAT_TRACK`` means the file is in the catalog.
+        failures: The files that could not be added.
+        mirrors: The report of the ``items.parquet`` side-step.
+        pmtiles: The report of the PMTiles side-step. When its ``failure``
+            is set, the thumbnail step did not run.
+    """
+
+    added: list[ItemInfo]
+    skipped: list[tuple[Path, str]]
+    failures: list[AddFailure]
+    mirrors: MirrorReport
+    pmtiles: PMTilesReport
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return the envelope ``data`` of ``portolan add``."""
+        return {
+            "added": [
+                {
+                    "item_id": ds.item_id,
+                    "collection_id": ds.collection_id,
+                    "format_type": ds.format_type or "unknown",
+                    "bbox": ds.bbox,
+                }
+                for ds in self.added
+            ],
+            "skipped": [{"path": str(p), "reason": reason} for p, reason in self.skipped],
+            "failures": [{"path": str(f.path), "error": f.error} for f in self.failures],
+        }
+
+
+def _collections_to_refresh(
+    added: list[ItemInfo], skips: list[tuple[Path, str]], catalog_root: Path
+) -> tuple[set[str], set[str]]:
+    """Warn about each file that stayed out of the catalog, and find the collections to refresh.
+
+    The affected set holds the collections of the added files and of the skips
+    still in the catalog, so --pmtiles works on already-tracked files. An
+    ignored file has no collection to refresh.
+
+    The versioned set holds the collections this run wrote a version for. A
+    side-step's derived asset folds into that snapshot instead of bumping a
+    second version, so one `add` stays one version. A skipped collection is
+    absent, so its backfill gets a version of its own rather than editing a
+    published snapshot.
+    """
+    from portolan_cli.remove import _resolve_collection_dir
+
+    versioned = {a.collection_id for a in added if a.collection_id}
+    affected = set(versioned)
+    for p, reason in skips:
+        if reason not in SKIPS_THAT_TRACK:
+            emit("warn", f"Skipping {p.name}: {reason}")
+            continue
+        # A nested collection id spans several path segments.
+        collection_dir = _resolve_collection_dir(p, catalog_root)
+        if collection_dir is not None:
+            affected.add(collection_dir.relative_to(catalog_root.resolve()).as_posix())
+    return affected, versioned
+
+
+def run_add(  # noqa: PLR0913 - each add option is a keyword argument
+    paths: list[Path],
+    catalog_root: Path,
+    *,
+    item_id: str | None = None,
+    item_datetime: datetime | None = None,
+    workers: int = 1,
+    generate_parquet: bool = False,
+    generate_pmtiles: bool = False,
+    force_pmtiles: bool = False,
+    generate_thumbnails: bool | None = None,
+    force_thumbnails: bool = False,
+    force: bool = False,
+    reconvert: bool = False,
+    merge_strategy: str = "smart",
+    skip_partitioning: bool = False,
+    on_progress: Callable[[Path], None] | None = None,
+    adding: AbstractContextManager[object] | None = None,
+    on_message: MessageCallback | None = None,
+    on_step: Callable[[MirrorReport | PMTilesOutcome], None] | None = None,
+    state: RunState | None = None,
+) -> AddOutcome:
+    """Run the whole ``portolan add`` workflow: add the files, then the side-steps.
+
+    The side-steps are the ``items.parquet`` mirrors, the PMTiles, and the
+    thumbnails, in that order. A higher-fidelity thumbnail from the PMTiles is
+    then adopted rather than replaced. Every geospatial collection needs a
+    thumbnail asset to satisfy PTL-VIZ-001 (Issue #683).
+
+    An error from ``add_files`` propagates and commits nothing. After
+    ``add_files`` returns, the state commits in every case, also when a
+    side-step raises. The files that ``add_files`` finalized keep their
+    version, and a side-step stages an asset only after it writes the file.
+
+    Args:
+        paths: The files and directories to add, resolved.
+        catalog_root: The catalog root.
+        item_id: Override of the item ID, for a single file.
+        item_datetime: The datetime of every item of this run.
+        workers: Parallel workers for metadata extraction.
+        generate_parquet: ``--stac-geoparquet``.
+        generate_pmtiles: ``--pmtiles``.
+        force_pmtiles: ``--force-pmtiles``. It implies ``--pmtiles``.
+        generate_thumbnails: ``--thumbnails/--no-thumbnails``. None defers to
+            the catalog setting.
+        force_thumbnails: ``--force-thumbnails``.
+        force: Re-process all files, ignoring change detection.
+        reconvert: Re-convert from source files.
+        merge_strategy: ``smart``, ``keep``, or ``overwrite``.
+        skip_partitioning: Add large files as they are, without partitions.
+            The caller asks the operator, then passes the answer.
+        on_progress: Called before each geospatial file is processed.
+        adding: Held open while the files are added, before the side-steps.
+            An error from adding the files passes through it, and an error
+            from a side-step does not.
+        on_message: Called as ``on_message(level, text)`` with each line for
+            the user, at the moment it happens. The code below this function
+            reports through it too (``report.reporting``). None logs the lines.
+        on_step: Gets the report of the mirror step, and the outcome of each
+            collection in the PMTiles step, as soon as each is done.
+        state: The run state. None opens one. This function commits it.
+
+    Returns:
+        The outcome of the run, for the caller to report.
+    """
+    from portolan_cli.collection_thumbnail import ensure_collection_thumbnails
+    from portolan_cli.report import reporting
+    from portolan_cli.stac import MergeStrategy
+    from portolan_cli.stac_parquet import generate_parquet_mirrors
+    from portolan_cli.version_ops import commit_run
+    from portolan_cli.viz import pmtiles
+    from portolan_core import trace
+    from portolan_core.run_state import RunState
+
+    if state is None:
+        state = RunState.open(catalog_root)
+    with reporting(on_message):
+        skip_reasons: dict[Path, str] = {}
+        with adding or contextlib.nullcontext():
+            added, skipped, failures = add_files(
+                paths=paths,
+                catalog_root=catalog_root,
+                collection_id=None,
+                item_id=item_id,
+                item_datetime=item_datetime,
+                on_progress=on_progress,
+                workers=workers,
+                force=force,
+                reconvert=reconvert,
+                skip_partitioning=skip_partitioning,
+                merge_strategy=MergeStrategy(merge_strategy),
+                skip_reasons=skip_reasons,
+                state=state,
+            )
+        # add_files gives every skip a reason. A path without one reads as unchanged.
+        skips = [(p, skip_reasons.get(p, SKIP_UNCHANGED)) for p in skipped]
+        affected, versioned = _collections_to_refresh(added, skips, catalog_root)
+
+        try:
+            with trace.span("add.mirrors"):
+                mirrors = generate_parquet_mirrors(
+                    catalog_root,
+                    affected,
+                    generate_parquet=generate_parquet,
+                    versioned_collections=versioned,
+                    state=state,
+                )
+            if on_step is not None:
+                on_step(mirrors)
+            with trace.span("add.pmtiles"):
+                tiles = pmtiles.generate_or_suggest_pmtiles(
+                    catalog_root,
+                    affected,
+                    generate_pmtiles=generate_pmtiles,
+                    force=force_pmtiles,
+                    state=state,
+                    on_outcome=on_step,
+                )
+            if tiles.failure is None:
+                ensure_collection_thumbnails(
+                    catalog_root,
+                    affected,
+                    generate=generate_thumbnails,
+                    force=force_thumbnails,
+                    versioned_collections=versioned,
+                    state=state,
+                )
+        finally:
+            commit_run(state)
+    return AddOutcome(added, skips, failures, mirrors, tiles)
 
 
 def _enrich_deferred_documents(
@@ -1517,7 +1733,7 @@ def _map_recorded_geo_dirs(
         catalog_root: Root directory of the catalog.
         state: The run state, which reads each ``versions.json`` once.
     """
-    from portolan_cli.stac_links import owned_item_hrefs
+    from portolan_core.stac_links import owned_item_hrefs
 
     root = catalog_root.resolve()
     item_paths: dict[Path, dict[Path, Path]] = {}

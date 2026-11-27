@@ -44,19 +44,15 @@ def pmtiles_asset_key(parquet_key: str) -> str:
 def pmtiles_asset_hrefs(assets: dict[str, Any]) -> list[str]:
     """Return the hrefs of all PMTiles assets in a collection's asset dict.
 
-    An asset is a PMTiles asset when its ``type`` is ``application/vnd.pmtiles``
-    or its ``href`` ends in ``.pmtiles``. Shared by the PMTiles-link check (rashid PTL-VIZ-003) and its
-    ``--fix`` repair so both classify assets identically.
+    The PMTiles-link check (rashid PTL-VIZ-003) and its ``--fix`` repair both
+    classify an asset with ``is_pmtiles_asset``, so they agree.
     """
+    from rashid_core.api import is_pmtiles_asset
+
     return [
         str(asset["href"])
         for asset in assets.values()
-        if isinstance(asset, dict)
-        and (
-            asset.get("type") == PMTILES_MEDIA_TYPE
-            or str(asset.get("href", "")).endswith(PMTILES_SUFFIX)
-        )
-        and asset.get("href")
+        if isinstance(asset, dict) and is_pmtiles_asset(asset) and asset.get("href")
     ]
 
 

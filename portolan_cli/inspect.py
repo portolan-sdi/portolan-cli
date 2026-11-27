@@ -14,12 +14,14 @@ import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from portolan_cli.stac_links import catalog_collections
 from portolan_cli.stac_parquet import count_items
-from portolan_cli.versions import read_versions
+from portolan_core.stac_links import catalog_collections
+from portolan_core.versions import read_versions
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+_MIN_PATH_PARTS = 2
 
 
 @dataclass
@@ -93,7 +95,7 @@ class FileInfo:
         lines.append(f"CRS: {self.crs or 'Unknown'}")
 
         if self.bbox:
-            from portolan_cli.bbox import to_2d_bbox
+            from portolan_core.bbox import to_2d_bbox
 
             # Reduce to 2D so a 6-element bbox shows [west, south, east, north]
             # instead of its [west, south, min_z, east] slice (issue #592).
@@ -162,7 +164,7 @@ class CollectionInfo:
             size_mb = self.total_size_bytes / (1024 * 1024)
             lines.append(f"Total Size: {size_mb:.2f} MB")
         if self.bbox:
-            from portolan_cli.bbox import to_2d_bbox
+            from portolan_core.bbox import to_2d_bbox
 
             # Reduce to 2D so a 6-element bbox shows [west, south, east, north]
             # instead of its [west, south, min_z, east] slice (issue #592).
@@ -302,7 +304,7 @@ def inspect_cog(path: Path, *, catalog_root: Path | None = None) -> FileInfo:
         path=path,
         format="COG",
         crs=metadata.crs,
-        bbox=list(metadata.bbox) if metadata.bbox else None,
+        bbox=list(metadata.bbox),
         width=metadata.width,
         height=metadata.height,
         band_count=metadata.band_count,
@@ -329,7 +331,7 @@ def _lookup_version(path: Path, catalog_root: Path) -> str | None:
         return None
 
     parts = relative.parts
-    if len(parts) < 2:
+    if len(parts) < _MIN_PATH_PARTS:
         return None
 
     # First part is collection ID ( subdirectory = collection)
@@ -361,13 +363,10 @@ def _lookup_version(path: Path, catalog_root: Path) -> str | None:
     # Determine item_id from path (parent directory name)
     item_id = path.parent.name if path.parent != catalog_root else ""
 
-    for asset_name in current_version_obj.assets:
-        # Check item-scoped key format (new format)
-        if item_id and asset_name == f"{item_id}/{filename}":
-            return f"v{versions_file.current_version}"
-        # Check legacy format (just filename)
-        if asset_name == filename:
-            return f"v{versions_file.current_version}"
+    # The item-scoped key is the new format. The bare filename is the legacy format.
+    keys = {filename, f"{item_id}/{filename}"} if item_id else {filename}
+    if any(asset_name in keys for asset_name in current_version_obj.assets):
+        return f"v{versions_file.current_version}"
 
     return None
 
@@ -456,3 +455,39 @@ def inspect_catalog(catalog_root: Path) -> CatalogInfo:
         description=data.get("description"),
         collection_count=collection_count,
     )
+
+
+def inspect_target(
+    target: Path | None, *, catalog_root: Path
+) -> FileInfo | CollectionInfo | CatalogInfo:
+    """Inspect the file, collection, or catalog that ``target`` names.
+
+    This is the library function of ``portolan info``.
+
+    Args:
+        target: A file, a catalog or collection directory, or None for the
+            catalog at ``catalog_root``.
+        catalog_root: The catalog root. It reports the catalog when ``target``
+            is None, and it gives a file its version.
+
+    Returns:
+        The report for the kind of target.
+
+    Raises:
+        FileNotFoundError: If ``target`` does not exist.
+        ValueError: If ``target`` is a directory with no catalog.json or
+            collection.json, or a file of an unsupported format.
+    """
+    if target is None:
+        return inspect_catalog(catalog_root)
+    if target.is_file():
+        return inspect_file(target, catalog_root=catalog_root)
+    if not target.is_dir():
+        raise FileNotFoundError(f"Path not found: {target}")
+    # A directory can hold both files. catalog.json wins, because it gives the
+    # organizing structure.
+    if (target / "catalog.json").exists():
+        return inspect_catalog(target)
+    if (target / "collection.json").exists():
+        return inspect_collection(target)
+    raise ValueError(f"Directory is not a catalog or collection: {target}")

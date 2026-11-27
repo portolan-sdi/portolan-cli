@@ -7,9 +7,9 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from portolan_cli import trace
-from portolan_cli.run_state import RunState
 from portolan_cli.validation.fixers import FIXERS
+from portolan_core import trace
+from portolan_core.run_state import RunState
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -88,9 +88,9 @@ def test_check_fix_counts_conversion_worker_work(tmp_path: Path) -> None:
 @pytest.mark.parametrize("fix", [False, True], ids=["check", "fix"])
 def test_preserve_glob_matches_a_symlinked_asset(tmp_path: Path, fix: bool) -> None:
     """A preserve rule names the catalog asset, rather than its symlink target."""
-    from portolan_cli.config import save_config
     from portolan_cli.formats import CloudNativeStatus
     from portolan_cli.scan.check import check_directory
+    from portolan_core.config import save_config
 
     root = tmp_path / "catalog"
     sub = root / "sub"
@@ -120,7 +120,7 @@ def test_config_read_command_parses_the_catalog_file_once(
     from click.testing import CliRunner
 
     from portolan_cli.cli import cli
-    from portolan_cli.config import save_config
+    from portolan_core.config import save_config
     from tests.conftest import _init_catalog
 
     _init_catalog(tmp_path)

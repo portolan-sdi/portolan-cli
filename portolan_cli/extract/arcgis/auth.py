@@ -9,13 +9,14 @@ lives in issue #311.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from http import HTTPStatus
 from typing import Any, cast
 
 import httpx
 
-from portolan_cli.errors import ArcGISAuthError
 from portolan_cli.extract.arcgis.discovery import ensure_json_format
 from portolan_cli.extract.common.urls import redact_credentials
+from portolan_core.errors import ArcGISAuthError
 
 
 @dataclass
@@ -57,7 +58,7 @@ def _token_services_url(base_url: str, timeout: float) -> str:
             f"Failed to read token services URL from {root}: {exc}", url=root
         ) from exc
 
-    if resp.status_code >= 400:
+    if resp.status_code >= HTTPStatus.BAD_REQUEST:
         raise ArcGISAuthError(
             f"Failed to read token services URL from {root}: HTTP {resp.status_code}", url=root
         )
@@ -111,7 +112,7 @@ def resolve_token(
     except (httpx.HTTPError, ValueError) as exc:
         raise ArcGISAuthError(f"Token request failed at {token_url}: {exc}", url=token_url) from exc
 
-    if resp.status_code >= 400:
+    if resp.status_code >= HTTPStatus.BAD_REQUEST:
         raise ArcGISAuthError(
             f"Token request failed at {token_url}: HTTP {resp.status_code}", url=token_url
         )

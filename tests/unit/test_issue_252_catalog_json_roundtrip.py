@@ -22,10 +22,13 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 # =============================================================================
 # Test fixtures
@@ -41,6 +44,7 @@ def empty_remote(monkeypatch: pytest.MonkeyPatch) -> None:
         raise FileNotFoundError(key)
 
     async def no_pages(*_args: Any, **_kwargs: Any) -> Any:
+        page: Any
         for page in ():
             yield page
 
@@ -49,9 +53,11 @@ def empty_remote(monkeypatch: pytest.MonkeyPatch) -> None:
 
     # The put mocks of these tests return None. obstore returns the ETag of the
     # write, and push records it for the rollback.
-    from portolan_cli.sync import push
+    from portolan_cli.sync import push, upload
 
-    real_put, real_put_async = push.put_object, push.put_object_async
+    # The type is loose because the mocks under these functions return None.
+    real_put: Callable[..., Any] = upload.put_object
+    real_put_async: Callable[..., Any] = upload.put_object_async
     no_etag = {"e_tag": None, "version": None}
 
     def put(*args: Any, **kwargs: Any) -> Any:

@@ -134,7 +134,7 @@ class TestGeoParquetMetadata:
         metadata = GeoParquetMetadata(
             bbox=None,
             crs=None,
-            geometry_type="Point",
+            geometry_type=["Point"],
             geometry_column="geometry",
             feature_count=0,
             schema={},
@@ -165,7 +165,7 @@ class TestGeoParquetMetadata:
         metadata = GeoParquetMetadata(
             bbox=None,
             crs="EPSG:4258",
-            geometry_type="Polygon",
+            geometry_type=["Polygon"],
             geometry_column="standardized_location",
             feature_count=5,
             schema={},
@@ -180,7 +180,7 @@ class TestGeoParquetMetadata:
         metadata = GeoParquetMetadata(
             bbox=None,
             crs="EPSG:28992",
-            geometry_type="Polygon",
+            geometry_type=["Polygon"],
             geometry_column="geom",
             feature_count=5,
             schema={},
@@ -194,7 +194,7 @@ class TestGeoParquetMetadata:
         metadata = GeoParquetMetadata(
             bbox=None,
             crs={"type": "GeographicCRS", "id": {"authority": "EPSG", "code": 4258}},
-            geometry_type="Polygon",
+            geometry_type=["Polygon"],
             geometry_column="geometry",
             feature_count=5,
             schema={},
@@ -208,7 +208,7 @@ class TestGeoParquetMetadata:
         metadata = GeoParquetMetadata(
             bbox=None,
             crs=None,
-            geometry_type="Point",
+            geometry_type=["Point"],
             geometry_column="geometry",
             feature_count=5,
             schema={},
@@ -338,6 +338,68 @@ class TestGeoParquetMetadataEdgeCases:
 
         metadata = extract_geoparquet_metadata(path)
         assert metadata.crs == "EPSG:4326"
+
+    @pytest.mark.unit
+    def test_extract_crs_keeps_the_projjson_authority(self, tmp_path: Path) -> None:
+        """A PROJJSON id with the OGC authority reads as OGC:CRS84, not EPSG:CRS84 (#928)."""
+        import json
+
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+
+        geo_meta = {
+            "version": "1.0.0",
+            "primary_column": "geometry",
+            "columns": {
+                "geometry": {
+                    "encoding": "WKB",
+                    "crs": {"type": "GeographicCRS", "id": {"authority": "OGC", "code": "CRS84"}},
+                }
+            },
+        }
+        table = pa.table({"geometry": [b"\x00"] * 3})
+        path = tmp_path / "crs84.parquet"
+        pq.write_table(
+            table.cast(table.schema.with_metadata({b"geo": json.dumps(geo_meta).encode()})), path
+        )
+
+        assert extract_geoparquet_metadata(path).crs == "OGC:CRS84"
+
+    @pytest.mark.unit
+    def test_extract_crs_keeps_a_projjson_with_a_custom_authority(self, tmp_path: Path) -> None:
+        """pyproj cannot resolve MYORG:1, so the full PROJJSON stays and still reprojects (#928)."""
+        import json
+
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+        from pyproj import CRS
+
+        from portolan_cli.preparation import wgs84_bbox
+
+        projjson = CRS("EPSG:32610").to_json_dict()
+        projjson["id"] = {"authority": "MYORG", "code": 1}
+        geo_meta = {
+            "version": "1.0.0",
+            "primary_column": "geometry",
+            "columns": {
+                "geometry": {
+                    "encoding": "WKB",
+                    "crs": projjson,
+                    "bbox": [500000.0, 4000000.0, 510000.0, 4010000.0],
+                }
+            },
+        }
+        table = pa.table({"geometry": [b"\x00"] * 3})
+        path = tmp_path / "myorg.parquet"
+        pq.write_table(
+            table.cast(table.schema.with_metadata({b"geo": json.dumps(geo_meta).encode()})), path
+        )
+
+        metadata = extract_geoparquet_metadata(path)
+
+        assert metadata.crs == projjson
+        assert metadata.to_stac_properties().get("proj:epsg") == 32610
+        assert wgs84_bbox(metadata) == pytest.approx([-123.0, 36.14, -122.89, 36.23], abs=0.01)
 
     @pytest.mark.unit
     def test_extract_crs_from_projjson_without_epsg(self, tmp_path: Path) -> None:
@@ -475,7 +537,7 @@ class TestCoveringColumnDetection:
     @pytest.mark.unit
     def test_rewritten_file_carries_the_column(self, tmp_path: Path) -> None:
         """A file written through geoparquet-io's add_bbox() reports True."""
-        import geoparquet_io as gpio  # type: ignore[import-untyped]
+        import geoparquet_io as gpio
 
         source = Path(__file__).resolve().parents[1] / "fixtures" / "vector" / "valid"
         output = tmp_path / "out.parquet"
@@ -551,7 +613,7 @@ class TestReadSpatialLayout:
     @pytest.mark.unit
     def test_a_geoparquet_with_the_column(self, tmp_path: Path) -> None:
         """Both answers are True after `add_bbox`."""
-        import geoparquet_io as gpio  # type: ignore[import-untyped]
+        import geoparquet_io as gpio
 
         from portolan_cli.metadata import read_spatial_layout
 

@@ -30,7 +30,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
-from rashid_core.model import Severity
+from rashid_core.api import Severity
 
 
 class Bucket(Enum):
@@ -76,14 +76,14 @@ def _external(requirement: str) -> Remediation:
 
 RULE_REMEDIATION: dict[str, Remediation] = {
     # ---- files: scaffolding and links are mechanical, prose is not ----
-    # fixer `required_files` composes readme.ensure_readmes + metadata.fix.repair_agents_md.
+    # fixer `required_files` composes the `agents` and `readme` fixers.
     # It subsumes `agents` and `readme`: when this row fires, fixers.auto_fixer_keys
     # drops those two from the selection so the same repair does not run three times.
     "PTL-FIL-001": _auto(
         "required_files",
         "Every catalog and collection directory must contain README.md and AGENTS.md.",
     ),
-    # fixer `agents` wraps metadata.fix.repair_agents_md
+    # fixer `agents` wraps agents_md.ensure_agents_md_tree
     "PTL-FIL-002": _auto(
         "agents",
         "Link AGENTS.md with rel='agents' and type='text/markdown'.",
@@ -372,7 +372,7 @@ RULE_REMEDIATION: dict[str, Remediation] = {
     ),
     "PTL-DAT-001": _auto("checksum", "Recompute file:checksum from the asset's current bytes."),
     "PTL-DAT-002": _auto("checksum", "Recompute file:size from the asset's current bytes."),
-    "PTL-DAT-003": _auto("convert", "Convert the asset to the cloud-native format it declares."),
+    "PTL-DAT-003": _auto("media_type", "Declare the media type that the asset's bytes carry."),
     "PTL-DAT-004": _auto("convert", "Rewrite the raster as a valid COG."),
     "PTL-DAT-005": _instruct(
         "Reconcile the asset's bytes with the metadata describing them; they disagree about the "

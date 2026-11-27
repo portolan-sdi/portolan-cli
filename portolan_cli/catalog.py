@@ -18,27 +18,29 @@ from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, NamedTuple, Self, overload
 
-from portolan_cli.errors import CatalogAlreadyExistsError
 from portolan_cli.humanize import humanize_slug
 from portolan_cli.input_hardening import validate_catalog_id
-from portolan_cli.json_io import write_json_atomic, write_text_atomic
-from portolan_cli.models.catalog import CatalogModel
-from portolan_cli.stac_links import (
+from portolan_cli.report import emit
+from portolan_cli.utils import href_root, relative_href
+from portolan_core.errors import CatalogAlreadyExistsError
+from portolan_core.json_io import write_json_atomic, write_text_atomic
+from portolan_core.models.catalog import CatalogModel
+from portolan_core.stac_links import (
+    contained_link_target,
     in_link_order,
     iter_links,
     iter_stac_objects,
     visible_stac_files,
 )
-from portolan_cli.trace import count
-from portolan_cli.utils import href_root, relative_href
+from portolan_core.trace import count
 
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from portolan_cli.run_state import RunState
-    from portolan_cli.versions import Version
+    from portolan_core.run_state import RunState
+    from portolan_core.versions import Version
 
 # Cross-platform file locking (fcntl on Unix, msvcrt on Windows)
 if sys.platform == "win32":
@@ -170,7 +172,7 @@ def find_catalog_root(
         >>> # During init, check for config.yaml only (catalog.json not yet written)
         >>> find_catalog_root(start_path, require_operational=False)
     """
-    from portolan_cli.constants import MAX_CATALOG_SEARCH_DEPTH
+    from portolan_core.constants import MAX_CATALOG_SEARCH_DEPTH
 
     def _is_catalog_root(path: Path) -> bool:
         """Check if path is a valid catalog root."""
@@ -212,7 +214,7 @@ class CatalogExistsError(Exception):
     """Raised when attempting to initialize a catalog that already exists.
 
     Legacy exception kept for backward compatibility.
-    New code should use CatalogAlreadyExistsError from portolan_cli.errors.
+    New code should use CatalogAlreadyExistsError from portolan_core.errors.
     """
 
     def __init__(self, path: Path) -> None:
@@ -494,7 +496,7 @@ def _check_init_preconditions(
         CatalogInitError: If the backend is not available.
         LogoError: If the logo is a URL, missing, or of an unpermitted media type.
     """
-    from portolan_cli.errors import UnmanagedStacCatalogError
+    from portolan_core.errors import UnmanagedStacCatalogError
 
     state = detect_state(path)
     if state == CatalogState.MANAGED:
@@ -547,8 +549,8 @@ def _write_conformance_files(
     Raises:
         CatalogInitError: If any write fails.
     """
-    from portolan_cli.agents_md import ensure_agents_md
     from portolan_cli.readme import ensure_readmes
+    from portolan_core.agents_md import ensure_agents_md
 
     try:
         ensure_agents_md(catalog_file)
@@ -572,6 +574,32 @@ def _write_conformance_files(
         raise CatalogInitError(f"Cannot write catalog logo: {e}") from e
 
 
+class InitResult(NamedTuple):
+    """The catalog that ``init_catalog`` created. It unpacks as ``(catalog_file, warnings)``.
+
+    Attributes:
+        catalog_file: The catalog.json that ``init_catalog`` wrote.
+        warnings: The values that ``init_catalog`` had to guess, for the user.
+    """
+
+    catalog_file: Path
+    warnings: list[str]
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize the result as the ``init`` envelope data, read back from catalog.json."""
+        from portolan_cli.logo import find_logo_link
+
+        data = json.loads(self.catalog_file.read_text(encoding="utf-8"))
+        logo_link = find_logo_link(data.get("links", []))
+        return {
+            "path": str(self.catalog_file.parent),
+            "catalog_file": "catalog.json",
+            "catalog_id": data.get("id", "unknown"),
+            "logo": logo_link["href"] if logo_link else None,
+            "warnings": self.warnings,
+        }
+
+
 def init_catalog(
     path: Path,
     *,
@@ -583,7 +611,7 @@ def init_catalog(
     license_url: str | None = None,
     logo: str | Path | None = None,
     logo_title: str | None = None,
-) -> tuple[Path, list[str]]:
+) -> InitResult:
     """Initialize a new Portolan catalog with the v2 file structure.
 
     Creates (in order for partial failure recovery):
@@ -745,7 +773,7 @@ def init_catalog(
     except OSError as e:
         raise CatalogInitError(f"Cannot write config.yaml: {e}") from e
 
-    return catalog_file, warnings
+    return InitResult(catalog_file, warnings)
 
 
 class Catalog:
@@ -896,7 +924,7 @@ def create_intermediate_catalogs(collection_id: str, catalog_root: Path) -> None
 
         # Intermediate catalogs are catalogs too: scaffold AGENTS.md and add the
         # rel="agents" link so every catalog.json satisfies rashid PTL-FIL-002.
-        from portolan_cli.agents_md import ensure_agents_md
+        from portolan_core.agents_md import ensure_agents_md
 
         ensure_agents_md(catalog_file)
 
@@ -991,15 +1019,9 @@ def _link_title_from_target(
     if not isinstance(href, str) or not href:
         return None
 
-    target = (stac_file.parent / href).resolve()
-
-    # input hardening: ignore ``../`` hrefs that resolve outside the
-    # catalog so a crafted link can't read files elsewhere on disk.
-    root = catalog_root.resolve()
-    if target != root and root not in target.parents:
-        return None
-
-    if not target.exists():
+    # Input hardening: a crafted link cannot read a file outside the catalog.
+    target = contained_link_target(catalog_root, stac_file.parent, href)
+    if target is None or not target.exists():
         return None
 
     try:
@@ -1059,7 +1081,7 @@ def ensure_link_titles(catalog_root: Path) -> bool:
 
 
 #: metadata.yaml keys that a catalog copies onto its own catalog.json (#815).
-#: Kept apart from :data:`portolan_cli.config.NON_INHERITED_METADATA_KEYS`, which
+#: Kept apart from :data:`portolan_core.config.NON_INHERITED_METADATA_KEYS`, which
 #: answers a different question. That constant names the keys a child never takes
 #: from a parent. This one names the keys a catalog publishes about itself.
 _CATALOG_HUMAN_FIELDS: tuple[str, ...] = ("title", "description")
@@ -1120,7 +1142,7 @@ def apply_catalog_human_titles(
 
     Every ``catalog.json`` in the visible tree is treated the same way. Each one
     reads the ``metadata.yaml`` in its own directory. A title never inherits (see
-    :data:`portolan_cli.config.NON_INHERITED_METADATA_KEYS`), so a root title
+    :data:`portolan_core.config.NON_INHERITED_METADATA_KEYS`), so a root title
     cannot rename a subcatalog below it.
 
     Idempotent. A catalog that already carries the values is not rewritten. The
@@ -1136,7 +1158,7 @@ def apply_catalog_human_titles(
     Returns:
         The catalog.json paths that were modified, in sweep order.
     """
-    from portolan_cli.run_state import RunState
+    from portolan_core.run_state import RunState
 
     state = state or RunState.open(catalog_root)
     changed: list[Path] = []
@@ -1202,8 +1224,6 @@ def _read_catalog_index(versions_path: Path) -> dict[str, Any]:
         CatalogVersionsCorruptedError: If the file is not JSON, is not an
             object, or holds a ``collections`` value that is not an object.
     """
-    from portolan_cli.output import warn
-
     try:
         count("versions_json.reads")
         content = json.loads(versions_path.read_text(encoding="utf-8"))
@@ -1213,7 +1233,7 @@ def _read_catalog_index(versions_path: Path) -> dict[str, Any]:
             f"File: {versions_path}. "
             "Fix manually or delete to reinitialize."
         )
-        warn(msg)
+        emit("warn", msg)
         raise CatalogVersionsCorruptedError(msg) from e
 
     if not isinstance(content, dict):
@@ -1222,7 +1242,7 @@ def _read_catalog_index(versions_path: Path) -> dict[str, Any]:
             f"got {type(content).__name__}. File: {versions_path}. "
             "Fix manually or delete to reinitialize."
         )
-        warn(msg)
+        emit("warn", msg)
         raise CatalogVersionsCorruptedError(msg)
 
     collections_value = content.get("collections")
@@ -1232,7 +1252,7 @@ def _read_catalog_index(versions_path: Path) -> dict[str, Any]:
             f"expected dict or null, got {type(collections_value).__name__}. "
             f"File: {versions_path}. Fix manually or delete to reinitialize."
         )
-        warn(msg)
+        emit("warn", msg)
         raise CatalogVersionsCorruptedError(msg)
     return content
 
@@ -1244,7 +1264,7 @@ def collection_summaries(state: RunState) -> dict[str, CollectionSummary]:
     The next run must reconcile them even when it stages no new version. The
     state's memo reuses records the unchanged-file checks already read.
     """
-    from portolan_cli.stac_links import versioned_collections
+    from portolan_core.stac_links import versioned_collections
 
     summaries: dict[str, CollectionSummary] = {}
     if not (state.catalog_root / "versions.json").exists():
@@ -1333,7 +1353,7 @@ class CatalogVersionsCorruptedError(Exception):
 # Directory handling
 # ─────────────────────────────────────────────────────────────────────────────
 
-# Note: GEOSPATIAL_EXTENSIONS imported from portolan_cli.constants
+# Note: GEOSPATIAL_EXTENSIONS imported from portolan_core.constants
 # Note: is_filegdb is imported from portolan_cli.scan.detect (canonical implementation).
 # scan_detect.is_filegdb accepts either .gdbtable files OR a 'gdb' marker file, which
 # matches the full FileGDB spec. Do not reimplement here.

@@ -33,19 +33,28 @@ from __future__ import annotations
 import contextlib
 import json
 import re
+from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
 from urllib.parse import quote
 
-from portolan_cli.agents_md import markdown_link_gap
-from portolan_cli.config import load_merged_metadata
-from portolan_cli.errors import ConfigInvalidStructureError
-from portolan_cli.json_io import write_json_atomic
-from portolan_cli.stac_links import owned_item_hrefs
-from portolan_cli.stac_links import visible_stac_files as _visible_stac_files
+from portolan_core.agents_md import markdown_link_gap
+from portolan_core.config import load_merged_metadata
+from portolan_core.errors import ConfigInvalidStructureError
+from portolan_core.json_io import write_json_atomic
+from portolan_core.stac_links import owned_item_hrefs
+from portolan_core.stac_links import visible_stac_files as _visible_stac_files
 
 if TYPE_CHECKING:
-    from portolan_cli.config import ConfigSource
+    from collections.abc import Callable, Iterator
+
+    from portolan_core.config import ConfigSource
+from portolan_core.bbox import BBOX_2D_LEN
+
+_KIB = 1024
+_INTERVAL_LEN = 2
+_MAX_CODE_LEN = 8
+_MAX_DESCRIPTION_LEN = 200
 
 # Keyword-badge rendering limits (#515). A junk-dominated list is a machine dump
 # (e.g. WFS layer ids seeded into metadata.yaml at extraction) and is suppressed;
@@ -56,7 +65,7 @@ TECHNICAL_KEYWORD_RATIO = 0.6  # >60% technical entries -> non-curated dump -> o
 
 def _format_size(size_bytes: int) -> str:
     """Format file size in human-readable format."""
-    if size_bytes < 1024:
+    if size_bytes < _KIB:
         return f"{size_bytes} B"
     if size_bytes < 1024 * 1024:
         return f"{size_bytes / 1024:.1f} KB"
@@ -182,10 +191,10 @@ def _add_spatial_section(sections: list[str], stac: dict[str, Any]) -> None:
         return
 
     bbox = bbox_list[0]
-    if len(bbox) < 4:
+    if len(bbox) < BBOX_2D_LEN:
         return
 
-    from portolan_cli.bbox import to_2d_bbox
+    from portolan_core.bbox import to_2d_bbox
 
     # Reduce to 2D so a 6-element extent shows [west, south, east, north], not
     # its [west, south, min_z, east] slice (issue #592).
@@ -214,7 +223,7 @@ def _add_temporal_section(sections: list[str], stac: dict[str, Any]) -> None:
         return
 
     interval = interval_list[0]
-    if len(interval) < 2:
+    if len(interval) < _INTERVAL_LEN:
         return
 
     start = interval[0] or "open"
@@ -497,7 +506,9 @@ def _is_meaningful_keyword(keyword: str) -> bool:
     if ":" in text:
         return False
     # Short alphanumeric codes (FACC: AP010, DB120, BH020, CA010).
-    return not (len(text) <= 8 and re.fullmatch(r"[A-Za-z]{1,3}\d{1,4}[A-Za-z0-9]*", text))
+    return not (
+        len(text) <= _MAX_CODE_LEN and re.fullmatch(r"[A-Za-z]{1,3}\d{1,4}[A-Za-z0-9]*", text)
+    )
 
 
 def _add_keywords_section(sections: list[str], metadata: dict[str, Any]) -> None:
@@ -785,8 +796,9 @@ def _rebase_item_assets(item: dict[str, Any], item_dir: str) -> dict[str, Any]:
     rebased: dict[str, Any] = {}
     for key, asset in assets.items():
         if isinstance(asset, dict) and isinstance(asset.get("href"), str):
-            asset = {**asset, "href": _collection_relative_href(asset["href"], item_dir)}
-        rebased[key] = asset
+            rebased[key] = {**asset, "href": _collection_relative_href(asset["href"], item_dir)}
+        else:
+            rebased[key] = asset
     return {**item, "assets": rebased}
 
 
@@ -874,13 +886,13 @@ def _extract_collection_extent(
     # Extract spatial
     spatial = extent.get("spatial", {})
     bbox_list = spatial.get("bbox", [])
-    bbox = bbox_list[0] if bbox_list and len(bbox_list[0]) >= 4 else None
+    bbox = bbox_list[0] if bbox_list and len(bbox_list[0]) >= BBOX_2D_LEN else None
 
     # Extract temporal
     temporal = extent.get("temporal", {})
     intervals = temporal.get("interval", [])
     start, end = None, None
-    if intervals and len(intervals) > 0 and len(intervals[0]) >= 2:
+    if intervals and len(intervals) > 0 and len(intervals[0]) >= _INTERVAL_LEN:
         start = intervals[0][0] or None
         end = intervals[0][1] or None
 
@@ -892,7 +904,7 @@ def _compute_bbox_envelope(bboxes: list[list[float]]) -> list[float] | None:
 
     Filters out invalid bboxes (inf/nan/out-of-range) with warnings (issue #516).
     """
-    from portolan_cli.bbox import compute_bbox_union
+    from portolan_core.bbox import compute_bbox_union
 
     if not bboxes:
         return None
@@ -1016,8 +1028,8 @@ def _add_collections_section(
         sections.append("")
         if description:
             # Truncate long descriptions
-            if len(description) > 200:
-                description = description[:197] + "..."
+            if len(description) > _MAX_DESCRIPTION_LEN:
+                description = description[: _MAX_DESCRIPTION_LEN - 3] + "..."
             sections.append(description)
             sections.append("")
 
@@ -1042,7 +1054,7 @@ def _add_aggregated_extent_section(
     sections.append("")
 
     if bbox:
-        from portolan_cli.bbox import to_2d_bbox
+        from portolan_core.bbox import to_2d_bbox
 
         # Reduce to 2D so east/north are read from the correct indices for a
         # 6-element bbox (issue #592).
@@ -1204,22 +1216,15 @@ def _ensure_readme_link(directory: Path, data: dict[str, Any]) -> bool:
     return True
 
 
-def readme_link_gap(stac_path: Path, data: dict[str, Any]) -> bool:
+def readme_link_gap(root: Path, stac_path: Path, data: dict[str, Any]) -> bool:
     """True when ``data``'s README link does not satisfy rashid PTL-FIL-003.
 
-    Replicates the four cases rashid's ``_check_markdown_link`` flags for
-    ``rel="describedby"`` / ``README.md``: no link with the rel; a link whose
-    ``type`` is not ``text/markdown``; an href that is missing, empty, or
-    absolute; and an href that does not resolve to the sibling ``README.md`` (or
-    resolves to one that does not exist). Every case is repaired by
-    :func:`ensure_readmes`, so ``check --fix`` can act on the answer.
-
-    Replicated rather than imported because rashid keeps ``_check_markdown_link``
-    private. rashid#57 exported the COG predicate, the structural relations, and
-    the multihash helpers, so those now come from ``rashid_core.api``; this one still
-    has no public counterpart. A change to PTL-FIL-003 must land here too.
+    Rashid's ``sidecar_link_gaps`` gives the answer for ``rel="describedby"``
+    and ``README.md``. Every gap is repaired by :func:`ensure_readmes`, so
+    ``check --fix`` can act on the answer.
 
     Args:
+        root: The catalog root.
         stac_path: Path of the ``catalog.json``/``collection.json`` (its parent
             directory is where ``README.md`` must sit).
         data: The parsed STAC object.
@@ -1227,7 +1232,7 @@ def readme_link_gap(stac_path: Path, data: dict[str, Any]) -> bool:
     Returns:
         True when the object needs repair.
     """
-    return markdown_link_gap(stac_path, data, rel=README_LINK_REL, target=README_FILENAME)
+    return markdown_link_gap(root, stac_path, data, rel=README_LINK_REL, target=README_FILENAME)
 
 
 def write_readme(readme_path: Path, content: str) -> None:
@@ -1295,3 +1300,189 @@ def ensure_readmes(catalog_root: Path, *, state: ConfigSource | None = None) -> 
             changed_any = True
 
     return changed_any
+
+
+def resolve_catalog_dir(catalog_root: Path, path: str | None, *, must_exist: bool) -> Path:
+    """Resolve the PATH argument of a catalog walk to a directory below the root.
+
+    Args:
+        catalog_root: The catalog root.
+        path: The PATH argument, relative to the root. None selects the root.
+        must_exist: If True, the directory must exist.
+
+    Returns:
+        ``catalog_root / path``, or the root when ``path`` is empty.
+
+    Raises:
+        InputValidationError: When ``path`` escapes the catalog root.
+        PathNotFoundError: When ``must_exist`` is set and nothing is at ``path``.
+        NotADirectoryError: When ``must_exist`` is set and ``path`` is a file.
+    """
+    from portolan_cli.input_hardening import validate_safe_path
+
+    if not path:
+        return catalog_root
+    validate_safe_path(Path(path), catalog_root)
+    target = catalog_root / path
+    if must_exist and not target.exists():
+        from portolan_core.errors import PathNotFoundError
+
+        raise PathNotFoundError(f"Path '{path}' does not exist in catalog.")
+    if must_exist and not target.is_dir():
+        raise NotADirectoryError(f"Path '{path}' is not a directory.")
+    return target
+
+
+class UnsupportedOptionError(ValueError):
+    """An option does not apply to the mode the run is in.
+
+    It is not a ``PortolanError`` for the reason that :class:`portolan_core.errors.PathNotFoundError` gives.
+    """
+
+
+@dataclass(frozen=True)
+class ReadmeRunResult:
+    """The READMEs a ``readme`` run wrote or checked, as catalog-relative paths.
+
+    Attributes:
+        recursive: True when the run walked the tree.
+        check: True when the run only compared the READMEs with fresh output.
+        fresh: Paths the run wrote, or found up to date in check mode.
+        stale: Paths whose README is missing or out of date, in check mode.
+        content: The README text of a single-path ``stdout`` run, which writes nothing.
+    """
+
+    recursive: bool
+    check: bool
+    fresh: list[str] = field(default_factory=list)
+    stale: list[str] = field(default_factory=list)
+    content: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return the envelope ``data`` of ``readme``."""
+        if self.recursive and self.check:
+            return {
+                "fresh": not self.stale,
+                "checked": self.fresh + self.stale,
+                "stale": self.stale,
+            }
+        if self.recursive:
+            return {"generated": self.fresh, "count": len(self.fresh)}
+        path = (self.fresh + self.stale)[0]
+        if self.check:
+            return {"fresh": not self.stale, "path": path}
+        return {"path": path, "generated": self.content is None}
+
+
+def _readme_for_dir(directory: Path, catalog_root: Path, say: Callable[[str], None]) -> str:
+    """Generate the README text of one catalog or collection directory."""
+    rel = "" if directory == catalog_root else f"{directory.relative_to(catalog_root)}/"
+    is_collection = (directory / "collection.json").exists()
+    is_catalog = not is_collection and (directory / "catalog.json").exists()
+    if is_collection or is_catalog:
+        stac_file = "collection.json" if is_collection else "catalog.json"
+        say(f"Reading {stac_file} from {rel or 'catalog root'}")
+    if (directory / ".portolan" / "metadata.yaml").exists():
+        say(f"Reading metadata.yaml from {rel}.portolan/")
+    if is_catalog:
+        return generate_catalog_readme(directory)
+    return generate_readme_for_collection(directory, catalog_root)
+
+
+def _settle_readme(readme_path: Path, content: str, *, check: bool) -> bool:
+    """Write the README, or in check mode compare it. True when it is fresh."""
+    if check:
+        return readme_path.exists() and readme_path.read_text(encoding="utf-8") == content
+    write_readme(readme_path, content)
+    return True
+
+
+def _start_then_subtree(base_dir: Path) -> Iterator[Path]:
+    """Yield ``base_dir``, then list and yield everything below it.
+
+    The caller settles ``base_dir`` before the listing runs, so a listing error
+    leaves the start directory done.
+    """
+    yield base_dir
+    yield from sorted(base_dir.rglob("*"))
+
+
+def _readme_walk(
+    catalog_root: Path, base_dir: Path, *, check: bool, say: Callable[[str], None]
+) -> ReadmeRunResult:
+    """Write or check the README of each catalog and collection at and below ``base_dir``."""
+    result = ReadmeRunResult(recursive=True, check=check)
+    for directory in _start_then_subtree(base_dir):
+        if not directory.is_dir():
+            continue
+        rel_dir = directory.relative_to(catalog_root)
+        if directory != base_dir and any(part.startswith(".") for part in rel_dir.parts):
+            continue
+        if (directory / "collection.json").exists():
+            say(f"Processing collection: {rel_dir}/")
+        elif (directory / "catalog.json").exists():
+            say(
+                "Processing catalog root"
+                if directory == catalog_root
+                else f"Processing subcatalog: {rel_dir}/"
+            )
+        else:
+            continue
+        readme_path = directory / README_FILENAME
+        content = _readme_for_dir(directory, catalog_root, say)
+        fresh = _settle_readme(readme_path, content, check=check)
+        (result.fresh if fresh else result.stale).append(str(readme_path.relative_to(catalog_root)))
+    # The root README comes first.
+    for paths in (result.fresh, result.stale):
+        if README_FILENAME in paths:
+            paths.remove(README_FILENAME)
+            paths.insert(0, README_FILENAME)
+    return result
+
+
+def generate_readmes(
+    catalog_root: Path,
+    path: str | None = None,
+    *,
+    check: bool = False,
+    stdout: bool = False,
+    recursive: bool = True,
+    on_progress: Callable[[str], None] | None = None,
+) -> ReadmeRunResult:
+    """Generate the README of each catalog and collection from STAC and metadata.yaml.
+
+    Args:
+        catalog_root: The catalog root.
+        path: The start directory, relative to the root. None selects the root.
+        check: If True, compare each README with fresh output and write nothing.
+        stdout: If True, return the README text of the start directory and
+            write nothing. Only a single-path run accepts it.
+        recursive: If False, act only on the start directory.
+        on_progress: Receives a message for each file the run reads.
+
+    Returns:
+        The READMEs the run wrote, found fresh, or found stale.
+
+    Raises:
+        UnsupportedOptionError: When ``stdout`` is set on a recursive run.
+        InputValidationError: When ``path`` escapes the catalog root.
+        PathNotFoundError: When a recursive run starts at a missing path.
+        NotADirectoryError: When a recursive run starts at a file.
+        ConfigInvalidStructureError: When a metadata.yaml does not parse.
+    """
+    say = on_progress or (lambda _message: None)
+    if recursive and stdout:
+        raise UnsupportedOptionError("--stdout is not supported in recursive mode")
+    base_dir = resolve_catalog_dir(catalog_root, path, must_exist=recursive)
+    if recursive:
+        return _readme_walk(catalog_root, base_dir, check=check, say=say)
+
+    content = _readme_for_dir(base_dir, catalog_root, say)
+    say("Generating README.md")
+    readme_path = base_dir / README_FILENAME
+    rel_path = [str(readme_path.relative_to(catalog_root))]
+    if not check and stdout:
+        return ReadmeRunResult(recursive=False, check=False, fresh=rel_path, content=content)
+    if _settle_readme(readme_path, content, check=check):
+        return ReadmeRunResult(recursive=False, check=check, fresh=rel_path)
+    return ReadmeRunResult(recursive=False, check=check, stale=rel_path)

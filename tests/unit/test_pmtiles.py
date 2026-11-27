@@ -452,10 +452,8 @@ class TestAddPMTilesLinkToCollection:
     @pytest.mark.unit
     def test_adds_web_map_links_link_and_extension(self, tmp_path: Path) -> None:
         """Adds rel='pmtiles' link with media type, layers, and extension."""
-        from portolan_cli.viz.pmtiles import (
-            WEB_MAP_LINKS_EXTENSION,
-            add_pmtiles_link_to_collection,
-        )
+        from portolan_cli.viz.pmtiles import add_pmtiles_link_to_collection
+        from portolan_cli.viz.pmtiles_links import WEB_MAP_LINKS_EXTENSION
 
         collection_dir = self._collection(tmp_path)
 
@@ -472,10 +470,8 @@ class TestAddPMTilesLinkToCollection:
     @pytest.mark.unit
     def test_idempotent_does_not_duplicate_link_or_extension(self, tmp_path: Path) -> None:
         """Calling twice keeps exactly one link and one extension entry."""
-        from portolan_cli.viz.pmtiles import (
-            WEB_MAP_LINKS_EXTENSION,
-            add_pmtiles_link_to_collection,
-        )
+        from portolan_cli.viz.pmtiles import add_pmtiles_link_to_collection
+        from portolan_cli.viz.pmtiles_links import WEB_MAP_LINKS_EXTENSION
 
         collection_dir = self._collection(tmp_path)
 
@@ -541,7 +537,7 @@ class TestTrackGeneratedAssetsInVersions:
     @pytest.mark.unit
     def test_asset_tracked_with_checksum_size_mtime(self, tmp_path: Path) -> None:
         """A generated thumbnail is added to versions.json as a full asset."""
-        from portolan_cli.versions import read_versions, track_generated_assets
+        from portolan_core.versions import read_versions, track_generated_assets
 
         collection_dir = tmp_path / "demographics"
         collection_dir.mkdir()
@@ -574,7 +570,7 @@ class TestTrackGeneratedAssetsInVersions:
     @pytest.mark.unit
     def test_pmtiles_and_thumbnail_share_one_version(self, tmp_path: Path) -> None:
         """PMTiles + thumbnail tracked together land in a SINGLE version (Issue #519)."""
-        from portolan_cli.versions import read_versions, track_generated_assets
+        from portolan_core.versions import read_versions, track_generated_assets
 
         collection_dir = tmp_path / "demographics"
         collection_dir.mkdir()
@@ -600,7 +596,7 @@ class TestTrackGeneratedAssetsInVersions:
     @pytest.mark.unit
     def test_only_if_missing_skips_already_tracked(self, tmp_path: Path) -> None:
         """only_if_missing creates no version when every asset is already tracked."""
-        from portolan_cli.versions import read_versions, track_generated_assets
+        from portolan_core.versions import read_versions, track_generated_assets
 
         collection_dir = tmp_path / "demographics"
         collection_dir.mkdir()
@@ -621,7 +617,7 @@ class TestTrackGeneratedAssetsInVersions:
     @pytest.mark.unit
     def test_creates_versions_file_when_missing(self, tmp_path: Path) -> None:
         """First-ever version is created at 1.0.0 if versions.json is absent."""
-        from portolan_cli.versions import read_versions, track_generated_assets
+        from portolan_core.versions import read_versions, track_generated_assets
 
         collection_dir = tmp_path / "demographics"
         collection_dir.mkdir()
@@ -640,7 +636,7 @@ class TestTrackGeneratedAssetsInVersions:
     @pytest.mark.unit
     def test_raises_when_asset_missing(self, tmp_path: Path) -> None:
         """A missing asset file is a hard error (no phantom asset)."""
-        from portolan_cli.versions import track_generated_assets
+        from portolan_core.versions import track_generated_assets
 
         collection_dir = tmp_path / "demographics"
         collection_dir.mkdir()
@@ -1029,6 +1025,10 @@ class TestGeneratePMTilesForCollection:
         """A failed rebuild names the tileset it kept (Issue #814)."""
         import os
 
+        from portolan_cli.report import reporting
+
+        lines: list[tuple[str, str]] = []
+
         from portolan_cli.viz.pmtiles import (
             PMTilesGenerationError,
             generate_pmtiles_for_collection,
@@ -1046,14 +1046,12 @@ class TestGeneratePMTilesForCollection:
         with (
             patch("portolan_cli.viz.pmtiles.check_pmtiles_available"),
             patch("portolan_cli.viz.pmtiles.generate_pmtiles", mock_generate_refuses),
-            patch("portolan_cli.viz.pmtiles.warn") as mock_warn,
+            reporting(lambda level, message: lines.append((level, message))),
         ):
             generate_pmtiles_for_collection(collection_dir, tmp_path)
 
         # The command must not claim it cleaned up a partial file.
-        assert [call.args[0] for call in mock_warn.call_args_list] == [
-            "Kept the previous data.pmtiles: the rebuild failed."
-        ]
+        assert lines == [("warn", "Kept the previous data.pmtiles: the rebuild failed.")]
 
     @pytest.mark.unit
     @pytest.mark.parametrize(
@@ -1107,8 +1105,8 @@ class TestGeneratePMTilesForCollection:
         PMTiles and thumbnail each bump their own version (two snapshots for one
         side-step); they must now share a single version snapshot.
         """
-        from portolan_cli.versions import read_versions
         from portolan_cli.viz.pmtiles import generate_pmtiles_for_collection
+        from portolan_core.versions import read_versions
 
         collection_dir = _data_collection(tmp_path, "demographics")
 
@@ -1155,10 +1153,8 @@ class TestGeneratePMTilesForCollection:
     @pytest.mark.unit
     def test_generate_emits_pmtiles_link(self, tmp_path: Path) -> None:
         """The generate path emits the rel='pmtiles' web-map-links link (#569)."""
-        from portolan_cli.viz.pmtiles import (
-            WEB_MAP_LINKS_EXTENSION,
-            generate_pmtiles_for_collection,
-        )
+        from portolan_cli.viz.pmtiles import generate_pmtiles_for_collection
+        from portolan_cli.viz.pmtiles_links import WEB_MAP_LINKS_EXTENSION
 
         collection_dir = tmp_path / "demographics"
         collection_dir.mkdir()
@@ -1205,8 +1201,8 @@ class TestGeneratePMTilesForCollection:
         from versions.json) must be backfilled — without forcing regeneration —
         and in exactly one version bump.
         """
-        from portolan_cli.versions import read_versions
         from portolan_cli.viz.pmtiles import generate_pmtiles_for_collection
+        from portolan_core.versions import read_versions
 
         collection_dir = tmp_path / "demographics"
         collection_dir.mkdir()
@@ -1321,9 +1317,9 @@ class TestGeneratePMTilesForCollection:
         """When thumbnails are disabled, only the PMTiles is tracked (one version)."""
         from unittest.mock import patch as _patch
 
-        from portolan_cli.versions import read_versions
         from portolan_cli.viz.pmtiles import generate_pmtiles_for_collection
         from portolan_cli.viz.thumbnail import ThumbnailConfig
+        from portolan_core.versions import read_versions
 
         collection_dir = self._fresh_collection(tmp_path / "demographics")
         pmtiles_path = collection_dir / "data.pmtiles"
@@ -1353,8 +1349,8 @@ class TestGeneratePMTilesForCollection:
     @pytest.mark.unit
     def test_thumbnail_render_failure_tracks_only_pmtiles(self, tmp_path: Path) -> None:
         """A failed thumbnail render must not block PMTiles tracking (Issue #13)."""
-        from portolan_cli.versions import read_versions
         from portolan_cli.viz.pmtiles import generate_pmtiles_for_collection
+        from portolan_core.versions import read_versions
 
         collection_dir = self._fresh_collection(tmp_path / "demographics")
         pmtiles_path = collection_dir / "data.pmtiles"
@@ -1447,7 +1443,6 @@ class TestGenerateOrSuggestPMTiles:
                 {"roads"},
                 generate_pmtiles=False,
                 force=False,
-                verbose=False,
             )
         # Issue #929: the step still registers tiles a user built, and builds none.
         mock_gen.assert_called_once()
@@ -1467,7 +1462,6 @@ class TestGenerateOrSuggestPMTiles:
                 {"roads"},
                 generate_pmtiles=True,
                 force=False,
-                verbose=False,
             )
         mock_gen.assert_called_once()
         assert mock_gen.call_args.args[0] == coll_path
@@ -1485,15 +1479,14 @@ class TestGenerateOrSuggestPMTiles:
                 "portolan_cli.viz.pmtiles.generate_pmtiles_for_collection",
                 side_effect=PMTilesNotAvailableError(),
             ),
-            pytest.raises(SystemExit),
         ):
-            generate_or_suggest_pmtiles(
+            report = generate_or_suggest_pmtiles(
                 tmp_path,
                 {"roads"},
                 generate_pmtiles=True,
                 force=False,
-                verbose=False,
             )
+        assert report.failure == str(PMTilesNotAvailableError())
 
     @pytest.mark.unit
     def test_auto_unavailable_does_not_exit(self, tmp_path: Path) -> None:
@@ -1508,14 +1501,15 @@ class TestGenerateOrSuggestPMTiles:
             "portolan_cli.viz.pmtiles.generate_pmtiles_for_collection",
             side_effect=PMTilesNotAvailableError(),
         ):
-            # Must not raise SystemExit on the auto path.
-            generate_or_suggest_pmtiles(
+            # An auto path that cannot run is no failure.
+            report = generate_or_suggest_pmtiles(
                 tmp_path,
                 {"roads"},
                 generate_pmtiles=False,
                 force=False,
-                verbose=False,
             )
+        assert report.failure is None
+        assert report.outcomes[0].config_enabled is True
 
     @pytest.mark.unit
     def test_missing_collection_json_skipped(self, tmp_path: Path) -> None:
@@ -1528,7 +1522,6 @@ class TestGenerateOrSuggestPMTiles:
                 {"ghost"},
                 generate_pmtiles=True,
                 force=False,
-                verbose=False,
             )
         mock_gen.assert_not_called()
 
@@ -1552,7 +1545,6 @@ class TestGenerateOrSuggestPMTiles:
                 {"roads"},
                 generate_pmtiles=False,
                 force=True,
-                verbose=False,
             )
         mock_gen.assert_called_once()
         assert mock_gen.call_args.args[0] == coll_path
@@ -1572,15 +1564,14 @@ class TestGenerateOrSuggestPMTiles:
                 "portolan_cli.viz.pmtiles.generate_pmtiles_for_collection",
                 side_effect=PMTilesNotAvailableError(),
             ),
-            pytest.raises(SystemExit),
         ):
-            generate_or_suggest_pmtiles(
+            report = generate_or_suggest_pmtiles(
                 tmp_path,
                 {"roads"},
                 generate_pmtiles=False,
                 force=True,
-                verbose=False,
             )
+        assert report.failure == str(PMTilesNotAvailableError())
 
     @pytest.mark.unit
     def test_force_alone_failure_exits(self, tmp_path: Path) -> None:
@@ -1594,12 +1585,11 @@ class TestGenerateOrSuggestPMTiles:
                 "portolan_cli.viz.pmtiles.generate_pmtiles_for_collection",
                 return_value=failed,
             ),
-            pytest.raises(SystemExit),
         ):
-            generate_or_suggest_pmtiles(
+            report = generate_or_suggest_pmtiles(
                 tmp_path,
                 {"roads"},
                 generate_pmtiles=False,
                 force=True,
-                verbose=False,
             )
+        assert report.failure == "PMTiles generation failed: tippecanoe failed"

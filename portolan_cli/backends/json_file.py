@@ -30,7 +30,7 @@ from portolan_cli.backends.protocol import (
     PullOutcome,
     SchemaFingerprint,
 )
-from portolan_cli.versions import (
+from portolan_core.versions import (
     Asset,
     SchemaInfo,
     VersionsFile,
@@ -41,7 +41,7 @@ from portolan_cli.versions import (
 )
 
 if TYPE_CHECKING:
-    from portolan_cli.versions import Version
+    from portolan_core.versions import Version
 
 
 class JsonFileBackend:
@@ -171,9 +171,9 @@ class JsonFileBackend:
         Returns:
             The newly created Version object.
         """
-        from portolan_cli.run_state import stat_matches
-        from portolan_cli.sync.checksums import compute_checksum
-        from portolan_cli.versions import SPEC_VERSION
+        from portolan_core.checksums import compute_checksum
+        from portolan_core.run_state import stat_matches
+        from portolan_core.versions import SPEC_VERSION
 
         versions_path = self._versions_path(collection)
 
@@ -261,7 +261,7 @@ class JsonFileBackend:
             return "1.0.0"
 
         current = versions_file.current_version or "0.0.0"
-        major, minor, patch = parse_version(current)
+        major, minor, _patch = parse_version(current)
 
         if breaking:
             return f"{major + 1}.0.0"
@@ -333,7 +333,7 @@ class JsonFileBackend:
             message="Drift detection pending sync implementation",
         )
 
-    def on_post_add(self, context: PostAddContext) -> None:  # noqa: ARG002 - the protocol fixes it
+    def on_post_add(self, context: PostAddContext) -> None:  # the protocol fixes it
         """Do nothing: versions.json is already written when add finishes."""
 
     def pull(

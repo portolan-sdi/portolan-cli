@@ -13,7 +13,7 @@ from unittest.mock import patch
 
 import pytest
 
-from portolan_cli.versions import read_versions
+from portolan_core.versions import read_versions
 
 
 class TestPreparedItem:
@@ -64,7 +64,7 @@ class TestPreparedItem:
         metadata = GeoParquetMetadata(
             bbox=(0, 0, 1, 1),
             crs="EPSG:4326",
-            geometry_type="Polygon",
+            geometry_type=["Polygon"],
             geometry_column="geometry",
             feature_count=100,
             schema={"id": "int64", "geometry": "binary"},
@@ -80,7 +80,7 @@ class TestPreparedItem:
             metadata=metadata,
         )
 
-        assert prepared.metadata is not None
+        assert isinstance(prepared.metadata, GeoParquetMetadata)
         assert prepared.metadata.feature_count == 100
         assert prepared.metadata.geometry_column == "geometry"
 
@@ -258,7 +258,7 @@ class TestFinalizeItems:
         )
 
         # Track write_versions calls
-        with patch("portolan_cli.versions.write_versions") as mock_write:
+        with patch("portolan_core.versions.write_versions") as mock_write:
             finalize_items(
                 catalog_root=initialized_catalog,
                 prepared=[prepared1, prepared2],
@@ -317,7 +317,7 @@ class TestFinalizeItems:
             item_json_path=initialized_catalog / "collection-b/item-1/item-1.json",
         )
 
-        with patch("portolan_cli.versions.write_versions") as mock_write:
+        with patch("portolan_core.versions.write_versions") as mock_write:
             finalize_items(
                 catalog_root=initialized_catalog,
                 prepared=[prepared_a, prepared_b],

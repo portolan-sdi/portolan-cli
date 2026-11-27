@@ -11,11 +11,11 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from portolan_cli.errors import UnsupportedFormatError
 from portolan_cli.formats import (
     CloudNativeStatus,
     get_cloud_native_status,
 )
+from portolan_core.errors import UnsupportedFormatError
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -125,8 +125,9 @@ class TestUnsupportedEmitsError:
 
         result = get_cloud_native_status(las_file)
         assert result.status == CloudNativeStatus.UNSUPPORTED
-        assert "COPC" in result.error_message  # type: ignore
-        assert "pdal" in result.error_message.lower()  # type: ignore
+        assert result.error_message is not None
+        assert "COPC" in result.error_message
+        assert "pdal" in result.error_message.lower()
 
     @pytest.mark.integration
     def test_unsupported_format_error_exception(self, tmp_path: Path) -> None:
@@ -136,9 +137,9 @@ class TestUnsupportedEmitsError:
 
         result = get_cloud_native_status(nc_file)
 
+        assert result.status == CloudNativeStatus.UNSUPPORTED
         with pytest.raises(UnsupportedFormatError) as exc_info:
-            if result.status == CloudNativeStatus.UNSUPPORTED:
-                raise UnsupportedFormatError(str(nc_file), "NetCDF")
+            raise UnsupportedFormatError(str(nc_file), "NetCDF")
 
         assert "NetCDF" in str(exc_info.value)
         assert "Unsupported format" in str(exc_info.value)

@@ -15,7 +15,7 @@ import pytest
 from click.testing import CliRunner
 
 from portolan_cli.cli import cli
-from portolan_cli.constants import PORTOLAN_SCHEMA_URI
+from portolan_core.constants import PORTOLAN_SCHEMA_URI
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -712,7 +712,7 @@ class TestCheckMetadataFixFlag:
     Note: These tests verify that --metadata --fix flag is accepted and runs
     without errors. Full end-to-end metadata fixing is tested in
     test_metadata_fix.py (unit tests) since fix_metadata() only operates on
-    files that check_directory_metadata() reports, which typically requires
+    files that scan_catalog_metadata() reports, which typically requires
     versions.json or existing STAC items.
     """
 
@@ -737,7 +737,7 @@ class TestCheckMetadataFixFlag:
                     # this test stays focused on the scanner's empty report.
                     "title": "Test Catalog",
                     "description": "Test",
-                    # AGENTS.md link present so RULE-0080 / repair_agents_md are a
+                    # AGENTS.md link present so the PTL-FIL-002 agents fixer is a
                     # no-op and this test stays focused on the empty scanner report.
                     "links": [
                         {"rel": "agents", "href": "./AGENTS.md", "type": "text/markdown"},

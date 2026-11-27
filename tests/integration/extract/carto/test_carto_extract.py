@@ -17,7 +17,7 @@ from portolan_cli.extract.carto.discovery import CartoDiscoveryResult, CartoTabl
 from portolan_cli.extract.carto.orchestrator import CartoLayerSource
 from portolan_cli.extract.common.report import ExtractionReport, MetadataExtracted
 from portolan_cli.extract.common.source import LayerRef, build_catalog
-from portolan_cli.licensing import ResolvedLicense
+from portolan_core.licensing import ResolvedLicense
 from tests.support.extract import make_layer_result, make_report
 
 pytestmark = [pytest.mark.integration]
@@ -102,7 +102,7 @@ def test_auto_init_tracks_non_geo_table_as_tabular_collection(tmp_path: Path) ->
     ``portolan:geospatial: false`` flag under a validator rule id that no
     longer exists, which contradicted the assertion below (issue #654).
     """
-    from portolan_cli.config import get_setting
+    from portolan_core.config import get_setting
 
     collection_dir = tmp_path / "lookup"
     collection_dir.mkdir()
@@ -147,8 +147,8 @@ def test_a_thumbnail_exception_keeps_the_versions_of_the_add(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The thumbnails run after the add. An exception there still commits the add."""
-    import portolan_cli.collection_thumbnail as collection_thumbnail
-    from portolan_cli.versions import read_versions
+    from portolan_cli import collection_thumbnail
+    from portolan_core.versions import read_versions
 
     def broken_thumbnails(*_args: object, **_kwargs: object) -> None:
         raise RuntimeError("thumbnail broke")

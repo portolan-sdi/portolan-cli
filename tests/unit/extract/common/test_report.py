@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from portolan_cli.extract.carto.orchestrator import ExtractionOptions as CartoOptions
 from portolan_cli.extract.common.report import (
     ExtractionReport,
     ExtractionSummary,
@@ -11,10 +12,14 @@ from portolan_cli.extract.common.report import (
     LayerResult,
     MetadataExtracted,
     load_report,
+    run_extract_command,
     save_report,
 )
+from portolan_cli.extract.common.source import Discovery, build_report
+from portolan_cli.input_hardening import InputValidationError
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
 
@@ -123,3 +128,44 @@ def test_summary_without_wall_duration_keeps_the_old_shape() -> None:
     data = _summary().to_dict()
     assert "wall_duration_seconds" not in data
     assert ExtractionSummary.from_dict(data).wall_duration_seconds is None
+
+
+def _recording_extract(seen: list[str | None]) -> Callable[..., ExtractionReport]:
+    """Build a fake extract_*_catalog that records the catalog id it receives."""
+
+    def extract(*, url: str, output_dir: Path, options: CartoOptions) -> ExtractionReport:
+        seen.append(options.catalog_id)
+        return build_report(Discovery(source_url=url, layers=[]), [])
+
+    return extract
+
+
+@pytest.mark.unit
+def test_run_extract_command_forwards_the_id_it_checks(tmp_path: Path) -> None:
+    """The id in the options is the one the extraction gets (Codex review of #1133)."""
+    seen: list[str | None] = []
+
+    run_extract_command(
+        _recording_extract(seen),
+        "https://example.invalid/api/v2/sql",
+        tmp_path,
+        CartoOptions(catalog_id="requested-id"),
+    )
+
+    assert seen == ["requested-id"]
+
+
+@pytest.mark.unit
+def test_run_extract_command_rejects_a_bad_id_in_the_options(tmp_path: Path) -> None:
+    """A bad id in the options fails before the extraction runs."""
+    seen: list[str | None] = []
+
+    with pytest.raises(InputValidationError, match="Invalid catalog ID"):
+        run_extract_command(
+            _recording_extract(seen),
+            "https://example.invalid/api/v2/sql",
+            tmp_path,
+            CartoOptions(catalog_id="bad id!"),
+        )
+
+    assert seen == []

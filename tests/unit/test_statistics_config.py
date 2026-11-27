@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from portolan_cli.config import KNOWN_SETTINGS, get_setting
+from portolan_core.config import KNOWN_SETTINGS, get_setting
 
 if TYPE_CHECKING:
     from pathlib import Path

@@ -18,9 +18,9 @@ from pathlib import Path, PurePath
 from typing import TYPE_CHECKING, Any
 
 from portolan_cli.formats import RASTER, RASTER_EXTENSIONS
-from portolan_cli.json_io import write_json_atomic
-from portolan_cli.models.item import ItemModel
-from portolan_cli.versions import (
+from portolan_core.json_io import write_json_atomic
+from portolan_core.models.item import ItemModel
+from portolan_core.versions import (
     Asset,
     read_versions,
     versions_asset_key,
@@ -28,9 +28,9 @@ from portolan_cli.versions import (
 )
 
 if TYPE_CHECKING:
-    from portolan_cli.config import ConfigSource
     from portolan_cli.preparation import PreparedItem
-    from portolan_cli.run_state import RunState
+    from portolan_core.config import ConfigSource
+    from portolan_core.run_state import RunState
 
 logger = logging.getLogger(__name__)
 
@@ -396,7 +396,7 @@ def update_versions_tracking(
     if not file_path.exists():
         raise FileNotFoundError(f"Data file not found: {file_path}")
 
-    from portolan_cli.run_state import RunState
+    from portolan_core.run_state import RunState
 
     run = state if state is not None else RunState.open(versions_path.parent.parent)
 

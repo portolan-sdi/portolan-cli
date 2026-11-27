@@ -1021,3 +1021,19 @@ async def test_cache_read_error_carries_its_status_for_the_retry_rule(
 
     assert caught.value.status_code == status
     assert permanent_status(caught.value) == label
+
+
+@pytest.mark.asyncio
+async def test_cache_rate_limit_error_names_the_tile_without_its_userinfo() -> None:
+    """A 429 error names the tile URL, not the password of the service URL (#1133)."""
+    from portolan_cli.extract.arcgis.imageserver.tilecache import _download_cache_tile
+
+    ref = CacheTileRef(level=9, row=3, col=4, dst_row=0, dst_col=0)
+    transport = httpx.MockTransport(lambda request: httpx.Response(429))
+    async with httpx.AsyncClient(transport=transport) as client:
+        with pytest.raises(TileCacheRateLimitError) as caught:
+            await _download_cache_tile(ref, "https://u:SECRET@h.example/X/ImageServer", client)
+
+    assert str(caught.value) == (
+        "Cache read rate limited: HTTP 429 for https://h.example/X/ImageServer/tile/9/3/4."
+    )

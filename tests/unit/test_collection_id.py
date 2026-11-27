@@ -292,7 +292,7 @@ class TestScanFixCollectionId:
         result = _compute_collection_id_fix(dir_path)
 
         assert result is not None
-        new_path, preview = result
+        new_path, _preview = result
         assert new_path == Path("/data/my-data")
 
     def test_compute_collection_id_fix_starts_with_number(self) -> None:
@@ -340,7 +340,7 @@ class TestAddValidation:
         test_file.write_text('{"type": "FeatureCollection", "features": []}')
 
         # Try to add with invalid collection ID
-        with pytest.raises(ValueError) as exc_info:
+        with pytest.raises(ValueError, match=r"Invalid collection ID") as exc_info:
             add(
                 path=test_file,
                 catalog_root=tmp_path,
@@ -358,7 +358,7 @@ class TestAddValidation:
         test_file = tmp_path / "data.geojson"
         test_file.write_text('{"type": "FeatureCollection", "features": []}')
 
-        with pytest.raises(ValueError) as exc_info:
+        with pytest.raises(ValueError, match=r"Invalid collection ID") as exc_info:
             add(
                 path=test_file,
                 catalog_root=tmp_path,

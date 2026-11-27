@@ -36,11 +36,12 @@ def _write_catalog() -> None:
                 "description": "Test",
                 "links": [],
             }
-        )
+        ),
+        encoding="utf-8",
     )
     Path(".portolan").mkdir()
     # config.yaml is the sentinel for catalog detection
-    Path(".portolan/config.yaml").write_text("version: 1\n")
+    Path(".portolan/config.yaml").write_text("version: 1\n", encoding="utf-8")
 
 
 def _write_asset(path: str, size: int) -> None:
@@ -234,7 +235,7 @@ class TestListFormatSize:
     @pytest.mark.unit
     def test_format_size_bytes(self) -> None:
         """format_size handles bytes correctly."""
-        from portolan_cli.cli import format_size
+        from portolan_cli.utils import format_size
 
         assert format_size(0) == "0B"
         assert format_size(100) == "100B"
@@ -243,7 +244,7 @@ class TestListFormatSize:
     @pytest.mark.unit
     def test_format_size_kilobytes(self) -> None:
         """format_size handles kilobytes correctly."""
-        from portolan_cli.cli import format_size
+        from portolan_cli.utils import format_size
 
         assert format_size(1024) == "1.0KB"
         assert format_size(1536) == "1.5KB"
@@ -252,7 +253,7 @@ class TestListFormatSize:
     @pytest.mark.unit
     def test_format_size_megabytes(self) -> None:
         """format_size handles megabytes correctly."""
-        from portolan_cli.cli import format_size
+        from portolan_cli.utils import format_size
 
         assert format_size(1024 * 1024) == "1.0MB"
         assert format_size(4_400_000) == "4.2MB"
@@ -260,7 +261,7 @@ class TestListFormatSize:
     @pytest.mark.unit
     def test_format_size_gigabytes(self) -> None:
         """format_size handles gigabytes correctly."""
-        from portolan_cli.cli import format_size
+        from portolan_cli.utils import format_size
 
         assert format_size(1024 * 1024 * 1024) == "1.0GB"
         assert format_size(2 * 1024 * 1024 * 1024) == "2.0GB"

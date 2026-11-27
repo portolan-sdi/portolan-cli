@@ -41,6 +41,12 @@ Or with pip:
 pip install portolan-cli
 ```
 
+To use the catalog writer from Python, install the library only:
+
+```sh
+pip install portolan-core
+```
+
 ## Documentation
 
 Start with the [end-to-end publishing example](https://portolan-sdi.github.io/portolan-cli/examples/).

@@ -46,7 +46,7 @@ def _count_scandir_calls(monkeypatch: pytest.MonkeyPatch) -> Counter[Path]:
     calls: Counter[Path] = Counter()
     real_scandir = os.scandir
 
-    def spy(path=".", /):  # type: ignore[no-untyped-def]
+    def spy(path=".", /):
         calls[Path(path)] += 1
         return real_scandir(path)  # preserve the context-manager return
 

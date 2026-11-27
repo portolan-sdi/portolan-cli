@@ -6,7 +6,7 @@ import json
 import shutil
 import threading
 from concurrent.futures import ThreadPoolExecutor
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import patch
 
 import pyarrow as pa
@@ -24,8 +24,8 @@ from portolan_cli.convert import (
     place_cog,
     write_cog,
 )
-from portolan_cli.errors import OutputExistsError
-from portolan_cli.run_state import RunState
+from portolan_core.errors import OutputExistsError
+from portolan_core.run_state import RunState
 from tests.conftest import _init_catalog
 
 if TYPE_CHECKING:
@@ -48,7 +48,8 @@ def _geojson(path: Path, value: int) -> Path:
                     }
                 ],
             }
-        )
+        ),
+        encoding="utf-8",
     )
     return path
 
@@ -79,9 +80,9 @@ def test_parallel_claims_reserve_free_names(tmp_path: Path, suffix: str) -> None
 
 def test_parallel_add_keeps_both_same_stem_outputs(tmp_path: Path) -> None:
     """Phase-2 workers must publish both converted values, in one version."""
-    import portolan_cli.preparation as preparation
+    from portolan_cli import preparation
     from portolan_cli.add import add_files
-    from portolan_cli.versions import read_versions
+    from portolan_core.versions import read_versions
 
     root = _init_catalog(tmp_path / "catalog")
     collection = root / "roads"
@@ -89,7 +90,7 @@ def test_parallel_add_keeps_both_same_stem_outputs(tmp_path: Path) -> None:
     paths[1].write_text('WKT,value\n"POINT (3 4)",222\n')
     barrier = threading.Barrier(2)
     conversion_lock = threading.Lock()
-    original_claim = preparation.claim_output
+    original_claim = claim_output
     original_convert = preparation._convert_and_extract_metadata
 
     def synchronized_claim(*args: Any, **kwargs: Any) -> Path:
@@ -126,7 +127,9 @@ def test_same_basename_sources_have_distinct_owners(tmp_path: Path) -> None:
     results = [convert_file(source, output_dir=output) for source in sources]
     assert [result.status for result in results] == [ConversionStatus.SUCCESS] * 2
     assert results[0].output != results[1].output, "basename provenance conflated two sources"
-    assert [pq.read_table(result.output).column("value")[0].as_py() for result in results] == [
+    assert [
+        pq.read_table(cast("Path", result.output)).column("value")[0].as_py() for result in results
+    ] == [
         111,
         222,
     ]
@@ -134,6 +137,7 @@ def test_same_basename_sources_have_distinct_owners(tmp_path: Path) -> None:
     _geojson(sources[0], 333)
     updated = convert_file(sources[0], output_dir=output)
     assert updated.output == results[0].output
+    assert updated.output is not None
     assert pq.read_table(updated.output).column("value").to_pylist() == [333]
 
 
@@ -247,7 +251,9 @@ def test_catalog_provenance_survives_a_move(tmp_path: Path) -> None:
     source.write_text("value\n111\n")
     with in_run(RunState.open(original)):
         output = convert_tabular(source, original)
-    record = json.loads(pq.read_metadata(output).metadata[PROVENANCE_KEY.encode()])
+    footer = pq.read_metadata(output).metadata
+    assert footer is not None
+    record = json.loads(footer[PROVENANCE_KEY.encode()])
     assert record["base"] == "catalog"
     assert record["path"] == "roads.csv"
     moved = tmp_path / "moved"
@@ -294,8 +300,8 @@ def test_parallel_crash_recovery_keeps_the_existing_output(
 ) -> None:
     """A generated file discovered with its source must not become a new output."""
     from portolan_cli.add import add_files
-    from portolan_cli.sync.checksums import compute_checksum
-    from portolan_cli.versions import read_versions
+    from portolan_core.checksums import compute_checksum
+    from portolan_core.versions import read_versions
     from tests.integration.test_collection_level_asset_workflow import _crashed_add
 
     with monkeypatch.context() as patched:

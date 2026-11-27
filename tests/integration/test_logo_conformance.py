@@ -13,7 +13,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 from click.testing import CliRunner
-from rashid_core import Severity, ValidationOptions, validate
+from rashid_core import validate
+from rashid_core.api import Severity, ValidationOptions
 
 from portolan_cli.cli import cli
 

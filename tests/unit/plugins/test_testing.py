@@ -9,7 +9,7 @@ import pytest
 
 from portolan_cli.backends.json_file import JsonFileBackend
 from portolan_cli.testing import ConformanceError, check_backend, check_format_handler
-from portolan_cli.versions import Version
+from portolan_core.versions import Version
 from tests.unit.plugins.stub_handler import StubHandler
 
 if TYPE_CHECKING:
@@ -145,8 +145,8 @@ def test_nonconforming_handler_lists_each_problem(tmp_path: Path) -> None:
     sample = tmp_path / "a.bad"
     sample.write_text("x", encoding="utf-8")
 
+    handler = StubHandler("bad", frozenset({".BAD"}), asset_level="layer")
     with pytest.raises(ConformanceError) as err:
-        handler = StubHandler("bad", frozenset({".BAD"}), asset_level="layer")
         check_format_handler(handler, sample, tmp_path)
 
     assert str(err.value).splitlines() == [

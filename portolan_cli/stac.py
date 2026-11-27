@@ -21,19 +21,29 @@ from typing import TYPE_CHECKING, Any
 
 import pystac
 
-from portolan_cli.bbox import compute_bbox_union, to_2d_bbox
-from portolan_cli.constants import PARTITION_EXTENSION_URI, PORTOLAN_SCHEMA_URI, ROLE_VISUAL
-from portolan_cli.errors import AssetKeyCollisionError, InvalidBboxError
-from portolan_cli.extension_registry import EXTENSION_REGISTRY
 from portolan_cli.humanize import humanize_slug
-from portolan_cli.json_io import write_json_atomic
 from portolan_cli.providers import derive_provenance, resolve_providers
+from portolan_cli.report import emit
 from portolan_cli.viz.pmtiles_links import PMTILES_MEDIA_TYPE, pmtiles_asset_key
+from portolan_core.bbox import (
+    compute_bbox_union,
+    get_bbox_validation_reason,
+    snap_to_wgs84_range,
+    to_2d_bbox,
+)
+from portolan_core.constants import PARTITION_EXTENSION_URI, PORTOLAN_SCHEMA_URI, ROLE_VISUAL
+from portolan_core.errors import AssetKeyCollisionError, InvalidBboxError
+from portolan_core.extension_registry import EXTENSION_REGISTRY
+from portolan_core.json_io import write_json_atomic
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Mapping, Sequence
 
+    from portolan_cli.metadata.geoparquet import GeoParquetMetadata
     from portolan_cli.metadata.tabular import TabularMetadata
+
+_RESOLUTION_LEN = 2
+_MAX_PLAIN_TITLE_LEN = 20
 
 logger = logging.getLogger(__name__)
 
@@ -143,6 +153,9 @@ def create_collection(
 
     Returns:
         A pystac.Collection object.
+
+    Raises:
+        InvalidBboxError: ``bbox`` is not a valid WGS84 bbox.
     """
     # Issue #502: titles and descriptions are mandatory and must be
     # human-readable. Derive a title from the id when none is supplied, and
@@ -156,6 +169,7 @@ def create_collection(
     # Default to global extent if not specified
     if bbox is None:
         bbox = [-180, -90, 180, 90]
+    bbox = _require_wgs84(bbox)
 
     # Default to open temporal interval
     if temporal_extent is None:
@@ -198,7 +212,14 @@ def create_item(
 
     Returns:
         A pystac.Item object.
+
+    Raises:
+        InvalidBboxError: ``bbox`` is not a valid WGS84 bbox. STAC requires
+            WGS84, so reproject a native bbox first, for example with
+            ``wgs84_bbox`` (#928).
     """
+    bbox = _require_wgs84(bbox)
+
     # Generate polygon geometry from bbox
     geometry = _bbox_to_polygon(bbox)
 
@@ -234,6 +255,18 @@ def create_item(
             item.add_asset(asset_key, asset)
 
     return item
+
+
+def _require_wgs84(bbox: list[float]) -> list[float]:
+    """Return ``bbox`` snapped to the WGS84 range, or raise InvalidBboxError.
+
+    The check passes a coordinate that only rounds past a bound, such as
+    180.00000000000006, so the snapped copy is what the caller stores.
+    """
+    reason = get_bbox_validation_reason(bbox)
+    if reason is not None:
+        raise InvalidBboxError(reason)
+    return snap_to_wgs84_range(bbox)
 
 
 def _bbox_to_polygon(bbox: list[float]) -> dict[str, object]:
@@ -816,11 +849,10 @@ def apply_provenance(
 
     if provenance == "official":
         if source_url is not None:
-            from portolan_cli.output import warn as warn_output
-
-            warn_output(
+            emit(
+                "warn",
                 f"{collection.id}: producer and host are the same organization, so the "
-                f"collection is official and carries no via link to {source_url}"
+                f"collection is official and carries no via link to {source_url}",
             )
         return
 
@@ -854,6 +886,29 @@ def to_rfc3339(moment: datetime) -> str:
     return moment.astimezone(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
+def _merge_partition_keys(
+    value: list[Any], existing_descriptions: dict[str, str]
+) -> list[dict[str, str]]:
+    """Merge new partition keys and keep the hand-authored description of each."""
+    merged_keys: list[dict[str, str]] = []
+    for new_key in value:
+        if isinstance(new_key, dict) and "name" in new_key:
+            key_name = new_key["name"]
+            merged_key = dict(new_key)
+            # Preserve existing hand-authored description if:
+            # 1. New key has no description at all
+            # 2. New key has empty/whitespace description
+            # 3. New key has auto-generated generic description (ends with "identifier")
+            new_desc = merged_key.get("description", "").strip()
+            is_generic_desc = new_desc.endswith("identifier") or new_desc == ""
+            if key_name in existing_descriptions and (
+                "description" not in merged_key or is_generic_desc
+            ):
+                merged_key["description"] = existing_descriptions[key_name]
+            merged_keys.append(merged_key)
+    return merged_keys
+
+
 def add_partition_metadata_to_collection(
     collection: pystac.Collection,
     partition_metadata: dict[str, object],
@@ -883,23 +938,7 @@ def add_partition_metadata_to_collection(
         if key.startswith("partition:"):
             # Special handling for partition:keys to preserve descriptions
             if key == "partition:keys" and isinstance(value, list):
-                merged_keys: list[dict[str, str]] = []
-                for new_key in value:
-                    if isinstance(new_key, dict) and "name" in new_key:
-                        key_name = new_key["name"]
-                        merged_key = dict(new_key)
-                        # Preserve existing hand-authored description if:
-                        # 1. New key has no description at all
-                        # 2. New key has empty/whitespace description
-                        # 3. New key has auto-generated generic description (ends with "identifier")
-                        new_desc = merged_key.get("description", "").strip()
-                        is_generic_desc = new_desc.endswith("identifier") or new_desc == ""
-                        if key_name in existing_descriptions and (
-                            "description" not in merged_key or is_generic_desc
-                        ):
-                            merged_key["description"] = existing_descriptions[key_name]
-                        merged_keys.append(merged_key)
-                collection.extra_fields[key] = merged_keys
+                collection.extra_fields[key] = _merge_partition_keys(value, existing_descriptions)
             else:
                 collection.extra_fields[key] = value
 
@@ -929,7 +968,7 @@ def ensure_portolan_schema_uri(document: dict[str, Any]) -> bool:
 
     The profile URI is the machine-readable conformance claim: every catalog and
     collection MUST carry exactly one (issue #654). This appends
-    :data:`~portolan_cli.constants.PORTOLAN_SCHEMA_URI` when absent, and rewrites
+    :data:`~portolan_core.constants.PORTOLAN_SCHEMA_URI` when absent, and rewrites
     a URI left over from an older spec version in place, so re-stamping a catalog
     upgrades it instead of accumulating claims. Other extension declarations keep
     their relative order.
@@ -1223,7 +1262,7 @@ def _compute_bbox_union(
     rejects inf/nan and "effectively infinite" sentinel poison values such as
     ±1.79e308 while accepting legitimate projected coordinates (issue #516).
     """
-    from portolan_cli.bbox import compute_bbox_union
+    from portolan_core.bbox import compute_bbox_union
 
     all_bboxes: list[list[float]] = []
     for m in metadata_list:
@@ -1299,7 +1338,7 @@ def _warn_on_mismatches(metadata_list: Sequence[object]) -> None:
         )
 
 
-def aggregate_table_metadata(metadata_list: Sequence[object]) -> object:
+def aggregate_table_metadata(metadata_list: Sequence[object]) -> GeoParquetMetadata:
     """Aggregate table metadata from multiple vector items for collection-level extension.
 
     Used to combine metadata from multiple GeoParquet files in a collection:
@@ -1363,7 +1402,8 @@ def add_projection_extension(
     """Add Projection extension fields to an item from metadata.
 
     Always sets (when available):
-    - proj:code: CRS code (EPSG or WKT)
+    - proj:code: CRS code (EPSG or WKT), or proj:projjson for a PROJJSON
+      CRS that no code names
     - proj:bbox: Bounding box in native CRS
 
     For raster metadata (COGMetadata), also sets:
@@ -1378,7 +1418,9 @@ def add_projection_extension(
     if not hasattr(metadata, "crs") or metadata.crs is None:
         return
 
-    # Set proj:code
+    # Set proj:code or proj:projjson. Drop both first, so a repeat call names one CRS.
+    item.properties.pop("proj:code", None)
+    item.properties.pop("proj:projjson", None)
     crs_str = metadata.crs
     if isinstance(crs_str, str):
         # Normalize EPSG codes
@@ -1388,15 +1430,13 @@ def add_projection_extension(
             # WKT or other format - store as-is
             item.properties["proj:code"] = crs_str
     elif isinstance(crs_str, dict):
-        # PROJJSON format (used by some GeoParquet files)
-        # Try to extract EPSG code if available
-        if "id" in crs_str and "code" in crs_str["id"]:
-            authority = crs_str["id"].get("authority", "EPSG")
-            code = crs_str["id"]["code"]
-            item.properties["proj:code"] = f"{authority}:{code}"
+        # PROJJSON format (used by some GeoParquet files). A CRS with no code
+        # to name goes in proj:projjson (projection v2.0.0), not proj:code.
+        code = _projjson_code(crs_str)
+        if code is None:
+            item.properties["proj:projjson"] = crs_str
         else:
-            # Store as WKT2 if we can't extract EPSG
-            item.properties["proj:code"] = str(crs_str)
+            item.properties["proj:code"] = code
 
     # Set proj:bbox (native CRS bbox)
     if hasattr(metadata, "bbox") and metadata.bbox is not None:
@@ -1419,6 +1459,30 @@ def add_projection_extension(
     ext_url = EXTENSION_URLS["projection"]
     if ext_url not in item.stac_extensions:
         item.stac_extensions.append(ext_url)
+
+
+def _projjson_code(crs: dict[str, Any]) -> str | None:
+    """The proj:code of a PROJJSON CRS, or None when no code names it.
+
+    The id counts only when pyproj resolves it. An id such as EPSG:999999 or
+    MYORG:1 gives way to the EPSG match of the definition (#928).
+    """
+    from pyproj import CRS
+    from pyproj.exceptions import CRSError
+
+    crs_id = crs.get("id", {})
+    if "code" in crs_id:
+        code = f"{crs_id.get('authority', 'EPSG')}:{crs_id['code']}"
+        try:
+            CRS.from_user_input(code)
+            return code
+        except CRSError:
+            pass
+    try:
+        epsg = CRS.from_user_input(crs).to_epsg()
+    except CRSError:
+        epsg = None
+    return f"EPSG:{epsg}" if epsg is not None else None
 
 
 def geometry_type_list(value: object) -> list[str]:
@@ -1468,7 +1532,7 @@ def _get_stac_properties(metadata: object) -> dict[str, object]:
 def _compute_spatial_resolution(metadata: object) -> float | None:
     """Extract spatial resolution from metadata, returning None if unavailable."""
     resolution = getattr(metadata, "resolution", None)
-    if not isinstance(resolution, (list, tuple)) or len(resolution) < 2:
+    if not isinstance(resolution, (list, tuple)) or len(resolution) < _RESOLUTION_LEN:
         return None
     x_res, y_res = resolution[0], resolution[1]
     if isinstance(x_res, (int, float)) and isinstance(y_res, (int, float)):
@@ -1813,7 +1877,7 @@ def apply_collection_fields(collection: pystac.Collection, fields: CollectionFie
         collection.extent.spatial = fields.spatial
     if fields.temporal is not None:
         collection.extent.temporal = fields.temporal
-    stored = collection.summaries.to_dict() if collection.summaries is not None else {}
+    stored = collection.summaries.to_dict()
     collection.summaries = pystac.Summaries(_merged_summaries(stored, fields.summaries))
     other_keys = [
         *collection.extra_fields,
@@ -2061,7 +2125,7 @@ def is_technical_name(text: str | None) -> bool:
     # CamelCase and all-caps acronyms ("DenHaagHousing", "USA", "IGN") have an
     # uppercase letter after the first char, so they fail this branch's guard
     # and fall through to the final non-technical return below.
-    if not re.search(r"[A-Z]", text[1:]) and len(text) < 20:
+    if not re.search(r"[A-Z]", text[1:]) and len(text) < _MAX_PLAIN_TITLE_LEN:
         has_digit = any(char.isdigit() for char in text)
         starts_capitalized = text[:1].isupper()
         return bool(has_digit or not starts_capitalized)

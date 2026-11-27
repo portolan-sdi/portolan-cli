@@ -27,7 +27,7 @@ import math
 from dataclasses import dataclass
 from typing import Any
 
-from portolan_cli.models.schema import BandSchema, ColumnSchema, SchemaModel
+from portolan_core.models.schema import BandSchema, ColumnSchema, SchemaModel
 
 
 def _nodata_equals(a: float | None, b: float | None) -> bool:
@@ -40,7 +40,7 @@ def _nodata_equals(a: float | None, b: float | None) -> bool:
         return True
     if a is None or b is None:
         return False
-    if isinstance(a, float) and isinstance(b, float) and math.isnan(a) and math.isnan(b):
+    if math.isnan(a) and math.isnan(b):
         return True
     return a == b
 
@@ -310,7 +310,7 @@ def _columns_by_name(
     for col in schema.columns:
         if isinstance(col, (ColumnSchema, BandSchema)):
             result[col.name] = col
-        elif isinstance(col, dict) and "name" in col:
+        elif "name" in col:
             result[col["name"]] = col
     return result
 

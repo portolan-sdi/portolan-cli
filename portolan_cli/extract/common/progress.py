@@ -20,11 +20,17 @@ Typical usage:
 
 from __future__ import annotations
 
+import logging
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TypeAlias
 
-if TYPE_CHECKING:
-    from collections.abc import Callable
+logger = logging.getLogger(__name__)
+
+MessageCallback: TypeAlias = Callable[[str, str], None]
+"""Called as ``on_message(level, text)`` with a message for the user. See ``emit_message``."""
+
+_LOG_LEVELS = {"warn": logging.WARNING, "error": logging.ERROR}
 
 
 @dataclass
@@ -47,8 +53,12 @@ class ExtractionProgress:
     error: str | None = None
 
 
+LayerProgressCallback: TypeAlias = Callable[[ExtractionProgress], None]
+"""Called with the progress of each layer. See ``emit_progress``."""
+
+
 def emit_progress(
-    on_progress: Callable[[ExtractionProgress], None] | None,
+    on_progress: LayerProgressCallback | None,
     layer_index: int,
     total_layers: int,
     layer_name: str,
@@ -66,3 +76,17 @@ def emit_progress(
                 error=error,
             )
         )
+
+
+def emit_message(on_message: MessageCallback | None, level: str, text: str) -> None:
+    """Hand a message for the user to ``on_message(level, text)``.
+
+    The level is ``info``, ``detail``, ``success``, ``warn``, or ``error``. The
+    CLI prints the message through ``output.py``, because library code never
+    prints (#1005). With no callback, the message goes to this module's logger
+    at the matching level, so a library caller still gets the warnings.
+    """
+    if on_message:
+        on_message(level, text)
+    else:
+        logger.log(_LOG_LEVELS.get(level, logging.INFO), text)

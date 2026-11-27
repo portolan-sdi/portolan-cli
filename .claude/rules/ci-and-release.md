@@ -17,11 +17,14 @@ paths:
 | Tier 2 | Every PR | lint, mypy, security, full tests, perf counter gates, CodSpeed, docs build |
 | Tier 3 | Nightly | rashid main conformance, perf scenarios (wall time and peak RSS), live network tests, slow tests, property tests, gate self-test |
 
-**All checks are strict**, no `continue-on-error`. Fix issues or they block.
+**All checks are strict.** Fix issues or they block. The nightly live network
+tests are the one `continue-on-error` step. Third-party services fail at random,
+so a failure opens a tracking issue instead. `tests/docs/test_ci_wiring.py` pins
+that exception.
 
 ### prek Hooks
 
-Install: `uv tool install prek && prek install`. All hooks block, no `--no-verify`. See `prek.toml` for full list.
+Install: `uv run prek install`. It installs the pre-commit, commit-msg, and pre-push hooks. All hooks block, no `--no-verify`. See `prek.toml` for full list.
 
 ## Git Workflow
 
@@ -66,10 +69,15 @@ commit pushed to `main` and creates the tag itself, it is not tag-triggered. See
 3. Release workflow detects the bump commit and creates tag + publishes
 
 **What happens automatically:**
-1. Version extracted from `pyproject.toml`
+1. Version extracted from `pyproject.toml`, and a check that the
+   `portolan-core` version and the `portolan-core==` pin agree with it
 2. Git tag created (e.g., `v0.3.0`)
-3. Package built and published to PyPI
-4. GitHub Release created
+3. Both packages built, then `portolan-core` published to PyPI before
+   `portolan-cli`, each with `skip-existing`
+4. GitHub Release created with both sets of files
+
+The `wheel-smoke` CI job (`scripts/wheel_smoke.py`) installs the
+`portolan-core` wheel alone and writes a catalog with it.
 
 **Versioning policy:** the project is pre-1.0. `major_version_zero = true` in
 `[tool.commitizen]` holds the major number at zero, so a `BREAKING CHANGE:`

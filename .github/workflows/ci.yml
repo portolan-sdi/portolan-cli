@@ -60,6 +60,7 @@ jobs:
               - 'uv.lock'
             python:
               - 'portolan_cli/**/*.py'
+              - 'packages/portolan-core/**/*.py'
 
   quality:
     name: Quality Gates (prek — single rule source)
@@ -96,12 +97,8 @@ jobs:
         # - no-commit-to-branch: meaningless in CI and fails on push-to-main
         #   (HEAD is `main`).
         # - fast-tests: the full matrix runs in the `test` job below.
-        # - update-freshness: stamps today's date into freshness markers, so it
-        #   is non-deterministic across days — a validation gate, not a mutation,
-        #   is what CI needs. Reference drift is still caught by
-        #   validate-agents-md (non-mutating), which DOES run here.
         env:
-          SKIP: no-commit-to-branch,fast-tests,update-freshness
+          SKIP: no-commit-to-branch,fast-tests
         run: uvx prek run --all-files --show-diff-on-failure
 
   security:
@@ -143,8 +140,11 @@ jobs:
         # The export pins every package with hashes, so pip-audit audits the
         # list as written and builds no virtual environment. On the Ubuntu
         # 26.04 runner, the temporary environment fails in ensurepip.
+        # --no-emit-workspace leaves out portolan-cli and portolan-core. Their
+        # editable lines carry no hash, and --require-hashes rejects them.
+        # The third-party dependencies of both members stay in the export.
         run: |
-          uv export --no-dev --no-emit-project \
+          uv export --no-dev --no-emit-workspace \
             --extra iceberg --extra pmtiles --extra thumbnails \
             -o /tmp/runtime-deps.txt
           # shellcheck disable=SC2046  # intentional word-splitting of the flag list
@@ -237,7 +237,7 @@ jobs:
         run: |
           coverage=()
           if [ "$MATRIX_OS" = "ubuntu-latest" ] && [ "$MATRIX_PYTHON" = "3.11" ]; then
-            coverage=(--cov=portolan_cli --cov-report=xml)
+            coverage=(--cov=portolan_cli --cov=portolan_core --cov-report=xml)
           fi
           marker="not network and not slow and not benchmark"
           if [ "$MATRIX_SUITE" = "unit" ] && [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
@@ -703,12 +703,50 @@ jobs:
       - name: Set up Python
         run: uv python install 3.11
 
-      - name: Build package
-        run: uv build
+      # The same commands as release.yml. tests/docs/test_ci_wiring.py keeps
+      # the two equal.
+      - name: Build packages
+        run: |
+          uv build --package portolan-core --out-dir dist/core
+          uv build --package portolan-cli --out-dir dist/cli
 
+      # List each sdist. An sdist must hold no build output, such as the
+      # portolan-core wheel inside the portolan-cli sdist.
       - name: Check package contents
         run: |
-          uv run python -c "import tarfile; t = tarfile.open(list(__import__('pathlib').Path('dist').glob('*.tar.gz'))[0]); print('\n'.join(t.getnames()))"
+          for sdist in dist/*/*.tar.gz; do
+            echo "$sdist"
+            tar -tzf "$sdist"
+            if tar -tzf "$sdist" | grep -E '^[^/]+/dist[^/]*/|\.whl$'; then
+              echo "::error::$sdist holds build output"
+              exit 1
+            fi
+          done
+
+  wheel-smoke:
+    # Installs the portolan-core wheel alone in a fresh environment and writes
+    # a catalog with it (#1133). The job fails when portolan-core pulls in the
+    # geospatial stack or portolan-cli, or when the portolan-cli wheel does not
+    # pin portolan-core to the shared version. The script needs only the
+    # standard library and uv, so the job syncs no project environment.
+    name: Wheel Smoke (portolan-core alone)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: ${{ env.UV_VERSION }}
+
+      - name: Set up Python
+        run: uv python install 3.11
+
+      - name: Check the portolan-core wheel
+        run: uv run --no-project --python 3.11 python scripts/wheel_smoke.py
 
   ci-success:
     name: CI Success
@@ -719,7 +757,7 @@ jobs:
     # don't touch iceberg. needs lists every job but `changes`, and
     # tests/docs/test_ci_wiring.py fails when one is missing.
     if: always()
-    needs: [quality, security, test, plugin-test, perf-gates, codspeed, iceberg-test, iceberg-e2e, diff-cover, docs, site-links, build]
+    needs: [quality, security, test, plugin-test, perf-gates, codspeed, iceberg-test, iceberg-e2e, diff-cover, docs, site-links, build, wheel-smoke]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

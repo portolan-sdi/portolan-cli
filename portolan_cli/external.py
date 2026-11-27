@@ -25,6 +25,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlparse
 
 import pystac
@@ -40,6 +41,7 @@ from portolan_cli.stac import (
     create_collection,
 )
 from portolan_cli.stac_enrich import enrich_collection_file
+from portolan_core.bbox import BBOX_2D_LEN, LAT_MAX, LAT_MIN, LON_MAX, LON_MIN
 
 # Role applied to external assets in addition to "data". This is what marks an
 # asset as referenced in place rather than downloaded and converted: a role is
@@ -88,6 +90,17 @@ class ExternalAddResult:
     href: str
     media_type: str
     via_url: str | None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return the envelope ``data`` of ``portolan add-external``."""
+        return {
+            "collection_id": self.collection_id,
+            "collection_path": str(self.collection_path),
+            "href": self.href,
+            "media_type": self.media_type,
+            "via": self.via_url,
+            "managed": False,
+        }
 
 
 def is_external_href(href: str) -> bool:
@@ -147,16 +160,16 @@ def _validate_bbox(bbox: list[float]) -> None:
     Raises:
         ValueError: If coordinates are out of range or min > max.
     """
-    if len(bbox) != 4:
+    if len(bbox) != BBOX_2D_LEN:
         raise ValueError("bbox must have exactly 4 values: min_x, min_y, max_x, max_y")
 
     min_x, min_y, max_x, max_y = bbox
 
-    if not (-180 <= min_x <= 180 and -180 <= max_x <= 180):
+    if not (LON_MIN <= min_x <= LON_MAX and LON_MIN <= max_x <= LON_MAX):
         raise ValueError(
             f"Longitude must be between -180 and 180, got min_x={min_x}, max_x={max_x}"
         )
-    if not (-90 <= min_y <= 90 and -90 <= max_y <= 90):
+    if not (LAT_MIN <= min_y <= LAT_MAX and LAT_MIN <= max_y <= LAT_MAX):
         raise ValueError(f"Latitude must be between -90 and 90, got min_y={min_y}, max_y={max_y}")
     if min_x > max_x:
         raise ValueError(f"min_x ({min_x}) must be <= max_x ({max_x})")

@@ -223,7 +223,7 @@ class TestGenerateCatalogReadme:
         junk = [f"vial_AP{i:03d}" for i in range(40)] + ["AP010", "orden:30"]
         (tmp_path / ".portolan").mkdir()
         (tmp_path / ".portolan" / "metadata.yaml").write_text(
-            "keywords:\n" + "".join(f"  - {k}\n" for k in junk + ["roads", "census"])
+            "keywords:\n" + "".join(f"  - {k}\n" for k in [*junk, "roads", "census"])
         )
 
         readme = generate_catalog_readme(tmp_path)

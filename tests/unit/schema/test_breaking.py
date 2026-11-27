@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import pytest
 
-from portolan_cli.models.schema import BandSchema, ColumnSchema, SchemaModel
 from portolan_cli.schema.breaking import (
     BreakingChange,
     detect_breaking_changes,
     is_breaking,
 )
+from portolan_core.models.schema import BandSchema, ColumnSchema, SchemaModel
 
 
 class TestBreakingChangeDataclass:
@@ -70,7 +70,7 @@ class TestDetectGeoparquetBreakingChanges:
         return SchemaModel(
             schema_version="1.0.0",
             format="geoparquet",
-            columns=columns,
+            columns=list(columns),
             crs=crs,
         )
 
@@ -223,7 +223,7 @@ class TestDetectCogBreakingChanges:
         return SchemaModel(
             schema_version="1.0.0",
             format="cog",
-            columns=bands,
+            columns=list(bands),
             crs=crs,
         )
 
@@ -345,7 +345,7 @@ class TestNullableChanges:
         return SchemaModel(
             schema_version="1.0.0",
             format="geoparquet",
-            columns=columns,
+            columns=list(columns),
         )
 
     @pytest.mark.unit
@@ -378,7 +378,7 @@ class TestNanNodata:
         return SchemaModel(
             schema_version="1.0.0",
             format="cog",
-            columns=bands,
+            columns=list(bands),
         )
 
     @pytest.mark.unit

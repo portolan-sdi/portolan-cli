@@ -42,6 +42,21 @@ if TYPE_CHECKING:
 
     from portolan_cli.api import PostAddContext, PullResult
 
+
+def _print_line(level: str, message: str) -> None:
+    """Print one line of an upload or a download through the output functions.
+
+    ``upload_file`` and ``download_file`` print nothing without a report
+    callback. This backend runs inside ``add`` and ``pull``, so it prints
+    their lines to the terminal.
+    """
+    from portolan_cli.api import detail, error, info, success, warn
+
+    {"success": success, "info": info, "warn": warn, "error": error, "detail": detail}[level](
+        message
+    )
+
+
 NAMESPACE = "portolake"
 
 
@@ -500,18 +515,24 @@ class IcebergBackend:
         item_json = catalog_root / collection_id / item_id / f"{item_id}.json"
         if item_json.exists():
             upload_file(
-                source=item_json, destination=f"{remote}/{collection_id}/{item_id}/{item_id}.json"
+                source=item_json,
+                destination=f"{remote}/{collection_id}/{item_id}/{item_id}.json",
+                report=_print_line,
             )
 
         collection_json = catalog_root / collection_id / "collection.json"
         if collection_json.exists():
             upload_file(
-                source=collection_json, destination=f"{remote}/{collection_id}/collection.json"
+                source=collection_json,
+                destination=f"{remote}/{collection_id}/collection.json",
+                report=_print_line,
             )
 
         catalog_json = catalog_root / "catalog.json"
         if catalog_json.exists():
-            upload_file(source=catalog_json, destination=f"{remote}/catalog.json")
+            upload_file(
+                source=catalog_json, destination=f"{remote}/catalog.json", report=_print_line
+            )
 
     def pull(
         self,
@@ -566,7 +587,7 @@ class IcebergBackend:
                 dest.parent.mkdir(parents=True, exist_ok=True)
 
                 with span("iceberg.download_file", href=asset.href):
-                    result = download_file(source=source, destination=dest)
+                    result = download_file(source=source, destination=dest, report=_print_line)
                 if result.success:
                     downloaded += result.files_downloaded
                 else:

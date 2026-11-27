@@ -14,7 +14,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from portolan_cli import logging_setup, trace
+from portolan_cli import logging_setup
+from portolan_core import trace
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
@@ -73,6 +74,13 @@ class TestLevel:
             monkeypatch.setenv("PORTOLAN_LOG", env)
         logging_setup.configure_logging(verbosity=verbosity, quiet=quiet)
         assert PKG.getEffectiveLevel() == expected
+
+    def test_verbose_reaches_the_core_logger(self) -> None:
+        """The reader modules live in portolan_core, so -v covers its logger too (#1133)."""
+        logging_setup.configure_logging(verbosity=1, quiet=False)
+        assert logging.getLogger("portolan_core.config").getEffectiveLevel() == logging.INFO
+        logging_setup.reset_logging()
+        assert logging.getLogger("portolan_core").level == logging.NOTSET
 
     def test_default_leaves_third_party_at_warning(self) -> None:
         logging_setup.configure_logging(verbosity=1, quiet=False)
@@ -139,7 +147,8 @@ class TestHandlers:
         assert records[0]["level"] == "DEBUG"
         assert records[0]["logger"] == "portolan_cli.sync"
         assert "ValueError: boom" in records[1]["exc"]
-        assert "rel" in records[0] and "ts" in records[0]
+        assert "rel" in records[0]
+        assert "ts" in records[0]
 
 
 class TestUserFormat:
@@ -147,7 +156,7 @@ class TestUserFormat:
 
     def test_a_warning_reads_as_a_warn_line(self, capsys: pytest.CaptureFixture[str]) -> None:
         logging_setup.configure_logging(verbosity=0, quiet=False)
-        logging.getLogger("portolan_cli.config").warning("unknown sort '%s'", "bogus")
+        logging.getLogger("portolan_core.config").warning("unknown sort '%s'", "bogus")
         assert capsys.readouterr() == ("", "\u26a0 unknown sort 'bogus'\n")
 
     def test_an_error_reads_as_an_error_line(self, capsys: pytest.CaptureFixture[str]) -> None:
@@ -165,9 +174,9 @@ class TestUserFormat:
 
     def test_verbose_keeps_the_record_format(self, capsys: pytest.CaptureFixture[str]) -> None:
         logging_setup.configure_logging(verbosity=1, quiet=False)
-        logging.getLogger("portolan_cli.config").warning("unknown sort")
+        logging.getLogger("portolan_core.config").warning("unknown sort")
         assert re.fullmatch(
-            r"\+\d+\.\d{3}s WARNING portolan_cli\.config: unknown sort\n", capsys.readouterr().err
+            r"\+\d+\.\d{3}s WARNING portolan_core\.config: unknown sort\n", capsys.readouterr().err
         )
 
     def test_a_third_party_warning_keeps_the_record_format(
@@ -253,7 +262,7 @@ class TestCredentialsStayOutOfTheLog:
         assert "basemaps.cartocdn.com/light_all/8/135/95.png" in err
         assert self.SECRET not in err
         record = json.loads(file_text)
-        assert "basemaps.cartocdn.com" in record["msg"]
+        assert re.search(r"basemaps\.cartocdn\.com/", record["msg"])
         assert "OSError" in record["exc"]
         assert self.SECRET not in file_text
 
@@ -340,12 +349,13 @@ class TestGdalDebug:
         assert logging.getLogger("rasterio._env").level == logging.NOTSET
 
 
-def test_package_logger_has_null_handler() -> None:
+@pytest.mark.parametrize("package", ["portolan_cli", "portolan_core"])
+def test_package_logger_has_null_handler(package: str) -> None:
     """A fresh interpreter sees the NullHandler that the package adds on import."""
     code = (
-        "import logging, portolan_cli; "
+        f"import logging, {package}; "
         "print(any(isinstance(h, logging.NullHandler) "
-        "for h in logging.getLogger('portolan_cli').handlers))"
+        f"for h in logging.getLogger('{package}').handlers))"
     )
     result = subprocess.run(
         [sys.executable, "-c", code], capture_output=True, text=True, check=True

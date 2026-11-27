@@ -224,12 +224,15 @@ class TestReadmeLinkGap:
             [{"rel": "describedby", "href": "./README.md", "type": "text/markdown"}],
         )
 
-        assert readme_link_gap(tmp_path / "catalog.json", data) is False
+        assert readme_link_gap(tmp_path, tmp_path / "catalog.json", data) is False
 
     def test_gap_when_link_is_absent(self, tmp_path: Path) -> None:
         (tmp_path / "README.md").write_text("# Root\n", encoding="utf-8")
 
-        assert readme_link_gap(tmp_path / "catalog.json", self._catalog_with(tmp_path, [])) is True
+        assert (
+            readme_link_gap(tmp_path, tmp_path / "catalog.json", self._catalog_with(tmp_path, []))
+            is True
+        )
 
     def test_gap_when_type_is_wrong(self, tmp_path: Path) -> None:
         (tmp_path / "README.md").write_text("# Root\n", encoding="utf-8")
@@ -238,7 +241,7 @@ class TestReadmeLinkGap:
             [{"rel": "describedby", "href": "./README.md", "type": "text/plain"}],
         )
 
-        assert readme_link_gap(tmp_path / "catalog.json", data) is True
+        assert readme_link_gap(tmp_path, tmp_path / "catalog.json", data) is True
 
     @pytest.mark.parametrize("href", ["", "/abs/README.md", "https://example.com/README.md"])
     def test_gap_when_href_is_missing_empty_or_absolute(self, tmp_path: Path, href: str) -> None:
@@ -248,13 +251,13 @@ class TestReadmeLinkGap:
             [{"rel": "describedby", "href": href, "type": "text/markdown"}],
         )
 
-        assert readme_link_gap(tmp_path / "catalog.json", data) is True
+        assert readme_link_gap(tmp_path, tmp_path / "catalog.json", data) is True
 
     def test_gap_when_href_key_is_absent(self, tmp_path: Path) -> None:
         (tmp_path / "README.md").write_text("# Root\n", encoding="utf-8")
         data = self._catalog_with(tmp_path, [{"rel": "describedby", "type": "text/markdown"}])
 
-        assert readme_link_gap(tmp_path / "catalog.json", data) is True
+        assert readme_link_gap(tmp_path, tmp_path / "catalog.json", data) is True
 
     def test_gap_when_href_does_not_resolve_to_the_sibling_readme(self, tmp_path: Path) -> None:
         (tmp_path / "README.md").write_text("# Root\n", encoding="utf-8")
@@ -263,7 +266,7 @@ class TestReadmeLinkGap:
             [{"rel": "describedby", "href": "../README.md", "type": "text/markdown"}],
         )
 
-        assert readme_link_gap(tmp_path / "catalog.json", data) is True
+        assert readme_link_gap(tmp_path, tmp_path / "catalog.json", data) is True
 
     def test_gap_when_the_readme_file_is_missing(self, tmp_path: Path) -> None:
         data = self._catalog_with(
@@ -271,4 +274,4 @@ class TestReadmeLinkGap:
             [{"rel": "describedby", "href": "./README.md", "type": "text/markdown"}],
         )
 
-        assert readme_link_gap(tmp_path / "catalog.json", data) is True
+        assert readme_link_gap(tmp_path, tmp_path / "catalog.json", data) is True

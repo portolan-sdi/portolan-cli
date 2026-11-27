@@ -21,10 +21,10 @@ import pytest
 from portolan_cli.add import (
     _scan_item_assets,
     add,
-    is_current,
 )
 from portolan_cli.catalog import init_catalog
-from portolan_cli.versions import read_versions
+from portolan_core.query import is_current
+from portolan_core.versions import read_versions
 
 
 @pytest.fixture
@@ -292,7 +292,7 @@ class TestCollectionRootLinks:
 
         # Load collection
         collection_path = catalog_root / collection_id / "collection.json"
-        with open(collection_path) as f:
+        with open(collection_path, encoding="utf-8") as f:
             collection_data = json.load(f)
 
         # Count item links

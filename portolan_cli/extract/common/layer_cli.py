@@ -14,8 +14,8 @@ from typing import TYPE_CHECKING
 import click
 
 from portolan_cli.cli import should_output_json
-from portolan_cli.errors import MissingLicenseError
 from portolan_cli.extract.common import cli_helpers
+from portolan_core.errors import MissingLicenseError
 
 if TYPE_CHECKING:
     from portolan_cli.extract.common.source import LayerSource
@@ -72,6 +72,7 @@ def build_command(layer_source: LayerSource) -> click.Command:
         auto: bool,
         raw: bool,
     ) -> None:
+        from portolan_cli.extract.common.report import ExtractRunResult
         from portolan_cli.extract.common.source import LayerSourceOptions, run_layer_extraction
         from portolan_cli.output import detail, info
 
@@ -112,6 +113,7 @@ def build_command(layer_source: LayerSource) -> click.Command:
                 target,
                 options,
                 on_progress=None if use_json else cli_helpers.make_extract_progress_callback(),
+                on_message=cli_helpers.print_message,
             )
         except MissingLicenseError as e:
             cli_helpers.fail_missing_license(e, use_json=use_json, url=url, command=command_name)
@@ -120,6 +122,8 @@ def build_command(layer_source: LayerSource) -> click.Command:
                 use_json, type(e).__name__, f"Extraction failed: {e}", url, command=command_name
             )
             raise SystemExit(1) from None
-        cli_helpers.output_extract_result(report, target, use_json, dry_run, command=command_name)
+        cli_helpers.output_extract_result(
+            ExtractRunResult(report, target), use_json, dry_run, command=command_name
+        )
 
     return command

@@ -20,7 +20,7 @@ import pyarrow.parquet as pq
 import rasterio
 from rasterio import Statistics as RasterioStats
 
-from portolan_cli.trace import count
+from portolan_core.trace import count
 
 
 def _serialize_stat_value(value: Any) -> Any:
@@ -305,7 +305,8 @@ def extract_parquet_statistics(path: Path) -> dict[str, ColumnStatistics]:
                     global_min = col_stats.min
                 if global_max is None or col_stats.max > global_max:
                     global_max = col_stats.max
-                total_nulls += col_stats.null_count
+                # A writer can leave the null count out of a row group.
+                total_nulls += col_stats.null_count or 0
 
         stats[col_name] = ColumnStatistics(
             name=col_name,

@@ -6,16 +6,21 @@ Tests the version_ops module that bridges CLI commands and versioning backends.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from portolan_cli.version_ops import (
+    VersionBumpResult,
     _resolve_backend_name,
     get_current_version,
     list_versions,
     publish_version,
 )
+
+if TYPE_CHECKING:
+    from portolan_cli.backends.protocol import SchemaFingerprint
 
 
 class TestResolveBackendName:
@@ -28,13 +33,13 @@ class TestResolveBackendName:
 
     @pytest.mark.unit
     def test_config_value_used_when_no_cli(self, tmp_path: Path) -> None:
-        with patch("portolan_cli.config.get_setting", return_value="config_backend"):
+        with patch("portolan_core.config.get_setting", return_value="config_backend"):
             result = _resolve_backend_name(None, catalog_root=tmp_path)
         assert result == "config_backend"
 
     @pytest.mark.unit
     def test_defaults_to_file(self) -> None:
-        with patch("portolan_cli.config.get_setting", return_value=None):
+        with patch("portolan_core.config.get_setting", return_value=None):
             result = _resolve_backend_name(None, catalog_root=None)
         assert result == "file"
 
@@ -84,7 +89,7 @@ class TestPublishVersion:
         mock_backend = MagicMock()
         mock_backend.publish.return_value = mock_version
 
-        schema = {"columns": [], "types": {}, "hash": "h"}
+        schema: SchemaFingerprint = {"columns": [], "types": {}, "hash": "h"}
 
         with patch("portolan_cli.backends.get_backend", return_value=mock_backend):
             result = publish_version("col", assets={"a": "/path"}, schema=schema, message="test")
@@ -98,7 +103,7 @@ class TestPublishVersion:
     def test_passes_removed_parameter(self) -> None:
         mock_backend = MagicMock()
 
-        schema = {"columns": [], "types": {}, "hash": "h"}
+        schema: SchemaFingerprint = {"columns": [], "types": {}, "hash": "h"}
 
         with patch("portolan_cli.backends.get_backend", return_value=mock_backend):
             publish_version(
@@ -152,7 +157,7 @@ class TestTryBackendPull:
             _pull_result(downloaded=3, version="2.0.0"),
         ]
         with (
-            patch("portolan_cli.run_state.RunState.setting", return_value="iceberg"),
+            patch("portolan_core.run_state.RunState.setting", return_value="iceberg"),
             patch("portolan_cli.backends.get_backend", return_value=backend),
         ):
             result = try_backend_pull(root, "s3://example-bucket/catalog", None, dry_run=False)
@@ -170,7 +175,7 @@ class TestTryBackendPull:
 
         backend = MagicMock()
         with (
-            patch("portolan_cli.run_state.RunState.setting", return_value="iceberg"),
+            patch("portolan_core.run_state.RunState.setting", return_value="iceberg"),
             patch("portolan_cli.backends.get_backend", return_value=backend),
         ):
             result = try_backend_pull(tmp_path, "s3://example-bucket/catalog", None, dry_run=False)
@@ -189,7 +194,7 @@ class TestTryBackendPull:
             _pull_result(downloaded=0, version="1.0.0", success=False),
         ]
         with (
-            patch("portolan_cli.run_state.RunState.setting", return_value="iceberg"),
+            patch("portolan_core.run_state.RunState.setting", return_value="iceberg"),
             patch("portolan_cli.backends.get_backend", return_value=backend),
         ):
             result = try_backend_pull(root, "s3://example-bucket/catalog", None, dry_run=False)
@@ -210,3 +215,30 @@ class TestJsonFileBackendHooks:
         assert backend.push_blocked_message(None) == (
             "Push is not supported with the 'file' backend."
         )
+
+
+class TestVersionBumpResultToDict:
+    """Only a bump that published or found no change has envelope data."""
+
+    @pytest.mark.unit
+    def test_no_change_reports_no_changes(self) -> None:
+        assert VersionBumpResult("points").to_dict() == {
+            "collection": "points",
+            "message": "No changes detected",
+            "created": False,
+        }
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize(
+        "result",
+        [
+            VersionBumpResult("points", error=("NotFoundError", "No versions.json in points")),
+            VersionBumpResult("points", "1.0.0", modified=["data.parquet"]),
+        ],
+        ids=["error", "declined"],
+    )
+    def test_a_failed_or_declined_bump_has_no_envelope_data(
+        self, result: VersionBumpResult
+    ) -> None:
+        with pytest.raises(ValueError, match="no envelope data"):
+            result.to_dict()

@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from portolan_cli.sync.checksums import file_fields, file_fields_from, multihash_sha256
+from portolan_core.checksums import file_fields, file_fields_from, multihash_sha256
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -91,5 +91,5 @@ class TestFileFields:
             file_fields(tmp_path / "absent.bin")
 
     def test_rejects_a_directory(self, tmp_path: Path) -> None:
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match=r"Not a regular file"):
             file_fields(tmp_path)

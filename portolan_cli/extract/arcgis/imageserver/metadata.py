@@ -22,8 +22,8 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from portolan_cli.crs import transform_bbox_to_wgs84
-from portolan_cli.licensing import LICENSE_REL, license_url_from_text
-from portolan_cli.models._stac_version import get_stac_version
+from portolan_core.licensing import LICENSE_REL, license_url_from_text
+from portolan_core.models._stac_version import get_stac_version
 
 if TYPE_CHECKING:
     from portolan_cli.extract.arcgis.imageserver.discovery import ImageServerMetadata
@@ -46,7 +46,7 @@ def create_collection_metadata(
     Returns:
         Dict ready for json.dump() with STAC Collection structure:
         - type: "Collection"
-        - stac_version: from portolan_cli.models._stac_version
+        - stac_version: from portolan_core.models._stac_version
         - id: derived from service name (sanitized)
         - extent: spatial from fullExtent (WGS84), temporal open interval
         - summaries: core v1.1.0 bands array
@@ -157,7 +157,7 @@ def create_item_metadata(
     Returns:
         Dict ready for json.dump() with STAC Item structure:
         - type: "Feature"
-        - stac_version: from portolan_cli.models._stac_version
+        - stac_version: from portolan_core.models._stac_version
         - id: from tile ID
         - geometry: Polygon from tile bbox
         - bbox: tile bbox (transformed to WGS84 if needed)

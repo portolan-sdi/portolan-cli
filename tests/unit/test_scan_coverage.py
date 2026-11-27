@@ -7,6 +7,7 @@ the main feature tests.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 from hypothesis import assume, given, settings
@@ -228,7 +229,7 @@ class TestScanResultSerialization:
                 )
             ],
         )
-        d = result.to_dict()
+        d: dict[str, Any] = result.to_dict()
         assert "special_formats" in d
         assert len(d["special_formats"]) == 1
         assert d["special_formats"][0]["format_type"] == "filegdb"
@@ -249,7 +250,7 @@ class TestScanResultSerialization:
                 )
             ],
         )
-        d = result.to_dict()
+        d: dict[str, Any] = result.to_dict()
         assert "dual_format_pairs" in d
         assert len(d["dual_format_pairs"]) == 1
 
@@ -567,6 +568,8 @@ class TestGetDirSizeErrorPaths:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """OSError during scandir should be caught and return 0."""
+        import os
+
         from portolan_cli.scan import core as scan_module
 
         # Create a FileGDB structure
@@ -578,7 +581,7 @@ class TestGetDirSizeErrorPaths:
         def raise_oserror(path: Path) -> None:
             raise OSError("Permission denied")
 
-        monkeypatch.setattr(scan_module.os, "scandir", raise_oserror)
+        monkeypatch.setattr(os, "scandir", raise_oserror)
 
         # Call _get_dir_size - should catch OSError and return 0
         result = scan_module._get_dir_size(gdb_dir)
@@ -603,7 +606,7 @@ class TestGetDirSizeErrorPaths:
 
         # Create a wrapper that makes stat fail for one file
         class FailingStatEntry:
-            def __init__(self, entry: os.DirEntry) -> None:
+            def __init__(self, entry: os.DirEntry[str]) -> None:
                 self._entry = entry
                 self._fail_stat = "a00000001" in entry.name
 
@@ -623,7 +626,7 @@ class TestGetDirSizeErrorPaths:
             for entry in original_scandir(path):
                 yield FailingStatEntry(entry)
 
-        monkeypatch.setattr(scan_module.os, "scandir", wrapped_scandir)
+        monkeypatch.setattr(os, "scandir", wrapped_scandir)
 
         # Call _get_dir_size - should catch OSError on one file, still count the other
         result = scan_module._get_dir_size(gdb_dir)

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import fnmatch
 import importlib.util
+import os
 import re
 import sys
 import tomllib
@@ -50,7 +51,8 @@ def _run_text(job: dict[str, Any]) -> str:
 
 def _load_selftest() -> ModuleType:
     spec = importlib.util.spec_from_file_location("gate_selftest", SELFTEST_SCRIPT)
-    assert spec is not None and spec.loader is not None
+    assert spec is not None
+    assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     sys.modules["gate_selftest"] = module
     spec.loader.exec_module(module)
@@ -149,7 +151,7 @@ def _pytest_step(job: dict[str, Any], prefix: str) -> dict[str, Any]:
 @pytest.mark.parametrize(
     ("job", "prefix", "flag"),
     [
-        ("test", "Run tests", "--cov=portolan_cli --cov-report=xml"),
+        ("test", "Run tests", "--cov=portolan_cli --cov=portolan_core --cov-report=xml"),
         ("iceberg-test", "Run unit and integration tests", "--cov=portolan_cli/backends/iceberg"),
     ],
 )
@@ -172,7 +174,8 @@ def test_only_the_linux_cell_measures_coverage(job: str, prefix: str, flag: str)
         "coverage=()",
         f'if [ "$MATRIX_OS" = "{COVERAGE_OS}" ] && [ "$MATRIX_PYTHON" = "{COVERAGE_PYTHON}" ]; then',
     ]
-    assert lines[2].startswith("coverage=(") and lines[2].endswith(")")
+    assert lines[2].startswith("coverage=(")
+    assert lines[2].endswith(")")
     assert flag in lines[2]
     assert lines[3] == "fi"
     assert [line for line in lines if "coverage=" in line] == lines[0:1] + lines[2:3]
@@ -257,20 +260,43 @@ def test_diff_cover_gates_the_changed_lines() -> None:
 
 
 def test_only_the_live_network_step_continues_on_error() -> None:
-    """A soft-fail step gates nothing. Live third-party servers are the one exception."""
-    jobs = _jobs("nightly.yml")
+    """A soft-fail step gates nothing. Live third-party servers are the one exception.
 
-    soft = [
-        (name, step.get("name"))
-        for name, job in jobs.items()
-        for step in job.get("steps", [])
-        if step.get("continue-on-error")
-    ]
-    soft_jobs = [name for name, job in jobs.items() if job.get("continue-on-error")]
+    The check reads every workflow. The security audit once had two soft-fail
+    steps. One ran the ruff S rules that the quality job already gates, and it
+    could only warn. The other let a pip-audit crash end in a green run.
+    """
+    soft: list[tuple[str, str, str | None]] = []
+    soft_jobs: list[tuple[str, str]] = []
+    for workflow in sorted(WORKFLOWS.glob("*.yml")):
+        for name, job in _jobs(workflow.name).items():
+            if job.get("continue-on-error"):
+                soft_jobs.append((workflow.name, name))
+            soft.extend(
+                (workflow.name, name, step.get("name"))
+                for step in job.get("steps", [])
+                if step.get("continue-on-error")
+            )
 
-    assert soft == [("network-live", "Run network tests against live services")]
+    assert soft == [("nightly.yml", "network-live", "Run network tests against live services")]
     assert soft_jobs == []
-    assert "dependency-check" not in jobs
+    assert "dependency-check" not in _jobs("nightly.yml")
+
+
+def test_security_audit_fails_when_pip_audit_cannot_run() -> None:
+    """A crash or invalid JSON from pip-audit must turn the run red.
+
+    The vulnerability path stays green and opens the tracking issue instead.
+    The capture must keep stderr out of the JSON. A clean pip-audit run writes
+    "No known vulnerabilities found" to stderr, and ``2>&1`` made that run
+    look like a crash.
+    """
+    (step,) = [s for s in _jobs("security-audit.yml")["audit"]["steps"] if s.get("id") == "audit"]
+    capture = step["run"].split("AUDIT_OUTPUT=$(uv run pip-audit", 1)[1].split(")", 1)[0]
+    error_branch = step["run"].split("::error::pip-audit failed", 1)[1]
+
+    assert capture.rstrip().endswith("--format json")
+    assert "exit 1" in error_branch
 
 
 @pytest.mark.parametrize("workflow", ["ci.yml", "nightly.yml"])
@@ -430,12 +456,167 @@ def test_codspeed_measures_the_benchmarks() -> None:
     assert not [s for s in job["steps"] if s.get("continue-on-error")]
 
 
+BUILD_PACKAGE = re.compile(r"uv build --package (\S+) --out-dir (\S+)")
+
+
+def test_release_publishes_portolan_core_before_portolan_cli() -> None:
+    """portolan-cli pins portolan-core exactly, so PyPI must hold portolan-core first.
+
+    Each distribution builds into its own directory, as in rashid's
+    publish.yml. The publish step for the portolan-core directory comes
+    before the publish step for the portolan-cli directory.
+    """
+    steps = _jobs("release.yml")["release"]["steps"]
+    out_dirs = {
+        package: out_dir
+        for step in steps
+        for package, out_dir in BUILD_PACKAGE.findall(str(step.get("run", "")))
+    }
+    published = [
+        step.get("with", {}).get("packages-dir", "dist/")
+        for step in steps
+        if str(step.get("uses", "")).startswith("pypa/gh-action-pypi-publish@")
+    ]
+
+    assert {"portolan-core", "portolan-cli"} <= out_dirs.keys()
+    assert out_dirs["portolan-core"] in published
+    assert out_dirs["portolan-cli"] in published
+    assert published.index(out_dirs["portolan-core"]) < published.index(out_dirs["portolan-cli"])
+
+
+def test_release_checks_the_versions_before_the_tag() -> None:
+    """A version mismatch must stop the release before it pushes a tag or publishes."""
+    steps = _jobs("release.yml")["release"]["steps"]
+    runs = [str(step.get("run", "")) for step in steps]
+    guard = next(
+        i for i, run in enumerate(runs) if "test_core_package.py::test_the_versions_agree" in run
+    )
+    tag = next(i for i, run in enumerate(runs) if 'git tag -a "$TAG"' in run)
+
+    assert guard < tag
+    assert "if" not in steps[guard]
+
+
+def test_ci_runs_the_wheel_smoke() -> None:
+    """The wheel-smoke job installs the built portolan-core wheel alone (#1133)."""
+    job = _jobs("ci.yml")["wheel-smoke"]
+
+    assert "python scripts/wheel_smoke.py" in _run_text(job)
+    assert job["steps"][0]["with"]["persist-credentials"] is False
+
+
+def _builds(job: dict[str, Any]) -> list[tuple[str, str]]:
+    return [
+        pair for step in job["steps"] for pair in BUILD_PACKAGE.findall(str(step.get("run", "")))
+    ]
+
+
+def test_release_builds_into_the_ignored_dist_folder() -> None:
+    """The portolan-cli sdist holds every file that .gitignore does not exclude.
+
+    A dist-core/ folder at the root went into the portolan-cli sdist with the
+    portolan-core wheel in it. .gitignore excludes dist/.
+    """
+    out_dirs = [out_dir for _, out_dir in _builds(_jobs("release.yml")["release"])]
+    gitignore = (REPO_ROOT / ".gitignore").read_text(encoding="utf-8").splitlines()
+
+    assert "dist/" in gitignore
+    assert out_dirs == ["dist/core", "dist/cli"]
+
+
+def test_the_build_job_builds_as_the_release_does() -> None:
+    """The build job checks the sdists of the same commands that the release runs."""
+    build = _jobs("ci.yml")["build"]
+
+    assert _builds(build) == _builds(_jobs("release.yml")["release"])
+    assert "dist/*/*.tar.gz" in _run_text(build)
+
+
+def _step_index(steps: list[dict[str, Any]], text: str) -> int:
+    (index,) = [i for i, step in enumerate(steps) if text in str(step.get("run", ""))]
+    return index
+
+
+def test_a_recovery_run_builds_the_tagged_commit() -> None:
+    """main can move on after a partial release, so the build checks out the tag first."""
+    steps = _jobs("release.yml")["release"]["steps"]
+    tag = _step_index(steps, 'git tag -a "$TAG"')
+    checkout = _step_index(steps, 'git checkout --quiet "$TAG"')
+    build = _step_index(steps, "uv build --package portolan-core")
+
+    assert tag < checkout < build
+    assert steps[checkout]["if"] == steps[build]["if"]
+
+
+def test_the_release_compares_the_build_with_pypi_before_it_publishes() -> None:
+    """skip-existing keeps a file that PyPI holds, so a different local build must fail first."""
+    steps = _jobs("release.yml")["release"]["steps"]
+    build = _step_index(steps, "uv build --package portolan-core")
+    compare = _step_index(steps, 'check_pypi_digests.py" portolan-core')
+    first_publish = next(
+        i
+        for i, step in enumerate(steps)
+        if str(step.get("uses", "")).startswith("pypa/gh-action-pypi-publish@")
+    )
+    run = str(steps[compare]["run"])
+
+    assert build < compare < first_publish
+    assert 'portolan-core "$VERSION" dist/core' in run
+    assert 'portolan-cli "$VERSION" dist/cli' in run
+
+
+def _load_digests() -> ModuleType:
+    spec = importlib.util.spec_from_file_location(
+        "check_pypi_digests", REPO_ROOT / "scripts" / "check_pypi_digests.py"
+    )
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.mark.parametrize(
+    ("published", "expected"),
+    [
+        ({}, []),  # nothing of the release is on PyPI yet
+        ({"a.whl": "1", "a.tar.gz": "2"}, []),
+        ({"a.whl": "1"}, []),  # the sdist is not on PyPI yet
+        ({"a.whl": "1", "a.tar.gz": "9"}, ["a.tar.gz"]),
+        ({"a.whl": "9", "a.tar.gz": "9", "b.whl": "3"}, ["a.tar.gz", "a.whl"]),
+    ],
+)
+def test_the_digest_check_names_each_file_with_other_bytes(
+    published: dict[str, str], expected: list[str]
+) -> None:
+    local = {"a.whl": "1", "a.tar.gz": "2"}
+
+    assert _load_digests().mismatches(local, published) == expected
+
+
 # ---------------------------------------------------------------------------
 # Cheap gate faults, run on every pull request
 # ---------------------------------------------------------------------------
 
 selftest = _load_selftest()
 CHEAP_FAULTS = ("library-print", "dead-function", "ci-success-wiring", "unknown-marker")
+
+
+def test_the_gate_env_puts_both_copied_packages_first(tmp_path: Path) -> None:
+    """Without the core folder a gate imports portolan_core from the editable install (#1133)."""
+    path = selftest.gate_env(tmp_path)["PYTHONPATH"].split(os.pathsep)
+
+    assert path == [str(tmp_path), str(tmp_path / "packages" / "portolan-core" / "src")]
+
+
+def test_the_duplicate_gate_runs_the_prek_jscpd_command() -> None:
+    """The self-test proves the hook that CI runs, so both read portolan-core (#1133)."""
+    prek = (REPO_ROOT / "prek.toml").read_text(encoding="utf-8")
+    (entry,) = re.findall(r'entry = "(uvx jscpd@[^"]+)"', prek)
+    (gate,) = selftest.FAULTS_BY_NAME["duplicate-block"].gates
+
+    assert gate.command == tuple(entry.split())
+    assert selftest.DUPLICATE_MODULE.startswith("packages/portolan-core/src/")
 
 
 def test_the_ci_success_check_fails_without_plugin_test() -> None:

@@ -15,6 +15,7 @@ from typing import Any
 
 import pytest
 
+from portolan_cli.extract.common.cli_helpers import print_message
 from portolan_cli.extract.common.orchestrator_base import (
     add_extracted_files,
     add_source_links,
@@ -28,6 +29,7 @@ from portolan_cli.extract.common.report import (
     ExtractionReport,
     ExtractionSummary,
     LayerResult,
+    MetadataExtracted,
 )
 from portolan_cli.metadata_extraction import ExtractedMetadata
 
@@ -69,7 +71,16 @@ def _report(
         source_url=source_url,
         portolan_version="test",
         gpio_version="test",
-        metadata_extracted=None,
+        metadata_extracted=MetadataExtracted(
+            source_url=source_url,
+            description=None,
+            attribution=None,
+            keywords=None,
+            producer=None,
+            processing_notes=None,
+            known_issues=None,
+            license_info_raw=None,
+        ),
         layers=layers,
         summary=ExtractionSummary(
             total_layers=len(layers),
@@ -119,7 +130,7 @@ def _init_with_recorded_add(
     report: ExtractionReport,
     events: list[str],
     post_init: Any,
-) -> list[Path] | None:
+) -> tuple[list[Path], set[str]] | None:
     """Run ``init_extracted_catalog`` with an ``add_files`` that records its call."""
     monkeypatch.setattr("portolan_cli.add.add_files", _recording_add(events))
     return init_extracted_catalog(tmp_path, report, title="t", description="d", post_init=post_init)
@@ -141,6 +152,44 @@ def test_add_extracted_files_logs_what_stays_out(
 
     assert added == []
     assert caplog.messages == ["Skipping b.parquet: no id", "Could not add c.parquet: bad geometry"]
+
+
+def test_the_add_of_extract_prints_what_the_library_reports(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A rewrite notice prints as it did before #1133."""
+    import portolan_cli.catalog as catalog_mod
+    from portolan_cli.report import emit
+
+    def add(**_: Any) -> tuple[list[Any], ...]:
+        emit("info", "Rewriting a.parquet (1.0KB): it carries no bbox covering column")
+        emit("warn", "Kept b.parquet as it is: it would lose the CRS it declared")
+        return [], [], []
+
+    monkeypatch.setattr(catalog_mod, "init_catalog", lambda *_a, **_k: (tmp_path, []))
+    monkeypatch.setattr("portolan_cli.add.add_files", add)
+    report = _report([_layer(0, "a", output_path="a/a.parquet")])
+    init_extracted_catalog(tmp_path, report, title="t", description="d", on_message=print_message)
+
+    captured = capsys.readouterr()
+    assert captured.out == (
+        "\u2192 Rewriting a.parquet (1.0KB): it carries no bbox covering column\n"
+    )
+    assert captured.err == "\u26a0 Kept b.parquet as it is: it would lose the CRS it declared\n"
+
+
+def test_the_thumbnails_of_extract_print_no_detail_line() -> None:
+    """Only `add --verbose` prints a thumbnail detail line. Extract never did."""
+    from portolan_cli.extract.common.source import _without_detail
+
+    lines: list[tuple[str, str]] = []
+    report = _without_detail(lambda level, text: lines.append((level, text)))
+    assert report is not None
+    report("detail", "Rendered thumbnail for a: a.thumb.jpg")
+    report("warn", "No thumbnail for a: a.parquet did not render")
+
+    assert lines == [("warn", "No thumbnail for a: a.parquet did not render")]
+    assert _without_detail(None) is None
 
 
 class TestInitExtractedCatalog:
@@ -276,7 +325,7 @@ class TestInitExtractedCatalog:
 
     @pytest.mark.usefixtures("stub_add_files")
     def test_reports_init_catalog_warnings(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
     ) -> None:
         """extract prints what init_catalog had to guess, the way `init` does (#821)."""
         report = _report([_layer(0, "a", output_path="a/a.parquet")])
@@ -290,11 +339,11 @@ class TestInitExtractedCatalog:
 
         init_extracted_catalog(tmp_path, report, title=None, description=None)
 
-        assert "Derived catalog id 'publish'" in capsys.readouterr().err
+        assert "Derived catalog id 'publish'" in caplog.text
 
     @pytest.mark.usefixtures("stub_add_files")
     def test_warns_when_id_cannot_apply_to_an_existing_catalog(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
     ) -> None:
         """An existing catalog keeps its id, so a passed --id must not go silent."""
         (tmp_path / ".portolan").mkdir()
@@ -310,7 +359,7 @@ class TestInitExtractedCatalog:
             tmp_path, report, catalog_id="phl-housing", title=None, description=None
         )
 
-        assert "phl-housing" in capsys.readouterr().err
+        assert "phl-housing" in caplog.text
 
 
 class TestAddSourceLinks:
@@ -383,6 +432,29 @@ class TestRegisterCollectionStyles:
         register_collection_styles(tmp_path, report, include_legends=True)
         assert legend_calls == [tmp_path / "a"]
 
+    def test_prints_the_default_style_notice(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A default that Portolan chose among several styles is announced, as before #1133."""
+        import json
+
+        report = _report([_layer(0, "a", output_path="a/a.parquet")])
+        (tmp_path / "a" / "styles").mkdir(parents=True)
+        (tmp_path / "a" / "collection.json").write_text(
+            json.dumps({"type": "Collection", "id": "a", "assets": {}})
+        )
+        for name in ("muted", "vivid"):
+            (tmp_path / "a" / "styles" / f"{name}.json").write_text(
+                f'{{"version":8,"name":"{name}","layers":[]}}'
+            )
+
+        register_collection_styles(tmp_path, report, on_message=print_message)
+
+        assert capsys.readouterr().out == (
+            "\u2192 Default style: styles/muted (chosen from 2 styles). To pick another, move "
+            'the "default" role to that style asset in collection.json.\n'
+        )
+
     def test_skips_unsuccessful_layers(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -418,11 +490,11 @@ class TestSeedCatalogMetadata:
         assert (tmp_path / ".portolan" / "metadata.yaml").exists()
 
     def test_attribution_names_the_producer_and_unset_host_warns(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
         """#1039: the source's attribution is the producer, and no placeholder host is made."""
-        from portolan_cli.config import load_merged_metadata
         from portolan_cli.providers import resolve_providers
+        from portolan_core.config import load_merged_metadata
 
         extracted = ExtractedMetadata(
             source_type="arcgis_featureserver",
@@ -442,18 +514,18 @@ class TestSeedCatalogMetadata:
             f"{tmp_path / '<collection>' / '.portolan' / 'metadata.yaml'}, then run "
             "'portolan add --force <collection>'."
         )
-        err = capsys.readouterr().err
+        err = caplog.text
         assert err.count(warning) == 1
         assert "No producer provider" not in err
 
     def test_source_without_attribution_warns_of_the_missing_producer(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
         seed_catalog_metadata(tmp_path, ExtractedMetadata(source_type="arcgis_featureserver"))
 
         metadata_path = tmp_path / ".portolan" / "metadata.yaml"
         assert (
-            capsys.readouterr().err.count(
+            caplog.text.count(
                 "No producer provider: the source publishes no author and no attribution. "
                 f"Add a provider with the producer role to {metadata_path}."
             )
@@ -464,7 +536,7 @@ class TestSeedCatalogMetadata:
 class TestLegendFileFields:
     def test_legend_assets_carry_size_and_checksum(self, tmp_path: Path) -> None:
         """#1039: legends/source states file:size and file:checksum (PTL-AST-003)."""
-        from portolan_cli.sync.checksums import file_fields
+        from portolan_core.checksums import file_fields
 
         collection = tmp_path / "a"
         (collection / "legends").mkdir(parents=True)
@@ -487,7 +559,7 @@ class TestParquetRowCount:
     """parquet_row_count reads the footer once and counts the open."""
 
     def test_missing_file_gives_zero_and_opens_nothing(self, tmp_path: Path) -> None:
-        from portolan_cli import trace
+        from portolan_core import trace
 
         with trace.tracing():
             assert parquet_row_count(tmp_path / "none.parquet") == 0
@@ -497,7 +569,7 @@ class TestParquetRowCount:
         import pyarrow as pa
         import pyarrow.parquet as pq
 
-        from portolan_cli import trace
+        from portolan_core import trace
 
         path = tmp_path / "rows.parquet"
         pq.write_table(pa.table({"id": [1, 2, 3]}), path)

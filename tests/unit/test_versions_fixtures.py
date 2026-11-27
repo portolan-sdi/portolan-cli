@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from portolan_cli.versions import read_versions
+from portolan_core.versions import read_versions
 
 FIXTURES_DIR = Path(__file__).parent.parent / "fixtures" / "metadata" / "versions"
 
@@ -116,7 +116,7 @@ class TestInvalidVersionsFixtures:
         fixture_path = FIXTURES_DIR / "invalid" / "versions_bad_checksum.json"
 
         # Should be valid JSON
-        with open(fixture_path) as f:
+        with open(fixture_path, encoding="utf-8") as f:
             data = json.load(f)
 
         assert "spec_version" in data
@@ -132,7 +132,7 @@ class TestInvalidVersionsFixtures:
         fixture_path = FIXTURES_DIR / "invalid" / "versions_missing_current.json"
 
         # Should be valid JSON
-        with open(fixture_path) as f:
+        with open(fixture_path, encoding="utf-8") as f:
             data = json.load(f)
 
         assert data["current_version"] == "2.0.0"
@@ -147,7 +147,7 @@ class TestInvalidVersionsFixtures:
         fixture_path = FIXTURES_DIR / "invalid" / "versions_duplicate.json"
 
         # Should be valid JSON
-        with open(fixture_path) as f:
+        with open(fixture_path, encoding="utf-8") as f:
             data = json.load(f)
 
         versions = [v["version"] for v in data["versions"]]
@@ -204,6 +204,6 @@ class TestFixtureIntegrity:
 
         for fixture_path in invalid_dir.glob("*.json"):
             # Should be valid JSON
-            with open(fixture_path) as f:
+            with open(fixture_path, encoding="utf-8") as f:
                 data = json.load(f)
             assert "spec_version" in data

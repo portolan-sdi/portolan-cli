@@ -14,7 +14,7 @@ from portolan_cli.extract.arcgis.imageserver.metadata import (
     create_item_metadata,
 )
 from portolan_cli.extract.arcgis.imageserver.tiling import TileSpec
-from portolan_cli.models._stac_version import get_stac_version
+from portolan_core.models._stac_version import get_stac_version
 
 # =============================================================================
 # Fixtures using Wave 1 data models

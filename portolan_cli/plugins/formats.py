@@ -19,13 +19,13 @@ import warnings
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
-from portolan_cli import extension_registry as _reg
-from portolan_cli.errors import AmbiguousFormatError, UnknownFormatHandlerError
+from portolan_core import extension_registry as _reg
+from portolan_core.errors import AmbiguousFormatError, UnknownFormatHandlerError
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from portolan_cli.config import ConfigSource
+    from portolan_core.config import ConfigSource
 
 BUILTIN_PREFIX = "builtin:"
 
@@ -158,7 +158,8 @@ class FormatHandler(Protocol):
 #   partition(path, catalog_root) -> list[Path]
 #       Split a converted file into Hive partitions. Return [] to keep it whole.
 #   reoptimize(source, catalog_root) -> Path
-#       Rewrite a cloud-native file for ``check --fix --force`` (issue #530).
+#       Rewrite a cloud-native file that a ``check --fix`` finding names, or a
+#       raster under ``check --fix --force``.
 #   reconvert(source, catalog_root) -> Path
 #       Rewrite a file that is its own output for ``add --force --reconvert``.
 
@@ -307,7 +308,7 @@ def _claims(plugin_name: str, handler: FormatHandler, path: Path) -> bool:
         return handler.claims(path)
     try:
         return handler.claims(path)
-    except Exception as err:  # noqa: BLE001 - one broken plugin must not stop the CLI
+    except Exception as err:  # one broken plugin must not stop the CLI
         from portolan_cli.plugins.manager import warn_hook_failure
 
         warn_hook_failure(plugin_name, f"{handler.name}.claims", err)

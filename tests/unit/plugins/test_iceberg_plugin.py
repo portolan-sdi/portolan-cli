@@ -40,7 +40,7 @@ def test_missing_extra_keeps_the_install_hint(monkeypatch: pytest.MonkeyPatch) -
 
     monkeypatch.setitem(sys.modules, "portolan_cli.backends.iceberg.backend", None)
 
-    with pytest.raises(ValueError) as excinfo:
+    with pytest.raises(ValueError, match=r"requires the iceberg extra") as excinfo:
         get_backend("iceberg")
 
     assert str(excinfo.value) == (

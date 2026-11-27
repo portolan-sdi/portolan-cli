@@ -37,14 +37,17 @@ import sys
 from datetime import UTC, datetime
 from typing import TextIO
 
-from portolan_cli import trace
 from portolan_cli.utils import redact_credentials
+from portolan_core import trace
+
+_DEBUG_VERBOSITY = 2
 
 LOG_ENV = "PORTOLAN_LOG"
 LOG_FILE_ENV = "PORTOLAN_LOG_FILE"
 GDAL_DEBUG_ENV = "PORTOLAN_GDAL_DEBUG"
 
-PACKAGE_LOGGER = "portolan_cli"
+# portolan_core holds the reader modules, so its records are ours too (#1133).
+PACKAGE_LOGGERS = ("portolan_cli", "portolan_core")
 THIRD_PARTY_LOGGERS = ("urllib3", "httpx", "obstore")
 # Rasterio sends GDAL messages to this logger. A CPL_DEBUG message arrives at DEBUG.
 GDAL_LOGGER = "rasterio._env"
@@ -92,7 +95,7 @@ class _RelativeFormatter(_RedactingFormatter):
 
 
 class _UserFormatter(_RelativeFormatter):
-    """Format a ``portolan_cli`` record as an output line: ``⚠ message``.
+    """Format a ``portolan_cli`` or ``portolan_core`` record as an output line: ``⚠ message``.
 
     At the default level a library warning is a message for the operator, so
     it reads like ``output.warn``. An error reads like ``output.error``. The
@@ -101,7 +104,7 @@ class _UserFormatter(_RelativeFormatter):
     """
 
     def _format(self, record: logging.LogRecord) -> str:
-        if record.name != PACKAGE_LOGGER and not record.name.startswith(f"{PACKAGE_LOGGER}."):
+        if record.name.split(".")[0] not in PACKAGE_LOGGERS:
             return super()._format(record)
         prefix = "✗" if record.levelno >= logging.ERROR else "⚠"
         return f"{prefix} {record.getMessage()}"
@@ -131,7 +134,7 @@ class _JsonFormatter(logging.Formatter):
 def _resolve_level(verbosity: int, quiet: bool) -> int:
     if quiet:
         return logging.ERROR
-    if verbosity >= 2:
+    if verbosity >= _DEBUG_VERBOSITY:
         return logging.DEBUG
     if verbosity == 1:
         return logging.INFO
@@ -139,21 +142,24 @@ def _resolve_level(verbosity: int, quiet: bool) -> int:
     return _ENV_LEVELS.get(env, logging.WARNING)
 
 
-_saved_root_level: int | None = None
+class _Saved:
+    """Hold the root level that ``configure_logging`` replaced for ``--quiet``."""
+
+    root_level: int | None = None
 
 
 def reset_logging() -> None:
     """Remove the handlers and levels that ``configure_logging`` set."""
-    global _saved_root_level
     root = logging.getLogger()
     for handler in list(root.handlers):
         if getattr(handler, "_portolan", False):
             root.removeHandler(handler)
             handler.close()
-    if _saved_root_level is not None:
-        root.setLevel(_saved_root_level)
-        _saved_root_level = None
-    logging.getLogger(PACKAGE_LOGGER).setLevel(logging.NOTSET)
+    if _Saved.root_level is not None:
+        root.setLevel(_Saved.root_level)
+        _Saved.root_level = None
+    for name in PACKAGE_LOGGERS:
+        logging.getLogger(name).setLevel(logging.NOTSET)
     for name in (*THIRD_PARTY_LOGGERS, GDAL_LOGGER):
         logging.getLogger(name).setLevel(logging.NOTSET)
     logging.captureWarnings(False)
@@ -166,7 +172,6 @@ def configure_logging(*, verbosity: int = 0, quiet: bool = False) -> None:
         verbosity: The count of ``-v`` flags.
         quiet: True for ``--quiet``. It wins over ``verbosity``.
     """
-    global _saved_root_level
     reset_logging()
     level = _resolve_level(verbosity, quiet)
     gdal_debug = os.environ.get(GDAL_DEBUG_ENV, "").strip() in ("1", "true", "on", "yes")
@@ -195,12 +200,13 @@ def configure_logging(*, verbosity: int = 0, quiet: bool = False) -> None:
     # the root level changes only for --quiet. Other libraries stay at
     # WARNING, as with Python's fallback handler.
     if level != logging.WARNING:
-        logging.getLogger(PACKAGE_LOGGER).setLevel(level)
+        for name in PACKAGE_LOGGERS:
+            logging.getLogger(name).setLevel(level)
     if quiet:
-        _saved_root_level = root.level
+        _Saved.root_level = root.level
         root.setLevel(logging.ERROR)
 
-    if verbosity >= 2 and not quiet:
+    if verbosity >= _DEBUG_VERBOSITY and not quiet:
         for name in THIRD_PARTY_LOGGERS:
             logging.getLogger(name).setLevel(logging.DEBUG)
         logging.captureWarnings(True)

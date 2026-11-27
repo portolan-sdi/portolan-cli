@@ -1,0 +1,86 @@
+{
+  "type": "Collection",
+  "stac_version": "1.1.0",
+  "stac_extensions": [
+    "https://schemas.portolan-sdi.org/portolan/v0.3.0/schema.json"
+  ],
+  "id": "environment/air-quality",
+  "title": "Air Quality",
+  "description": "PM2.5 rasters from two monitoring stations.",
+  "license": "CC-BY-4.0",
+  "providers": [
+    {
+      "name": "Example Agency",
+      "roles": [
+        "producer",
+        "host"
+      ],
+      "url": "https://example.org"
+    }
+  ],
+  "extent": {
+    "spatial": {
+      "bbox": [
+        [
+          -5.0,
+          36.0,
+          -4.0,
+          37.0
+        ]
+      ]
+    },
+    "temporal": {
+      "interval": [
+        [
+          "2024-01-01T00:00:00Z",
+          "2024-12-31T23:59:59Z"
+        ]
+      ]
+    }
+  },
+  "assets": {
+    "thumbnail": {
+      "href": "./thumbnail.png",
+      "type": "image/png",
+      "roles": [
+        "thumbnail"
+      ],
+      "title": "Thumbnail",
+      "description": "A preview image of the data."
+    }
+  },
+  "links": [
+    {
+      "rel": "root",
+      "href": "../../catalog.json",
+      "type": "application/json"
+    },
+    {
+      "rel": "parent",
+      "href": "../catalog.json",
+      "type": "application/json"
+    },
+    {
+      "rel": "item",
+      "href": "./Estaci%C3%B3n%20Sur/Estaci%C3%B3n%20Sur.json",
+      "type": "application/geo+json",
+      "title": "Estación Sur"
+    },
+    {
+      "rel": "item",
+      "href": "./station-north/station-north.json",
+      "type": "application/geo+json",
+      "title": "North Station"
+    },
+    {
+      "rel": "agents",
+      "href": "./AGENTS.md",
+      "type": "text/markdown"
+    },
+    {
+      "rel": "describedby",
+      "href": "./README.md",
+      "type": "text/markdown"
+    }
+  ]
+}

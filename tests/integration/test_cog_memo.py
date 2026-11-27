@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import shutil
 from functools import partial
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 import pytest
@@ -15,7 +15,7 @@ from rasterio.transform import from_origin
 from portolan_cli.conversion_config import CogSettings
 from portolan_cli.convert import place_cog, write_cog
 from portolan_cli.formats import in_run
-from portolan_cli.run_state import RunState
+from portolan_core.run_state import RunState
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -38,17 +38,17 @@ def _cog(root: Path, value: int) -> Path:
 def test_cog_replacement_invalidates_destination(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, writer: str
 ) -> None:
-    from portolan_cli import trace
     from portolan_cli.metadata.cog import extract_cog_metadata
     from portolan_cli.metadata.statistics import extract_band_statistics
     from portolan_cli.preparation import convert_raster
+    from portolan_core import trace
 
     output = _cog(tmp_path / "old", 10)
     replacement = _cog(tmp_path / "new", 20)
     assert output.stat().st_size == replacement.stat().st_size
     state = RunState.open(tmp_path)
     # Pin a reused key; normal ext4 timestamps would hide missing invalidations.
-    monkeypatch.setattr("portolan_cli.run_state._stat_key", lambda st: (0, st.st_size, 0, 0))
+    monkeypatch.setattr("portolan_core.run_state._stat_key", lambda st: (0, st.st_size, 0, 0))
     with in_run(state):
         old_checksum = state.checksum(output)
         assert state.memo("cog.metadata", output, extract_cog_metadata).bbox[0] == 10
@@ -74,7 +74,8 @@ def test_cog_replacement_invalidates_destination(
         assert state.checksum(output) == expected_checksum, "COG replacement retained old checksum"
         with trace.tracing():
             assert state.memo("cog.metadata", output, extract_cog_metadata).bbox[0] == 20
-            for mode in ("cached", "approx"):
+            modes: tuple[Literal["cached", "approx"], ...] = ("cached", "approx")
+            for mode in modes:
                 assert (
                     state.memo(
                         f"cog.statistics.{mode}",

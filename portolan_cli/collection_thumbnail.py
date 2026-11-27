@@ -30,19 +30,19 @@ import logging
 from pathlib import Path, PurePath
 from typing import TYPE_CHECKING, Any
 
-from portolan_cli import extension_registry as _reg
-from portolan_cli.constants import ROLE_THUMBNAIL
 from portolan_cli.formats import is_geoparquet, run_scope
-from portolan_cli.json_io import write_json_atomic
-from portolan_cli.output import detail, warn
 from portolan_cli.stac_parquet import sync_file_extension
-from portolan_cli.sync.checksums import compute_checksum, multihash_sha256
-from portolan_cli.trace import span
-from portolan_cli.versions import track_generated_assets
+from portolan_core import extension_registry as _reg
+from portolan_core.checksums import compute_checksum, multihash_sha256
+from portolan_core.constants import ROLE_THUMBNAIL
+from portolan_core.json_io import write_json_atomic
+from portolan_core.trace import span
+from portolan_core.versions import track_generated_assets
 
 if TYPE_CHECKING:
-    from portolan_cli.config import ConfigSource
-    from portolan_cli.run_state import RunState
+    from portolan_core.config import ConfigSource
+    from portolan_core.run_state import RunState
+from portolan_cli.report import emit
 from portolan_cli.viz.thumbnail import (
     generate_vector_thumbnail,
     get_thumbnail_config,
@@ -365,7 +365,7 @@ def _resolve_for_collection(
     if rendered is None:
         # A silent failure left partitioned collections without a thumbnail
         # and gave no hint why (issue #1038).
-        warn(f"No thumbnail for {collection_path.name}: {path.name} did not render")
+        emit("warn", f"No thumbnail for {collection_path.name}: {path.name} did not render")
         return None
     return rendered, True
 
@@ -407,7 +407,6 @@ def ensure_collection_thumbnail(
     generate: bool | None = None,
     force: bool = False,
     amend_latest: bool = False,
-    verbose: bool = False,
     state: RunState | None = None,
 ) -> Path | None:
     """Give one collection a thumbnail asset, if it needs and can have one.
@@ -426,7 +425,6 @@ def ensure_collection_thumbnail(
         amend_latest: Fold the thumbnail into the version the caller just wrote
             instead of bumping. ``add`` sets this for collections it versioned
             this run, so one add stays one version.
-        verbose: Emit a line per collection touched.
         state: The run state. It parses the config once per run and holds
             the staged version that the thumbnail joins.
 
@@ -448,7 +446,7 @@ def ensure_collection_thumbnail(
             collection_path, catalog_root, data, force=force, state=state
         )
     except Exception as exc:
-        warn(f"Thumbnail generation failed for {collection_path.name}: {exc}")
+        emit("warn", f"Thumbnail generation failed for {collection_path.name}: {exc}")
         return None
     if resolved is None:
         return None
@@ -472,11 +470,11 @@ def ensure_collection_thumbnail(
             state=state,
         )
     except Exception as exc:
-        warn(f"Failed to track {thumbnail.name} in versions.json: {exc}")
+        emit("warn", f"Failed to track {thumbnail.name} in versions.json: {exc}")
 
-    if verbose:
-        verb = "Rendered" if was_rendered else "Registered existing"
-        detail(f"{verb} thumbnail for {collection_path.name}: {thumbnail.name}")
+    # A detail line. The CLI shows it with --verbose only.
+    verb = "Rendered" if was_rendered else "Registered existing"
+    emit("detail", f"{verb} thumbnail for {collection_path.name}: {thumbnail.name}")
     return thumbnail
 
 
@@ -487,7 +485,6 @@ def ensure_collection_thumbnails(
     generate: bool | None = None,
     force: bool = False,
     versioned_collections: set[str] | None = None,
-    verbose: bool = False,
     state: RunState | None = None,
 ) -> None:
     """Ensure every affected collection carries a thumbnail asset.
@@ -506,7 +503,6 @@ def ensure_collection_thumbnails(
             bumping a second version. A collection that was skipped is absent,
             so its backfilled thumbnail gets its own version instead of editing
             a snapshot that may already be published.
-        verbose: Emit a line per collection touched.
         state: The run state, which parses the config once per run.
     """
     # Each footer read goes through the run memo.
@@ -529,7 +525,6 @@ def ensure_collection_thumbnails(
                     generate=True,
                     force=force,
                     amend_latest=collection_id in (versioned_collections or set()),
-                    verbose=verbose,
                     state=state,
                 )
 

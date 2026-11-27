@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path, PurePath
 from typing import TYPE_CHECKING, Any
 
@@ -32,13 +32,11 @@ import pystac
 from pystac.layout import AsIsLayoutStrategy
 from pystac.stac_io import DefaultStacIO
 
-from portolan_cli.config import load_merged_metadata, load_own_metadata
 from portolan_cli.hookspecs import EnrichContext
 from portolan_cli.humanize import humanize_slug
-from portolan_cli.json_io import write_json_atomic
 from portolan_cli.metadata import extract_geoparquet_metadata
 from portolan_cli.metadata.geoparquet import GeoParquetMetadata
-from portolan_cli.query import ItemInfo
+from portolan_cli.report import emit
 from portolan_cli.stac import (
     DEFAULT_LICENSE,
     PROVISIONAL_END_DATETIME,
@@ -63,20 +61,23 @@ from portolan_cli.stac import (
     update_catalog_provenance,
 )
 from portolan_cli.stac_enrich import enrich_collection_file, enrich_item_file
-from portolan_cli.stac_links import in_link_order, iter_links
 from portolan_cli.utils import href_root, relative_href
-from portolan_cli.versions import (
+from portolan_core.config import load_merged_metadata, load_own_metadata
+from portolan_core.json_io import write_json_atomic
+from portolan_core.query import ItemInfo
+from portolan_core.stac_links import contained_link_target, in_link_order, iter_links
+from portolan_core.versions import (
     Asset,
     versions_asset_key,
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping
+    from collections.abc import Callable, Iterable, Mapping
 
     from portolan_cli.backends.protocol import PostAddItemContext
     from portolan_cli.plugins.formats import FormatContext
     from portolan_cli.preparation import PreparedItem
-    from portolan_cli.run_state import RunState
+    from portolan_core.run_state import RunState
 
 logger = logging.getLogger(__name__)
 
@@ -230,9 +231,10 @@ def _fix_item_links(
         if not collection_json_path.exists():
             return
         collection_data = json.loads(collection_json_path.read_text(encoding="utf-8"))
-    for _link, _href, linked_path in iter_links(collection_data, collection_dir, ("item",)):
-        item_path = linked_path.resolve()
-        if not item_path.exists():
+    for _link, href, _path in iter_links(collection_data, collection_dir, ("item",)):
+        # The repair writes only inside the catalog, after symlinks resolve.
+        item_path = contained_link_target(catalog_root, collection_dir, href)
+        if item_path is None or not item_path.exists():
             continue
 
         item_data = json.loads(item_path.read_text(encoding="utf-8"))
@@ -302,13 +304,13 @@ def _declare_conformance_links(
     not write ``collection.json`` again. With ``readme_link`` False, the
     README.md link stays out, because no sweep writes the README.md file.
     """
-    from portolan_cli.agents_md import (
+    from portolan_cli.readme import _ensure_readme_link
+    from portolan_cli.stac import ensure_portolan_schema_uri
+    from portolan_core.agents_md import (
         agents_link_is_wellformed,
         build_agents_link,
         find_agents_link,
     )
-    from portolan_cli.readme import _ensure_readme_link
-    from portolan_cli.stac import ensure_portolan_schema_uri
 
     ensure_portolan_schema_uri(collection_data)
     links = collection_data.setdefault("links", [])
@@ -368,7 +370,7 @@ def _save_collection_with_links(
     # Scaffold AGENTS.md next to the collection. The link is already in the
     # file, so this writes no JSON. It never overwrites an existing AGENTS.md,
     # so re-running `add` preserves human edits.
-    from portolan_cli.agents_md import ensure_agents_md
+    from portolan_core.agents_md import ensure_agents_md
 
     ensure_agents_md(collection_json_path)
 
@@ -422,7 +424,7 @@ def _read_wgs84_bbox(
     the footprint of each unchanged file once.
     """
     from portolan_cli.plugins.formats import handler_for
-    from portolan_cli.preparation import _extract_bbox_wgs84
+    from portolan_cli.preparation import wgs84_bbox
 
     def _load(file_path: Path) -> list[float] | None:
         handler = handler_for(file_path, catalog_root, state=state)
@@ -431,11 +433,11 @@ def _read_wgs84_bbox(
         metadata = handler.read_metadata(file_path)
         if not getattr(metadata, "bbox", None):
             return None
-        return _extract_bbox_wgs84(metadata, file_path)  # type: ignore[arg-type]
+        return wgs84_bbox(metadata, file_path)  # type: ignore[arg-type]
 
     try:
         return state.memo("wgs84_bbox", path, _load) if state is not None else _load(path)
-    except Exception:  # noqa: BLE001 - an unreadable file contributes no footprint
+    except Exception:  # an unreadable file contributes no footprint
         logger.debug("Cannot read the footprint of %s", path, exc_info=True)
         return None
 
@@ -448,13 +450,13 @@ def _linked_items(collection: pystac.Collection) -> list[pystac.Item]:
     """
     try:
         return list(collection.get_items(recursive=True))
-    except Exception:  # noqa: BLE001 - fall back to resolving each link alone
+    except Exception:  # fall back to resolving each link alone
         logger.debug("Collection '%s' links an unreadable item", collection.id, exc_info=True)
     items: list[pystac.Item] = []
     for link in collection.get_links(pystac.RelType.ITEM):
         try:
             target = link.resolve_stac_object(root=collection.get_root()).target
-        except Exception:  # noqa: BLE001 - a dead link contributes no member
+        except Exception:  # a dead link contributes no member
             logger.debug("Skipping the dead item link %s", link.href)
             continue
         if isinstance(target, pystac.Item):
@@ -1273,7 +1275,7 @@ def add_companion_assets(
     from portolan_cli.preparation import _get_asset_role, _get_media_type
     from portolan_cli.stac import document_tabular_table, set_temporal_extent
     from portolan_cli.stac_parquet import sync_file_extension
-    from portolan_cli.sync.checksums import file_fields_from
+    from portolan_core.checksums import file_fields_from
 
     assets = collection_data.setdefault("assets", {})
     for companion in companions:
@@ -1300,7 +1302,7 @@ def stage_companions(state: RunState, collection_id: str, paths: list[Path]) -> 
     A companion bumps the minor, as it did when ``add`` published it through
     the backend.
     """
-    from portolan_cli.versions import generated_asset_record
+    from portolan_core.versions import generated_asset_record
 
     collection_dir = state.collection_dir(collection_id)
     records = dict(
@@ -1308,6 +1310,36 @@ def stage_companions(state: RunState, collection_id: str, paths: list[Path]) -> 
         for path in paths
     )
     state.stage(collection_id, assets=records, minor=True)
+
+
+def stage_rewritten(state: RunState, paths: Iterable[Path]) -> None:
+    """Stage the new bytes of each tracked file that a pass rewrote, as ``add`` records them."""
+    root = state.catalog_root.resolve()
+    for path in paths:
+        collection_dir = next(
+            (p for p in path.resolve().parents if (p / "collection.json").is_file()), None
+        )
+        if collection_dir is None or not collection_dir.is_relative_to(root):
+            continue
+        key = versions_asset_key(path, collection_dir)
+        previous = state.tracked_assets(collection_dir).get(key)
+        if previous is None:
+            continue
+        state.invalidate(path)
+        stat = path.stat()
+        _, feature_count, fingerprint = _asset_freshness_fields(
+            path, is_collection_level=path.parent.resolve() == collection_dir, state=state
+        )
+        record = replace(
+            previous,
+            sha256=state.checksum(path),
+            size_bytes=stat.st_size,
+            mtime=stat.st_mtime,
+            source_mtime=None if previous.source_mtime is None else stat.st_mtime,
+        )
+        if fingerprint is not None:
+            record = replace(record, feature_count=feature_count, schema_fingerprint=fingerprint)
+        state.stage(collection_dir.relative_to(root).as_posix(), assets={key: record})
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1327,11 +1359,10 @@ def _emit_stale_asset_warnings(
     if not stale_warnings:
         return
 
-    from portolan_cli.output import warn as warn_output
-
-    warn_output(
+    emit(
+        "warn",
         f"{len(stale_warnings)} asset(s) reference missing files "
-        "(run `portolan check --fix` to clean up)"
+        "(run `portolan check --fix` to clean up)",
     )
     for warning_msg in stale_warnings:
         logger.debug(warning_msg)
@@ -1393,7 +1424,7 @@ def aggregate_table_extension(
     """
     if not any(isinstance(m, GeoParquetMetadata) for m in metadata):
         return
-    from portolan_cli.run_state import RunState
+    from portolan_core.run_state import RunState
 
     # FormatContext types its state as a config source for plugins. The run
     # passes a RunState, whose memo holds the footers.
@@ -1416,10 +1447,8 @@ def _emit_partition_warnings(
     if not partition_warnings:
         return
 
-    from portolan_cli.output import warn as warn_output
-
     for warning_msg in partition_warnings:
-        warn_output(warning_msg)
+        emit("warn", warning_msg)
 
 
 def _enrich_saved_documents(
@@ -1652,8 +1681,8 @@ def _finalize_batch(
     # profile schema URI and carries AGENTS.md and README.md behind their links.
     # Swept once per batch so subcatalogs created along the way (
     # nesting) and pre-existing objects are covered, not just what was written.
-    from portolan_cli.agents_md import ensure_agents_md_tree
     from portolan_cli.readme import ensure_readmes
+    from portolan_core.agents_md import ensure_agents_md_tree
 
     ensure_schema_uris(catalog_root)
     ensure_agents_md_tree(catalog_root)

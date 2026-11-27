@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 
 def _write(path: Path, data: dict[str, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data))
+    path.write_text(json.dumps(data), encoding="utf-8")
 
 
 def _slug_catalog(root: Path) -> None:
@@ -189,6 +189,85 @@ class TestEnsureLinkTitlesUnicode:
         assert catalog["links"][0]["title"] == "Áreas Programáticas"
 
 
+def _encoded_catalog(root: Path) -> None:
+    """A catalog whose link hrefs are percent-encoded, as rashid writes them."""
+    _write(
+        root / "catalog.json",
+        {
+            "type": "Catalog",
+            "stac_version": "1.0.0",
+            "id": "demo",
+            "title": "Demo",
+            "description": "d",
+            "links": [{"rel": "child", "href": "./%C3%A9t%C3%A9/collection.json"}],
+        },
+    )
+    _write(
+        root / "été" / "collection.json",
+        {
+            "type": "Collection",
+            "stac_version": "1.0.0",
+            "id": "ete",
+            "title": "Summer",
+            "description": "d",
+            "links": [{"rel": "item", "href": "./tree%20census/tree%20census.json"}],
+        },
+    )
+    _write(
+        root / "été" / "tree census" / "tree census.json",
+        {
+            "type": "Feature",
+            "stac_version": "1.0.0",
+            "id": "tree_census",
+            "properties": {},
+            "links": [],
+        },
+    )
+
+
+@pytest.mark.unit
+class TestPercentEncodedLinks:
+    def test_the_child_link_gets_the_title_of_the_decoded_target(self, tmp_path: Path) -> None:
+        _encoded_catalog(tmp_path)
+
+        ensure_link_titles(tmp_path)
+
+        catalog = json.loads((tmp_path / "catalog.json").read_text(encoding="utf-8"))
+        assert catalog["links"][0]["title"] == "Summer"
+
+    def test_the_item_of_an_encoded_link_gets_a_title(self, tmp_path: Path) -> None:
+        _encoded_catalog(tmp_path)
+
+        repair_titles_and_links(tmp_path)
+
+        item = json.loads((tmp_path / "été" / "tree census" / "tree census.json").read_text())
+        assert item["properties"]["title"] == "Tree Census"
+
+
+@pytest.mark.unit
+def test_an_item_link_outside_the_catalog_is_not_rewritten(tmp_path: Path) -> None:
+    """The title repair writes only inside the catalog root."""
+    outside = tmp_path / "outside.json"
+    _write(outside, {"type": "Feature", "id": "x", "properties": {}, "links": []})
+    before = outside.read_text()
+    catalog_root = tmp_path / "catalog"
+    _write(
+        catalog_root / "catalog.json",
+        {
+            "type": "Catalog",
+            "stac_version": "1.0.0",
+            "id": "demo",
+            "title": "Demo",
+            "description": "d",
+            "links": [{"rel": "item", "href": "../outside.json"}],
+        },
+    )
+
+    repair_titles_and_links(catalog_root)
+
+    assert outside.read_text() == before
+
+
 @pytest.mark.unit
 class TestValidateTitleDescription:
     def test_blank_string_is_accepted_as_absent(self) -> None:
@@ -199,7 +278,8 @@ class TestValidateTitleDescription:
 
     def test_non_string_is_rejected(self) -> None:
         errors = _validate_title_description({"title": 123})
-        assert errors and "title" in errors[0]
+        assert errors
+        assert "title" in errors[0]
 
 
 @pytest.mark.unit
@@ -236,3 +316,80 @@ class TestApplyHumanTitles:
         coll = create_collection(collection_id="publico_arbolado", description="")
         apply_human_titles(coll, {"title": "  ", "description": None})
         assert coll.title == "Publico Arbolado"
+
+
+def _catalog_through_symlink(tmp_path: Path, rel: str, href: str) -> tuple[Path, Path]:
+    """A catalog whose ``alias`` directory is a symlink to a directory outside it."""
+    outside = tmp_path / "outside"
+    _write(
+        outside / "item.json",
+        {"type": "Feature", "id": "x", "title": "Secret", "properties": {}, "links": []},
+    )
+    catalog_root = tmp_path / "catalog"
+    catalog_root.mkdir()
+    (catalog_root / "alias").symlink_to(outside, target_is_directory=True)
+    _write(
+        catalog_root / "catalog.json",
+        {
+            "type": "Catalog",
+            "stac_version": "1.0.0",
+            "id": "demo",
+            "title": "Demo",
+            "description": "d",
+            "links": [{"rel": rel, "href": href}],
+        },
+    )
+    return catalog_root, outside / "item.json"
+
+
+@pytest.mark.unit
+class TestSymlinkOutOfTheCatalog:
+    def test_the_item_title_repair_does_not_write_through_the_symlink(self, tmp_path: Path) -> None:
+        catalog_root, outside = _catalog_through_symlink(tmp_path, "item", "./alias/%69tem.json")
+        before = outside.read_text()
+
+        repair_titles_and_links(catalog_root)
+
+        assert outside.read_text() == before
+
+    def test_the_link_title_backfill_does_not_read_through_the_symlink(
+        self, tmp_path: Path
+    ) -> None:
+        catalog_root, _outside = _catalog_through_symlink(tmp_path, "child", "./alias/item.json")
+
+        ensure_link_titles(catalog_root)
+
+        catalog = json.loads((catalog_root / "catalog.json").read_text())
+        assert "title" not in catalog["links"][0]
+
+
+@pytest.mark.unit
+class TestAbsoluteLocalHrefs:
+    """An absolute filesystem href inside the catalog names its file."""
+
+    def test_the_child_link_gets_the_title_of_the_target(self, tmp_path: Path) -> None:
+        _slug_catalog(tmp_path)
+        catalog_json = tmp_path / "catalog.json"
+        catalog = json.loads(catalog_json.read_text())
+        catalog["links"][0]["href"] = str(tmp_path / "publico_arbolado" / "collection.json")
+        _write(catalog_json, catalog)
+        collection_json = tmp_path / "publico_arbolado" / "collection.json"
+        collection = json.loads(collection_json.read_text())
+        collection["title"] = "Arbolado"
+        _write(collection_json, collection)
+
+        ensure_link_titles(tmp_path)
+
+        assert json.loads(catalog_json.read_text())["links"][0]["title"] == "Arbolado"
+
+    def test_the_item_gets_a_title(self, tmp_path: Path) -> None:
+        _slug_catalog(tmp_path)
+        collection_json = tmp_path / "publico_arbolado" / "collection.json"
+        item_json = tmp_path / "publico_arbolado" / "tree_census" / "tree_census.json"
+        collection = json.loads(collection_json.read_text())
+        collection["links"][0]["href"] = str(item_json)
+        _write(collection_json, collection)
+
+        repair_titles_and_links(tmp_path)
+
+        assert json.loads(item_json.read_text())["properties"]["title"] == "Tree Census"

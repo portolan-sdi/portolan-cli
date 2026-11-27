@@ -12,10 +12,17 @@ Tests cover:
 from __future__ import annotations
 
 from pathlib import Path
+from typing import cast
 
 import pytest
 
-from portolan_cli.models.schema import ColumnSchema, SchemaModel
+from portolan_core.models.schema import ColumnSchema, SchemaModel
+
+
+def _columns(schema: SchemaModel) -> list[ColumnSchema]:
+    """Return the columns of a GeoParquet schema, which are all ColumnSchema."""
+    assert all(isinstance(c, ColumnSchema) for c in schema.columns)
+    return cast("list[ColumnSchema]", schema.columns)
 
 
 class TestGeoParquetSchemaExtraction:
@@ -30,14 +37,13 @@ class TestGeoParquetSchemaExtraction:
         import pyarrow.parquet as pq
 
         # Create schema with geometry column
-        schema = pa.schema(
-            [
-                ("id", pa.int64()),
-                ("name", pa.string()),
-                ("population", pa.int64()),
-                ("geometry", pa.binary()),
-            ]
-        )
+        fields: list[tuple[str, pa.DataType]] = [
+            ("id", pa.int64()),
+            ("name", pa.string()),
+            ("population", pa.int64()),
+            ("geometry", pa.binary()),
+        ]
+        schema = pa.schema(fields)
 
         # Add GeoParquet metadata
         geo_metadata = {
@@ -89,7 +95,7 @@ class TestGeoParquetSchemaExtraction:
 
         schema = extract_schema_from_geoparquet(sample_geoparquet)
 
-        column_names = [c.name for c in schema.columns]
+        column_names = [c.name for c in _columns(schema)]
         assert "id" in column_names
         assert "name" in column_names
         assert "population" in column_names
@@ -102,7 +108,7 @@ class TestGeoParquetSchemaExtraction:
 
         schema = extract_schema_from_geoparquet(sample_geoparquet)
 
-        columns_by_name = {c.name: c for c in schema.columns}
+        columns_by_name = {c.name: c for c in _columns(schema)}
         assert "int64" in columns_by_name["id"].type
         assert "string" in columns_by_name["name"].type
 
@@ -113,7 +119,7 @@ class TestGeoParquetSchemaExtraction:
 
         schema = extract_schema_from_geoparquet(sample_geoparquet)
 
-        columns_by_name = {c.name: c for c in schema.columns}
+        columns_by_name = {c.name: c for c in _columns(schema)}
         geom = columns_by_name["geometry"]
         assert geom.geometry_type == "Point"
         assert "4326" in str(geom.crs)
@@ -139,12 +145,11 @@ class TestMissingCRSWarning:
         import pyarrow as pa
         import pyarrow.parquet as pq
 
-        schema = pa.schema(
-            [
-                ("id", pa.int64()),
-                ("geometry", pa.binary()),
-            ]
-        )
+        fields: list[tuple[str, pa.DataType]] = [
+            ("id", pa.int64()),
+            ("geometry", pa.binary()),
+        ]
+        schema = pa.schema(fields)
 
         # GeoParquet metadata without CRS
         geo_metadata = {
@@ -178,7 +183,7 @@ class TestMissingCRSWarning:
 
         schema = extract_schema_from_geoparquet(geoparquet_no_crs)
 
-        columns_by_name = {c.name: c for c in schema.columns}
+        columns_by_name = {c.name: c for c in _columns(schema)}
         assert columns_by_name["geometry"].crs is None
 
     @pytest.mark.unit
@@ -186,7 +191,7 @@ class TestMissingCRSWarning:
         """Missing CRS should return a warning when requested."""
         from portolan_cli.metadata.geoparquet import extract_schema_from_geoparquet
 
-        schema, warnings = extract_schema_from_geoparquet(geoparquet_no_crs, return_warnings=True)
+        _schema, warnings = extract_schema_from_geoparquet(geoparquet_no_crs, return_warnings=True)
 
         assert any("crs" in w.lower() for w in warnings)
 

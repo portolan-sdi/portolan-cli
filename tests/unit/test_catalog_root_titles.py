@@ -179,7 +179,7 @@ class TestTitleDoesNotInherit:
     """title/description name one object and never inherit (issue #815)."""
 
     def test_collection_does_not_take_the_root_title(self, tmp_path: Path) -> None:
-        from portolan_cli.config import load_merged_metadata
+        from portolan_core.config import load_merged_metadata
 
         _metadata(tmp_path, {"license": "CC-BY-4.0", "title": "Philadelphia Housing"})
         collection = tmp_path / "dor_parcel"
@@ -192,7 +192,7 @@ class TestTitleDoesNotInherit:
         assert merged["license"] == "CC-BY-4.0"
 
     def test_collection_keeps_its_own_title(self, tmp_path: Path) -> None:
-        from portolan_cli.config import load_merged_metadata
+        from portolan_core.config import load_merged_metadata
 
         _metadata(tmp_path, {"license": "CC-BY-4.0", "title": "Philadelphia Housing"})
         collection = tmp_path / "dor_parcel"
@@ -204,7 +204,7 @@ class TestTitleDoesNotInherit:
         assert merged["license"] == "CC-BY-4.0"
 
     def test_root_keeps_its_own_title(self, tmp_path: Path) -> None:
-        from portolan_cli.config import load_merged_metadata
+        from portolan_core.config import load_merged_metadata
 
         _metadata(tmp_path, {"title": "Philadelphia Housing", "description": "Ten collections."})
 
@@ -214,7 +214,7 @@ class TestTitleDoesNotInherit:
         assert merged["description"] == "Ten collections."
 
     def test_description_does_not_inherit(self, tmp_path: Path) -> None:
-        from portolan_cli.config import load_merged_metadata
+        from portolan_core.config import load_merged_metadata
 
         _metadata(tmp_path, {"description": "Ten collections."})
         collection = tmp_path / "dor_parcel"

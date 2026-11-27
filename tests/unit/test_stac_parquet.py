@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 from datetime import UTC
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
@@ -28,9 +28,9 @@ def test_mirror_refreshes_after_item_edit_with_restored_mtime(collection_with_it
 
     import pyarrow.parquet as pq
 
-    from portolan_cli.run_state import RunState
     from portolan_cli.stac_parquet import generate_items_parquet, track_parquet_in_versions
     from portolan_cli.version_ops import commit_run
+    from portolan_core.run_state import RunState
 
     if os.name != "posix":
         pytest.skip("Windows ctime is creation time, not a content-change signal")
@@ -60,7 +60,7 @@ def _write_version_snapshot(collection_dir: Path, version: str) -> None:
     """Write a versions.json with one snapshot, as the add flow would."""
     from datetime import datetime
 
-    from portolan_cli.versions import Asset, Version, VersionsFile, write_versions
+    from portolan_core.versions import Asset, Version, VersionsFile, write_versions
 
     write_versions(
         collection_dir / "versions.json",
@@ -380,7 +380,7 @@ class TestOwnedItemHrefs:
     @pytest.mark.unit
     def test_returns_href_and_resolved_path_pairs(self, collection_with_items: Path) -> None:
         """Each pair carries the written href and the file it resolves to."""
-        from portolan_cli.stac_links import owned_item_hrefs
+        from portolan_core.stac_links import owned_item_hrefs
 
         owned = owned_item_hrefs(collection_with_items / "collection.json")
 
@@ -392,21 +392,21 @@ class TestOwnedItemHrefs:
     @pytest.mark.unit
     def test_descends_organizing_catalogs(self, collection_with_organizing_catalogs: Path) -> None:
         """Items behind an organizing catalog still belong to the collection."""
-        from portolan_cli.stac_links import owned_item_hrefs
+        from portolan_core.stac_links import owned_item_hrefs
 
         assert len(owned_item_hrefs(collection_with_organizing_catalogs / "collection.json")) == 2
 
     @pytest.mark.unit
     def test_missing_node_returns_empty(self, tmp_path: Path) -> None:
         """A collection with no collection.json owns nothing."""
-        from portolan_cli.stac_links import owned_item_hrefs
+        from portolan_core.stac_links import owned_item_hrefs
 
         assert owned_item_hrefs(tmp_path / "collection.json") == []
 
     @pytest.mark.unit
     def test_child_link_cycle_terminates(self, tmp_path: Path) -> None:
         """Two catalogs that link to each other do not recurse without end."""
-        from portolan_cli.stac_links import owned_item_hrefs
+        from portolan_core.stac_links import owned_item_hrefs
 
         (tmp_path / "a").mkdir()
         (tmp_path / "collection.json").write_text(
@@ -430,7 +430,7 @@ class TestOwnedItemHrefs:
     @pytest.mark.unit
     def test_shared_catalog_in_two_branches_is_walked_twice(self, tmp_path: Path) -> None:
         """The cycle guard skips only catalogs active in the current branch."""
-        from portolan_cli.stac_links import owned_item_hrefs
+        from portolan_core.stac_links import owned_item_hrefs
 
         for name in ("a", "b", "shared"):
             (tmp_path / name).mkdir()
@@ -522,7 +522,7 @@ class TestGenerateItemsParquet:
         parquet_path = generate_items_parquet(collection_with_organizing_catalogs)
 
         ids = pq.read_table(parquet_path, columns=["id"]).column("id").to_pylist()
-        assert sorted(ids) == ["scene-2023", "scene-2024"]
+        assert sorted(cast("list[str]", ids)) == ["scene-2023", "scene-2024"]
 
     @pytest.mark.unit
     def test_generate_items_parquet_creates_file(self, collection_with_items: Path) -> None:
@@ -1616,7 +1616,7 @@ class TestGenerateParquetMirrors:
         its own, so one `add` produced two versions (the #683 family).
         """
         from portolan_cli.stac_parquet import generate_parquet_mirrors
-        from portolan_cli.versions import read_versions
+        from portolan_core.versions import read_versions
 
         catalog_root = collection_with_items.parent
         _write_version_snapshot(collection_with_items, "1.0.0")
@@ -1640,7 +1640,7 @@ class TestGenerateParquetMirrors:
         history, so only versions written in this run are amended.
         """
         from portolan_cli.stac_parquet import generate_parquet_mirrors
-        from portolan_cli.versions import read_versions
+        from portolan_core.versions import read_versions
 
         catalog_root = collection_with_items.parent
         _write_version_snapshot(collection_with_items, "1.0.0")
@@ -1660,7 +1660,7 @@ class TestGenerateParquetMirrors:
     def test_unchanged_mirror_is_not_reversioned(self, collection_with_items: Path) -> None:
         """Re-adding with identical items records nothing new in versions.json."""
         from portolan_cli.stac_parquet import generate_parquet_mirrors
-        from portolan_cli.versions import read_versions
+        from portolan_core.versions import read_versions
 
         catalog_root = collection_with_items.parent
         _write_version_snapshot(collection_with_items, "1.0.0")
@@ -1771,7 +1771,7 @@ class TestRestampCollectionAssets:
     @pytest.mark.unit
     def test_it_stamps_the_collection_and_its_items(self, tmp_path: Path) -> None:
         from portolan_cli.stac_parquet import restamp_collection_assets
-        from portolan_cli.sync.checksums import file_fields
+        from portolan_core.checksums import file_fields
 
         collection_dir = _stale_collection(tmp_path)
 
@@ -1812,7 +1812,7 @@ class TestWriteReadme:
     @pytest.mark.unit
     def test_writing_the_readme_restamps_its_asset(self, tmp_path: Path) -> None:
         from portolan_cli.readme import write_readme
-        from portolan_cli.sync.checksums import file_fields
+        from portolan_core.checksums import file_fields
 
         collection_dir = _stale_collection(tmp_path)
         readme = collection_dir / "README.md"
@@ -1837,7 +1837,7 @@ class TestWriteReadme:
         from click.testing import CliRunner
 
         from portolan_cli.cli import cli
-        from portolan_cli.sync.checksums import file_fields
+        from portolan_core.checksums import file_fields
 
         runner = CliRunner()
         assert (
@@ -1885,9 +1885,9 @@ class TestMirrorOnPluginBackend:
     ) -> None:
         from typing import Any
 
-        import portolan_cli.version_ops as version_ops
+        from portolan_cli import version_ops
         from portolan_cli.stac_parquet import generate_parquet_mirrors
-        from portolan_cli.versions import read_versions
+        from portolan_core.versions import read_versions
 
         catalog_root = collection_with_items.parent
         (catalog_root / ".portolan").mkdir(exist_ok=True)

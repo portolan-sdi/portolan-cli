@@ -37,12 +37,13 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from portolan_cli.extract.common.progress import MessageCallback
     from portolan_cli.extract.common.report import ExtractionReport, LayerResult
-    from portolan_cli.licensing import ResolvedLicense
     from portolan_cli.metadata_extraction import ExtractedMetadata
-    from portolan_cli.query import ItemInfo
-    from portolan_cli.run_state import RunState
     from portolan_cli.viz.style import LegendInfo
+    from portolan_core.licensing import ResolvedLicense
+    from portolan_core.query import ItemInfo
+    from portolan_core.run_state import RunState
 
 logger = logging.getLogger(__name__)
 
@@ -86,7 +87,7 @@ def parquet_row_count(path: Path) -> int:
         return 0
     import pyarrow.parquet as pq
 
-    from portolan_cli.trace import count
+    from portolan_core.trace import count
 
     count("parquet.opens")
     return int(pq.read_metadata(path).num_rows)
@@ -101,6 +102,7 @@ def init_extracted_catalog(
     description: str | None,
     post_init: Callable[[Path, list[Path], bool], None] | None = None,
     state: RunState | None = None,
+    on_message: MessageCallback | None = None,
 ) -> tuple[list[Path], set[str]] | None:
     """Initialize a catalog and add the extracted assets.
 
@@ -131,6 +133,8 @@ def init_extracted_catalog(
             (issue #832).
         state: The run state of the extraction. The add stages its versions
             in it, and the caller commits them. None commits the add at once.
+        on_message: Called as ``on_message(level, text)`` with each notice for
+            the user. None logs the notice instead.
 
     Returns:
         The added parquet files and the collections that this add wrote a
@@ -138,8 +142,8 @@ def init_extracted_catalog(
         then stops, because no catalog exists.
     """
     from portolan_cli.catalog import CatalogState, detect_state, init_catalog
+    from portolan_cli.extract.common.progress import emit_message
     from portolan_cli.formats import run_scope
-    from portolan_cli.output import warn
 
     parquet_files = collect_successful_parquet_files(output_dir, report)
     if not parquet_files:
@@ -168,14 +172,16 @@ def init_extracted_catalog(
             license_id=None,
         )
         for message in init_warnings:
-            warn(message)
+            emit_message(on_message, "warn", message)
 
     elif catalog_id is not None:
         # The catalog already exists and keeps the id it was created with. Say so,
         # rather than accept the flag and change nothing (issue #821).
-        warn(
+        emit_message(
+            on_message,
+            "warn",
             f"Ignored --id '{catalog_id}'. {output_dir} is already a Portolan "
-            "catalog and keeps the id it was created with."
+            "catalog and keeps the id it was created with.",
         )
 
     if post_init is not None:
@@ -183,7 +189,11 @@ def init_extracted_catalog(
         with run_scope(state):
             post_init(output_dir, parquet_files, fresh)
 
-    added = add_extracted_files(parquet_files, output_dir, state=state)
+    from portolan_cli.report import reporting
+
+    # The add reports each notice here, as `add` prints it.
+    with reporting(on_message):
+        added = add_extracted_files(parquet_files, output_dir, state=state)
     return parquet_files, {item.collection_id for item in added}
 
 
@@ -219,6 +229,7 @@ def register_collection_styles(
     report: ExtractionReport,
     *,
     include_legends: bool = False,
+    on_message: MessageCallback | None = None,
 ) -> None:
     """Register discovered style (and optionally legend) sidecars as STAC assets.
 
@@ -230,7 +241,10 @@ def register_collection_styles(
         output_dir: The catalog output directory.
         report: The extraction report.
         include_legends: Also discover and register legend sidecars (WFS/WMS).
+        on_message: Called as ``on_message(level, text)`` with the notice of
+            the default style that Portolan chose.
     """
+    from portolan_cli.report import reporting
     from portolan_cli.viz.style import (
         discover_legends,
         discover_styles,
@@ -245,7 +259,8 @@ def register_collection_styles(
 
         styles = discover_styles(collection_dir)
         if styles:
-            register_style_assets(collection_dir, styles)
+            with reporting(on_message):
+                register_style_assets(collection_dir, styles)
             logger.debug("Registered %d style(s) for %s", len(styles), result.name)
 
         if include_legends:
@@ -259,8 +274,8 @@ def register_collection_styles(
 
 def _stamp_legends(collection_dir: Path, legends: list[LegendInfo]) -> None:
     """Write ``file:size`` and ``file:checksum`` on the legend assets (PTL-AST-003)."""
-    from portolan_cli.json_io import write_json_atomic
     from portolan_cli.stac_parquet import stamp_file_fields
+    from portolan_core.json_io import write_json_atomic
 
     collection_json = collection_dir / "collection.json"
     if not collection_json.exists():
@@ -317,41 +332,50 @@ def seed_catalog_metadata(
     output_dir: Path,
     extracted: ExtractedMetadata | None,
     license_override: ResolvedLicense | None = None,
+    *,
+    on_message: MessageCallback | None = None,
 ) -> None:
     """Seed the catalog-level ``metadata.yaml`` from harvested service metadata.
 
     Writes ``{output_dir}/.portolan/metadata.yaml`` from the given serialized
-    metadata, emitting a user-facing confirmation when a file is created. A
-    ``None`` argument (no metadata harvested) is a no-op.
+    metadata, and reports a confirmation when it creates the file. A ``None``
+    argument (no metadata harvested) is a no-op. This module prints nothing
+    (#1005). Its notices go to ``on_message``.
 
     Args:
         output_dir: The catalog output directory.
         extracted: Source-agnostic metadata to seed, or ``None`` to skip.
         license_override: License resolved from the command line, which wins over
             anything harvested (issue #686).
+        on_message: Called as ``on_message(level, text)`` with each notice for
+            the user. None logs the notice instead.
     """
+    from portolan_cli.extract.common.progress import emit_message
     from portolan_cli.metadata_seeding import seed_metadata_yaml
-    from portolan_cli.output import info, warn
 
     if extracted is None:
         return
 
     metadata_path = output_dir / ".portolan" / "metadata.yaml"
     if seed_metadata_yaml(extracted, metadata_path, license_override=license_override):
-        info(f"Seeded metadata.yaml from {extracted.source_type}")
+        emit_message(on_message, "info", f"Seeded metadata.yaml from {extracted.source_type}")
         if not (extracted.producer or extracted.attribution):
             # A producer is a fact of the source. Portolan does not invent one.
-            warn(
+            emit_message(
+                on_message,
+                "warn",
                 "No producer provider: the source publishes no author and no attribution. "
                 f"Add a provider with the producer role to {metadata_path}. Until then, "
-                "check reports PTL-PRV-001."
+                "check reports PTL-PRV-001.",
             )
         # The host serves the catalog. Only the person who runs extract knows it,
         # and a placeholder is never published as one (issue #1039).
         # A collection takes an inherited contact only on its first add, so the
         # warning names the collection file, which a re-add applies (#755).
-        warn(
+        emit_message(
+            on_message,
+            "warn",
             "No host provider: set contact.name and contact.email in "
             f"{output_dir / '<collection>' / '.portolan' / 'metadata.yaml'}, then run "
-            "'portolan add --force <collection>'. Until then, check reports PTL-PRV-002."
+            "'portolan add --force <collection>'. Until then, check reports PTL-PRV-002.",
         )

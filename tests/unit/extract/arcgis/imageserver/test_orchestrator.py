@@ -12,7 +12,9 @@ import pytest
 
 from portolan_cli.extract.arcgis.imageserver.orchestrator import (
     ImageServerCLIOptions,
+    run_imageserver,
     run_imageserver_extraction,
+    run_imageserver_extraction_sync,
 )
 
 if TYPE_CHECKING:
@@ -159,20 +161,23 @@ class TestRunImageServerExtraction:
         assert exit_code == 1
 
     @pytest.mark.asyncio
-    async def test_extraction_error_returns_exit_code_1(self, tmp_path: Path) -> None:
-        """Extraction error should return exit code 1."""
-        with patch(
-            "portolan_cli.extract.arcgis.imageserver.orchestrator.extract_imageserver",
-            new_callable=AsyncMock,
-            side_effect=Exception("Network error"),
+    async def test_extraction_error_propagates(self, tmp_path: Path) -> None:
+        """An extraction error reaches the caller. The command maps it to exit code 1."""
+        from portolan_cli.extract.arcgis.imageserver.discovery import ImageServerDiscoveryError
+
+        with (
+            patch(
+                "portolan_cli.extract.arcgis.imageserver.orchestrator.extract_imageserver",
+                new_callable=AsyncMock,
+                side_effect=ImageServerDiscoveryError("Network error"),
+            ),
+            pytest.raises(ImageServerDiscoveryError, match="Network error"),
         ):
-            exit_code, _ = await run_imageserver_extraction(
+            await run_imageserver(
                 url="https://example.com/rest/services/Test/ImageServer",
                 output_dir=tmp_path,
                 options=ImageServerCLIOptions(),
             )
-
-        assert exit_code == 1
 
     @pytest.mark.asyncio
     async def test_dry_run_returns_exit_code_0(self, tmp_path: Path) -> None:
@@ -240,7 +245,7 @@ class TestRetriesAndFailureHint:
 
     @pytest.mark.asyncio
     async def test_partial_failure_prints_resume_hint(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
         mock_result = MagicMock()
         mock_result.tiles_downloaded = 7
@@ -260,13 +265,12 @@ class TestRetriesAndFailureHint:
             )
 
         assert exit_code == 0
-        captured = capsys.readouterr()
-        assert "Re-run the same command with --resume to retry the 5 failed tiles." in captured.err
-        assert "lower --tile-size or --max-concurrent" in captured.err
+        assert "Re-run the same command with --resume to retry the 5 failed tiles." in caplog.text
+        assert "lower --tile-size or --max-concurrent" in caplog.text
 
     @pytest.mark.asyncio
     async def test_all_failed_prints_resume_hint(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
         mock_result = MagicMock()
         mock_result.tiles_downloaded = 0
@@ -286,12 +290,11 @@ class TestRetriesAndFailureHint:
             )
 
         assert exit_code == 1
-        captured = capsys.readouterr()
-        assert "Re-run the same command with --resume to retry the 3 failed tiles." in captured.err
+        assert "Re-run the same command with --resume to retry the 3 failed tiles." in caplog.text
 
     @pytest.mark.asyncio
     async def test_success_prints_no_hint(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
         mock_result = MagicMock()
         mock_result.tiles_downloaded = 3
@@ -310,7 +313,7 @@ class TestRetriesAndFailureHint:
                 options=ImageServerCLIOptions(),
             )
 
-        assert "--resume" not in capsys.readouterr().err
+        assert "--resume" not in caplog.text
 
 
 class TestLicenseOptions:
@@ -335,10 +338,9 @@ class TestLicenseOptions:
         assert call_kwargs["license_url"] == "https://example.com/terms.html"
 
     @pytest.mark.asyncio
-    async def test_missing_license_error_returns_exit_code_1(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        from portolan_cli.errors import MissingLicenseError
+    async def test_missing_license_error_propagates(self, tmp_path: Path) -> None:
+        """The library raises the license error. The command prints it and the hint."""
+        from portolan_core.errors import MissingLicenseError
 
         mock_extract = AsyncMock(
             side_effect=MissingLicenseError(
@@ -346,48 +348,16 @@ class TestLicenseOptions:
             )
         )
 
-        with patch(
-            "portolan_cli.extract.arcgis.imageserver.orchestrator.extract_imageserver",
-            mock_extract,
+        with (
+            patch(
+                "portolan_cli.extract.arcgis.imageserver.orchestrator.extract_imageserver",
+                mock_extract,
+            ),
+            pytest.raises(MissingLicenseError),
         ):
-            exit_code, report = await run_imageserver_extraction(
-                url="https://example.com/rest/services/Test/ImageServer",
-                output_dir=tmp_path,
-                options=ImageServerCLIOptions(),
+            await run_imageserver(
+                url=SERVICE_URL, output_dir=tmp_path, options=ImageServerCLIOptions()
             )
-
-        assert exit_code == 1
-        assert report is None
-        captured = capsys.readouterr()
-        assert "No usable license for this extraction" in captured.err
-        # The FeatureServer path prints the same hint (pull request #871 review).
-        assert "Pass --license with an SPDX identifier" in captured.out
-
-    @pytest.mark.asyncio
-    async def test_json_mode_prints_no_license_hint(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        """JSON output carries the error envelope, so prose would break it."""
-        from portolan_cli.errors import MissingLicenseError
-
-        mock_extract = AsyncMock(
-            side_effect=MissingLicenseError(
-                "this extraction", "the source publishes no license URL to link to"
-            )
-        )
-
-        with patch(
-            "portolan_cli.extract.arcgis.imageserver.orchestrator.extract_imageserver",
-            mock_extract,
-        ):
-            exit_code, _ = await run_imageserver_extraction(
-                url=SERVICE_URL,
-                output_dir=tmp_path,
-                options=ImageServerCLIOptions(use_json=True),
-            )
-
-        assert exit_code == 1
-        assert "Pass --license" not in capsys.readouterr().out
 
 
 class TestEmptyTileOutcome:
@@ -406,7 +376,7 @@ class TestEmptyTileOutcome:
 
     @pytest.mark.asyncio
     async def test_an_all_empty_first_run_fails(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
         """A run that reads no data and skips nothing reports the empty extent."""
         mock_extract = AsyncMock(return_value=self._result(0, 4, 0))
@@ -422,11 +392,11 @@ class TestEmptyTileOutcome:
             )
 
         assert exit_code == 1
-        assert "all 4 tiles are empty" in capsys.readouterr().err
+        assert "all 4 tiles are empty" in caplog.text
 
     @pytest.mark.asyncio
     async def test_a_resumed_run_with_skipped_tiles_succeeds(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
         """A resumed run holds the data its earlier run wrote (CodeRabbit review).
 
@@ -446,4 +416,66 @@ class TestEmptyTileOutcome:
             )
 
         assert exit_code == 0
-        assert "Extraction produced no data" not in capsys.readouterr().err
+        assert "Extraction produced no data" not in caplog.text
+
+
+class TestCompatibilityWrappers:
+    """The public wrappers keep their contract: a failure returns (1, None) (Codex review).
+
+    They take no callback, so their messages go to the ``portolan_cli`` logger.
+    """
+
+    @staticmethod
+    def _network_error() -> AsyncMock:
+        from portolan_cli.extract.arcgis.imageserver.discovery import ImageServerDiscoveryError
+
+        return AsyncMock(side_effect=ImageServerDiscoveryError("Network error"))
+
+    @pytest.mark.asyncio
+    async def test_an_error_returns_exit_code_1(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        with patch(
+            "portolan_cli.extract.arcgis.imageserver.orchestrator.extract_imageserver",
+            self._network_error(),
+        ):
+            result = await run_imageserver_extraction(
+                SERVICE_URL, tmp_path, ImageServerCLIOptions()
+            )
+
+        assert result == (1, None)
+        assert [(r.levelname, r.getMessage()) for r in caplog.records] == [
+            ("ERROR", "ImageServer extraction failed: Network error")
+        ]
+
+    @pytest.mark.asyncio
+    async def test_a_missing_license_returns_exit_code_1_and_the_hint(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        import logging
+
+        from portolan_core.errors import MissingLicenseError
+        from portolan_core.licensing import CLI_LICENSE_REMEDIATION
+
+        caplog.set_level(logging.INFO, logger="portolan_cli")
+        error = MissingLicenseError("this extraction", "the source publishes no license URL")
+        with patch(
+            "portolan_cli.extract.arcgis.imageserver.orchestrator.extract_imageserver",
+            AsyncMock(side_effect=error),
+        ):
+            result = await run_imageserver_extraction(SERVICE_URL, tmp_path)
+
+        assert result == (1, None)
+        assert [(r.levelname, r.getMessage()) for r in caplog.records] == [
+            ("ERROR", f"ImageServer extraction failed: {error}"),
+            ("INFO", CLI_LICENSE_REMEDIATION),
+        ]
+
+    def test_the_sync_wrapper_returns_exit_code_1(self, tmp_path: Path) -> None:
+        with patch(
+            "portolan_cli.extract.arcgis.imageserver.orchestrator.extract_imageserver",
+            self._network_error(),
+        ):
+            result = run_imageserver_extraction_sync(SERVICE_URL, tmp_path)
+
+        assert result == (1, None)

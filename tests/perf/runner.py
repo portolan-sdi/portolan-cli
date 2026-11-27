@@ -50,13 +50,13 @@ TILE_SIZE = 256
 
 
 #: Modules that only relay a count. The site is the first frame outside them.
-_RELAYS = ("portolan_cli.trace", "portolan_cli.json_io")
+_RELAYS = ("portolan_core.trace", "portolan_core.json_io")
 
 
 def _site(frame: FrameType | None) -> str:
     while frame is not None:
         module = str(frame.f_globals.get("__name__", ""))
-        if module.startswith("portolan_cli") and module not in _RELAYS:
+        if module.startswith(("portolan_cli", "portolan_core")) and module not in _RELAYS:
             return f"{module}:{frame.f_code.co_name}"
         frame = frame.f_back
     return "outside portolan_cli"
@@ -68,7 +68,7 @@ def _install_site_recorder(sites: dict[str, Counter[str]]) -> None:
     It runs before any ``portolan_cli`` module imports ``count`` by name, so
     every module binds the wrapper.
     """
-    from portolan_cli import trace
+    from portolan_core import trace
 
     count = trace.count
     lock = threading.Lock()
@@ -86,7 +86,7 @@ def _install_site_recorder(sites: dict[str, Counter[str]]) -> None:
 def _install_duckdb_counter() -> None:
     import duckdb
 
-    from portolan_cli import trace
+    from portolan_core import trace
 
     connect = duckdb.connect
 
@@ -106,7 +106,7 @@ def _install_parquet_counter(patch: pytest.MonkeyPatch) -> None:
     """
     import pyarrow.parquet as pq
 
-    from portolan_cli import trace
+    from portolan_core import trace
 
     original: Callable[..., None] = pq.ParquetFile.__init__
 
@@ -201,8 +201,8 @@ def run(argv: list[str], *, mem: bool) -> dict[str, Any]:
     _install_site_recorder(sites)
     _install_duckdb_counter()
 
-    from portolan_cli import trace
     from portolan_cli.cli import cli
+    from portolan_core import trace
 
     exit_code: int | str = 0
     with contextlib.ExitStack() as stack:
@@ -219,7 +219,7 @@ def run(argv: list[str], *, mem: bool) -> dict[str, Any]:
             exit_code = result if isinstance(result, int) else 0
         except SystemExit as stop:
             exit_code = stop.code if isinstance(stop.code, int) else 1
-        except Exception as error:  # noqa: BLE001 - the record names the error
+        except Exception as error:  # the record names the error
             exit_code = f"{type(error).__name__}: {error}"
         wall_s = time.perf_counter() - start
         network = guard.collect()

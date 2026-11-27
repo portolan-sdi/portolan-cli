@@ -31,7 +31,7 @@ class TestViaLinkGeneration:
 
     def test_auto_init_adds_via_link_to_collection(self, tmp_path: Path) -> None:
         """build_arcgis_catalog adds via link to each collection."""
-        from portolan_cli.licensing import ResolvedLicense
+        from portolan_core.licensing import ResolvedLicense
 
         output_dir = tmp_path / "test_catalog"
         output_dir.mkdir()
@@ -84,7 +84,7 @@ class TestViaLinkGeneration:
 
     def test_via_link_uses_layer_specific_url_when_available(self, tmp_path: Path) -> None:
         """When layer URL differs from service URL, use layer-specific URL."""
-        from portolan_cli.licensing import ResolvedLicense
+        from portolan_core.licensing import ResolvedLicense
 
         output_dir = tmp_path / "test_catalog"
         output_dir.mkdir()
@@ -131,7 +131,7 @@ class TestViaLinkGeneration:
 
     def test_no_via_link_for_failed_layers(self, tmp_path: Path) -> None:
         """Failed layers don't get collections, so no via link needed."""
-        from portolan_cli.licensing import ResolvedLicense
+        from portolan_core.licensing import ResolvedLicense
 
         output_dir = tmp_path / "test_catalog"
         output_dir.mkdir()

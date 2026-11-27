@@ -227,19 +227,19 @@ versioning.
 
 ### Format handler helpers
 
-::: portolan_cli.api.FileInfo
-    options:
-      heading_level: 4
-
-::: portolan_cli.api.InvalidOutputError
-    options:
-      heading_level: 4
-
 ::: portolan_cli.api.RASTER_EXTENSIONS
     options:
       heading_level: 4
 
 ::: portolan_cli.api.VECTOR_EXTENSIONS
+    options:
+      heading_level: 4
+
+::: portolan_cli.api.FileInfo
+    options:
+      heading_level: 4
+
+::: portolan_cli.api.InvalidOutputError
     options:
       heading_level: 4
 
@@ -311,6 +311,36 @@ versioning.
     options:
       heading_level: 4
 
+### STAC builders
+
+::: portolan_cli.api.create_item
+    options:
+      heading_level: 4
+
+::: portolan_cli.api.create_collection
+    options:
+      heading_level: 4
+
+::: portolan_cli.api.add_projection_extension
+    options:
+      heading_level: 4
+
+::: portolan_cli.api.add_vector_extension
+    options:
+      heading_level: 4
+
+::: portolan_cli.api.add_raster_extension
+    options:
+      heading_level: 4
+
+::: portolan_cli.api.add_table_extension
+    options:
+      heading_level: 4
+
+::: portolan_cli.api.wgs84_bbox
+    options:
+      heading_level: 4
+
 ## Plugin hooks
 
 Use `@hookimpl` to implement these hooks from `portolan_cli.hookspecs`.
@@ -336,3 +366,32 @@ Call these checks from `portolan_cli.testing` in your plugin tests.
 ::: portolan_cli.testing.check_extractor
 
 ::: portolan_cli.testing.check_format_handler
+
+## Catalog writer
+
+Import these names from `portolan_core.writer`. The `portolan-core` package
+installs them, and it does not need `portolan-cli`.
+
+::: portolan_core.writer.CatalogWriteError
+
+::: portolan_core.writer.DeleteOperation
+
+::: portolan_core.writer.InvalidDocumentError
+
+::: portolan_core.writer.InvalidKeyError
+
+::: portolan_core.writer.LocalSink
+
+::: portolan_core.writer.MissingOwnerError
+
+::: portolan_core.writer.ObstoreSink
+
+::: portolan_core.writer.PutOperation
+
+::: portolan_core.writer.Sink
+
+::: portolan_core.writer.WritePlan
+
+::: portolan_core.writer.apply_plan
+
+::: portolan_core.writer.plan_catalog

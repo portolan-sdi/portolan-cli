@@ -18,7 +18,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-from portolan_cli.json_io import write_json_atomic
+from portolan_cli.utils import redact_credentials
+from portolan_core.json_io import write_json_atomic
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -281,8 +282,8 @@ class ImageServerMetadataExtracted:
         Returns:
             ExtractedMetadata with fields populated from this instance.
         """
-        from portolan_cli.licensing import license_url_from_text
         from portolan_cli.metadata_extraction import ExtractedMetadata
+        from portolan_core.licensing import license_url_from_text
 
         # Build processing_notes with service description and technical specs
         processing_notes_parts: list[str] = []
@@ -386,6 +387,8 @@ def build_imageserver_report(
     Returns:
         Complete extraction report.
     """
+    # The report goes to a file and into reprs, so it never holds a credential.
+    url = redact_credentials(url)
     # Get versions
     try:
         from importlib.metadata import version

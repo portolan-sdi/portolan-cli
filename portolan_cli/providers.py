@@ -26,7 +26,7 @@ import re
 from collections.abc import Mapping
 from typing import Any, Literal
 
-from portolan_cli.errors import InvalidProvidersError
+from portolan_core.errors import InvalidProvidersError
 
 PRODUCER_ROLE = "producer"
 HOST_ROLE = "host"

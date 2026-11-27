@@ -19,7 +19,6 @@ import ast
 import re
 import sys
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from pathlib import Path
 
 # Repo-specific instructions live in AGENTS.md. CLAUDE.md only imports it,
@@ -60,8 +59,8 @@ def generate_test_markers(root: Path) -> str:
         markers_section = match.group(1)
         markers: list[tuple[str, str]] = []
 
-        for line in markers_section.split("\n"):
-            line = line.strip().strip(",").strip('"').strip("'")
+        for raw_line in markers_section.split("\n"):
+            line = raw_line.strip().strip(",").strip('"').strip("'")
             if ":" in line:
                 name, description = line.split(":", 1)
                 markers.append((name.strip(), description.strip()))
@@ -95,6 +94,24 @@ class CLICommand:
     docstring: str | None
 
 
+def _decorator_command_name(
+    decorator: ast.expr, function_name: str, current: str | None
+) -> str | None:
+    """Return the command name that a ``@x.command()`` or ``@x.group()`` decorator gives."""
+    if not (
+        isinstance(decorator, ast.Call)
+        and isinstance(decorator.func, ast.Attribute)
+        and decorator.func.attr in ("command", "group")
+    ):
+        return current
+    # Check for explicit name argument
+    if decorator.args:
+        arg = decorator.args[0]
+        return str(arg.value) if isinstance(arg, ast.Constant) else current
+    # Use function name
+    return function_name.replace("_cmd", "").replace("_", "-")
+
+
 def extract_cli_commands(root: Path) -> list[CLICommand]:
     """Extract CLI commands from portolan_cli/cli.py."""
     cli_path = root / "portolan_cli" / "cli.py"
@@ -113,20 +130,7 @@ def extract_cli_commands(root: Path) -> list[CLICommand]:
 
                 # Check decorators for @cli.command() or @cli.group()
                 for decorator in node.decorator_list:
-                    if (
-                        isinstance(decorator, ast.Call)
-                        and isinstance(decorator.func, ast.Attribute)
-                        and decorator.func.attr in ("command", "group")
-                    ):
-                        # Check for explicit name argument
-                        if decorator.args:
-                            arg = decorator.args[0]
-                            if isinstance(arg, ast.Constant):
-                                command_name = str(arg.value)
-                        else:
-                            # Use function name
-                            fn_name = node.name.replace("_cmd", "")
-                            command_name = fn_name.replace("_", "-")
+                    command_name = _decorator_command_name(decorator, node.name, command_name)
 
                 if command_name:
                     docstring = ast.get_docstring(node)
@@ -200,13 +204,6 @@ def update_generated_section(claude_md: str, section_name: str, new_content: str
     return updated
 
 
-def add_freshness_marker(section_header: str, date: str | None = None) -> str:
-    """Generate a freshness marker for a section."""
-    if date is None:
-        date = datetime.now(UTC).strftime("%Y-%m-%d")
-    return f"<!-- freshness: last-verified: {date} -->\n{section_header}"
-
-
 # =============================================================================
 # Main
 # =============================================================================
@@ -223,7 +220,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Generate auto-updated sections for AGENTS.md")
     parser.add_argument(
         "--section",
-        choices=list(GENERATORS.keys()) + ["all"],
+        choices=[*list(GENERATORS.keys()), "all"],
         default="all",
         help="Section to generate (default: all)",
     )

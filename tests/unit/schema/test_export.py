@@ -6,12 +6,12 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from portolan_cli.models.schema import BandSchema, ColumnSchema, SchemaModel
 from portolan_cli.schema.export import (
     export_schema_csv,
     export_schema_json,
     export_schema_parquet,
 )
+from portolan_core.models.schema import BandSchema, ColumnSchema, SchemaModel
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -89,7 +89,7 @@ class TestExportSchemaJson:
         # Verify content
         import json
 
-        with open(output) as f:
+        with open(output, encoding="utf-8") as f:
             data = json.load(f)
 
         assert data["schema_version"] == "1.0.0"
@@ -123,7 +123,7 @@ class TestExportSchemaCsv:
         # Verify content
         import csv
 
-        with open(output) as f:
+        with open(output, encoding="utf-8") as f:
             reader = csv.DictReader(f)
             rows = list(reader)
 
@@ -142,7 +142,7 @@ class TestExportSchemaCsv:
 
         import csv
 
-        with open(output) as f:
+        with open(output, encoding="utf-8") as f:
             reader = csv.DictReader(f)
             rows = list(reader)
 

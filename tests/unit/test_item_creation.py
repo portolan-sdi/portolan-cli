@@ -14,8 +14,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from portolan_cli.constants import STAC_VERSION
-from portolan_cli.models.item import AssetModel, ItemModel
+from portolan_core.constants import STAC_VERSION
+from portolan_core.models.item import AssetModel, ItemModel
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -30,12 +30,11 @@ class TestItemCreation:
         import pyarrow as pa
         import pyarrow.parquet as pq
 
-        schema = pa.schema(
-            [
-                ("id", pa.int64()),
-                ("geometry", pa.binary()),
-            ]
-        )
+        columns: list[tuple[str, pa.DataType]] = [
+            ("id", pa.int64()),
+            ("geometry", pa.binary()),
+        ]
+        schema = pa.schema(columns)
 
         geo_metadata = {
             "version": "1.0.0",
@@ -265,7 +264,7 @@ class TestWriteItemJson:
 
         result_path = write_item_json(sample_item, tmp_path)
 
-        with open(result_path) as f:
+        with open(result_path, encoding="utf-8") as f:
             data = json.load(f)
 
         assert data["type"] == "Feature"

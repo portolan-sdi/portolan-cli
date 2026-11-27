@@ -11,8 +11,8 @@ from pathlib import Path
 import click
 
 from portolan_cli.cli import should_output_json
-from portolan_cli.errors import MissingLicenseError
 from portolan_cli.extract.common import cli_helpers
+from portolan_core.errors import MissingLicenseError
 
 
 @click.command("wfs")
@@ -152,6 +152,7 @@ def extract_wfs_cmd(
         # Extract 4 layers in parallel with 5-minute timeout per layer
         portolan extract wfs URL --workers 4 --timeout 300
     """
+    from portolan_cli.extract.common.report import run_extract_command
     from portolan_cli.extract.wfs.orchestrator import (
         ExtractionOptions,
         extract_wfs_catalog,
@@ -211,13 +212,15 @@ def extract_wfs_cmd(
     )
 
     try:
-        report = extract_wfs_catalog(
-            url=url,
-            output_dir=output_dir,
+        result = run_extract_command(
+            extract_wfs_catalog,
+            url,
+            output_dir,
+            options,
             layer_filter=layer_include,
             layer_exclude=layer_exclude,
-            options=options,
             on_progress=None if use_json else on_progress,
+            on_message=cli_helpers.print_message,
         )
     except MissingLicenseError as e:
         cli_helpers.fail_missing_license(e, use_json=use_json, url=url, command="extract-wfs")
@@ -227,4 +230,4 @@ def extract_wfs_cmd(
         )
         raise SystemExit(1) from None
 
-    cli_helpers.output_extract_result(report, output_dir, use_json, dry_run, command="extract-wfs")
+    cli_helpers.output_extract_result(result, use_json, dry_run, command="extract-wfs")

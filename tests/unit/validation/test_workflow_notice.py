@@ -11,7 +11,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from rashid_core import Report
+from rashid_core.api import Report
 
 from portolan_cli.metadata.models import MetadataCheckResult, MetadataReport, MetadataStatus
 from portolan_cli.validation.runner import run_check
@@ -19,7 +19,7 @@ from portolan_cli.validation.runner import run_check
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from portolan_cli.run_state import RunState
+    from portolan_core.run_state import RunState
 
 pytestmark = pytest.mark.unit
 

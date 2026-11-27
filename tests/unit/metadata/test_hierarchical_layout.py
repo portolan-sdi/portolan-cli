@@ -271,7 +271,7 @@ class TestTouchedButIdentical:
         import shutil
 
         from portolan_cli.metadata.detection import check_file_metadata
-        from portolan_cli.sync.checksums import compute_checksum
+        from portolan_core.checksums import compute_checksum
 
         collection_dir = tmp_path / "rasters"
         item_dir = collection_dir / ITEM_ID

@@ -50,8 +50,8 @@ from __future__ import annotations
 from importlib.metadata import version
 from typing import TYPE_CHECKING, Any
 
-from portolan_cli.constants import PORTOLAN_SPEC_VERSION
 from portolan_cli.validation.remediation import Bucket, remediation_of
+from portolan_core.constants import PORTOLAN_SPEC_VERSION
 
 if TYPE_CHECKING:
     from collections.abc import Iterable

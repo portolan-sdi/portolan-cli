@@ -43,24 +43,40 @@ from __future__ import annotations
 
 import importlib
 import json
-import posixpath
-from collections.abc import Callable, Iterable, Iterator, Sequence
+import logging
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
-from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING, Any
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Protocol
 
-from rashid_core.api import STRUCTURAL_RELS, has_cog, is_absolute_href, links_of, roles_of
-from rashid_core.catalog import CatalogGraph, Node
+from rashid_core.api import (
+    STRUCTURAL_RELS,
+    CatalogGraph,
+    ExpectedLink,
+    Node,
+    expected_links,
+    has_cog,
+    is_absolute_href,
+    links_of,
+    roles_of,
+)
 
 from portolan_cli.metadata.fix import FixAction, FixReport, FixResult
 from portolan_cli.validation.remediation import Bucket, remediation_of
 
 if TYPE_CHECKING:
-    from portolan_cli.run_state import RunState
+    from portolan_core.run_state import RunState
+
 
 #: A fixer sweeps ``catalog_root``. ``dry_run`` means report but do not write.
 #: The run state is the one of the command, or None outside ``check --fix``.
-Fixer = Callable[[Path, bool, "RunState | None"], list[FixResult]]
+class Fixer(Protocol):
+    """A fixer sweeps ``catalog_root``. A call without a state opens its own run."""
+
+    def __call__(
+        self, root: Path, dry_run: bool, state: RunState | None = None, /
+    ) -> list[FixResult]:
+        """Repair the catalog and report each change."""
 
 
 @dataclass(frozen=True)
@@ -89,8 +105,8 @@ class FixerRun:
     skip_reasons: dict[str, list[str]] = field(default_factory=dict)
 
 
-_JSON_TYPE = "application/json"
-_GEOJSON_TYPE = "application/geo+json"
+logger = logging.getLogger(__name__)
+
 _STYLE_MEDIA_TYPE = "application/vnd.mapbox.style+json"
 _PARQUET_MEDIA_TYPE = "application/vnd.apache.parquet"
 _MIRROR_ROLE = "collection-mirror"
@@ -107,7 +123,7 @@ def _graph(root: Path) -> CatalogGraph:
 
 
 def _write_node(node: Node, *, dry_run: bool) -> None:
-    from portolan_cli.json_io import write_json_atomic
+    from portolan_core.json_io import write_json_atomic
 
     if dry_run:
         return
@@ -157,63 +173,8 @@ def _local_asset_path(node: Node, asset: dict[str, Any]) -> Path | None:
 # --------------------------------------------------------------------------
 
 
-def _relative_href(from_node: Node, to_path: PurePosixPath) -> str:
-    """Href for ``to_path`` written relative to ``from_node``'s own directory."""
-    rel = posixpath.relpath(str(to_path), str(from_node.path.parent))
-    return rel if rel.startswith("../") else f"./{rel}"
-
-
-def _owned_items(node: Node, graph: CatalogGraph) -> Iterator[Node]:
-    """Every item ``node`` owns, descending through organizing catalogs.
-
-    A catalog may group a collection's items (core.md:168-170), so ownership does
-    not stop one level down. Descent halts at a nested collection, whose items
-    are its own to mirror.
-    """
-    for child in graph.children_of(node):
-        if child.kind == "item":
-            yield child
-        elif child.kind == "catalog":
-            yield from _owned_items(child, graph)
-
-
-def _enclosing_collection(node: Node, graph: CatalogGraph) -> Node | None:
-    """The nearest collection above ``node``, which need not be its parent.
-
-    A catalog may sit below a collection to organize its items (core.md:168-170,
-    for example a raster collection grouping items by year). An item there has
-    that catalog as its parent while its ``collection`` link points past it to
-    the enclosing collection, and both are correct.
-    """
-    current = graph.parent_of(node)
-    while current is not None:
-        if current.kind == "collection":
-            return current
-        current = graph.parent_of(current)
-    return None
-
-
-def _expected_structural_links(node: Node, graph: CatalogGraph) -> list[tuple[str, Node]]:
-    """The (rel, target) pairs the spec requires on ``node``, in link order."""
-    expected: list[tuple[str, Node]] = []
-    root = graph.root
-    parent = graph.parent_of(node)
-    if root is not None:
-        expected.append(("root", root))
-    if parent is not None:
-        expected.append(("parent", parent))
-    if node.kind == "item":
-        enclosing = _enclosing_collection(node, graph)
-        if enclosing is not None:
-            expected.append(("collection", enclosing))
-    expected.extend(
-        ("item" if child.kind == "item" else "child", child) for child in graph.children_of(node)
-    )
-    return expected
-
-
 def _reuse_link(
-    existing: list[dict[str, Any]], node: Node, graph: CatalogGraph, rel: str, target: Node
+    existing: list[dict[str, Any]], node: Node, graph: CatalogGraph, expected: ExpectedLink
 ) -> dict[str, Any] | None:
     """An existing link to carry forward, so titles and extras survive the repair.
 
@@ -222,14 +183,14 @@ def _reuse_link(
     outlive the repair. A ``child``/``item`` link that resolves nowhere has no
     counterpart to carry forward and is simply replaced.
     """
-    same_rel = [link for link in existing if link.get("rel") == rel]
+    same_rel = [link for link in existing if link.get("rel") == expected.rel]
     if not same_rel:
         return None
-    if rel not in ("child", "item"):
+    if expected.rel not in ("child", "item"):
         return same_rel[0]
     for link in same_rel:
         href = link.get("href")
-        if isinstance(href, str) and graph.resolve_link(node, href) is target:
+        if isinstance(href, str) and graph.resolve_link(node, href) is expected.target:
             return link
     return None
 
@@ -244,15 +205,20 @@ def _rebuilt_rels() -> frozenset[str]:
 
 
 def _rebuild_links(node: Node, graph: CatalogGraph) -> list[dict[str, Any]]:
-    """The link block ``node`` should carry: structural first, everything else after."""
+    """The link block ``node`` should carry: structural first, everything else after.
+
+    rashid's ``expected_links`` gives each structural rel, target, href, and type,
+    as its link rules check them. This side keeps only what rashid has no use for:
+    the title and extras of an existing link, and a title for a new one.
+    """
     existing = links_of(node)
     rebuilt: list[dict[str, Any]] = []
-    for rel, target in _expected_structural_links(node, graph):
-        href = _relative_href(node, target.path)
-        link = dict(_reuse_link(existing, node, graph, rel, target) or {})
+    for expected in expected_links(graph, node):
+        rel, target = expected.rel, expected.target
+        link = dict(_reuse_link(existing, node, graph, expected) or {})
         link["rel"] = rel
-        link["href"] = href
-        link["type"] = _GEOJSON_TYPE if rel == "item" else _JSON_TYPE
+        link["href"] = expected.href
+        link["type"] = expected.type
         if rel in ("child", "item") and not link.get("title"):
             # An item holds its title under properties, a catalog at the top.
             properties = target.data.get("properties")
@@ -296,7 +262,7 @@ def _extent_bboxes(node: Node) -> list[Any] | None:
 
 
 def _looks_valid(box: Any) -> bool:
-    from portolan_cli.bbox import is_valid_bbox, snap_to_wgs84_range, to_2d_bbox
+    from portolan_core.bbox import is_valid_bbox, snap_to_wgs84_range, to_2d_bbox
 
     if not isinstance(box, list) or len(box) not in (4, 6):
         return False
@@ -317,7 +283,7 @@ def _child_bboxes(node: Node, graph: CatalogGraph) -> list[list[float]]:
     Descends through an organizing catalog (core.md:168-170), which carries no
     extent of its own and would otherwise hide the items beneath it.
     """
-    from portolan_cli.bbox import to_2d_bbox
+    from portolan_core.bbox import to_2d_bbox
 
     found: list[list[float]] = []
     for child in graph.children_of(node):
@@ -331,7 +297,7 @@ def _child_bboxes(node: Node, graph: CatalogGraph) -> list[list[float]]:
     return found
 
 
-#: Asset suffix -> the extractor whose metadata object ``_extract_bbox_wgs84``
+#: Asset suffix -> the extractor whose metadata object ``wgs84_bbox``
 #: understands. Anything absent from this map has no readable footprint, so the
 #: bbox fixer skips it rather than inventing one.
 _BBOX_EXTRACTORS: dict[str, tuple[str, str]] = {
@@ -357,13 +323,13 @@ def _wgs84_bbox_from_asset(node: Node, asset: dict[str, Any]) -> list[float] | N
     entry = _BBOX_EXTRACTORS.get(path.suffix.lower())
     if entry is None:
         return None
-    from portolan_cli.preparation import _extract_bbox_wgs84
+    from portolan_cli.preparation import wgs84_bbox
 
     module_name, attribute = entry
     try:
         extract = getattr(importlib.import_module(module_name), attribute)
-        return _extract_bbox_wgs84(extract(path))
-    except Exception:  # noqa: BLE001 - any extractor failure is an honest skip
+        return wgs84_bbox(extract(path))
+    except Exception:  # any extractor failure is an honest skip
         return None
 
 
@@ -385,8 +351,8 @@ _BBOX_SKIP_MESSAGE = (
 
 def _fix_item_bbox(node: Node, *, dry_run: bool) -> FixResult | None:
     """Recompute one item's bbox (and, if absent, its geometry) from its assets."""
-    from portolan_cli.bbox import compute_bbox_union
     from portolan_cli.item import _bbox_to_polygon
+    from portolan_core.bbox import compute_bbox_union
 
     declared = "bbox" in node.data
     if declared and _looks_valid(node.data["bbox"]):
@@ -408,8 +374,8 @@ def _fix_container_bbox(node: Node, graph: CatalogGraph, *, dry_run: bool) -> Fi
     boxes = _extent_bboxes(node)
     if boxes is None or all(_looks_valid(box) for box in boxes):
         return None
-    from portolan_cli.errors import InvalidBboxError
     from portolan_cli.stac import build_spatial_extent
+    from portolan_core.errors import InvalidBboxError
 
     # Items were repaired first and graph nodes are shared objects, so a bbox
     # written above is already visible here without reloading the tree. The
@@ -502,6 +468,70 @@ def _fix_assets(root: Path, dry_run: bool, _state: RunState | None = None) -> li
 
 
 # --------------------------------------------------------------------------
+# media_type — PTL-DAT-003
+# --------------------------------------------------------------------------
+
+#: The magic bytes of each format the data pass sniffs, and the media type they imply.
+_MAGIC_MEDIA_TYPES: tuple[tuple[bytes, str], ...] = (
+    (b"PAR1", _PARQUET_MEDIA_TYPE),
+    (b"II*\x00", "image/tiff; application=geotiff"),
+    (b"MM\x00*", "image/tiff; application=geotiff"),
+    (b"PMTiles", "application/vnd.pmtiles"),
+    (b"\x89PNG\r\n\x1a\n", "image/png"),
+    (b"\xff\xd8\xff", "image/jpeg"),
+)
+
+
+def _kind(media_type: str) -> str:
+    """The format a media type names, so that equivalent spellings compare equal."""
+    lowered = media_type.lower()
+    family = next((name for name in ("parquet", "pmtiles") if name in lowered), None)
+    return family or lowered.split(";")[0].strip().replace("image/jpg", "image/jpeg")
+
+
+def _sniffed_media_type(path: Path) -> str | None:
+    """The media type the file's magic bytes imply, preferring the extension's spelling."""
+    from portolan_cli.formats import is_cloud_optimized_geotiff
+    from portolan_cli.preparation import _get_media_type
+
+    with path.open("rb") as handle:
+        head = handle.read(8)
+    sniffed = next((kind for magic, kind in _MAGIC_MEDIA_TYPES if head.startswith(magic)), None)
+    if sniffed is None:
+        return None
+    if _kind(sniffed) == "image/tiff":
+        cog = "image/tiff; application=geotiff; profile=cloud-optimized"
+        return cog if is_cloud_optimized_geotiff(path) else sniffed
+    by_extension = _get_media_type(path)
+    return by_extension if _kind(by_extension) == _kind(sniffed) else sniffed
+
+
+def _fix_media_types(root: Path, dry_run: bool, _state: RunState | None = None) -> list[FixResult]:
+    """Declare the media type that each local asset's bytes carry."""
+    known = {_kind(media_type) for _, media_type in _MAGIC_MEDIA_TYPES}
+    results: list[FixResult] = []
+    for node in _graph(root).iter("collection", "item"):
+        changed = False
+        for asset in _assets_of(node).values():
+            declared = asset.get("type")
+            path = _local_asset_path(node, asset)
+            if path is None or not isinstance(declared, str) or _kind(declared) not in known:
+                continue
+            try:
+                sniffed = _sniffed_media_type(path)
+            except OSError as exc:
+                logger.warning("Cannot read %s to type it: %s", path.name, exc)
+                continue
+            if sniffed is not None and _kind(sniffed) != _kind(declared):
+                asset["type"] = sniffed
+                changed = True
+        if changed:
+            _write_node(node, dry_run=dry_run)
+            results.append(_updated(node, "Typed the assets from their bytes"))
+    return results
+
+
+# --------------------------------------------------------------------------
 # checksum — PTL-AST-003/004, PTL-DAT-001/002
 # --------------------------------------------------------------------------
 
@@ -513,7 +543,7 @@ def _fix_checksums(root: Path, dry_run: bool, _state: RunState | None = None) ->
     asset whole: a COG is routinely gigabytes, and the whole point of this fixer
     is that it runs over every asset in the catalog.
     """
-    from portolan_cli.sync.checksums import file_fields
+    from portolan_core.checksums import file_fields
 
     results: list[FixResult] = []
     for node in _graph(root).iter("collection", "item"):
@@ -675,7 +705,7 @@ def _has_cog_items(node: Node, graph: CatalogGraph) -> bool:
     rashid now exports the predicate it applies (rashid#57), so this reads the
     answer from ``has_cog`` instead of replicating the rule.
     """
-    return any(has_cog(item) for item in _owned_items(node, graph))
+    return any(has_cog(item) for item in graph.items_of(node))
 
 
 def _write_mirror(collection_dir: Path, root: Path, state: RunState | None) -> None:
@@ -741,7 +771,7 @@ def _fix_item_mirror(root: Path, dry_run: bool, state: RunState | None = None) -
 
 
 def _is_partitioned(node: Node) -> bool:
-    from portolan_cli.constants import PARTITION_EXTENSION_URI
+    from portolan_core.constants import PARTITION_EXTENSION_URI
 
     if any(key.startswith("partition:") for key in node.data):
         return True
@@ -751,8 +781,8 @@ def _is_partitioned(node: Node) -> bool:
 
 def _fix_partition(root: Path, dry_run: bool, _state: RunState | None = None) -> list[FixResult]:
     """Populate the partition: block from the Hive layout on disk."""
-    from portolan_cli.constants import PARTITION_EXTENSION_URI
     from portolan_cli.partitioning import build_glob_pattern, detect_partitioning
+    from portolan_core.constants import PARTITION_EXTENSION_URI
 
     results: list[FixResult] = []
     for node in _graph(root).iter("collection"):
@@ -809,21 +839,25 @@ def _fix_schema_uri(root: Path, dry_run: bool, _state: RunState | None = None) -
 
 
 #: (rel-presence predicate, filename) pairs for the two required sibling docs.
-_Gap = Callable[[Path, dict[str, Any]], bool]
+_Gap = Callable[[Path, Path, dict[str, Any]], bool]
 
 
-def _readme_gap(stac_path: Path, data: dict[str, Any]) -> bool:
+def _readme_gap(root: Path, stac_path: Path, data: dict[str, Any]) -> bool:
     """True when README.md is absent or its rel='describedby' link is unfit."""
     from portolan_cli.readme import README_FILENAME, readme_link_gap
 
-    return not (stac_path.parent / README_FILENAME).exists() or readme_link_gap(stac_path, data)
+    return not (stac_path.parent / README_FILENAME).exists() or readme_link_gap(
+        root, stac_path, data
+    )
 
 
-def _agents_gap(stac_path: Path, data: dict[str, Any]) -> bool:
+def _agents_gap(root: Path, stac_path: Path, data: dict[str, Any]) -> bool:
     """True when AGENTS.md is absent or its rel='agents' link is unfit."""
-    from portolan_cli.agents_md import AGENTS_MD_FILENAME, agents_link_gap
+    from portolan_core.agents_md import AGENTS_MD_FILENAME, agents_link_gap
 
-    return not (stac_path.parent / AGENTS_MD_FILENAME).exists() or agents_link_gap(stac_path, data)
+    return not (stac_path.parent / AGENTS_MD_FILENAME).exists() or agents_link_gap(
+        root, stac_path, data
+    )
 
 
 def _fix_markdown_requirement(
@@ -836,14 +870,15 @@ def _fix_markdown_requirement(
 ) -> list[FixResult]:
     """Scaffold a required sibling markdown file and its link, and say so honestly.
 
-    ``gap`` mirrors rashid's four-case link check (wrong ``type``, absolute
-    href, unresolvable href, no link at all), which is wider than what the
+    ``gap`` asks rashid's ``sidecar_link_gaps``, which is wider than what the
     scaffolders normalize. When a repair runs and the gap survives it, the
     result is SKIPPED rather than UPDATED: the finding will outlive the
     re-check, and ``--fix`` must not claim work the next check contradicts.
     """
     gapped = [
-        node for node in _graph(root).iter("catalog", "collection") if gap(node.abs_path, node.data)
+        node
+        for node in _graph(root).iter("catalog", "collection")
+        if gap(root, node.abs_path, node.data)
     ]
     if not gapped or dry_run:
         return [_updated(node, message) for node in gapped]
@@ -851,7 +886,7 @@ def _fix_markdown_requirement(
     results = []
     for node in gapped:
         data = _reload(node.abs_path)
-        if data is None or gap(node.abs_path, data):
+        if data is None or gap(root, node.abs_path, data):
             results.append(
                 _skipped(
                     node.abs_path, f"{message}, but the link still does not conform; fix it by hand"
@@ -877,7 +912,7 @@ def _fix_readme(root: Path, dry_run: bool, state: RunState | None = None) -> lis
 
 def _fix_agents(root: Path, dry_run: bool, _state: RunState | None = None) -> list[FixResult]:
     """Scaffold AGENTS.md and its rel='agents' link."""
-    from portolan_cli.agents_md import ensure_agents_md_tree
+    from portolan_core.agents_md import ensure_agents_md_tree
 
     return _fix_markdown_requirement(
         root,
@@ -910,22 +945,15 @@ def _fix_pmtiles(root: Path, dry_run: bool, _state: RunState | None = None) -> l
 
 
 def _fix_convert(root: Path, _dry_run: bool, _state: RunState | None = None) -> list[FixResult]:
-    """Registered but deliberately inert: conversion belongs to the geo-asset pass.
+    """Inert: the geo-asset pass converts, and rewrites the files that these findings name.
 
-    PTL-DAT-003 names this key, so the registry must carry it. Running a
-    conversion sweep from here was wrong twice over: ``--metadata --fix``
-    silently rewrote asset bytes the operator never asked about, and the sweep
-    ran without the worker and force settings the geo-asset pass is configured
-    with. Reporting the honest hand-off costs the operator one flag and costs
-    nobody their data.
+    ``--metadata --fix`` must not rewrite asset bytes, so this reports the hand-off.
     """
     return [
         _skipped(
             root,
             "Conversion runs in the geo-asset pass; re-run `portolan check --fix` "
-            "without --metadata. A GeoParquet that is already cloud-native but "
-            "unsorted or missing its bbox covering column is rewritten by "
-            "`portolan add --force --reconvert`",
+            "without --metadata",
         )
     ]
 
@@ -942,6 +970,7 @@ FIXERS: dict[str, Fixer] = {
     "links": _fix_links,
     "titles": _fix_titles,
     "assets": _fix_assets,
+    "media_type": _fix_media_types,
     "bbox": _fix_bbox,
     "partition": _fix_partition,
     "item_mirror": _fix_item_mirror,
@@ -1045,7 +1074,7 @@ def repair_written_items(
     for key in POST_ITEM_WRITE_FIXERS:
         try:
             results.extend(FIXERS[key](root, dry_run, state))
-        except Exception as exc:  # noqa: BLE001 - one bad fixer must not strand the rest
+        except Exception as exc:  # one bad fixer must not strand the rest
             results.append(
                 FixResult(root, FixAction.SKIPPED, False, f"Fixer '{key}' failed: {exc}")
             )
@@ -1140,7 +1169,7 @@ def apply_fixers(
     for key in selected:
         try:
             outcome = FIXERS[key](root, dry_run, state)
-        except Exception as exc:  # noqa: BLE001 - one bad fixer must not strand the rest
+        except Exception as exc:  # one bad fixer must not strand the rest
             outcome = [FixResult(root, FixAction.SKIPPED, False, f"Fixer '{key}' failed: {exc}")]
         results.extend(outcome)
         if any(result.action in (FixAction.CREATED, FixAction.UPDATED) for result in outcome):

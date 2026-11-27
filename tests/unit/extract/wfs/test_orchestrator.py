@@ -492,8 +492,10 @@ class TestAssignSlugs:
         slugs = _assign_slugs(layers)
 
         # Both should have hash suffixes due to collision
-        assert "_" in slugs[0] and len(slugs[0].split("_")[-1]) == 6
-        assert "_" in slugs[1] and len(slugs[1].split("_")[-1]) == 6
+        assert "_" in slugs[0]
+        assert len(slugs[0].split("_")[-1]) == 6
+        assert "_" in slugs[1]
+        assert len(slugs[1].split("_")[-1]) == 6
         # But they should be different
         assert slugs[0] != slugs[1]
 
@@ -727,7 +729,7 @@ class TestTimeoutEnforcement:
 
 def test_failed_version_negotiation_logs_no_key(caplog: pytest.LogCaptureFixture) -> None:
     """#981: geoparquet-io quotes the keyed URL. The warning names the service without the key."""
-    from geoparquet_io.core.wfs import WFSError  # type: ignore[import-untyped]
+    from geoparquet_io.core.wfs import WFSError
 
     from portolan_cli.extract.wfs.orchestrator import _negotiate_version
 

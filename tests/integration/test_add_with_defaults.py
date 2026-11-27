@@ -146,7 +146,7 @@ class TestAddWithTemporalDefaults:
         item_json = item_dir / "test-item.json"
         assert item_json.exists(), f"Expected {item_json}"
 
-        with open(item_json) as f:
+        with open(item_json, encoding="utf-8") as f:
             item = json.load(f)
 
         # Should have datetime from year: 2025 default
@@ -186,7 +186,7 @@ class TestAddWithTemporalDefaults:
         assert result.exit_code == 0, result.output
 
         item_json = item_dir / "test-item2.json"
-        with open(item_json) as f:
+        with open(item_json, encoding="utf-8") as f:
             item = json.load(f)
 
         # Should have explicitly provided datetime, not default
@@ -227,7 +227,7 @@ class TestAddWithRasterNodataDefaults:
         assert result.exit_code == 0, result.output
 
         item_json = item_dir / "test-nodata.json"
-        with open(item_json) as f:
+        with open(item_json, encoding="utf-8") as f:
             item = json.load(f)
 
         # Check bands have nodata from defaults (bands live on the data asset, #437)
@@ -304,7 +304,7 @@ class TestSourceNodataPreserved:
         assert result.exit_code == 0, result.output
 
         item_json = item_dir / "test-preserve-nodata.json"
-        with open(item_json) as f:
+        with open(item_json, encoding="utf-8") as f:
             item = json.load(f)
 
         bands = _data_asset_bands(item)
@@ -508,7 +508,7 @@ class TestHierarchyOverride:
         assert result.exit_code == 0, result.output
 
         item_json = item_dir / "test-item.json"
-        with open(item_json) as f:
+        with open(item_json, encoding="utf-8") as f:
             item = json.load(f)
 
         # Should use collection year (2025), not catalog year (2024)

@@ -233,7 +233,7 @@ def test_publish_geohash_values_queryable(iceberg_backend, iceberg_catalog, tmp_
     result = table.scan().to_arrow()
 
     # Find which geohash column exists
-    geohash_col = [c for c in result.column_names if c.startswith("geohash_")][0]
+    geohash_col = next(c for c in result.column_names if c.startswith("geohash_"))
     geohash_values = result.column(geohash_col).to_pylist()
 
     # All values should be non-empty strings

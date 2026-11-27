@@ -37,11 +37,11 @@ def initialized_catalog(tmp_path: Path) -> Path:
 
 def _write_partition(partition_dir: Path) -> None:
     """Write a tiny valid GeoParquet file into ``partition_dir``."""
-    import geopandas as gpd
+    import geopandas
     from shapely.geometry import Point
 
     partition_dir.mkdir(parents=True, exist_ok=True)
-    gpd.GeoDataFrame(
+    geopandas.GeoDataFrame(
         {"id": [1, 2]},
         geometry=[Point(0, 0), Point(1, 1)],
         crs="EPSG:4326",

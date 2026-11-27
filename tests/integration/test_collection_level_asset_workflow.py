@@ -15,7 +15,8 @@ import shutil
 from typing import TYPE_CHECKING
 
 import pytest
-from rashid_core import ValidationOptions, validate
+from rashid_core import validate
+from rashid_core.api import ValidationOptions
 
 from portolan_cli.add import add
 
@@ -38,7 +39,7 @@ def _assert_no_item_json(collection_dir: Path) -> None:
 def _assert_collection_assets(collection_dir: Path, expected_assets: dict[str, str]) -> None:
     """Assert collection.json has expected assets with correct hrefs."""
     collection_json = collection_dir / "collection.json"
-    with open(collection_json) as f:
+    with open(collection_json, encoding="utf-8") as f:
         collection_data = json.load(f)
 
     assets = collection_data.get("assets", {})
@@ -124,7 +125,7 @@ class TestCollectionLevelAssetWorkflow:
         versions_file = collection_dir / "versions.json"
         assert versions_file.exists(), "versions.json should exist"
 
-        with open(versions_file) as f:
+        with open(versions_file, encoding="utf-8") as f:
             versions_data = json.load(f)
 
         assert len(versions_data["versions"]) == 1, "Should have one version"
@@ -184,7 +185,7 @@ class TestCollectionLevelAssetWorkflow:
 
         # Verify versions.json tracks both assets
         versions_file = collection_dir / "versions.json"
-        with open(versions_file) as f:
+        with open(versions_file, encoding="utf-8") as f:
             versions_data = json.load(f)
 
         assert len(versions_data["versions"]) == 2, "Should have two versions"
@@ -259,7 +260,7 @@ class TestCollectionLevelAssetWorkflow:
 
         # Verify versions.json tracks both correctly
         versions_file = collection_dir / "versions.json"
-        with open(versions_file) as f:
+        with open(versions_file, encoding="utf-8") as f:
             versions_data = json.load(f)
 
         all_assets = {}
@@ -357,7 +358,7 @@ class TestCollectionLevelNonGeoCompanionWorkflow:
         collection_json = collection_dir / "collection.json"
         assert collection_json.exists(), "collection.json should exist"
 
-        with open(collection_json) as f:
+        with open(collection_json, encoding="utf-8") as f:
             collection_data = json.load(f)
 
         assets = collection_data.get("assets", {})
@@ -401,7 +402,7 @@ class TestCollectionLevelNonGeoCompanionWorkflow:
         pq.write_table(table, nongeo_file)
 
         # Add directory
-        added, skipped, failures = add_files(
+        _added, skipped, failures = add_files(
             paths=[collection_dir],
             catalog_root=fresh_catalog_no_versions,
             collection_id="data",
@@ -424,7 +425,7 @@ class TestCollectionLevelNonGeoCompanionWorkflow:
         tracks there, and track the CSV as its companion.
         """
         from portolan_cli.add import add_files
-        from portolan_cli.versions import read_versions
+        from portolan_core.versions import read_versions
 
         catalog = fresh_catalog_no_versions
         collection_dir = catalog / "buildings"
@@ -448,7 +449,7 @@ class TestCollectionLevelNonGeoCompanionWorkflow:
     ) -> None:
         """The same holds for an item directory: the raster item keeps its CSV."""
         from portolan_cli.add import add_files
-        from portolan_cli.versions import read_versions
+        from portolan_core.versions import read_versions
 
         catalog = fresh_catalog_no_versions
         csv = _raster_item_with_csv(catalog, fixtures_dir)
@@ -618,7 +619,7 @@ class TestOneAddIsOneVersion:
     def test_the_pmtiles_and_the_thumbnail_join_the_add_version(
         self, tmp_path: Path, fixtures_dir: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from portolan_cli.versions import read_versions
+        from portolan_core.versions import read_versions
 
         root = tmp_path / "catalog"
         _init_catalog(root)
@@ -632,7 +633,7 @@ class TestOneAddIsOneVersion:
         )
         _stub_thumbnail(monkeypatch)
 
-        from portolan_cli import json_io
+        from portolan_core import json_io
 
         written: list[Path] = []
         write_text_atomic = json_io.write_text_atomic
@@ -673,7 +674,7 @@ class TestOneAddIsOneVersion:
         side steps included. A re-add that changes nothing leaves the index bytes.
         """
         from portolan_cli.catalog import CollectionSummary
-        from portolan_cli.versions import read_versions
+        from portolan_core.versions import read_versions
 
         root = tmp_path / "catalog"
         _init_catalog(root)
@@ -710,7 +711,7 @@ class TestOneAddIsOneVersion:
         self, tmp_path: Path, fixtures_dir: Path
     ) -> None:
         from portolan_cli.add import add_files
-        from portolan_cli.versions import read_versions
+        from portolan_core.versions import read_versions
 
         root = tmp_path / "catalog"
         _init_catalog(root)
@@ -750,8 +751,8 @@ class TestOneAddIsOneVersion:
         collection.json then agree.
         """
         from portolan_cli.add import add_files
-        from portolan_cli.sync.checksums import compute_checksum
-        from portolan_cli.versions import read_versions
+        from portolan_core.checksums import compute_checksum
+        from portolan_core.versions import read_versions
 
         with monkeypatch.context() as patched:
             root, collection_dir = _crashed_add(tmp_path, fixtures_dir, patched)
@@ -797,7 +798,7 @@ class TestTheBumpOfAnAdd:
 
     @staticmethod
     def _versions(collection_dir: Path) -> list[str]:
-        from portolan_cli.versions import read_versions
+        from portolan_core.versions import read_versions
 
         return [v.version for v in read_versions(collection_dir / "versions.json").versions]
 

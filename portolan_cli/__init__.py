@@ -21,6 +21,11 @@ os.environ.setdefault("MIMALLOC_ARENA_EAGER_COMMIT", "0")
 
 # A library user who sets no handler sees no Portolan records (issue #991).
 logging.getLogger(__name__).addHandler(logging.NullHandler())
+# geoparquet-io installs an INFO stream handler on first use when its logger
+# and the root logger have none. A handler here stops that. Records still
+# propagate to a root handler, so the CLI and a host that configures logging
+# see the warnings. The logger name loads nothing.
+logging.getLogger("geoparquet_io").addHandler(logging.NullHandler())
 
 if TYPE_CHECKING:
     from portolan_cli.catalog import Catalog, CatalogExistsError

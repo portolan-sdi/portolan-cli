@@ -338,7 +338,7 @@ class TestVectorRendering:
     @pytest.mark.unit
     def test_tracks_the_rendered_file_in_versions_json(self, tmp_path: Path) -> None:
         """An untracked derived asset breaks push (#519, #735)."""
-        from portolan_cli.versions import read_versions
+        from portolan_core.versions import read_versions
 
         collection_dir = _vector_collection(tmp_path)
         rendered = collection_dir / "roads.thumb.jpg"
@@ -385,19 +385,23 @@ class TestVectorRendering:
         assert _thumbnail_assets(collection_dir) == {}
 
     @pytest.mark.unit
-    def test_render_returning_none_registers_nothing_and_warns(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_render_returning_none_registers_nothing_and_warns(self, tmp_path: Path) -> None:
         """Issue #1038: the failure went to a debug log only."""
+        from portolan_cli.report import reporting
+
         collection_dir = _vector_collection(tmp_path)
 
-        with patch(
-            "portolan_cli.collection_thumbnail.generate_vector_thumbnail", return_value=None
+        lines: list[tuple[str, str]] = []
+        with (
+            patch("portolan_cli.collection_thumbnail.generate_vector_thumbnail", return_value=None),
+            reporting(lambda level, message: lines.append((level, message))),
         ):
             ensure_collection_thumbnails(tmp_path, {"roads"})
 
         assert _thumbnail_assets(collection_dir) == {}
-        assert "No thumbnail for roads:" in capsys.readouterr().err
+        [(level, message)] = lines
+        assert level == "warn"
+        assert message.startswith("No thumbnail for roads: ")
 
 
 class TestNonGeospatialCollections:
@@ -686,7 +690,7 @@ class TestOneAddIsOneVersion:
 
     def _seed_version(self, collection_dir: Path, catalog_root: Path) -> None:
         """Stand in for the snapshot ``add`` writes before the side-steps run."""
-        from portolan_cli.versions import track_generated_assets
+        from portolan_core.versions import track_generated_assets
 
         track_generated_assets(
             collection_dir,

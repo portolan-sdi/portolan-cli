@@ -19,8 +19,8 @@ from dataclasses import dataclass
 from enum import Enum
 from urllib.parse import urlparse
 
-from portolan_cli.errors import PortolanError
 from portolan_cli.extract.common.urls import redact_credentials
+from portolan_core.errors import PortolanError
 
 
 class ArcGISURLType(Enum):
@@ -155,7 +155,7 @@ def parse_arcgis_url(url: str) -> ParsedArcGISURL:
         raise InvalidArcGISURLError(url, f"malformed URL: {e}") from e
 
     # Strip query parameters for pattern matching
-    url_path = url.split("?")[0]
+    url_path = url.split("?", maxsplit=1)[0]
 
     # Try to match ImageServer first (before FeatureServer/MapServer pattern)
     image_match = _IMAGE_SERVER_PATTERN.search(url_path)

@@ -5,12 +5,13 @@ from __future__ import annotations
 import json
 import logging
 import shutil
-from typing import TYPE_CHECKING
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any
 
 from portolan_cli.collection_id import resolve_collection_id
 from portolan_cli.discovery import get_sidecars
-from portolan_cli.json_io import write_json_atomic
-from portolan_cli.versions import (
+from portolan_core.json_io import write_json_atomic
+from portolan_core.versions import (
     Version,
     read_versions,
 )
@@ -20,6 +21,27 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+
+class SafetyError(Exception):
+    """A removal that deletes files and has no ``force``.
+
+    It is not a ``PortolanError``, so its message has no code prefix. The
+    ``rm`` envelope keeps the type and the message that it reported before.
+    """
+
+
+def require_force(*, keep: bool, dry_run: bool, force: bool) -> None:
+    """Refuse a removal that deletes files when ``force`` is not set.
+
+    Raises:
+        SafetyError: If ``keep``, ``dry_run``, and ``force`` are all False.
+    """
+    if not (keep or dry_run or force):
+        raise SafetyError(
+            "Destructive rm requires --force flag. "
+            "Use --keep to preserve files, or --dry-run to preview."
+        )
 
 
 def _gather_removable_files(path: Path) -> list[Path]:
@@ -239,6 +261,67 @@ def remove_files(
                 logger.warning("%s: %s", result.file_path, result.message)
 
     return removed, skipped
+
+
+@dataclass(frozen=True)
+class RemoveResult:
+    """The outcome of ``portolan rm``.
+
+    Attributes:
+        removed: The files that left tracking, or would leave it in a dry run.
+        skipped: The files that stayed, because they are outside the catalog,
+            not tracked, or a symlink.
+        kept_on_disk: True when the files stay on disk.
+        dry_run: True when nothing changed.
+    """
+
+    removed: list[Path]
+    skipped: list[Path]
+    kept_on_disk: bool
+    dry_run: bool
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize the result as the ``rm`` envelope data."""
+        return {
+            "removed": [str(p) for p in self.removed],
+            "skipped": [str(p) for p in self.skipped],
+            "kept_on_disk": self.kept_on_disk,
+            "dry_run": self.dry_run,
+        }
+
+
+def remove_path(
+    path: Path,
+    *,
+    catalog_root: Path,
+    keep: bool = False,
+    dry_run: bool = False,
+    force: bool = False,
+) -> RemoveResult:
+    """Remove one file or directory from the catalog.
+
+    This is the library function of ``portolan rm``.
+
+    Args:
+        path: The file or directory. A relative path resolves against the
+            working directory.
+        catalog_root: Root directory of the catalog.
+        keep: If True, preserve the files on disk (only untrack).
+        dry_run: If True, report what would be removed and change nothing.
+        force: Allow a removal that deletes files from disk.
+
+    Returns:
+        The removed and skipped files.
+
+    Raises:
+        SafetyError: If the removal deletes files and ``force`` is False.
+        ValueError: If a versions.json is not valid.
+    """
+    require_force(keep=keep, dry_run=dry_run, force=force)
+    removed, skipped = remove_files(
+        paths=[path.resolve()], catalog_root=catalog_root, keep=keep, dry_run=dry_run
+    )
+    return RemoveResult(removed, skipped, kept_on_disk=keep, dry_run=dry_run)
 
 
 def _versions_catalog_root(versions_path: Path) -> Path:

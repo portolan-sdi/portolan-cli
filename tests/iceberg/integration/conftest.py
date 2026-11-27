@@ -19,6 +19,8 @@ from portolan_cli.cli import cli
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from click.testing import Result
+
 _SKIP_WINDOWS = pytest.mark.skipif(
     sys.platform == "win32",
     reason="PyIceberg SQL catalog warehouse paths broken on Windows"
@@ -145,7 +147,7 @@ def place_geojson_in_collection(
     return dest
 
 
-def invoke_add(runner: CliRunner, catalog_root: Path, file_path: Path) -> object:
+def invoke_add(runner: CliRunner, catalog_root: Path, file_path: Path) -> Result:
     """Invoke `portolan add` with the iceberg backend."""
     return runner.invoke(
         cli,

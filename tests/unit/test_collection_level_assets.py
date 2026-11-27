@@ -50,8 +50,8 @@ def _run_deferred(
 ) -> tuple[list[Any], list[Any], list[Any]]:
     """Run phase 3 of add on the deferred files, and return added, skipped, failures."""
     from portolan_cli.add import _plan_deferred, _ProcessResult, _write_deferred
-    from portolan_cli.run_state import RunState
     from portolan_cli.version_ops import commit_run
+    from portolan_core.run_state import RunState
 
     added: list[Any] = []
     skipped: list[Any] = []
@@ -113,7 +113,7 @@ class TestCollectionLevelAssets:
         versions_file = collection_dir / "versions.json"
         assert versions_file.exists(), "versions.json should be created"
 
-        with open(versions_file) as f:
+        with open(versions_file, encoding="utf-8") as f:
             versions_data = json.load(f)
 
         # Get the first version
@@ -246,7 +246,7 @@ class TestCollectionLevelAssets:
         collection_json = collection_dir / "collection.json"
         assert collection_json.exists(), "collection.json should be created"
 
-        with open(collection_json) as f:
+        with open(collection_json, encoding="utf-8") as f:
             collection_data = json.load(f)
 
         # Check assets field has our data (key is file stem, not "data")
@@ -299,7 +299,7 @@ class TestCollectionLevelAssets:
 
         # And collection.json should have item link, not direct asset
         collection_json = collection_dir / "collection.json"
-        with open(collection_json) as f:
+        with open(collection_json, encoding="utf-8") as f:
             collection_data = json.load(f)
 
         links = collection_data.get("links", [])
@@ -418,7 +418,7 @@ class TestCollectionLevelNonGeoCompanions:
         source_to_item_dir: dict = {}
         source_to_collection_dir: dict = {}
         deferred_non_geo = [(non_geo_file, orphan_dir, "orphan")]
-        added, skipped, failures = _run_deferred(
+        _added, skipped, failures = _run_deferred(
             initialized_catalog, deferred_non_geo, source_to_item_dir, source_to_collection_dir
         )
 

@@ -659,7 +659,7 @@ class TestCloneResult:
     @pytest.mark.unit
     def test_clone_result_stores_success(self, tmp_path: Path) -> None:
         """CloneResult should store success status."""
-        from portolan_cli.sync.core import CloneResult
+        from portolan_cli.sync.transport import CloneResult
 
         result = CloneResult(
             success=True,
@@ -673,7 +673,7 @@ class TestCloneResult:
     @pytest.mark.unit
     def test_clone_result_stores_errors(self, tmp_path: Path) -> None:
         """CloneResult should store error messages."""
-        from portolan_cli.sync.core import CloneResult
+        from portolan_cli.sync.transport import CloneResult
 
         result = CloneResult(
             success=False,
@@ -692,7 +692,7 @@ class TestCloneFunction:
     @pytest.mark.unit
     def test_clone_fails_on_non_empty_directory(self, tmp_path: Path) -> None:
         """Clone should fail if target directory is not empty."""
-        from portolan_cli.sync.core import clone
+        from portolan_cli.sync.transport import clone
 
         # Create non-empty directory
         target = tmp_path / "target"
@@ -711,13 +711,13 @@ class TestCloneFunction:
     @pytest.mark.unit
     def test_clone_creates_target_directory(self, tmp_path: Path) -> None:
         """Clone should create target directory if it doesn't exist."""
-        from portolan_cli.sync.core import clone
+        from portolan_cli.sync.transport import clone
 
         target = tmp_path / "new_catalog"
 
         with (
-            patch("portolan_cli.sync.core.init_catalog") as mock_init,
-            patch("portolan_cli.sync.core.pull") as mock_pull,
+            patch("portolan_cli.sync.transport.init_catalog") as mock_init,
+            patch("portolan_cli.sync.transport.pull") as mock_pull,
         ):
             # Mock successful operations
             mock_init.return_value = None
@@ -739,13 +739,13 @@ class TestCloneFunction:
     @pytest.mark.unit
     def test_clone_calls_init_catalog(self, tmp_path: Path) -> None:
         """Clone should initialize the catalog."""
-        from portolan_cli.sync.core import clone
+        from portolan_cli.sync.transport import clone
 
         target = tmp_path / "new_catalog"
 
         with (
-            patch("portolan_cli.sync.core.init_catalog") as mock_init,
-            patch("portolan_cli.sync.core.pull") as mock_pull,
+            patch("portolan_cli.sync.transport.init_catalog") as mock_init,
+            patch("portolan_cli.sync.transport.pull") as mock_pull,
         ):
             mock_pull.return_value = MagicMock(
                 success=True,
@@ -766,13 +766,14 @@ class TestCloneFunction:
     @pytest.mark.unit
     def test_clone_calls_pull_with_correct_args(self, tmp_path: Path) -> None:
         """Clone should call pull with the correct arguments."""
-        from portolan_cli.sync.core import clone
+        from portolan_cli.sync.report import silent
+        from portolan_cli.sync.transport import clone
 
         target = tmp_path / "new_catalog"
 
         with (
-            patch("portolan_cli.sync.core.init_catalog"),
-            patch("portolan_cli.sync.core.pull") as mock_pull,
+            patch("portolan_cli.sync.transport.init_catalog"),
+            patch("portolan_cli.sync.transport.pull") as mock_pull,
         ):
             mock_pull.return_value = MagicMock(
                 success=True,
@@ -795,18 +796,20 @@ class TestCloneFunction:
             dry_run=False,
             profile="my-profile",
             stac_tree=True,
+            report=silent,
+            show_progress=False,
         )
 
     @pytest.mark.unit
     def test_clone_fails_when_pull_fails(self, tmp_path: Path) -> None:
         """Clone should fail if pull fails."""
-        from portolan_cli.sync.core import clone
+        from portolan_cli.sync.transport import clone
 
         target = tmp_path / "new_catalog"
 
         with (
-            patch("portolan_cli.sync.core.init_catalog"),
-            patch("portolan_cli.sync.core.pull") as mock_pull,
+            patch("portolan_cli.sync.transport.init_catalog"),
+            patch("portolan_cli.sync.transport.pull") as mock_pull,
         ):
             mock_pull.return_value = MagicMock(
                 success=False,
@@ -821,17 +824,19 @@ class TestCloneFunction:
             )
 
         assert result.success is False
+        assert result.errors == ["Pull failed for collection 'test'"]
+        assert result.collections_cloned == []
 
     @pytest.mark.unit
     def test_clone_fails_when_remote_not_found(self, tmp_path: Path) -> None:
         """Clone should fail with helpful message when remote doesn't exist."""
-        from portolan_cli.sync.core import clone
+        from portolan_cli.sync.transport import clone
 
         target = tmp_path / "new_catalog"
 
         with (
-            patch("portolan_cli.sync.core.init_catalog"),
-            patch("portolan_cli.sync.core.pull") as mock_pull,
+            patch("portolan_cli.sync.transport.init_catalog"),
+            patch("portolan_cli.sync.transport.pull") as mock_pull,
         ):
             mock_pull.return_value = MagicMock(
                 success=False,
@@ -851,13 +856,13 @@ class TestCloneFunction:
     @pytest.mark.unit
     def test_clone_returns_pull_result(self, tmp_path: Path) -> None:
         """Clone should return the pull result."""
-        from portolan_cli.sync.core import clone
+        from portolan_cli.sync.transport import clone
 
         target = tmp_path / "new_catalog"
 
         with (
-            patch("portolan_cli.sync.core.init_catalog"),
-            patch("portolan_cli.sync.core.pull") as mock_pull,
+            patch("portolan_cli.sync.transport.init_catalog"),
+            patch("portolan_cli.sync.transport.pull") as mock_pull,
         ):
             mock_pull_result = MagicMock(
                 success=True,
@@ -992,7 +997,7 @@ class TestListRemoteCollectionsNestedCatalogs:
     @pytest.mark.unit
     def test_list_remote_collections_simple_flat_structure(self, tmp_path: Path) -> None:
         """list_remote_collections should work with flat catalog structure."""
-        from portolan_cli.sync.core import list_remote_collections
+        from portolan_cli.sync.transport import list_remote_collections
 
         # Mock catalog with direct child collections (no nesting)
         catalog_data = {
@@ -1004,7 +1009,7 @@ class TestListRemoteCollectionsNestedCatalogs:
             ],
         }
 
-        with patch("portolan_cli.sync.core._fetch_remote_catalog_json") as mock_fetch:
+        with patch("portolan_cli.sync.transport._fetch_remote_catalog_json") as mock_fetch:
             mock_fetch.return_value = catalog_data
 
             collections = list_remote_collections("s3://bucket/catalog")
@@ -1022,7 +1027,7 @@ class TestListRemoteCollectionsNestedCatalogs:
                     └── hittekaart/
                         └── collection.json (actual collection)
         """
-        from portolan_cli.sync.core import list_remote_collections
+        from portolan_cli.sync.transport import list_remote_collections
 
         # Root catalog points to subcatalog (NOT a collection)
         root_catalog = {
@@ -1049,7 +1054,9 @@ class TestListRemoteCollectionsNestedCatalogs:
                 return climate_catalog
             raise ValueError(f"Unexpected URL: {remote_url}")
 
-        with patch("portolan_cli.sync.core._fetch_remote_catalog_json", side_effect=mock_fetch):
+        with patch(
+            "portolan_cli.sync.transport._fetch_remote_catalog_json", side_effect=mock_fetch
+        ):
             collections = list_remote_collections("s3://bucket/catalog")
 
         # Full path includes the subcatalog directory for proper clone/pull
@@ -1065,7 +1072,7 @@ class TestListRemoteCollectionsNestedCatalogs:
                 └── netherlands/catalog.json
                     └── amsterdam/collection.json
         """
-        from portolan_cli.sync.core import list_remote_collections
+        from portolan_cli.sync.transport import list_remote_collections
 
         root_catalog = {
             "type": "Catalog",
@@ -1095,7 +1102,9 @@ class TestListRemoteCollectionsNestedCatalogs:
                 return europe_catalog
             return root_catalog
 
-        with patch("portolan_cli.sync.core._fetch_remote_catalog_json", side_effect=mock_fetch):
+        with patch(
+            "portolan_cli.sync.transport._fetch_remote_catalog_json", side_effect=mock_fetch
+        ):
             collections = list_remote_collections("s3://bucket/catalog")
 
         # Full path includes all subcatalog directories
@@ -1112,7 +1121,7 @@ class TestListRemoteCollectionsNestedCatalogs:
             └── organized/catalog.json (subcatalog)
                 └── nested-data/collection.json
         """
-        from portolan_cli.sync.core import list_remote_collections
+        from portolan_cli.sync.transport import list_remote_collections
 
         root_catalog = {
             "type": "Catalog",
@@ -1134,7 +1143,9 @@ class TestListRemoteCollectionsNestedCatalogs:
                 return organized_catalog
             return root_catalog
 
-        with patch("portolan_cli.sync.core._fetch_remote_catalog_json", side_effect=mock_fetch):
+        with patch(
+            "portolan_cli.sync.transport._fetch_remote_catalog_json", side_effect=mock_fetch
+        ):
             collections = list_remote_collections("s3://bucket/catalog")
 
         # Full paths: direct collection keeps path, nested gets subcatalog prefix
@@ -1146,7 +1157,7 @@ class TestListRemoteCollectionsNestedCatalogs:
 
         Even without circular references, deeply nested structures should be bounded.
         """
-        from portolan_cli.sync.core import list_remote_collections
+        from portolan_cli.sync.transport import list_remote_collections
 
         # Create a deeply nested structure (more than reasonable depth)
         def make_catalog(level: int, max_level: int = 20) -> dict[str, Any]:
@@ -1176,7 +1187,9 @@ class TestListRemoteCollectionsNestedCatalogs:
                     return make_catalog(level)
             return make_catalog(0)
 
-        with patch("portolan_cli.sync.core._fetch_remote_catalog_json", side_effect=mock_fetch):
+        with patch(
+            "portolan_cli.sync.transport._fetch_remote_catalog_json", side_effect=mock_fetch
+        ):
             # Should not raise, should stop at max depth
             _ = list_remote_collections("s3://bucket/catalog")
 
@@ -1194,7 +1207,7 @@ class TestListRemoteCollectionsNestedCatalogs:
                     └── s3://bucket/catalog/a/catalog.json (circular - absolute URL)
                     └── ./real-data/collection.json
         """
-        from portolan_cli.sync.core import list_remote_collections
+        from portolan_cli.sync.transport import list_remote_collections
 
         root_catalog = {
             "type": "Catalog",
@@ -1234,7 +1247,9 @@ class TestListRemoteCollectionsNestedCatalogs:
                 return a_catalog
             return root_catalog
 
-        with patch("portolan_cli.sync.core._fetch_remote_catalog_json", side_effect=mock_fetch):
+        with patch(
+            "portolan_cli.sync.transport._fetch_remote_catalog_json", side_effect=mock_fetch
+        ):
             collections = list_remote_collections("s3://bucket/catalog")
 
         # Should find the collection without infinite loop (full path includes subcatalogs)
@@ -1245,7 +1260,7 @@ class TestListRemoteCollectionsNestedCatalogs:
     @pytest.mark.unit
     def test_list_remote_collections_absolute_urls(self) -> None:
         """list_remote_collections should handle absolute URLs in child links."""
-        from portolan_cli.sync.core import list_remote_collections
+        from portolan_cli.sync.transport import list_remote_collections
 
         root_catalog = {
             "type": "Catalog",
@@ -1274,7 +1289,9 @@ class TestListRemoteCollectionsNestedCatalogs:
                 return region_catalog
             return root_catalog
 
-        with patch("portolan_cli.sync.core._fetch_remote_catalog_json", side_effect=mock_fetch):
+        with patch(
+            "portolan_cli.sync.transport._fetch_remote_catalog_json", side_effect=mock_fetch
+        ):
             collections = list_remote_collections("s3://bucket/catalog")
 
         # Full path includes subcatalog directory
@@ -1287,7 +1304,7 @@ class TestListRemoteCollectionsNestedCatalogs:
         When cloning nested catalogs, we need the full path to pull correctly:
         e.g., 'climate/hittekaart' not just 'hittekaart'
         """
-        from portolan_cli.sync.core import list_remote_collections
+        from portolan_cli.sync.transport import list_remote_collections
 
         root_catalog = {
             "type": "Catalog",
@@ -1306,7 +1323,9 @@ class TestListRemoteCollectionsNestedCatalogs:
                 return climate_catalog
             return root_catalog
 
-        with patch("portolan_cli.sync.core._fetch_remote_catalog_json", side_effect=mock_fetch):
+        with patch(
+            "portolan_cli.sync.transport._fetch_remote_catalog_json", side_effect=mock_fetch
+        ):
             collections = list_remote_collections("s3://bucket/catalog")
 
         # Full path is required for clone/pull to work correctly
@@ -1319,7 +1338,7 @@ class TestCloneNestedCatalogs:
     @pytest.mark.unit
     def test_clone_discovers_nested_collections(self, tmp_path: Path) -> None:
         """clone() without collection arg should discover nested collections."""
-        from portolan_cli.sync.core import clone
+        from portolan_cli.sync.transport import clone
 
         root_catalog = {
             "type": "Catalog",
@@ -1341,9 +1360,9 @@ class TestCloneNestedCatalogs:
         target = tmp_path / "cloned"
 
         with (
-            patch("portolan_cli.sync.core._fetch_remote_catalog_json", side_effect=mock_fetch),
-            patch("portolan_cli.sync.core.init_catalog"),
-            patch("portolan_cli.sync.core.pull") as mock_pull,
+            patch("portolan_cli.sync.transport._fetch_remote_catalog_json", side_effect=mock_fetch),
+            patch("portolan_cli.sync.transport.init_catalog"),
+            patch("portolan_cli.sync.transport.pull") as mock_pull,
         ):
             mock_pull.return_value = MagicMock(
                 success=True,

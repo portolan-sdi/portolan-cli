@@ -20,6 +20,8 @@ if TYPE_CHECKING:
     from pathlib import Path
     from typing import Any
 
+    from portolan_cli.sync.report import Report
+
 
 # =============================================================================
 # Fixtures
@@ -397,7 +399,7 @@ class TestPushExcludeConfig:
     @pytest.mark.unit
     def test_default_exclude_patterns(self) -> None:
         """Default exclusion patterns should include common non-syncable files."""
-        from portolan_cli.config import DEFAULT_SETTINGS
+        from portolan_core.config import DEFAULT_SETTINGS
 
         defaults = DEFAULT_SETTINGS.get("push.exclude", [])
 
@@ -411,7 +413,7 @@ class TestPushExcludeConfig:
     @pytest.mark.unit
     def test_exclude_patterns_from_config(self, tmp_path: Path) -> None:
         """Exclusion patterns should be loadable from config.yaml."""
-        from portolan_cli.config import get_setting
+        from portolan_core.config import get_setting
 
         # Create config with custom exclusions
         portolan_dir = tmp_path / ".portolan"
@@ -426,6 +428,7 @@ push:
         )
 
         patterns = get_setting("push.exclude", catalog_path=tmp_path)
+        assert patterns is not None
         assert "*.backup" in patterns
         assert "temp/" in patterns
 
@@ -467,7 +470,9 @@ class TestPushMetadataSync:
         assert errors == []
 
     @pytest.mark.unit
-    def test_push_dry_run_shows_metadata_files(self, catalog_with_metadata: Path, capsys) -> None:
+    def test_push_dry_run_shows_metadata_files(
+        self, print_report: Report, catalog_with_metadata: Path, capsys
+    ) -> None:
         """Dry run should list metadata files that would be synced."""
         from portolan_cli.sync.push import push
 
@@ -476,6 +481,7 @@ class TestPushMetadataSync:
             collection="collection1",
             destination="s3://test-bucket/catalog",
             dry_run=True,
+            report=print_report,
         )
 
         captured = capsys.readouterr()
@@ -522,13 +528,14 @@ class TestPushAllMetadataSync:
 
     @pytest.mark.unit
     def test_push_all_root_files_dry_run_shows_metadata(
-        self, catalog_with_metadata: Path, capsys
+        self, print_report: Report, catalog_with_metadata: Path, capsys
     ) -> None:
         """_push_all_upload_root_files dry run should show metadata files."""
         from portolan_cli.sync.push import _push_all_upload_root_files
 
         stats: dict[str, Any] = {
             "failed": 0,
+            "landed": 0,
             "successful": 1,  # At least one collection succeeded
             "total_files": 0,
             "total_versions": 0,
@@ -543,6 +550,7 @@ class TestPushAllMetadataSync:
                 region=None,
                 dry_run=True,
                 stats=stats,
+                report=print_report,
             )
         )
 
@@ -583,6 +591,7 @@ class TestPushCatalogLogo:
 
         stats: dict[str, Any] = {
             "failed": 0,
+            "landed": 0,
             "successful": 1,
             "total_files": 0,
             "total_versions": 0,
@@ -812,7 +821,6 @@ class TestPushNoVersionChangeMetadataSync:
                     catalog_root=catalog_with_metadata,
                     collection="collection1",
                     destination="s3://test-bucket/catalog",
-                    json_mode=True,
                 )
             )
 
@@ -873,7 +881,6 @@ class TestPushNoVersionChangeMetadataSync:
                     destination="s3://test-bucket/catalog",
                     # include_catalog=False so root files stay out of this check.
                     include_catalog=False,
-                    json_mode=True,
                 )
             )
 
@@ -909,14 +916,15 @@ class TestPushNoVersionChangeMetadataSync:
                 new=AsyncMock(return_value=(local_versions, "etag-1")),
             ),
             patch("portolan_cli.sync.push.obs.put_async", side_effect=failing_put_async),
-            patch("portolan_cli.sync.push.warn", side_effect=warnings.append),
         ):
             result = asyncio.run(
                 push_async(
                     catalog_root=catalog_with_metadata,
                     collection="collection1",
                     destination="s3://test-bucket/catalog",
-                    json_mode=True,
+                    report=lambda level, message: (
+                        warnings.append(message) if level == "warn" else None
+                    ),
                 )
             )
 

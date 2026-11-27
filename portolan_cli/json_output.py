@@ -32,7 +32,7 @@ import json
 from dataclasses import dataclass, field
 from typing import Any
 
-from portolan_cli import trace
+from portolan_core import trace
 
 
 @dataclass

@@ -26,7 +26,7 @@ import yaml
 from click.testing import CliRunner
 
 from portolan_cli.cli import cli
-from portolan_cli.constants import PORTOLAN_SCHEMA_URI
+from portolan_core.constants import PORTOLAN_SCHEMA_URI
 
 pytestmark = pytest.mark.integration
 
@@ -190,7 +190,8 @@ def _check_json(root: Path, *args: str) -> dict[str, Any]:
         cli, ["check", str(root), "--metadata", "--json", *args], catch_exceptions=False
     )
     payload: dict[str, Any] = json.loads(result.output)
-    return payload["data"]
+    data: dict[str, Any] = payload["data"]
+    return data
 
 
 def _snapshot(root: Path) -> dict[str, bytes]:

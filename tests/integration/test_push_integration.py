@@ -26,6 +26,7 @@ if TYPE_CHECKING:
     from click.testing import Result
 
     from portolan_cli.sync.push import PushResult
+    from portolan_cli.sync.report import Report
 
 
 @pytest.fixture
@@ -253,7 +254,7 @@ class TestLocalVersionsReading:
         """Should raise FileNotFoundError for nonexistent collection."""
         from portolan_cli.sync.push import _read_local_versions
 
-        with pytest.raises(FileNotFoundError, match="versions.json not found"):
+        with pytest.raises(FileNotFoundError, match=r"versions.json not found"):
             _read_local_versions(
                 catalog_root=catalog_with_versions,
                 collection="nonexistent",
@@ -878,7 +879,7 @@ class TestErrorHandling:
         """Push should fail with clear error when versions.json doesn't exist."""
         from portolan_cli.sync.push import push
 
-        with pytest.raises(FileNotFoundError, match="versions.json"):
+        with pytest.raises(FileNotFoundError, match=r"versions.json"):
             push(
                 catalog_root=catalog_missing_versions_file,
                 collection="demographics",
@@ -1723,8 +1724,8 @@ class TestPushAgainstMoto:
         self, tmp_path: Path, bucket: tuple[str, Any]
     ) -> None:
         """Issue #1042: the clone holds collection.json, README.md, and AGENTS.md."""
-        from portolan_cli.sync.core import clone
         from portolan_cli.sync.push import push_all_collections
+        from portolan_cli.sync.transport import clone
 
         name, client = bucket
         root = _catalog(tmp_path, {"roads": {"roads.parquet": b"P"}})
@@ -1801,7 +1802,7 @@ class TestPushAgainstMoto:
 
         from portolan_cli.cli import cli
 
-        name, client = bucket
+        name, _client = bucket
         root, cloned = tmp_path / "R", tmp_path / "cloned"
 
         def run(*args: str) -> str:
@@ -1873,12 +1874,13 @@ class TestPushAgainstMoto:
             data = json.loads(result.output)["data"]
             return sorted((f["rule_id"], f["path"]) for f in data["findings"])
 
-        source = [f for f in findings(root) if not f[1].startswith("rivers/")]
-        assert findings(cloned) == source
+        expected = [f for f in findings(root) if not f[1].startswith("rivers/")]
+        assert findings(cloned) == expected
 
     @pytest.mark.integration
     def test_credential_without_list_warns_once_and_deletes_nothing(
         self,
+        print_report: Report,
         tmp_path: Path,
         bucket: tuple[str, Any],
         monkeypatch: pytest.MonkeyPatch,
@@ -1892,7 +1894,7 @@ class TestPushAgainstMoto:
 
         name, client = bucket
         root = _catalog(tmp_path, {"a": {"a.parquet": b"a"}, "b": {"b.parquet": b"b"}})
-        assert push_all_collections(root, f"s3://{name}/cat").success
+        assert push_all_collections(root, f"s3://{name}/cat", report=print_report).success
         keys_after_first_push = _keys(client, name)
         for coll in ("a", "b"):
             _write_collection(root, coll, "1.0.1", {f"{coll}.parquet": b"x", "new.parquet": b"n"})
@@ -1915,7 +1917,7 @@ class TestPushAgainstMoto:
         monkeypatch.setattr(obstore, "head_async", head_without_list)
         _fail_put(monkeypatch, fail_manifest)
         capsys.readouterr()
-        result = push_all_collections(root, f"s3://{name}/cat")
+        result = push_all_collections(root, f"s3://{name}/cat", report=print_report)
 
         assert result.failed_collections == 2
         notice = "Cannot read which remote keys exist before the upload"

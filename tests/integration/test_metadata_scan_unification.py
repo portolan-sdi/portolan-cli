@@ -30,7 +30,7 @@ from click.testing import CliRunner
 from portolan_cli.cli import cli
 from portolan_cli.metadata.models import MetadataStatus
 from portolan_cli.metadata.scan import scan_catalog_metadata
-from portolan_cli.sync.checksums import file_fields
+from portolan_core.checksums import file_fields
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -1078,7 +1078,8 @@ class TestCheckResolvesCatalogRoot:
         # The JSON envelope is on stdout. GDAL logs a thumbnail warning to stderr.
         payload = json.loads(result.stdout)
         metadata_fix = payload.get("data", {}).get("fix", {}).get("metadata_fix")
-        assert metadata_fix is not None and metadata_fix["total_count"] >= 1, (
+        assert metadata_fix is not None
+        assert metadata_fix["total_count"] >= 1, (
             f"running --fix from a subdir must reach the catalog root and "
             f"act on its items. got: {payload}"
         )

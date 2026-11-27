@@ -36,24 +36,27 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path, PurePath
 from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
 
-from portolan_cli.errors import PortolanError
 from portolan_cli.extract.common.urls import redact_credentials
-from portolan_cli.trace import count, span, submit
+from portolan_core.errors import PortolanError
+from portolan_core.trace import count, span, submit
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     import click
 
-    from portolan_cli.extract.common.progress import ExtractionProgress
+    from portolan_cli.extract.common.progress import (
+        LayerProgressCallback,
+        MessageCallback,
+    )
     from portolan_cli.extract.common.report import (
         ExtractionReport,
         FolderCoverage,
         LayerResult,
         MetadataExtracted,
     )
-    from portolan_cli.licensing import ResolvedLicense
     from portolan_cli.metadata_extraction import ExtractedMetadata
+    from portolan_core.licensing import ResolvedLicense
 
 logger = logging.getLogger(__name__)
 
@@ -490,7 +493,7 @@ class _Run:
     discovery: Discovery
     output_dir: Path
     options: LayerSourceOptions
-    on_progress: Callable[[ExtractionProgress], None] | None
+    on_progress: LayerProgressCallback | None
     # Data files of the layers that timed out. Their retries stop.
     abandoned: set[str] = field(default_factory=set)
     # Set after the fetch step. A late worker then removes the staging root.
@@ -625,7 +628,7 @@ class _Run:
     def _styles(self, layer: LayerRef, collection_dir: Path) -> None:
         try:
             self.source.styles(self.discovery.source_url, layer, collection_dir)
-        except Exception:  # noqa: BLE001 - a missing style must not fail the layer
+        except Exception:  # a missing style must not fail the layer
             logger.warning(
                 "Style extraction failed for layer '%s'; skipping style.", layer.name, exc_info=True
             )
@@ -731,7 +734,7 @@ def _report_kept(run: _Run, index: int, total: int, layer: LayerRef) -> None:
     run.emit(index, total, layer, "skipped", layer.skip_reason)
 
 
-def _fetch_parallel(
+def _fetch_parallel(  # noqa: PLR0914 - one ordered fetch sequence
     run: _Run, jobs: list[tuple[int, LayerRef]], total: int
 ) -> list[tuple[int, LayerResult]]:
     """Fetch layers on worker threads, with a deadline per started layer.
@@ -775,7 +778,7 @@ def _fetch_parallel(
                 index, layer = futures[future]
                 try:
                     result = run.promote(future.result())
-                except Exception as err:  # noqa: BLE001 - one layer must not stop the run
+                except Exception as err:  # one layer must not stop the run
                     logger.error("Layer %s failed: %s", layer.name, redact_credentials(str(err)))
                     result = _result(layer, "failed", error=str(err), attempts=1)
                 run.emit(
@@ -814,7 +817,7 @@ def _fetch_parallel(
 
 
 def _resolve_license(discovery: Discovery, options: LayerSourceOptions) -> ResolvedLicense | None:
-    from portolan_cli.licensing import resolve_harvest_license
+    from portolan_core.licensing import resolve_harvest_license
 
     if options.raw:
         return None
@@ -826,14 +829,17 @@ def _resolve_license(discovery: Discovery, options: LayerSourceOptions) -> Resol
 
 
 def _post_init(
-    source_name: str, discovery: Discovery, resolved_license: ResolvedLicense | None
+    source_name: str,
+    discovery: Discovery,
+    resolved_license: ResolvedLicense | None,
+    on_message: MessageCallback | None,
 ) -> Callable[[Path, list[Path], bool], None]:
     def post_init(out: Path, files: list[Path], fresh: bool) -> None:
-        from portolan_cli.config import set_setting
         from portolan_cli.extract.common.orchestrator_base import seed_catalog_metadata
         from portolan_cli.formats import is_geoparquet
         from portolan_cli.metadata_extraction import ExtractedMetadata
         from portolan_cli.stac import update_stac_metadata
+        from portolan_core.config import set_setting
 
         # A plain Parquet output, from a table with no geometry, becomes a
         # tabular collection. add_files accepts it only with tabular support.
@@ -850,7 +856,7 @@ def _post_init(
         seed = discovery.catalog_seed
         if seed is None and resolved_license is not None:
             seed = ExtractedMetadata(source_type=source_name, source_url=discovery.source_url)
-        seed_catalog_metadata(out, seed, resolved_license)
+        seed_catalog_metadata(out, seed, resolved_license, on_message=on_message)
 
     return post_init
 
@@ -937,6 +943,7 @@ def build_catalog(
     *,
     resolved_license: ResolvedLicense | None = None,
     catalog_id: str | None = None,
+    on_message: MessageCallback | None = None,
 ) -> None:
     """Build or extend the catalog around the layers that succeeded.
 
@@ -951,6 +958,8 @@ def build_catalog(
         report: The extraction report.
         resolved_license: The license to seed (issue #686).
         catalog_id: Catalog id. None derives it from the directory name.
+        on_message: Called as ``on_message(level, text)`` with each notice for
+            the user. None logs the notice instead.
     """
     from portolan_cli.collection_thumbnail import ensure_collection_thumbnails
     from portolan_cli.extract.common.orchestrator_base import (
@@ -958,8 +967,9 @@ def build_catalog(
         init_extracted_catalog,
         register_collection_styles,
     )
-    from portolan_cli.run_state import RunState
+    from portolan_cli.report import reporting
     from portolan_cli.version_ops import commit_run
+    from portolan_core.run_state import RunState
 
     # One run state holds the add and the thumbnails. The commit at the end
     # writes one version per collection and the catalog index once.
@@ -970,15 +980,16 @@ def build_catalog(
         catalog_id=catalog_id,
         title=discovery.catalog_title,
         description=discovery.catalog_description,
-        post_init=_post_init(layer_source.name, discovery, resolved_license),
+        post_init=_post_init(layer_source.name, discovery, resolved_license, on_message),
         state=state,
+        on_message=on_message,
     )
     if added is None:
         return
     # A step after the add may raise. The files that the add finalized keep
     # their version, so the commit runs in any case.
     try:
-        register_collection_styles(output_dir, report, include_legends=True)
+        register_collection_styles(output_dir, report, include_legends=True, on_message=on_message)
         by_path = {layer_path(layer): layer for layer in discovery.layers}
 
         def link(result: LayerResult) -> SourceLink | None:
@@ -997,11 +1008,25 @@ def build_catalog(
         # frees aborts the process on Windows.
         files, versioned = added
         collection_ids = {path.parent.relative_to(output_dir).as_posix() for path in files}
-        ensure_collection_thumbnails(
-            output_dir, collection_ids, versioned_collections=versioned, state=state
-        )
+        with reporting(_without_detail(on_message)):
+            ensure_collection_thumbnails(
+                output_dir, collection_ids, versioned_collections=versioned, state=state
+            )
     finally:
         commit_run(state)
+
+
+def _without_detail(on_message: MessageCallback | None) -> MessageCallback | None:
+    """Return ``on_message`` without the detail lines, which only ``add --verbose`` prints."""
+    if on_message is None:
+        return None
+    callback = on_message
+
+    def report(level: str, text: str) -> None:
+        if level != "detail":
+            callback(level, text)
+
+    return report
 
 
 def run_layer_extraction(
@@ -1010,7 +1035,8 @@ def run_layer_extraction(
     output_dir: Path,
     options: LayerSourceOptions | None = None,
     *,
-    on_progress: Callable[[ExtractionProgress], None] | None = None,
+    on_progress: LayerProgressCallback | None = None,
+    on_message: MessageCallback | None = None,
 ) -> ExtractionReport:
     """Extract the layers of ``source`` into a Portolan catalog.
 
@@ -1024,6 +1050,9 @@ def run_layer_extraction(
         output_dir: Catalog directory.
         options: Extraction options. None uses the defaults.
         on_progress: Called with progress for each layer.
+        on_message: Called as ``on_message(level, text)`` with each notice of
+            the catalog build. The level is ``info`` or ``warn``. None logs
+            the notices to the ``portolan_cli`` logger instead.
 
     Returns:
         The extraction report.
@@ -1105,6 +1134,7 @@ def run_layer_extraction(
                 report,
                 resolved_license=resolved_license,
                 catalog_id=options.catalog_id,
+                on_message=on_message,
             )
     return report
 
@@ -1120,12 +1150,14 @@ class LayerSourceExtractor:
     def extract(self, source: str, output_dir: Path, **options: Any) -> ExtractionReport:
         """Run ``run_layer_extraction``. ``options`` holds LayerSourceOptions fields."""
         on_progress = options.pop("on_progress", None)
+        on_message = options.pop("on_message", None)
         return run_layer_extraction(
             self.layer_source,
             source,
             output_dir,
             LayerSourceOptions(**options),
             on_progress=on_progress,
+            on_message=on_message,
         )
 
     def cli_command(self) -> click.Command:

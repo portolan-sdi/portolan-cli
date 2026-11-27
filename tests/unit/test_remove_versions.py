@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from portolan_cli.remove import _remove_from_versions, _remove_one_file
-from portolan_cli.versions import (
+from portolan_core.versions import (
     SPEC_VERSION,
     Asset,
     Version,

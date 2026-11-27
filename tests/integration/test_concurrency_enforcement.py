@@ -304,9 +304,9 @@ class TestCLIIntegration:
         with runner.isolated_filesystem():
             # Setup minimal catalog (remote via env var per Issue #356)
             Path(".portolan").mkdir()
-            Path(".portolan/config.yaml").write_text("version: '1.0'\n")
+            Path(".portolan/config.yaml").write_text("version: '1.0'\n", encoding="utf-8")
             Path("col1").mkdir()
-            Path("col1/versions.json").write_text('{"versions": []}')
+            Path("col1/versions.json").write_text('{"versions": []}', encoding="utf-8")
 
             with patch("portolan_cli.sync.push.push_all_collections") as mock_push:
                 from portolan_cli.sync.push import PushAllResult

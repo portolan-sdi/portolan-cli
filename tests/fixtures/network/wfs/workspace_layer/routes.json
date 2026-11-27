@@ -98,11 +98,11 @@
       "service": "WFS",
       "request": "DescribeFeatureType",
       "version": "2.0.0",
-      "typeNames": "topp:states",
-      "typeName": "topp:states"
+      "typeNames": "gs:us_states",
+      "typeName": "gs:us_states"
     },
     "content_type": "application/gml+xml; version=3.2",
-    "body_file": "DescribeFeatureType_topp_states.xml"
+    "body_file": "DescribeFeatureType_gs_us_states.xml"
   },
   {
     "method": "GET",
@@ -111,11 +111,11 @@
       "service": "WFS",
       "version": "2.0.0",
       "request": "GetFeature",
-      "typeNames": "topp:states",
+      "typeNames": "gs:us_states",
       "resultType": "hits"
     },
     "content_type": "text/xml",
-    "body_file": "GetFeature_hits_topp_states.xml"
+    "body_file": "GetFeature_hits_gs_us_states.xml"
   },
   {
     "method": "GET",
@@ -124,14 +124,14 @@
       "service": "WFS",
       "version": "2.0.0",
       "request": "GetFeature",
-      "typeNames": "topp:states",
+      "typeNames": "gs:us_states",
       "outputFormat": "application/json",
       "count": "1",
       "startIndex": "50001",
       "srsName": "urn:ogc:def:crs:EPSG::4326"
     },
     "content_type": "application/json;charset=UTF-8",
-    "body_file": "GetFeature_start50001_topp_states.json"
+    "body_file": "GetFeature_start50001_gs_us_states.json"
   },
   {
     "method": "GET",
@@ -140,12 +140,12 @@
       "service": "WFS",
       "version": "2.0.0",
       "request": "GetFeature",
-      "typeNames": "topp:states",
+      "typeNames": "gs:us_states",
       "outputFormat": "application/json",
       "srsName": "urn:ogc:def:crs:EPSG::4326"
     },
     "content_type": "application/json;charset=UTF-8",
-    "body_file": "GetFeature_topp_states.json"
+    "body_file": "GetFeature_gs_us_states.json"
   },
   {
     "method": "GET",
@@ -154,10 +154,10 @@
       "service": "WMS",
       "version": "1.1.1",
       "request": "GetStyles",
-      "layers": "topp:states"
+      "layers": "gs:us_states"
     },
     "content_type": "application/vnd.ogc.sld+xml",
-    "body_file": "GetStyles_topp_states.xml"
+    "body_file": "GetStyles_gs_us_states.xml"
   },
   {
     "method": "GET",
@@ -166,10 +166,10 @@
       "service": "WMS",
       "version": "1.1.1",
       "request": "GetLegendGraphic",
-      "layer": "topp:states",
+      "layer": "gs:us_states",
       "format": "image/png"
     },
     "content_type": "image/png",
-    "body_file": "GetLegendGraphic_topp_states.png"
+    "body_file": "GetLegendGraphic_gs_us_states.png"
   }
 ]

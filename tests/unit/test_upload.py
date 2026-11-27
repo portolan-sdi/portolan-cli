@@ -31,6 +31,8 @@ from tests.conftest import aws_files_environ, cleared_environ
 if TYPE_CHECKING:
     from collections.abc import Generator
 
+    from obstore.store import S3Credential
+
 
 # =============================================================================
 # Test fixtures
@@ -368,7 +370,7 @@ class TestParseObjectStoreUrl:
                 else f"{scheme}://{bucket}{trailing}"
             )
 
-        bucket_url, prefix = parse_object_store_url(url)
+        _bucket_url, prefix = parse_object_store_url(url)
 
         # The invariant: prefix never ends with slash
         assert not prefix.endswith("/"), f"Prefix {prefix!r} should not end with '/'"
@@ -1264,15 +1266,16 @@ class TestBuildTargetKey:
 
 
 class TestOutputIntegration:
-    """Tests for integration with portolan_cli.output module."""
+    """Tests for the notices that an upload sends."""
 
     @pytest.mark.unit
-    def test_upload_file_uses_output_functions(
+    def test_upload_file_sends_notices(
         self, temp_file: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """Upload should use portolan_cli.output for logging."""
+        """Upload reports each step through the report callback and prints nothing."""
         from portolan_cli.sync.upload import upload_file
 
+        notices: list[tuple[str, str]] = []
         with (
             patch("portolan_cli.sync.upload.obs"),
             patch("portolan_cli.sync.upload.S3Store"),
@@ -1284,13 +1287,14 @@ class TestOutputIntegration:
             result = upload_file(
                 source=temp_file,
                 destination="s3://mybucket/data.parquet",
+                report=lambda level, message: notices.append((level, message)),
             )
 
         assert result.success is True
-        # The output module uses click.echo, so the lines reach stdout
-        out = capsys.readouterr().out
-        assert "Uploading test_data.parquet (0.00 MB) -> data.parquet" in out
-        assert "Upload complete" in out
+        assert capsys.readouterr() == ("", "")
+        assert notices[0] == ("info", "Uploading test_data.parquet (0.00 MB) -> data.parquet")
+        assert notices[1][0] == "success"
+        assert notices[1][1].startswith("Upload complete (")
 
 
 # =============================================================================
@@ -1395,17 +1399,26 @@ class TestProfileEndpointRegion:
         assert kwargs["region"] == "us-west-2"
 
     @pytest.mark.unit
-    def test_profile_endpoint_names_its_source(
-        self, default_profile_endpoint: Path, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_profile_endpoint_names_its_source(self, default_profile_endpoint: Path) -> None:
         """The upload must name the profile that supplies the endpoint."""
         from portolan_cli.sync.upload import _create_s3_store
 
-        with cleared_environ(), patch("portolan_cli.sync.upload.S3Store"):
-            _create_s3_store("s3://mybucket", None, None, None, None)
+        notices: list[tuple[str, str]] = []
+        with (
+            cleared_environ(),
+            patch("portolan_cli.sync.upload.S3Store"),
+        ):
+            _create_s3_store(
+                "s3://mybucket",
+                None,
+                None,
+                None,
+                None,
+                report=lambda level, message: notices.append((level, message)),
+            )
 
-        assert capsys.readouterr().out.splitlines() == [
-            "  Endpoint https://data.source.coop from AWS profile 'default'"
+        assert notices == [
+            ("detail", "Endpoint https://data.source.coop from AWS profile 'default'")
         ]
 
     @pytest.mark.unit
@@ -1552,8 +1565,8 @@ class TestProfileEndpointStore:
     @pytest.mark.unit
     def test_plaintext_profile_endpoint_is_refused(self, mock_profile_endpoint: Path) -> None:
         """An http profile endpoint with credentials should raise."""
-        from portolan_cli.errors import InsecureS3EndpointError
         from portolan_cli.sync.upload import _create_s3_store
+        from portolan_core.errors import InsecureS3EndpointError
 
         with cleared_environ(), pytest.raises(InsecureS3EndpointError):
             _create_s3_store("s3://mybucket", "plaintext", None, None, None)
@@ -1621,8 +1634,8 @@ class TestFailingCredentialProcess:
     def test_credential_process_failure_raises(self, failing_credential_process: Path) -> None:
         """A credential_process that fails must stop with its message."""
         pytest.importorskip("boto3")
-        from portolan_cli.errors import ProfileCredentialsError
         from portolan_cli.sync.upload import _create_s3_store
+        from portolan_core.errors import ProfileCredentialsError
 
         with (
             cleared_environ(AWS_CONFIG_FILE=str(failing_credential_process / "config")),
@@ -1649,10 +1662,10 @@ class TestGuardedCredentialProvider:
     @pytest.mark.unit
     def test_refresh_failure_raises_profile_error(self) -> None:
         """A provider that fails on a later call must report the profile."""
-        from portolan_cli.errors import ProfileCredentialsError
         from portolan_cli.sync.upload import _GuardedCredentialProvider
+        from portolan_core.errors import ProfileCredentialsError
 
-        def failing_provider() -> dict[str, str]:
+        def failing_provider() -> S3Credential:
             raise RuntimeError("credential_process returned nonzero")
 
         guarded = _GuardedCredentialProvider(failing_provider, "work")
@@ -1668,7 +1681,11 @@ class TestGuardedCredentialProvider:
         """A working provider must return its credentials unchanged."""
         from portolan_cli.sync.upload import _GuardedCredentialProvider
 
-        credential = {"access_key_id": "AKIAKEY", "secret_access_key": "secret"}
+        credential: S3Credential = {
+            "access_key_id": "AKIAKEY",
+            "secret_access_key": "secret",
+            "expires_at": None,
+        }
         guarded = _GuardedCredentialProvider(lambda: credential, "work")
 
         assert guarded() == credential
@@ -1698,6 +1715,7 @@ class TestDelegatedCredentialProvider:
             assert provider is not None
             credential = provider()
 
+        assert isinstance(credential, dict)
         assert credential["access_key_id"] == "ASIAPROCESSKEY"
         assert credential["token"] == "process-session-token"
 

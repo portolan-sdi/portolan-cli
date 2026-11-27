@@ -58,7 +58,7 @@ def _initial_versions_data() -> dict[str, Any]:
 
 def _data_version(version: str, *, day: int, sha256: str, size_bytes: int) -> Any:
     """Return a Version from January 2024 with one data.parquet asset."""
-    from portolan_cli.versions import Asset, Version
+    from portolan_core.versions import Asset, Version
 
     return Version(
         version=version,
@@ -109,7 +109,7 @@ def _patched_pull_io(
     checksum: str,
 ) -> Iterator[None]:
     """Patch the remote fetch, the asset download, and the checksum with fixed results."""
-    from portolan_cli.versions import _parse_versions_file
+    from portolan_core.versions import _parse_versions_file
 
     with (
         patch("portolan_cli.sync.pull._fetch_remote_versions_async") as mock_fetch,
@@ -536,7 +536,7 @@ class TestUncommittedChangeDetection:
         portolan_dir.mkdir(parents=True)
 
         # Create versions.json with empty versions list
-        versions_data = {
+        versions_data: dict[str, Any] = {
             "spec_version": "1.0.0",
             "current_version": None,
             "versions": [],
@@ -601,7 +601,7 @@ class TestVersionDiffing:
     def test_diff_versions_newer_remote(self) -> None:
         """Should identify files changed between local and remote versions."""
         from portolan_cli.sync.pull import diff_versions
-        from portolan_cli.versions import VersionsFile
+        from portolan_core.versions import VersionsFile
 
         local_versions = VersionsFile(
             spec_version="1.0.0",
@@ -629,7 +629,7 @@ class TestVersionDiffing:
     def test_diff_versions_up_to_date(self) -> None:
         """Should indicate no changes when versions match."""
         from portolan_cli.sync.pull import diff_versions
-        from portolan_cli.versions import VersionsFile
+        from portolan_core.versions import VersionsFile
 
         versions = VersionsFile(
             spec_version="1.0.0",
@@ -646,7 +646,7 @@ class TestVersionDiffing:
     def test_diff_versions_no_local_versions(self) -> None:
         """Should download all files when local has no versions."""
         from portolan_cli.sync.pull import diff_versions
-        from portolan_cli.versions import Asset, Version, VersionsFile
+        from portolan_core.versions import Asset, Version, VersionsFile
 
         local_versions = VersionsFile(
             spec_version="1.0.0",
@@ -701,7 +701,7 @@ class TestPullOperation:
         data_file.write_bytes(b"modified content - uncommitted")
 
         with patch("portolan_cli.sync.pull._fetch_remote_versions_async") as mock_fetch:
-            from portolan_cli.versions import _parse_versions_file
+            from portolan_core.versions import _parse_versions_file
 
             mock_fetch.return_value = _parse_versions_file(remote_versions_data)
 
@@ -730,7 +730,7 @@ class TestPullOperation:
             patch("portolan_cli.sync.pull._fetch_remote_versions_async") as mock_fetch,
             patch("portolan_cli.sync.pull._download_assets_async") as mock_download,
         ):
-            from portolan_cli.versions import _parse_versions_file
+            from portolan_core.versions import _parse_versions_file
 
             mock_fetch.return_value = _parse_versions_file(remote_versions_data)
             mock_download.return_value = (1, 0)  # 1 downloaded, 0 failed
@@ -786,7 +786,7 @@ class TestPullOperation:
             patch("portolan_cli.sync.pull._fetch_remote_versions_async") as mock_fetch,
             patch("portolan_cli.sync.pull.compute_checksum") as mock_checksum,
         ):
-            from portolan_cli.versions import _parse_versions_file
+            from portolan_core.versions import _parse_versions_file
 
             mock_fetch.return_value = _parse_versions_file(same_versions_data)
             mock_checksum.return_value = "abc123"
@@ -846,7 +846,7 @@ class TestRemoteFetch:
             # Simulate download writing the file
             def write_versions(source: str, destination: Path, **kwargs) -> MagicMock:
                 destination.parent.mkdir(parents=True, exist_ok=True)
-                destination.write_text(json.dumps(remote_data))
+                destination.write_text(json.dumps(remote_data), encoding="utf-8")
                 result = MagicMock()
                 result.success = True
                 return result
@@ -872,7 +872,7 @@ class TestRemoteFetch:
             mock_result.errors = [(Path("versions.json"), FileNotFoundError("Not found"))]
             mock_download.return_value = mock_result
 
-            with pytest.raises(PullError, match="versions.json"):
+            with pytest.raises(PullError, match=r"versions.json"):
                 fetch_remote_versions(
                     remote_url="s3://bucket/catalog",
                     collection="test-collection",
@@ -929,7 +929,7 @@ class TestErrorHandling:
             patch("portolan_cli.sync.pull._fetch_remote_versions_async") as mock_fetch,
             patch("portolan_cli.sync.pull._download_assets_async") as mock_download,
         ):
-            from portolan_cli.versions import VersionsFile
+            from portolan_core.versions import VersionsFile
 
             mock_fetch.return_value = VersionsFile(
                 spec_version="1.0.0",
@@ -965,7 +965,7 @@ class TestPathTraversalProtection:
         local_root.mkdir()
 
         # Malicious href with path traversal
-        remote_assets = {
+        remote_assets: dict[str, dict[str, str | int]] = {
             "evil.parquet": {
                 "sha256": "abc123",
                 "size_bytes": 1000,
@@ -990,7 +990,7 @@ class TestPathTraversalProtection:
         local_root.mkdir()
 
         # Absolute path href
-        remote_assets = {
+        remote_assets: dict[str, dict[str, str | int]] = {
             "evil.parquet": {
                 "sha256": "abc123",
                 "size_bytes": 1000,
@@ -998,7 +998,7 @@ class TestPathTraversalProtection:
             }
         }
 
-        with pytest.raises(ValueError, match="[Aa]bsolute|escapes"):
+        with pytest.raises(ValueError, match=r"[Aa]bsolute|escapes"):
             _download_assets(
                 remote_url="s3://bucket/catalog",
                 local_root=local_root,
@@ -1014,7 +1014,7 @@ class TestPathTraversalProtection:
         local_root = tmp_path / "catalog"
         local_root.mkdir()
 
-        remote_assets = {
+        remote_assets: dict[str, dict[str, str | int]] = {
             "data.parquet": {
                 "sha256": "abc123",
                 "size_bytes": 1000,
@@ -1028,7 +1028,7 @@ class TestPathTraversalProtection:
             mock_download.return_value = mock_result
 
             # Should not raise
-            downloaded, failed = _download_assets(
+            _downloaded, failed = _download_assets(
                 remote_url="s3://bucket/catalog",
                 local_root=local_root,
                 files_to_download=["data.parquet"],
@@ -1050,7 +1050,7 @@ class TestLocalAheadDetection:
     def test_diff_versions_detects_local_ahead(self) -> None:
         """Should detect when local has versions not in remote."""
         from portolan_cli.sync.pull import diff_versions
-        from portolan_cli.versions import VersionsFile
+        from portolan_core.versions import VersionsFile
 
         # Local has v1.0.0 and v1.1.0
         local_versions = VersionsFile(
@@ -1081,7 +1081,7 @@ class TestLocalAheadDetection:
     def test_diff_versions_detects_diverged(self) -> None:
         """Should detect when local and remote have diverged."""
         from portolan_cli.sync.pull import diff_versions
-        from portolan_cli.versions import VersionsFile
+        from portolan_core.versions import VersionsFile
 
         # Local has v1.0.0 and v1.1.0-local
         local_versions = VersionsFile(
@@ -1118,14 +1118,14 @@ class TestProgressReporting:
     """Tests for progress reporting during downloads."""
 
     @pytest.mark.unit
-    def test_download_assets_shows_progress(self, tmp_path: Path, capsys) -> None:
+    def test_download_assets_shows_progress(self, tmp_path: Path) -> None:
         """_download_assets should show (1/N) style progress."""
         from portolan_cli.sync.pull import _download_assets
 
         local_root = tmp_path / "catalog"
         local_root.mkdir()
 
-        remote_assets = {
+        remote_assets: dict[str, dict[str, str | int]] = {
             "file1.parquet": {
                 "sha256": "abc123",
                 "size_bytes": 1000,
@@ -1143,26 +1143,29 @@ class TestProgressReporting:
             mock_result.success = True
             mock_download.return_value = mock_result
 
+            lines: list[tuple[str, str]] = []
             _download_assets(
                 remote_url="s3://bucket/catalog",
                 local_root=local_root,
                 files_to_download=["file1.parquet", "file2.parquet"],
                 remote_assets=remote_assets,
+                report=lambda level, message: lines.append((level, message)),
             )
 
-        captured = capsys.readouterr()
-        assert "(1/2)" in captured.out
-        assert "(2/2)" in captured.out
+        assert lines == [
+            ("info", "Downloading (1/2): file1.parquet"),
+            ("info", "Downloading (2/2): file2.parquet"),
+        ]
 
     @pytest.mark.unit
-    def test_download_assets_dry_run_shows_progress(self, tmp_path: Path, capsys) -> None:
+    def test_download_assets_dry_run_shows_progress(self, tmp_path: Path) -> None:
         """Dry-run should also show progress indicators."""
         from portolan_cli.sync.pull import _download_assets
 
         local_root = tmp_path / "catalog"
         local_root.mkdir()
 
-        remote_assets = {
+        remote_assets: dict[str, dict[str, str | int]] = {
             "data.parquet": {
                 "sha256": "abc123",
                 "size_bytes": 1000,
@@ -1170,17 +1173,17 @@ class TestProgressReporting:
             },
         }
 
+        lines: list[tuple[str, str]] = []
         _download_assets(
             remote_url="s3://bucket/catalog",
             local_root=local_root,
             files_to_download=["data.parquet"],
             remote_assets=remote_assets,
             dry_run=True,
+            report=lambda level, message: lines.append((level, message)),
         )
 
-        captured = capsys.readouterr()
-        assert "(1/1)" in captured.out
-        assert "DRY RUN" in captured.out
+        assert lines == [("info", "[DRY RUN] Would download (1/1): data.parquet")]
 
 
 # =============================================================================
@@ -1370,7 +1373,7 @@ class TestDownloadAssetsErrorHandling:
         local_root = tmp_path / "catalog"
         local_root.mkdir()
 
-        remote_assets = {
+        remote_assets: dict[str, dict[str, str | int]] = {
             "existing.parquet": {
                 "sha256": "abc123",
                 "size_bytes": 1000,
@@ -1404,7 +1407,7 @@ class TestDownloadAssetsErrorHandling:
         local_root = tmp_path / "catalog"
         local_root.mkdir()
 
-        remote_assets = {
+        remote_assets: dict[str, dict[str, str | int]] = {
             "data.parquet": {
                 "sha256": "abc123",
                 "size_bytes": 1000,
@@ -1441,7 +1444,7 @@ class TestValidateSafePathEdgeCases:
         """_validate_safe_path should reject Windows absolute paths."""
         from portolan_cli.sync.pull import _validate_safe_path
 
-        with pytest.raises(ValueError, match="[Aa]bsolute|escapes"):
+        with pytest.raises(ValueError, match=r"[Aa]bsolute|escapes"):
             _validate_safe_path(tmp_path, "C:\\Windows\\System32")
 
     @pytest.mark.unit
@@ -1450,7 +1453,7 @@ class TestValidateSafePathEdgeCases:
         from portolan_cli.sync.pull import _validate_safe_path
 
         # Try to escape using multiple traversal sequences
-        with pytest.raises(ValueError, match="path traversal|escapes"):
+        with pytest.raises(ValueError, match=r"path traversal|escapes"):
             _validate_safe_path(tmp_path, "subdir/../../etc/passwd")
 
 
@@ -1473,7 +1476,7 @@ class TestFetchRemoteVersionsErrors:
             mock_result.errors = [("file", Exception("Network error"))]
             mock_download.return_value = mock_result
 
-            with pytest.raises(PullError, match="versions.json"):
+            with pytest.raises(PullError, match=r"versions.json"):
                 fetch_remote_versions(
                     remote_url="s3://bucket/catalog",
                     collection="test",
@@ -1514,7 +1517,7 @@ class TestMalformedDataHandling:
         self, remote_versions_data_malformed: dict[str, Any]
     ) -> None:
         """_parse_versions_file should raise ValueError when current_version missing."""
-        from portolan_cli.versions import _parse_versions_file
+        from portolan_core.versions import _parse_versions_file
 
         with pytest.raises(ValueError, match="missing field"):
             _parse_versions_file(remote_versions_data_malformed)
@@ -1524,7 +1527,7 @@ class TestMalformedDataHandling:
         self, remote_versions_data_wrong_asset_types: dict[str, Any]
     ) -> None:
         """_parse_versions_file should raise when assets have wrong types."""
-        from portolan_cli.versions import _parse_versions_file
+        from portolan_core.versions import _parse_versions_file
 
         with pytest.raises((ValueError, TypeError, AttributeError)):
             _parse_versions_file(remote_versions_data_wrong_asset_types)
@@ -1535,7 +1538,7 @@ class TestMalformedDataHandling:
     ) -> None:
         """Pull should handle catalog with malformed local versions.json."""
         from portolan_cli.sync.pull import pull
-        from portolan_cli.versions import VersionsFile
+        from portolan_core.versions import VersionsFile
 
         with patch("portolan_cli.sync.pull._fetch_remote_versions_async") as mock_fetch:
             # Remote is valid
@@ -1548,6 +1551,7 @@ class TestMalformedDataHandling:
             # Local versions.json is malformed (missing "versions" key)
             # This should either raise an error or handle gracefully
             # depending on whether it parses local versions
+            error: Exception | None = None
             try:
                 result = pull(
                     remote_url="s3://bucket/catalog",
@@ -1557,8 +1561,10 @@ class TestMalformedDataHandling:
                 # If it succeeds (e.g., treats empty local as fresh pull), that's OK
                 assert result is not None
             except (ValueError, KeyError) as e:
-                # If it fails due to malformed local, that's also valid behavior
-                assert "versions" in str(e).lower() or "missing" in str(e).lower()
+                error = e
+            # If it fails due to malformed local, that's also valid behavior
+            if error is not None:
+                assert "versions" in str(error).lower() or "missing" in str(error).lower()
 
     @pytest.mark.unit
     def test_pull_with_wrong_current_version_type(
@@ -1566,7 +1572,7 @@ class TestMalformedDataHandling:
     ) -> None:
         """Pull should handle catalog with wrong type for current_version."""
         from portolan_cli.sync.pull import pull
-        from portolan_cli.versions import VersionsFile
+        from portolan_core.versions import VersionsFile
 
         with patch("portolan_cli.sync.pull._fetch_remote_versions_async") as mock_fetch:
             mock_fetch.return_value = VersionsFile(
@@ -1577,6 +1583,7 @@ class TestMalformedDataHandling:
 
             # Local has current_version as int instead of string
             # The code should either handle this gracefully or raise a clear error
+            error: Exception | None = None
             try:
                 result = pull(
                     remote_url="s3://bucket/catalog",
@@ -1586,8 +1593,10 @@ class TestMalformedDataHandling:
                 # If it succeeds, result should be valid
                 assert result is not None
             except (ValueError, TypeError) as e:
-                # If it fails, error should be informative
-                assert str(e)  # Error message should not be empty
+                error = e
+            # If it fails, error should be informative
+            if error is not None:
+                assert str(error)  # Error message should not be empty
 
     @pytest.mark.unit
     def test_fetch_remote_malformed_response(self, tmp_path: Path) -> None:
@@ -1600,7 +1609,7 @@ class TestMalformedDataHandling:
 
             def write_malformed(source: str, destination: Path, **kwargs) -> MagicMock:
                 destination.parent.mkdir(parents=True, exist_ok=True)
-                destination.write_text(malformed_json)
+                destination.write_text(malformed_json, encoding="utf-8")
                 result = MagicMock()
                 result.success = True
                 return result
@@ -1696,7 +1705,7 @@ class TestDryRunNetworkIsolation:
     ) -> None:
         """Non-dry-run pull must still call fetch_remote_versions (sanity check)."""
         from portolan_cli.sync.pull import pull
-        from portolan_cli.versions import _parse_versions_file
+        from portolan_core.versions import _parse_versions_file
 
         with (
             patch("portolan_cli.sync.pull._fetch_remote_versions_async") as mock_fetch,

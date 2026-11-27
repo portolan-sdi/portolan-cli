@@ -74,17 +74,18 @@ class TestValidateSafePath:
     ) -> None:
         """Test handling of OSError from path.resolve() for deeply nested paths."""
 
-        class PathWithOSError(type(tmp_path)):
-            """Path subclass that raises OSError on resolve()."""
+        original_resolve = type(tmp_path).resolve
 
-            def resolve(self, strict: bool = False) -> Path:
-                """Simulate OSError during path resolution."""
-                if "trigger_error" in str(self):
-                    raise OSError("Path too deep or filesystem error")
-                return super().resolve(strict=strict)
+        def resolve(self: Path, strict: bool = False) -> Path:
+            """Simulate OSError during path resolution."""
+            if "trigger_error" in str(self):
+                raise OSError("Path too deep or filesystem error")
+            return original_resolve(self, strict=strict)
+
+        monkeypatch.setattr(type(tmp_path), "resolve", resolve)
 
         # Create a path that will trigger the error
-        error_path = PathWithOSError(tmp_path / "trigger_error" / "file.txt")
+        error_path = tmp_path / "trigger_error" / "file.txt"
 
         with pytest.raises(InputValidationError, match="Cannot resolve path"):
             validate_safe_path(error_path, tmp_path)

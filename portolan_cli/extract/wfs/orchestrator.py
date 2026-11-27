@@ -45,13 +45,15 @@ from portolan_cli.extract.common.source import (
 from portolan_cli.extract.common.styles import extract_wms_legend, extract_wms_style
 from portolan_cli.extract.common.urls import merge_query, redact_credentials
 from portolan_cli.extract.wfs.discovery import LayerInfo, WFSDiscoveryResult, discover_layers
-from portolan_cli.licensing import license_url_from_text
+from portolan_core.licensing import license_url_from_text
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
     from pathlib import Path
 
-    from portolan_cli.extract.common.progress import ExtractionProgress
+    from portolan_cli.extract.common.progress import (
+        LayerProgressCallback,
+        MessageCallback,
+    )
     from portolan_cli.extract.common.report import ExtractionReport
     from portolan_cli.extract.csw.models import ISOMetadata
     from portolan_cli.extract.wfs.metadata import WFSMetadata
@@ -215,7 +217,7 @@ class WFSLayerSource:
         geoparquet-io raises a WFS error for a layer with no features. That
         error becomes ``EmptyLayerError`` (issue #450).
         """
-        from geoparquet_io.core.wfs import convert_wfs_to_geoparquet  # type: ignore[import-untyped]
+        from geoparquet_io.core.wfs import convert_wfs_to_geoparquet
 
         wfs_layer: WFSLayer = layer.data
         options = self.options
@@ -324,7 +326,8 @@ def extract_wfs_catalog(
     layer_filter: list[str] | None = None,
     layer_exclude: list[str] | None = None,
     options: ExtractionOptions | None = None,
-    on_progress: Callable[[ExtractionProgress], None] | None = None,
+    on_progress: LayerProgressCallback | None = None,
+    on_message: MessageCallback | None = None,
 ) -> ExtractionReport:
     """Extract layers from a WFS service to a Portolan catalog.
 
@@ -335,6 +338,7 @@ def extract_wfs_catalog(
         layer_exclude: Glob patterns to exclude layers.
         options: Extraction options (defaults to ExtractionOptions()).
         on_progress: Callback for progress updates.
+        on_message: Called as ``on_message(level, text)`` with each catalog notice.
 
     Returns:
         ExtractionReport with results for all layers.
@@ -350,6 +354,7 @@ def extract_wfs_catalog(
         output_dir,
         driver_options(options, layer_filter, layer_exclude),
         on_progress=on_progress,
+        on_message=on_message,
     )
 
 

@@ -33,10 +33,10 @@ from typing import TYPE_CHECKING, Any
 
 import yaml
 
-from portolan_cli.constants import TODO_MARKER
 from portolan_cli.extract.common.urls import sanitize_published_string
-from portolan_cli.licensing import OTHER_LICENSE, ResolvedLicense
 from portolan_cli.providers import PRODUCER_ROLE
+from portolan_core.constants import TODO_MARKER
+from portolan_core.licensing import OTHER_LICENSE, ResolvedLicense
 
 if TYPE_CHECKING:
     from portolan_cli.metadata_extraction import ExtractedMetadata
@@ -189,8 +189,9 @@ def _build_metadata_dict(
         metadata["attribution"] = extracted.attribution
 
     if extracted.keywords:
-        # Ensure all keywords are strings (defensive - ExtractedMetadata types this as list[str])
-        metadata["keywords"] = [str(k) for k in extracted.keywords if k is not None]
+        # An extractor can put None in the list at runtime. Drop it and make each keyword a string.
+        keywords: list[object] = list(extracted.keywords)
+        metadata["keywords"] = [str(k) for k in keywords if k is not None]
 
     if extracted.processing_notes:
         metadata["processing_notes"] = extracted.processing_notes

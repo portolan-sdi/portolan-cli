@@ -13,7 +13,7 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-import geopandas as gpd
+import geopandas
 import pandas as pd
 import pytest
 import shapely
@@ -68,7 +68,7 @@ def _added_raster(root: Path, collection: str, *flags: str) -> Path:
 
 
 def _points(path: Path, coords: list[tuple[float, float]], **columns: list[Any]) -> None:
-    frame = gpd.GeoDataFrame(
+    frame = geopandas.GeoDataFrame(
         columns, geometry=[shapely.Point(x, y) for x, y in coords], crs="EPSG:4326"
     )
     frame.to_parquet(path)
@@ -180,7 +180,9 @@ class TestAntimeridianExtent:
         root = _catalog(tmp_path / "cat")
         collection_dir = root / "boundaries"
         collection_dir.mkdir()
-        gpd.read_parquet(FIELDMAPS).to_crs(4269).to_parquet(collection_dir / "boundaries.parquet")
+        geopandas.read_parquet(FIELDMAPS).to_crs(4269).to_parquet(
+            collection_dir / "boundaries.parquet"
+        )
 
         _run("add", "--portolan-dir", str(root), str(collection_dir), "--no-thumbnails")
 

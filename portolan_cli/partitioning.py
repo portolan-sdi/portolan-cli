@@ -30,12 +30,13 @@ from typing import TYPE_CHECKING, Any
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from portolan_cli.trace import count
+from portolan_core.trace import count
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
     from pathlib import Path
 
-    from portolan_cli.config import ConfigSource
+    from portolan_core.config import ConfigSource
 
 
 @dataclass
@@ -143,7 +144,7 @@ def find_large_partition_candidates(
     Returns:
         A :class:`PartitionPromptDecision` describing the gating and candidates.
     """
-    from portolan_cli.config import get_setting
+    from portolan_core.config import get_setting
 
     def _setting(key: str) -> Any:
         if state is not None:
@@ -175,6 +176,17 @@ def find_large_partition_candidates(
     )
 
 
+def _large_parquet(path: Path, threshold_gb: float) -> tuple[Path, float] | None:
+    """Return the path and its size in GB when it exceeds ``threshold_gb``, else None."""
+    try:
+        if should_partition(path, threshold_gb=threshold_gb, enabled=True):
+            return (path, path.stat().st_size / (1024 * 1024 * 1024))
+    except OSError:
+        # Skip files with permission errors or broken symlinks
+        return None
+    return None
+
+
 def _scan_partition_candidates(
     resolved_paths: list[Path], threshold_gb: float
 ) -> list[tuple[Path, float]]:
@@ -182,19 +194,15 @@ def _scan_partition_candidates(
     large_files: list[tuple[Path, float]] = []
     for p in resolved_paths:
         try:
+            candidates: Iterable[Path] = []
             if p.is_file() and p.suffix.lower() == ".parquet":
-                if should_partition(p, threshold_gb=threshold_gb, enabled=True):
-                    size_gb = p.stat().st_size / (1024 * 1024 * 1024)
-                    large_files.append((p, size_gb))
+                candidates = [p]
             elif p.is_dir():
-                for pq_file in p.rglob("*.parquet"):
-                    try:
-                        if should_partition(pq_file, threshold_gb=threshold_gb, enabled=True):
-                            size_gb = pq_file.stat().st_size / (1024 * 1024 * 1024)
-                            large_files.append((pq_file, size_gb))
-                    except OSError:
-                        # Skip files with permission errors or broken symlinks
-                        continue
+                candidates = p.rglob("*.parquet")
+            for candidate in candidates:
+                found = _large_parquet(candidate, threshold_gb)
+                if found is not None:
+                    large_files.append(found)
         except OSError:
             # Skip paths with permission errors or broken symlinks
             continue
@@ -229,7 +237,7 @@ def partition_geoparquet(
     """
     import shutil
 
-    from geoparquet_io.core.partition.by_kdtree import (  # type: ignore[import-untyped]
+    from geoparquet_io.core.partition.by_kdtree import (
         partition_by_kdtree,
     )
 
@@ -737,8 +745,8 @@ def _directory_setting(
     The partition settings that ``add`` resolved through its run state win.
     A format handler calls ``partition_vector_file`` without the state.
     """
-    from portolan_cli.config import get_setting
     from portolan_cli.conversion_config import partition_override
+    from portolan_core.config import get_setting
 
     override = partition_override(directory)
     if override is not None and key in override.values:
@@ -776,7 +784,7 @@ def partition_vector_file(
     if strategy is None or catalog_root is None:
         return []
 
-    from portolan_cli.errors import PartitionCollisionError
+    from portolan_core.errors import PartitionCollisionError
 
     column = PARTITION_COLUMNS.get(strategy, f"{strategy}_cell")
     existing = sorted(p.name for p in path.parent.glob(f"{column}=*") if p.is_dir())
@@ -806,3 +814,106 @@ def strategy_of_column(column: str) -> str:
         if column in (name, f"{name}_prefix"):
             return strategy
     return column.removesuffix("_cell")
+
+
+@dataclass(frozen=True)
+class PartitionPreview:
+    """The result of ``portolan partition --preview``. Nothing is written."""
+
+    file: Path
+    size_gb: float
+    recommended: bool
+    strategy: str
+    target_rows: int
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return the envelope data of ``portolan partition --preview``."""
+        return {
+            "file": str(self.file),
+            "size_gb": round(self.size_gb, 2),
+            "recommended_partition": self.recommended,
+            "strategy": self.strategy,
+            "target_rows": self.target_rows,
+        }
+
+
+@dataclass(frozen=True)
+class PartitionOutcome:
+    """The result of ``portolan partition``: the partition files it wrote."""
+
+    input: Path
+    output_dir: Path
+    files: list[Path]
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return the envelope data of ``portolan partition``."""
+        return {
+            "input": str(self.input),
+            "output_dir": str(self.output_dir),
+            "partitions": len(self.files),
+            "files": [str(p) for p in self.files],
+        }
+
+
+def partition_file(
+    input_file: Path,
+    output_dir: Path | None,
+    *,
+    strategy: str = DEFAULT_STRATEGY,
+    target_rows: int = DEFAULT_TARGET_ROWS,
+    preview: bool = False,
+    verbose: bool = False,
+) -> PartitionPreview | PartitionOutcome:
+    """Partition a GeoParquet file into ``output_dir``, or preview the partition.
+
+    The preview reads ``partitioning.threshold_gb`` and ``partitioning.enabled``
+    from the configuration of the working directory and writes nothing.
+
+    Args:
+        input_file: The GeoParquet file.
+        output_dir: Directory for the Hive-style partitions. Only the preview
+            accepts None.
+        strategy: Partitioning strategy.
+        target_rows: Target rows per partition.
+        preview: Report the recommendation and write nothing.
+        verbose: Ask geoparquet-io for its verbose output.
+
+    Returns:
+        The preview, or the partition files.
+
+    Raises:
+        PartitionError: If ``output_dir`` is None, or if geoparquet-io fails.
+            A failure removes the partial partitions.
+    """
+    if preview:
+        from portolan_core.config import get_setting
+
+        threshold_gb = get_setting("partitioning.threshold_gb") or 2.0
+        enabled = get_setting("partitioning.enabled")
+        return PartitionPreview(
+            file=input_file,
+            size_gb=input_file.stat().st_size / (1024 * 1024 * 1024),
+            recommended=should_partition(
+                input_file, threshold_gb=float(threshold_gb), enabled=enabled is not False
+            ),
+            strategy=strategy,
+            target_rows=target_rows,
+        )
+
+    from portolan_core.errors import PartitionError
+
+    if output_dir is None:
+        raise PartitionError("output_dir is required unless preview is set")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        files = partition_geoparquet(
+            input_path=input_file,
+            output_dir=output_dir,
+            strategy=strategy,
+            target_rows=target_rows,
+            verbose=verbose,
+        )
+    # geoparquet-io raises many types. The error keeps its message.
+    except Exception as e:
+        raise PartitionError(str(e)) from e
+    return PartitionOutcome(input_file, output_dir, files)

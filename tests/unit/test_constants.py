@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from portolan_cli.constants import MAX_CATALOG_DEPTH
+from portolan_core.constants import MAX_CATALOG_DEPTH
 
 pytestmark = pytest.mark.unit
 

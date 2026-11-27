@@ -10,11 +10,11 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
-from portolan_cli.versions import Asset, read_versions, write_versions
+from portolan_core.versions import Asset, read_versions, write_versions
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -52,7 +52,7 @@ class TestStatusHashesNothingWhenUnchanged:
     def test_unchanged_collection(
         self, tmp_path: Path, tracked: Callable[[int], Path], counters: Callable[[str], int]
     ) -> None:
-        from portolan_cli.status import detect_modified_files
+        from portolan_core.status import detect_modified_files
 
         coll = tracked(10)
         assert detect_modified_files(coll, read_versions(coll / "versions.json")) == []
@@ -61,7 +61,7 @@ class TestStatusHashesNothingWhenUnchanged:
     def test_modified_file_is_still_found(
         self, tmp_path: Path, tracked: Callable[[int], Path]
     ) -> None:
-        from portolan_cli.status import detect_modified_files
+        from portolan_core.status import detect_modified_files
 
         coll = tracked(3)
         (coll / "f1.bin").write_bytes(b"changed!")
@@ -74,8 +74,8 @@ class TestIsCurrentReadsVersionsOnce:
     def test_shared_state(
         self, tmp_path: Path, tracked: Callable[[int], Path], counters: Callable[[str], int]
     ) -> None:
-        from portolan_cli.query import is_current
-        from portolan_cli.run_state import RunState
+        from portolan_core.query import is_current
+        from portolan_core.run_state import RunState
 
         coll = tracked(10)
         state = RunState.open(tmp_path)
@@ -323,6 +323,7 @@ class TestItemsParquetMirror:
         doc["links"].append({"rel": "item", "href": "./i9/i9.json"})
         (coll / "collection.json").write_text(json.dumps(doc))
         generate_parquet_mirrors(catalog, {"c"}, generate_parquet=True)
-        ids = pq.read_table(coll / "items.parquet", columns=["id"]).column("id").to_pylist()
+        column = pq.read_table(coll / "items.parquet", columns=["id"]).column("id")
+        ids = cast("list[str]", column.to_pylist())
         # The mirror holds its rows in Hilbert order, not in link order.
         assert sorted(ids) == ["i0", "i1", "i9"]

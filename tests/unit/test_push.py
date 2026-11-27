@@ -17,6 +17,7 @@ Test categories:
 
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -34,6 +35,8 @@ from tests.memory_remote import memory_remote, record_puts, stored_json, stored_
 if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
+
+    from portolan_cli.sync.report import Report
 
 # =============================================================================
 # Test fixtures
@@ -117,7 +120,7 @@ def local_catalog(tmp_path: Path) -> Path:
     (item_dir / "data.parquet").write_bytes(b"x" * 2048)
 
     # Create item STAC file using Portolan naming convention: {item_id}.json
-    item_data = {
+    item_data: dict[str, Any] = {
         "type": "Feature",
         "stac_version": "1.0.0",
         "id": "data",
@@ -748,6 +751,87 @@ class TestRollbackRestoresOverwrittenKeys:
         assert _stored_bytes(remote, "catalog/test/style.json") == b'{"style": 2}'
 
     @pytest.mark.unit
+    def test_push_fails_when_a_backup_stays_after_its_delete(
+        self,
+        local_catalog: Path,
+        remote: MemoryStore,
+        second_push: dict[str, bytes],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The Source Cooperative proxy answers a bulk delete on an account with 404."""
+        from portolan_cli.sync.push import push
+
+        async def bucket_not_found(*_args: Any, **_kwargs: Any) -> None:
+            raise FileNotFoundError("NoSuchBucket")
+
+        monkeypatch.setattr(obs, "delete_async", bucket_not_found)
+        result = push(local_catalog, "test", "s3://mybucket/catalog")
+
+        assert result.success is False
+        leftover = sorted(k for k in stored_keys(remote) if "/push-backup/" in k)
+        assert leftover
+        assert all(any(k in e and "NoSuchBucket" in e for e in result.errors) for k in leftover)
+        assert _stored_bytes(remote, "catalog/test/data/data.parquet") == b"bytes of 1.2.0"
+
+    @pytest.mark.unit
+    def test_push_all_uploads_the_root_when_a_landed_push_keeps_a_backup(
+        self,
+        local_catalog: Path,
+        remote: MemoryStore,
+        second_push: dict[str, bytes],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The new versions.json is live, so the root catalog must name it too."""
+        from portolan_cli.sync.push import push_all_collections
+
+        root: dict[str, Any] = {
+            "type": "Catalog",
+            "id": "c",
+            "stac_version": "1.1.0",
+            "description": "c",
+        }
+        root["links"] = [{"rel": "child", "href": "./test/collection.json"}]
+        (local_catalog / "catalog.json").write_text(json.dumps(root))
+        (local_catalog / ".portolan").mkdir(exist_ok=True)
+        (local_catalog / ".portolan" / "config.yaml").write_text("{}\n")
+
+        async def bucket_not_found(*_args: Any, **_kwargs: Any) -> None:
+            raise FileNotFoundError("NoSuchBucket")
+
+        monkeypatch.setattr(obs, "delete_async", bucket_not_found)
+        result = push_all_collections(local_catalog, "s3://mybucket/catalog")
+
+        assert result.success is False
+        assert "NoSuchBucket" in " ".join(result.collection_errors["test"])
+        assert stored_json(remote, "catalog/catalog.json") == root
+
+    @pytest.mark.unit
+    async def test_interrupted_backup_warns_when_a_copy_stays_after_its_delete(
+        self,
+        print_report: Report,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        from portolan_cli.sync.push import _back_up
+
+        store = MemoryStore()
+        obs.put(store, "catalog/test/a.parquet", b"old")
+
+        async def copy_then_stop(_store: Any, _src: str, dst: str, **_kwargs: Any) -> None:
+            obs.put(store, dst, b"old")
+            raise asyncio.CancelledError
+
+        async def bucket_not_found(*_args: Any, **_kwargs: Any) -> None:
+            raise FileNotFoundError("NoSuchBucket")
+
+        monkeypatch.setattr(obs, "copy_async", copy_then_stop)
+        monkeypatch.setattr(obs, "delete_async", bucket_not_found)
+        with pytest.raises(asyncio.CancelledError):
+            await _back_up(store, {"catalog/test/a.parquet": 3}, "catalog", 4, report=print_report)
+
+        assert "Failed to delete the backup of catalog/test/a.parquet" in capsys.readouterr().err
+
+    @pytest.mark.unit
     async def test_backup_key_sits_under_the_push_prefix(self) -> None:
         """The backup is <prefix>/.portolan/push-backup/<token>/<key>, with the old bytes."""
         import re
@@ -766,21 +850,32 @@ class TestRollbackRestoresOverwrittenKeys:
 
     @pytest.mark.unit
     async def test_failed_copy_warns_and_a_missing_key_does_not(
-        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+        self,
+        print_report: Report,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
     ) -> None:
         from obstore.exceptions import PermissionDeniedError
 
         from portolan_cli.sync.push import _back_up
 
         store = MemoryStore()
-        assert await _back_up(store, {"catalog/test/gone.parquet": None}, "catalog", 4) == {}
+        assert (
+            await _back_up(
+                store, {"catalog/test/gone.parquet": None}, "catalog", 4, report=print_report
+            )
+            == {}
+        )
         assert capsys.readouterr().err == ""
 
         async def denied(*_args: Any, **_kwargs: Any) -> None:
             raise PermissionDeniedError("403 Forbidden")
 
         monkeypatch.setattr(obs, "copy_async", denied)
-        assert await _back_up(store, {"catalog/test/a.parquet": 3}, "catalog", 4) == {}
+        assert (
+            await _back_up(store, {"catalog/test/a.parquet": 3}, "catalog", 4, report=print_report)
+            == {}
+        )
         err = capsys.readouterr().err
         assert "Cannot back up catalog/test/a.parquet, a failed push leaves its new bytes" in err
 
@@ -907,7 +1002,7 @@ class TestMissingAssetDetection:
             ]
         }
 
-        with pytest.raises(FileNotFoundError, match="missing.parquet"):
+        with pytest.raises(FileNotFoundError, match=r"missing.parquet"):
             _get_assets_to_upload(
                 catalog_root=local_catalog,
                 versions_data=versions_data,
@@ -949,7 +1044,11 @@ class TestMissingDerivedAsset:
         ],
     )
     def test_missing_derived_asset_is_skipped(
-        self, local_catalog: Path, capsys: pytest.CaptureFixture[str], missing_href: str
+        self,
+        print_report: Report,
+        local_catalog: Path,
+        capsys: pytest.CaptureFixture[str],
+        missing_href: str,
     ) -> None:
         """Push skips a recorded derived artifact that is no longer on disk."""
         from portolan_cli.sync.push import _get_assets_to_upload
@@ -966,6 +1065,7 @@ class TestMissingDerivedAsset:
                     "derived": missing_href,
                 }
             ),
+            report=print_report,
         )
 
         assert assets == [source.resolve()]
@@ -1016,7 +1116,7 @@ class TestMissingDerivedAsset:
 
     @pytest.mark.unit
     def test_thumbnail_role_wins_over_an_unknown_filename(
-        self, local_catalog: Path, capsys: pytest.CaptureFixture[str]
+        self, print_report: Report, local_catalog: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Push skips a preview the spec calls optional, whatever its name."""
         from portolan_cli.sync.push import _get_assets_to_upload
@@ -1026,6 +1126,7 @@ class TestMissingDerivedAsset:
         assets = _get_assets_to_upload(
             catalog_root=local_catalog,
             versions_data=self._versions_data({"preview.webp": "test/preview.webp"}),
+            report=print_report,
         )
 
         assert assets == []
@@ -1269,7 +1370,9 @@ class TestProgressReporting:
     """Tests for progress reporting during uploads."""
 
     @pytest.mark.unit
-    def test_push_dry_run_shows_progress(self, local_catalog: Path, capsys) -> None:
+    def test_push_dry_run_shows_progress(
+        self, print_report: Report, local_catalog: Path, capsys
+    ) -> None:
         """Dry-run at push level should show what would be uploaded."""
         from portolan_cli.sync.push import push
 
@@ -1279,6 +1382,7 @@ class TestProgressReporting:
             collection="test",
             destination="s3://mybucket/catalog",
             dry_run=True,
+            report=print_report,
         )
 
         captured = capsys.readouterr()
@@ -1305,7 +1409,7 @@ class TestMultiCloudStoreSetup:
             with patch("portolan_cli.sync.upload.S3Store") as mock_s3:
                 mock_s3.return_value = MagicMock()
 
-                store, prefix = setup_store("s3://mybucket/catalog", profile="myprofile")
+                _store, prefix = setup_store("s3://mybucket/catalog", profile="myprofile")
 
         mock_load.assert_called_once_with("myprofile")
         mock_s3.assert_called_once_with(
@@ -1331,7 +1435,7 @@ class TestMultiCloudStoreSetup:
         ):
             mock_s3.return_value = MagicMock()
 
-            store, prefix = setup_store("s3://mybucket/prefix")
+            _store, _prefix = setup_store("s3://mybucket/prefix")
 
         mock_s3.assert_called_once_with(
             "mybucket",
@@ -1391,7 +1495,7 @@ class TestMultiCloudStoreSetup:
         with patch("portolan_cli.sync.upload.obs.store.from_url") as mock_from_url:
             mock_from_url.return_value = MagicMock()
 
-            store, prefix = setup_store("gs://mybucket/catalog")
+            _store, prefix = setup_store("gs://mybucket/catalog")
 
         mock_from_url.assert_called_once_with("gs://mybucket")
         assert prefix == "catalog"
@@ -1408,7 +1512,7 @@ class TestMultiCloudStoreSetup:
         with patch("portolan_cli.sync.upload.obs.store.from_url") as mock_from_url:
             mock_from_url.return_value = MagicMock()
 
-            store, prefix = setup_store("gs://mybucket/prefix")
+            _store, prefix = setup_store("gs://mybucket/prefix")
 
         mock_from_url.assert_called_once_with("gs://mybucket")
         assert prefix == "prefix"
@@ -1425,7 +1529,7 @@ class TestMultiCloudStoreSetup:
         with patch("portolan_cli.sync.upload.obs.store.from_url") as mock_from_url:
             mock_from_url.return_value = MagicMock()
 
-            store, prefix = setup_store("az://account/mycontainer/catalog")
+            _store, prefix = setup_store("az://account/mycontainer/catalog")
 
         mock_from_url.assert_called_once_with("az://account/mycontainer")
         assert prefix == "catalog"
@@ -1442,7 +1546,7 @@ class TestMultiCloudStoreSetup:
         with patch("portolan_cli.sync.upload.obs.store.from_url") as mock_from_url:
             mock_from_url.return_value = MagicMock()
 
-            store, prefix = setup_store("az://account/mycontainer/data")
+            _store, prefix = setup_store("az://account/mycontainer/data")
 
         mock_from_url.assert_called_once_with("az://account/mycontainer")
         assert prefix == "data"
@@ -1460,7 +1564,7 @@ class TestMultiCloudStoreSetup:
             mock_from_url.return_value = MagicMock()
 
             # Azure format: az://account/container/prefix
-            store, prefix = setup_store("az://myaccount/mycontainer/data/v1")
+            _store, prefix = setup_store("az://myaccount/mycontainer/data/v1")
 
         # bucket_url = az://account/container, prefix = data/v1
         mock_from_url.assert_called_once_with("az://myaccount/mycontainer")
@@ -1483,7 +1587,7 @@ class TestMultiCloudStoreSetup:
             with patch("portolan_cli.sync.upload.obs.store.from_url") as mock_from_url:
                 mock_from_url.return_value = MagicMock()
 
-                store, prefix = setup_store("custom://bucket/catalog")
+                _store, prefix = setup_store("custom://bucket/catalog")
 
         mock_from_url.assert_called_once_with("custom://bucket")
         assert prefix == "catalog"
@@ -1782,7 +1886,7 @@ class TestVersionDiffInvariants:
     ) -> None:
         """Version diff should partition versions into local_only and remote_only.
 
-        Property: local_only ∪ remote_only ∪ common = local ∪ remote
+        Property: local_only | remote_only | common == local | remote
         Property: local_only ∩ remote_only = ∅
         """
         from portolan_cli.sync.push import diff_version_lists
@@ -2415,7 +2519,7 @@ class TestAssetDiffing:
             ]
         }
 
-        remote_versions_data = {"versions": []}  # Empty versions list
+        remote_versions_data: dict[str, Any] = {"versions": []}  # Empty versions list
 
         assets = _get_assets_to_upload(
             catalog_root=catalog_dir,

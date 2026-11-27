@@ -619,7 +619,7 @@ class TestExtensionShape:
         # MagicMock(name=...) names the mock itself, so the attribute is set after.
         field = MagicMock(source_id=5, field_id=1000)
         field.name = "geohash_3"
-        field.transform.__str__ = lambda self: "identity"  # type: ignore[method-assign]
+        field.transform.__str__ = lambda self: "identity"
         table = MagicMock()
         table.spec.return_value.fields = [field]
 

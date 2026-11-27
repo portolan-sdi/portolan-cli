@@ -15,8 +15,8 @@ from __future__ import annotations
 
 import pytest
 
-from portolan_cli.constants import TODO_MARKER
-from portolan_cli.licensing import (
+from portolan_core.constants import TODO_MARKER
+from portolan_core.licensing import (
     OTHER_LICENSE,
     PROPRIETARY_LICENSE,
     license_gap,

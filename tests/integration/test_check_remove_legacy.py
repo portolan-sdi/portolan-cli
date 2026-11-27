@@ -290,6 +290,7 @@ class TestRemoveLegacyFileGDB:
 
         return gdb
 
+    @pytest.mark.skip(reason="FileGDB conversion requires GDAL with FileGDB driver")
     def test_removes_entire_gdb_directory(
         self,
         runner: CliRunner,
@@ -298,9 +299,6 @@ class TestRemoveLegacyFileGDB:
         """Should remove entire .gdb directory after conversion."""
         gdb = filegdb_directory
         parent = gdb.parent
-
-        # Skip - requires GDAL with FileGDB support
-        pytest.skip("FileGDB conversion requires GDAL with FileGDB driver")
 
         result = runner.invoke(cli, ["check", str(parent), "--fix", "--remove-legacy"])
 

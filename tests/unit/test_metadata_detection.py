@@ -235,7 +235,7 @@ class TestGetCurrentMetadata:
         txt_file = tmp_path / "data.txt"
         txt_file.write_text("not geospatial data")
 
-        with pytest.raises(ValueError, match="unsupported|Unsupported"):
+        with pytest.raises(ValueError, match=r"unsupported|Unsupported"):
             get_current_metadata(txt_file)
 
 
@@ -539,7 +539,8 @@ class TestCheckFileMetadata:
         assert result.file_path == dest
         # Message should mention no/missing and metadata/stac
         msg = result.message.lower()
-        assert ("no" in msg or "missing" in msg) and ("metadata" in msg or "stac" in msg)
+        assert "no" in msg or "missing" in msg
+        assert "metadata" in msg or "stac" in msg
 
     @pytest.mark.unit
     def test_returns_fresh_when_metadata_current(
@@ -886,7 +887,7 @@ class TestOneFooterReadPerFile:
     ) -> None:
         from portolan_cli.metadata.detection import get_current_metadata
         from portolan_cli.metadata.geoparquet import extract_geoparquet_metadata
-        from portolan_cli.run_state import RunState
+        from portolan_core.run_state import RunState
 
         state = RunState.open(tmp_path)
         opened = _count_footer_reads(monkeypatch)
@@ -1018,9 +1019,9 @@ class TestScanReadsVersionsOncePerCollection:
     ) -> None:
         import shutil
 
-        from portolan_cli import versions
         from portolan_cli.metadata.models import MetadataStatus
         from portolan_cli.metadata.scan import scan_catalog_metadata
+        from portolan_core import versions
 
         catalog = tmp_path / "cat"
         collection_dir = catalog / "coll"
@@ -1046,7 +1047,7 @@ class TestScanReadsVersionsOncePerCollection:
             return real(path)
 
         monkeypatch.setattr(versions, "read_versions", counted)
-        monkeypatch.setattr("portolan_cli.run_state.read_versions", counted)
+        monkeypatch.setattr("portolan_core.run_state.read_versions", counted)
         opened = _count_footer_reads(monkeypatch)
 
         report = scan_catalog_metadata(catalog)
@@ -1068,7 +1069,7 @@ class TestPrepareSharesTheFooterWithTheRun:
     ) -> None:
         from portolan_cli.metadata.geoparquet import extract_geoparquet_metadata
         from portolan_cli.preparation import prepare_item
-        from portolan_cli.run_state import RunState
+        from portolan_core.run_state import RunState
 
         source = _catalog_with_points(tmp_path, valid_points_geojson)
         state = RunState.open(tmp_path)
@@ -1091,8 +1092,8 @@ class TestPrepareHashesEachFileOnce:
         self, tmp_path: Path, valid_points_geojson: Path
     ) -> None:
         """One hash of the source, one of the output, with no run state given."""
-        from portolan_cli import trace
         from portolan_cli.preparation import prepare_item
+        from portolan_core import trace
 
         source = _catalog_with_points(tmp_path, valid_points_geojson)
 
@@ -1110,11 +1111,12 @@ class TestPrepareHashesEachFileOnce:
 @pytest.mark.unit
 def test_a_run_converts_the_current_assets_once(tmp_path: Path) -> None:
     """Each item check reads the asset map. A run must not rebuild it per item."""
+    import dataclasses
     from unittest.mock import patch
 
     from portolan_cli.metadata import detection
-    from portolan_cli.run_state import RunState
-    from portolan_cli.versions import Asset, VersionsFile, add_version, write_versions
+    from portolan_core.run_state import RunState
+    from portolan_core.versions import Asset, VersionsFile, add_version, write_versions
 
     collection = tmp_path / "scenes"
     collection.mkdir()
@@ -1131,7 +1133,7 @@ def test_a_run_converts_the_current_assets_once(tmp_path: Path) -> None:
     )
     state = RunState.open(tmp_path)
 
-    with patch.object(detection, "asdict", wraps=detection.asdict) as converted:
+    with patch("portolan_cli.metadata.detection.asdict", wraps=dataclasses.asdict) as converted:
         for _ in range(10):
             found = detection.load_current_assets(collection, state)
             assert found is not None

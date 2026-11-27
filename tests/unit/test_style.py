@@ -863,6 +863,19 @@ class TestWriteDefaultStyle:
 # =============================================================================
 
 
+def _two_unmarked_styles(collection_dir: Path) -> None:
+    """Write a collection with two styles, neither of them marked as the default."""
+    import json
+
+    (collection_dir / "collection.json").write_text(
+        json.dumps({"type": "Collection", "id": "test", "assets": {}})
+    )
+    styles_dir = collection_dir / "styles"
+    styles_dir.mkdir()
+    (styles_dir / "muted.json").write_text('{"version":8,"name":"Muted","layers":[]}')
+    (styles_dir / "vivid.json").write_text('{"version":8,"name":"Vivid","layers":[]}')
+
+
 class TestRegisterStyleAssets:
     """Tests for registering discovered styles as STAC assets."""
 
@@ -973,14 +986,7 @@ class TestRegisterStyleAssets:
 
         from portolan_cli.viz.style import discover_styles, register_style_assets
 
-        (tmp_path / "collection.json").write_text(
-            json.dumps({"type": "Collection", "id": "test", "assets": {}})
-        )
-        styles_dir = tmp_path / "styles"
-        styles_dir.mkdir()
-        (styles_dir / "muted.json").write_text('{"version":8,"name":"Muted","layers":[]}')
-        (styles_dir / "vivid.json").write_text('{"version":8,"name":"Vivid","layers":[]}')
-
+        _two_unmarked_styles(tmp_path)
         register_style_assets(tmp_path, discover_styles(tmp_path))
 
         updated = json.loads((tmp_path / "collection.json").read_text())
@@ -992,24 +998,23 @@ class TestRegisterStyleAssets:
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Portolan names the default it chose and how to change it."""
-        import json
-
+        from portolan_cli.report import reporting
         from portolan_cli.viz.style import discover_styles, register_style_assets
 
-        (tmp_path / "collection.json").write_text(
-            json.dumps({"type": "Collection", "id": "test", "assets": {}})
-        )
-        styles_dir = tmp_path / "styles"
-        styles_dir.mkdir()
-        (styles_dir / "muted.json").write_text('{"version":8,"name":"Muted","layers":[]}')
-        (styles_dir / "vivid.json").write_text('{"version":8,"name":"Vivid","layers":[]}')
+        _two_unmarked_styles(tmp_path)
+        lines: list[tuple[str, str]] = []
+        with reporting(lambda level, message: lines.append((level, message))):
+            register_style_assets(tmp_path, discover_styles(tmp_path))
 
-        register_style_assets(tmp_path, discover_styles(tmp_path))
-
+        assert lines == [
+            (
+                "info",
+                "Default style: styles/muted (chosen from 2 styles). To pick another, "
+                'move the "default" role to that style asset in collection.json.',
+            )
+        ]
         captured = capsys.readouterr()
-        message = captured.out + captured.err
-        assert "styles/muted" in message
-        assert "default" in message
+        assert (captured.out, captured.err) == ("", "")
 
     @pytest.mark.unit
     def test_a_publisher_choice_prints_no_notice(
@@ -1546,7 +1551,7 @@ class TestCompleteStyleSources:
         import json
 
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(style))
+        path.write_text(json.dumps(style), encoding="utf-8")
 
     @pytest.mark.unit
     def test_fills_missing_url_and_zoom(self, tmp_path: Path) -> None:

@@ -9,11 +9,11 @@ from __future__ import annotations
 import httpx
 import pytest
 
-from portolan_cli.errors import ArcGISAuthError
 from portolan_cli.extract.arcgis.auth import (
     ArcGISCredentials,
     resolve_token,
 )
+from portolan_core.errors import ArcGISAuthError
 
 pytestmark = pytest.mark.unit
 
@@ -40,7 +40,8 @@ def test_resolve_token_mints_from_username_password(monkeypatch: pytest.MonkeyPa
 
     def fake_post(self: object, url: str, data: dict[str, str] | None = None) -> httpx.Response:
         assert data is not None
-        assert data["username"] == "u" and data["password"] == "p"
+        assert data["username"] == "u"
+        assert data["password"] == "p"
         return httpx.Response(200, json={"token": "MINTED", "expires": 1})
 
     monkeypatch.setattr(httpx.Client, "get", fake_get)

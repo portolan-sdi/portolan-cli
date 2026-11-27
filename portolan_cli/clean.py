@@ -21,9 +21,10 @@ from __future__ import annotations
 
 import json
 import shutil
-from typing import TYPE_CHECKING
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any
 
-from portolan_cli.constants import PORTOLAN_DIR
+from portolan_core.constants import PORTOLAN_DIR
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -135,7 +136,7 @@ def remove_empty_directories(catalog_root: Path, removed_files: list[Path]) -> l
     parent_dirs = set()
     for file_path in removed_files:
         parent = file_path.parent
-        while parent != catalog_root and parent != catalog_root.parent:
+        while parent not in (catalog_root, catalog_root.parent):
             parent_dirs.add(parent)
             parent = parent.parent
 
@@ -205,3 +206,58 @@ def clean_catalog(
     directories_removed.extend(empty_dirs_removed)
 
     return files_removed, directories_removed, data_files
+
+
+@dataclass(frozen=True)
+class CleanResult:
+    """The outcome of ``portolan clean``.
+
+    Attributes:
+        catalog_root: The catalog root. The envelope paths are relative to it.
+        files: The metadata files removed, or that a dry run would remove.
+        directories: The directories removed, or that a dry run would remove.
+        data_files_preserved: The number of data files that stay.
+        dry_run: True when nothing was removed.
+    """
+
+    catalog_root: Path
+    files: list[Path]
+    directories: list[Path]
+    data_files_preserved: int
+    dry_run: bool
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize the outcome as the ``clean`` envelope data."""
+        files = [str(f.relative_to(self.catalog_root)) for f in self.files]
+        directories = [str(d.relative_to(self.catalog_root)) for d in self.directories]
+        if self.dry_run:
+            return {
+                "would_remove_files": files,
+                "would_remove_directories": directories,
+                "data_files_preserved": self.data_files_preserved,
+                "dry_run": True,
+            }
+        return {
+            "files_removed": files,
+            "directories_removed": directories,
+            "data_files_preserved": self.data_files_preserved,
+        }
+
+
+def clean_metadata(catalog_root: Path, *, dry_run: bool = False) -> CleanResult:
+    """Remove all Portolan metadata from a catalog while preserving data.
+
+    This is the library function of ``portolan clean``.
+
+    Args:
+        catalog_root: Path to the catalog root directory.
+        dry_run: If True, only report what would be removed without deleting.
+
+    Returns:
+        The removed files and directories, and the number of data files kept.
+
+    Raises:
+        OSError: If file deletion fails (permission errors, etc.).
+    """
+    files, directories, data_files = clean_catalog(catalog_root, dry_run=dry_run)
+    return CleanResult(catalog_root, files, directories, data_files, dry_run)

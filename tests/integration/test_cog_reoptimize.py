@@ -1,8 +1,8 @@
 """Tests for COG re-optimization (--force) and parallel conversion (issue #530).
 
 Covers:
-- convert_file(force=True): re-encodes already-valid COGs (raster only), adding
-  overviews via current CogSettings; leaves vectors skipped.
+- convert_file(force=True): re-encodes already-valid COGs, adding overviews via
+  current CogSettings.
 - convert_directory(workers=N): parallel conversion via ProcessPoolExecutor with
   per-file on_progress callbacks, matching the serial result set.
 - check_directory(force=, workers=): unions CLOUD_NATIVE rasters into the fix set
@@ -16,6 +16,7 @@ not raster math.
 from __future__ import annotations
 
 import shutil
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -23,7 +24,11 @@ import pytest
 import rasterio
 from rasterio.transform import from_bounds
 
+from portolan_cli.hookspecs import hookimpl
+from tests.unit.plugins.stub_handler import StubHandler
+
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
 
@@ -67,7 +72,7 @@ def _overview_count(path: Path) -> int:
 
 
 class TestConvertFileForce:
-    """convert_file(force=True) re-optimizes valid COGs (rasters only)."""
+    """convert_file(force=True) re-optimizes valid COGs."""
 
     @pytest.mark.integration
     def test_force_reencodes_cog_and_adds_overviews(self, tmp_path: Path) -> None:
@@ -101,30 +106,6 @@ class TestConvertFileForce:
         assert result.status == ConversionStatus.SKIPPED
         assert result.output is None
         assert _overview_count(cog) == 0
-
-    @pytest.mark.integration
-    def test_force_does_not_touch_geoparquet(
-        self, valid_points_parquet: Path, tmp_path: Path
-    ) -> None:
-        """force is raster-scoped: a valid GeoParquet stays SKIPPED and unchanged.
-
-        The test works on a copy, so a regression cannot rewrite the shared fixture.
-        """
-        import shutil
-
-        from portolan_cli.convert import ConversionStatus, convert_file
-
-        source = tmp_path / valid_points_parquet.name
-        shutil.copy2(valid_points_parquet, source)
-        before = source.read_bytes()
-
-        result = convert_file(source, force=True)
-
-        assert source.read_bytes() == before
-        assert not source.with_name(f"{source.stem}.thumb.jpg").exists()
-        assert result.status == ConversionStatus.SKIPPED
-        assert result.output is None
-        assert result.format_from == "GeoParquet"
 
 
 class TestConvertDirectoryParallel:
@@ -242,7 +223,7 @@ class TestCheckDirectoryForce:
         """force without fix is a programmer error (mirrors remove_legacy guard)."""
         from portolan_cli.scan.check import check_directory
 
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match=r"force requires fix=True"):
             check_directory(tmp_path, fix=False, force=True)
 
     @pytest.mark.integration
@@ -260,3 +241,74 @@ class TestCheckDirectoryForce:
         assert previews["tile.tif"].format_to == "COG"
         # Dry run must not modify the file.
         assert _overview_count(cog) == 0
+
+    def test_force_dry_run_prints_the_cog_it_would_rewrite(self, tmp_path: Path) -> None:
+        """The human dry run names the COG that the preview rewrites."""
+        from click.testing import CliRunner
+
+        from portolan_cli.cli import cli
+
+        _make_cog_without_overviews(tmp_path / "tile.tif")
+
+        result = CliRunner().invoke(cli, ["check", str(tmp_path), "--fix", "--force", "--dry-run"])
+
+        assert "Dry run: 1 file(s) would be converted" in result.output
+        assert "tile.tif (COG) -> COG" in result.output
+
+
+@dataclass
+class _PluginCog(StubHandler):
+    """A plugin handler for ``.tif`` that records which method rewrote the file."""
+
+    calls: list[str] = field(default_factory=list)
+
+    def convert(self, source: Path, output_dir: Path, catalog_root: Path | None) -> Path:
+        self.calls.append("convert")
+        return source
+
+    def reoptimize(self, source: Path, catalog_root: Path | None) -> Path:
+        self.calls.append("reoptimize")
+        return source
+
+
+class _Plugin:
+    def __init__(self, handler: StubHandler) -> None:
+        self.handler = handler
+
+    @hookimpl
+    def portolan_formats(self) -> list[object]:
+        return [self.handler]
+
+
+@pytest.mark.integration
+def test_force_calls_the_reoptimize_method_of_a_plugin_handler(
+    tmp_path: Path, register_plugin: Callable[..., None]
+) -> None:
+    from portolan_cli.convert import ConversionStatus, convert_file
+
+    handler = _PluginCog("plugin-cog", frozenset({".tif"}), family="raster")
+    register_plugin(_Plugin(handler))
+    cog = _make_cog_without_overviews(tmp_path / "tile.tif", size=600)
+
+    result = convert_file(cog, force=True)
+
+    assert (result.status, result.output, handler.calls) == (
+        ConversionStatus.SUCCESS,
+        cog,
+        ["reoptimize"],
+    )
+
+
+@pytest.mark.integration
+def test_force_skips_a_plugin_cog_whose_handler_cannot_reoptimize(
+    tmp_path: Path, register_plugin: Callable[..., None]
+) -> None:
+    from portolan_cli.convert import ConversionStatus, convert_file
+
+    register_plugin(_Plugin(StubHandler("plugin-cog", frozenset({".tif"}), family="raster")))
+    cog = _make_cog_without_overviews(tmp_path / "tile.tif", size=600)
+    before = cog.read_bytes()
+
+    result = convert_file(cog, force=True)
+
+    assert (result.status, cog.read_bytes()) == (ConversionStatus.SKIPPED, before)

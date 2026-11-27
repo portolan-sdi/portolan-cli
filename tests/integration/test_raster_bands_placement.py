@@ -113,9 +113,11 @@ class TestRasterBandsPlacement:
     def test_bands_on_data_asset(self, raster_catalog: Path, float32_raster: Path) -> None:
         item = _add_raster(raster_catalog, float32_raster)
         bands = item["assets"]["data"].get("bands")
-        assert isinstance(bands, list) and len(bands) == 2, f"Expected 2 asset bands, got {bands}"
+        assert isinstance(bands, list), f"Expected 2 asset bands, got {bands}"
+        assert len(bands) == 2, f"Expected 2 asset bands, got {bands}"
         for band in bands:
-            assert "name" in band and "data_type" in band
+            assert "name" in band
+            assert "data_type" in band
 
     def test_band_statistics_preserved_on_asset(
         self, raster_catalog: Path, float32_raster: Path
@@ -130,8 +132,9 @@ class TestRasterBandsPlacement:
         self, raster_catalog: Path, float32_raster: Path
     ) -> None:
         """Relocating bands onto the asset must keep the item schema-valid (STAC 1.1.0)."""
-        from rashid_core import ValidationOptions, validate
-        from rashid_core.structural import STR_INVALID
+        from rashid_core import validate
+        from rashid_core.api import ValidationOptions
+        from rashid_core.ids import STR_INVALID
 
         _add_raster(raster_catalog, float32_raster)
         report = validate(

@@ -17,12 +17,12 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
-from portolan_cli.catalog_list import (
+from portolan_cli.cli import cli
+from portolan_core.catalog_list import (
     _STAC_METADATA_FILES,
     _get_format_display_name,
     _is_ignored,
 )
-from portolan_cli.cli import cli
 
 
 @pytest.fixture
@@ -71,7 +71,7 @@ class TestMetadataFileExclusion:
         STAC items have "type": "Feature" like GeoJSON, but they also have
         "stac_version" which distinguishes them. They are JSON, not GeoJSON.
         """
-        from portolan_cli.format_families import is_geojson
+        from portolan_core.format_families import is_geojson
 
         # Create a STAC item JSON file
         stac_item = tmp_path / "item.json"
@@ -129,10 +129,11 @@ class TestMetadataFileExclusion:
                         "description": "Test",
                         "links": [],
                     }
-                )
+                ),
+                encoding="utf-8",
             )
             Path(".portolan").mkdir()
-            Path(".portolan/config.yaml").write_text("version: 1\n")
+            Path(".portolan/config.yaml").write_text("version: 1\n", encoding="utf-8")
 
             # Create collection with versions.json and a data file
             Path("collection").mkdir()
@@ -144,7 +145,8 @@ class TestMetadataFileExclusion:
                         "schema_version": "1.0.0",
                         "versions": [],
                     }
-                )
+                ),
+                encoding="utf-8",
             )
 
             result = runner.invoke(cli, ["list"])
@@ -193,10 +195,11 @@ class TestJsonFormatDetection:
                         "description": "Test",
                         "links": [],
                     }
-                )
+                ),
+                encoding="utf-8",
             )
             Path(".portolan").mkdir()
-            Path(".portolan/config.yaml").write_text("version: 1\n")
+            Path(".portolan/config.yaml").write_text("version: 1\n", encoding="utf-8")
 
             # Create collection with a plain JSON config file
             Path("collection").mkdir()
@@ -204,7 +207,7 @@ class TestJsonFormatDetection:
             Path("collection/item/data.parquet").write_bytes(b"x" * 1000)
             # This is plain JSON, NOT GeoJSON
             Path("collection/item/config.json").write_text(
-                json.dumps({"setting": "value", "enabled": True})
+                json.dumps({"setting": "value", "enabled": True}), encoding="utf-8"
             )
 
             result = runner.invoke(cli, ["list"])
@@ -232,10 +235,11 @@ class TestJsonFormatDetection:
                         "description": "Test",
                         "links": [],
                     }
-                )
+                ),
+                encoding="utf-8",
             )
             Path(".portolan").mkdir()
-            Path(".portolan/config.yaml").write_text("version: 1\n")
+            Path(".portolan/config.yaml").write_text("version: 1\n", encoding="utf-8")
 
             # Create collection with a GeoJSON file saved as .json
             Path("collection").mkdir()
@@ -253,7 +257,8 @@ class TestJsonFormatDetection:
                             }
                         ],
                     }
-                )
+                ),
+                encoding="utf-8",
             )
 
             result = runner.invoke(cli, ["list"])

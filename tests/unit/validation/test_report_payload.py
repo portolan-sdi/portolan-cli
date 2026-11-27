@@ -12,7 +12,8 @@ import json
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from rashid_core import Finding, Report, Severity
+from rashid_core import Finding
+from rashid_core.api import Report, Severity
 
 from portolan_cli.metadata.fix import FixAction, FixReport, FixResult
 from portolan_cli.validation.remediation import Bucket
@@ -75,7 +76,7 @@ class TestEnvelope:
         assert payload["validator"] == {"name": "rashid", "version": version("rashid")}
 
     def test_spec_version_is_reported(self) -> None:
-        from portolan_cli.constants import PORTOLAN_SPEC_VERSION
+        from portolan_core.constants import PORTOLAN_SPEC_VERSION
 
         assert build_check_payload(_outcome([]), mode="all")["spec_version"] == (
             PORTOLAN_SPEC_VERSION

@@ -107,7 +107,7 @@ class TestFindCatalogRoot:
     def test_depth_limit_prevents_traversal_beyond_max(self, tmp_path: Path) -> None:
         """find_catalog_root stops after MAX_CATALOG_SEARCH_DEPTH levels."""
         from portolan_cli.catalog import find_catalog_root
-        from portolan_cli.constants import MAX_CATALOG_SEARCH_DEPTH
+        from portolan_core.constants import MAX_CATALOG_SEARCH_DEPTH
 
         # Setup: Create catalog at root, then nest beyond MAX_CATALOG_SEARCH_DEPTH
         portolan_dir = tmp_path / ".portolan"
@@ -117,7 +117,7 @@ class TestFindCatalogRoot:
         # Create nested path deeper than MAX_CATALOG_SEARCH_DEPTH
         deep_path = tmp_path
         for i in range(MAX_CATALOG_SEARCH_DEPTH + 5):
-            deep_path = deep_path / f"level{i}"
+            deep_path /= f"level{i}"
         deep_path.mkdir(parents=True)
 
         # Act
@@ -130,7 +130,7 @@ class TestFindCatalogRoot:
     def test_depth_limit_finds_within_max(self, tmp_path: Path) -> None:
         """find_catalog_root finds catalog within MAX_CATALOG_SEARCH_DEPTH levels."""
         from portolan_cli.catalog import find_catalog_root
-        from portolan_cli.constants import MAX_CATALOG_SEARCH_DEPTH
+        from portolan_core.constants import MAX_CATALOG_SEARCH_DEPTH
 
         # Setup: Create catalog at root
         portolan_dir = tmp_path / ".portolan"
@@ -141,7 +141,7 @@ class TestFindCatalogRoot:
         # Create nested path exactly at MAX_CATALOG_SEARCH_DEPTH - 1 (should find)
         deep_path = tmp_path
         for i in range(MAX_CATALOG_SEARCH_DEPTH - 1):
-            deep_path = deep_path / f"level{i}"
+            deep_path /= f"level{i}"
         deep_path.mkdir(parents=True)
 
         # Act

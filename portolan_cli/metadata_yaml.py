@@ -11,7 +11,7 @@ STAC or other sources.
 ``license`` is the one required field generation actually enforces: ``portolan add``
 refuses to write a collection without a usable one, because a collection with no
 license fails PTL-LIC-001 or PTL-LIC-002 under ``portolan check`` (issue #686). The
-predicate lives in ``portolan_cli.licensing``; ``portolan init`` seeds the value so
+predicate lives in ``portolan_core.licensing``; ``portolan init`` seeds the value so
 the requirement is already met before the first add.
 
 **Auto-filled from STAC (NOT in metadata.yaml):**
@@ -42,14 +42,17 @@ import re
 from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING, Any
 
-from portolan_cli.config import load_merged_metadata
-from portolan_cli.licensing import OTHER_LICENSE, license_gap
 from portolan_cli.providers import HOST_ROLE, PROVIDER_ROLES
+from portolan_core.config import load_merged_metadata
+from portolan_core.licensing import OTHER_LICENSE, license_gap
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from portolan_cli.config import ConfigSource
+    from portolan_core.config import ConfigSource
+
+_MIN_YEAR = 1800
+_MAX_YEAR = 2100
 
 logger = logging.getLogger(__name__)
 
@@ -286,7 +289,7 @@ def _validate_contact(metadata: dict[str, Any]) -> list[str]:
 def _validate_license(metadata: dict[str, Any]) -> list[str]:
     """Validate the required 'license' field.
 
-    The verdict comes from :func:`portolan_cli.licensing.license_gap`, so this
+    The verdict comes from :func:`portolan_core.licensing.license_gap`, so this
     command, ``portolan add``, and ``portolan check`` all apply one policy to
     one SPDX list (issue #727). A license must be an identifier in
     ``rashid_core.api.SPDX_LICENSE_IDS``, or the STAC 1.1 keyword ``other`` with a
@@ -520,7 +523,7 @@ def _validate_temporal_defaults(temporal: dict[str, Any]) -> list[str]:
             errors.append(
                 f"Field 'defaults.temporal.year' must be an integer, got {type(year).__name__}"
             )
-        elif year < 1800 or year > 2100:
+        elif year < _MIN_YEAR or year > _MAX_YEAR:
             errors.append(
                 f"Field 'defaults.temporal.year' must be between 1800 and 2100, got {year}"
             )

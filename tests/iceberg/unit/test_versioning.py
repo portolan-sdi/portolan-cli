@@ -14,7 +14,7 @@ from portolan_cli.backends.iceberg.versioning import (
     snapshot_to_version,
     version_to_snapshot_properties,
 )
-from portolan_cli.versions import Asset, SchemaInfo
+from portolan_core.versions import Asset, SchemaInfo
 
 # --- compute_next_version ---
 
@@ -225,5 +225,5 @@ def test_build_assets_nested_asset_key(tmp_path):
     test_file = tmp_path / "data.parquet"
     test_file.write_bytes(b"content")
 
-    assets, changes = build_assets({"item1/data.parquet": str(test_file)}, collection="boundaries")
+    assets, _changes = build_assets({"item1/data.parquet": str(test_file)}, collection="boundaries")
     assert assets["item1/data.parquet"].href == "boundaries/item1/data.parquet"

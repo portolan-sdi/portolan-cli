@@ -28,20 +28,22 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from portolan_cli.config import ConfigSource, load_catalog_config
-from portolan_cli.constants import (
+from portolan_cli.report import emit
+from portolan_cli.stac_parquet import stamp_file_fields, sync_file_extension
+from portolan_cli.utils import get_dict, get_list
+from portolan_core.config import ConfigSource, load_catalog_config
+from portolan_core.constants import (
     LEGACY_LEGEND_MANIFEST_FIELD,
     LEGACY_STYLE_MANIFEST_FIELD,
     ROLE_DEFAULT,
     ROLE_STYLE,
 )
-from portolan_cli.json_io import write_json_atomic
-from portolan_cli.output import info
-from portolan_cli.stac_parquet import stamp_file_fields, sync_file_extension
-from portolan_cli.utils import get_dict, get_list
+from portolan_core.json_io import write_json_atomic
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+_RESCALE_LEN = 2
 
 logger = logging.getLogger(__name__)
 
@@ -654,10 +656,11 @@ def _merge_style_asset(
 
 def _announce_default(default_key: str, style_count: int) -> None:
     """Tell the publisher which style Portolan made the default, and how to move it."""
-    info(
+    emit(
+        "info",
         f"Default style: {default_key} (chosen from {style_count} styles). "
         f'To pick another, move the "{DEFAULT_ROLE}" role to that style asset '
-        "in collection.json."
+        "in collection.json.",
     )
 
 
@@ -907,7 +910,7 @@ def get_raster_style_config(
     rescale_max: float | None = None
 
     if rescale:
-        if len(rescale) < 2:
+        if len(rescale) < _RESCALE_LEN:
             logger.warning(
                 "styles.raster.rescale must be [min, max], got %d values; ignoring", len(rescale)
             )

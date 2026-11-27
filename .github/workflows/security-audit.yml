@@ -1,5 +1,6 @@
 # Daily security audit workflow
-# Creates/updates GitHub issues instead of failing CI.
+# Found vulnerabilities open or update a GitHub issue, and the run stays green.
+# The run fails only when pip-audit cannot produce a report.
 #
 # Philosophy: Separate GATE (block PRs) from NOTIFICATION (alert on CVEs).
 # This workflow is the notification layer - it runs daily and manages
@@ -51,11 +52,11 @@ jobs:
 
       - name: Run pip-audit
         id: audit
-        continue-on-error: true
         run: |
           # Export runtime deps (what we ship). The hashes let pip-audit
           # audit the pinned list with no virtual environment, as in ci.yml.
-          uv export --no-dev --no-emit-project \
+          # --no-emit-workspace drops the unhashed editable member lines.
+          uv export --no-dev --no-emit-workspace \
             --extra iceberg --extra pmtiles --extra thumbnails \
             -o /tmp/runtime-deps.txt
 
@@ -69,7 +70,7 @@ jobs:
             --disable-pip --require-hashes \
             --requirement /tmp/runtime-deps.txt \
             $IGNORES \
-            --format json 2>&1) || true
+            --format json) || true
 
           # Save full report as artifact (avoids 1MB output limit)
           echo "$AUDIT_OUTPUT" > /tmp/pip-audit-report.json
@@ -92,25 +93,10 @@ jobs:
               echo "No vulnerabilities found"
             fi
           else
-            # pip-audit failed or returned invalid JSON - treat as error
-            echo "has_vulnerabilities=error" >> $GITHUB_OUTPUT
+            # pip-audit crashed or wrote invalid JSON. Its stderr is in the log.
             echo "::error::pip-audit failed or returned invalid output"
             echo "$AUDIT_OUTPUT"
-          fi
-
-      - name: Also run the ruff security rules for code security
-        id: code-security
-        continue-on-error: true
-        run: |
-          # The S rules check our code, not the dependencies. The quality job
-          # gates them on every commit. This report keeps the nightly artifact.
-          uv run ruff check --select S --output-format json \
-            -o ruff-security-report.json portolan_cli || true
-          if [ -f ruff-security-report.json ]; then
-            ISSUE_COUNT=$(jq 'length' ruff-security-report.json)
-            if [ "$ISSUE_COUNT" -gt 0 ]; then
-              echo "::warning::The ruff S rules found $ISSUE_COUNT issues"
-            fi
+            exit 1
           fi
 
       - name: Upload audit artifacts
@@ -120,7 +106,6 @@ jobs:
           path: |
             /tmp/runtime-deps.txt
             /tmp/pip-audit-report.json
-            ruff-security-report.json
           retention-days: 30
         if: always()
 
@@ -304,10 +289,3 @@ jobs:
             });
 
             console.log(`Closed issue #${issueNumber}`);
-
-      - name: Log audit error
-        if: needs.audit.outputs.has_vulnerabilities == 'error'
-        run: |
-          echo "::error::Security audit failed - check the audit job logs"
-          echo "This could indicate a pip-audit bug or network issue."
-          echo "The audit will be retried on the next scheduled run."

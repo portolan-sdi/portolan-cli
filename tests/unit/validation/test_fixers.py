@@ -13,7 +13,9 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from rashid_core.model import Finding, Severity
+from rashid_core import validate
+from rashid_core.api import Severity, ValidationOptions
+from rashid_core.model import Finding
 
 from portolan_cli.metadata.fix import FixAction, FixResult
 from portolan_cli.validation import fixers as fixers_module
@@ -496,9 +498,9 @@ class TestLinksFixer:
         Concatenating it with a tuple raised ``TypeError`` the moment upstream
         exported anything but a tuple.
         """
-        monkeypatch.setattr(
-            fixers_module, "STRUCTURAL_RELS", frozenset(fixers_module.STRUCTURAL_RELS)
-        )
+        from rashid_core.api import STRUCTURAL_RELS
+
+        monkeypatch.setattr(fixers_module, "STRUCTURAL_RELS", frozenset(STRUCTURAL_RELS))
         collection = _tiny_catalog(tmp_path)
         data = _read_json(collection / "collection.json")
         data["links"] = [
@@ -641,6 +643,77 @@ class TestLinksFixer:
 
         assert _snapshot(tmp_path) == before
         assert [r.file_path.name for r in results] == ["catalog.json", "collection.json"]
+
+
+def _add_translation(root: Path, tag: str = "ro") -> None:
+    """Make ``root/<tag>`` an alternate-language tree of the catalog at ``root``.
+
+    core.md, Alternate-Language Trees: the translation has its own root and joins
+    the source tree only by ``alternate`` links, never by ``child`` links.
+    """
+    _tiny_catalog(root / tag)
+    for path, href in (
+        (root / "catalog.json", f"./{tag}/catalog.json"),
+        (root / tag / "catalog.json", "../catalog.json"),
+    ):
+        data = _read_json(path)
+        data["links"] = [{"rel": "alternate", "href": href, "type": "application/json"}]
+        _write_json(path, data)
+
+
+def _link_and_file_findings_after_fix(root: Path) -> list[str]:
+    """Run ``check --fix``'s fixers, then list the PTL-LNK and PTL-FIL findings left.
+
+    Each collection gets a README that names its license and source first, so
+    PTL-FIL-005 (README prose, an INSTRUCT rule) does not fire.
+    """
+    for collection_json in root.rglob("collection.json"):
+        (collection_json.parent / "README.md").write_text(
+            "# Roads\n\nLicense: CC-BY-4.0. Source: a test.\n", encoding="utf-8"
+        )
+    options = ValidationOptions(structural=False, extensions=False, data=False)
+    apply_fixers(root, validate(root, options=options).findings, dry_run=False)
+    return sorted(
+        f"{finding.rule_id} {finding.path}"
+        for finding in validate(root, options=options).findings
+        if finding.rule_id.startswith(("PTL-LNK", "PTL-FIL"))
+    )
+
+
+class TestLinksFixerAgreesWithRashid:
+    """The links fixer writes the links rashid expects, so a re-check finds none.
+
+    The fixer used to compute its own link block. It linked every tree to the
+    catalog root, wrote hrefs without percent-encoding, and linked children that
+    are not STAC. ``rashid_core.api.expected_links`` is the rule's own answer.
+    """
+
+    def test_translated_catalog_has_no_link_findings(self, tmp_path: Path) -> None:
+        """Each language tree links to its own root, and no child crosses languages."""
+        _tiny_catalog(tmp_path)
+        _add_translation(tmp_path)
+
+        assert _link_and_file_findings_after_fix(tmp_path) == []
+
+    def test_non_ascii_name_with_a_space_has_no_link_findings(self, tmp_path: Path) -> None:
+        """A directory named ``été 2024`` gets the href ``./%C3%A9t%C3%A9%202024/...``."""
+        _tiny_catalog(tmp_path, collection="été 2024")
+
+        assert _link_and_file_findings_after_fix(tmp_path) == []
+        child = next(
+            link
+            for link in _read_json(tmp_path / "catalog.json")["links"]
+            if link["rel"] == "child"
+        )
+        assert child["href"] == "./%C3%A9t%C3%A9%202024/collection.json"
+
+    def test_unparseable_child_gets_no_child_link(self, tmp_path: Path) -> None:
+        """A ``catalog.json`` that is not JSON is not a child to link."""
+        _tiny_catalog(tmp_path)
+        (tmp_path / "misc").mkdir()
+        (tmp_path / "misc" / "catalog.json").write_text("invalid JSON", encoding="utf-8")
+
+        assert _link_and_file_findings_after_fix(tmp_path) == []
 
 
 class TestBboxFixer:
@@ -1005,7 +1078,7 @@ class TestPartitionFixer:
 
 class TestSchemaUriFixer:
     def test_schema_uri_is_stamped(self, tmp_path: Path) -> None:
-        from portolan_cli.constants import PORTOLAN_SCHEMA_URI
+        from portolan_core.constants import PORTOLAN_SCHEMA_URI
 
         _tiny_catalog(tmp_path)
 
@@ -1088,6 +1161,49 @@ class TestMarkdownLinkGapParity:
 
         assert [r.file_path for r in results] == [catalog_json]
 
+    @pytest.mark.parametrize(("fixer", "rel"), [("readme", "describedby"), ("agents", "agents")])
+    def test_one_conforming_link_is_enough(self, tmp_path: Path, fixer: str, rel: str) -> None:
+        """A second link under the rel, such as a data dictionary, is not a gap."""
+        catalog_json = self._scaffolded(tmp_path)
+        data = _read_json(catalog_json)
+        data["links"].append({"rel": rel, "href": "./dictionary.html", "type": "text/html"})
+        _write_json(catalog_json, data)
+        before = _snapshot(tmp_path)
+
+        assert FIXERS[fixer](tmp_path, False) == []
+        assert _snapshot(tmp_path) == before
+
+    @pytest.mark.parametrize(
+        ("fixer", "rel", "href"),
+        [
+            ("readme", "describedby", "./READ%4DE.md"),
+            ("agents", "agents", "./AGENTS.md#usage"),
+            ("readme", "describedby", "../roads/README.md"),
+        ],
+    )
+    def test_an_href_rashid_resolves_to_the_sibling_is_not_a_gap(
+        self, tmp_path: Path, fixer: str, rel: str, href: str
+    ) -> None:
+        """Rashid decodes the href, drops its fragment and resolves it from the catalog root."""
+        self._scaffolded(tmp_path)
+        self._mutate_link(tmp_path / "roads" / "collection.json", rel, href=href)
+        before = _snapshot(tmp_path)
+
+        assert FIXERS[fixer](tmp_path, False) == []
+        assert _snapshot(tmp_path) == before
+
+    @pytest.mark.parametrize(("fixer", "rel"), [("readme", "describedby"), ("agents", "agents")])
+    def test_a_relative_catalog_root_works(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fixer: str, rel: str
+    ) -> None:
+        catalog_json = self._scaffolded(tmp_path / "catalog")
+        self._mutate_link(catalog_json, rel, type="text/html")
+        monkeypatch.chdir(tmp_path)
+
+        results = FIXERS[fixer](Path("catalog"), True)
+
+        assert [r.file_path.name for r in results] == ["catalog.json"]
+
     def test_a_missing_file_is_detected(self, tmp_path: Path) -> None:
         self._scaffolded(tmp_path)
         (tmp_path / "README.md").unlink()
@@ -1123,23 +1239,14 @@ class TestConvertFixer:
         assert [r.action for r in results] == [FixAction.SKIPPED]
 
     def test_the_skip_names_the_pass_that_owns_conversion(self, tmp_path: Path) -> None:
-        """The skip names both commands that do repair a file.
-
-        `convert` is selected by PTL-DAT-003, which the geo-asset pass owns, and
-        by PTL-DAT-006 and PTL-DAT-007, which it does not: those two fire on a
-        file that is already cloud-native, so the geo-asset pass skips it. Since
-        #805 `add --force --reconvert` rewrites that file, so the message names
-        it rather than leaving the operator with no route.
-        """
+        """The skip names the geo-asset pass, which rewrites the files these findings name."""
         _tiny_catalog(tmp_path)
 
         results = FIXERS["convert"](tmp_path, False)
 
         assert results[0].message == (
             "Conversion runs in the geo-asset pass; re-run `portolan check --fix` "
-            "without --metadata. A GeoParquet that is already cloud-native but "
-            "unsorted or missing its bbox covering column is rewritten by "
-            "`portolan add --force --reconvert`"
+            "without --metadata"
         )
 
 
@@ -1431,6 +1538,19 @@ class TestPmtilesFixer:
         ]
         assert [r.action for r in results] == [FixAction.UPDATED]
 
+    @pytest.mark.parametrize("href", ["./ROADS.PMTILES", "./roads.pmtiles?v=2"])
+    def test_the_fixer_repairs_every_asset_the_rule_flags(self, tmp_path: Path, href: str) -> None:
+        """PTL-VIZ-003 reads the href path in any case and without its query."""
+        collection = _tiny_catalog(tmp_path)
+        data = _read_json(collection / "collection.json")
+        data["assets"] = {"tiles": {"href": href}}
+        _write_json(collection / "collection.json", data)
+
+        FIXERS["pmtiles"](tmp_path, False)
+
+        fixed = _read_json(collection / "collection.json")
+        assert [link["href"] for link in fixed["links"] if link["rel"] == "pmtiles"] == [href]
+
     def test_a_collection_without_pmtiles_is_untouched(self, tmp_path: Path) -> None:
         _tiny_catalog(tmp_path)
         before = _snapshot(tmp_path)
@@ -1549,3 +1669,85 @@ class TestThumbnailFixer:
         assert [r.action for r in results] == [FixAction.UPDATED]
         assert _snapshot(tmp_path) == before
         assert collection_dir.exists()
+
+
+class TestMediaTypes:
+    """PTL-DAT-003: the declared media type follows the bytes of the asset."""
+
+    COG = "image/tiff; application=geotiff; profile=cloud-optimized"
+
+    def _asset(self, tmp_path: Path, name: str, content: bytes, declared: str) -> Path:
+        collection = _tiny_catalog(tmp_path)
+        (collection / name).write_bytes(content)
+        data = _read_json(collection / "collection.json")
+        data["assets"] = {"data": {"href": f"./{name}", "type": declared}}
+        _write_json(collection / "collection.json", data)
+        return collection / "collection.json"
+
+    @pytest.mark.parametrize(
+        ("name", "content", "expected"),
+        [
+            ("a.parquet", b"PAR1" + b"\0" * 8, "application/vnd.apache.parquet"),
+            ("a.pmtiles", b"PMTiles\x03", "application/vnd.pmtiles"),
+            ("a.png", b"\x89PNG\r\n\x1a\n", "image/png"),
+            ("a.jpg", b"\xff\xd8\xff\xe0", "image/jpeg"),
+            ("a.tif", b"II*\x00" + b"\0" * 8, "image/tiff; application=geotiff"),
+            ("a.tif", b"MM\x00*" + b"\0" * 8, "image/tiff; application=geotiff"),
+        ],
+    )
+    def test_the_bytes_decide_the_type(
+        self, tmp_path: Path, name: str, content: bytes, expected: str
+    ) -> None:
+        declared = "image/jpeg" if name == "a.png" else "image/png"
+        collection = self._asset(tmp_path, name, content, declared)
+
+        FIXERS["media_type"](tmp_path, False)
+
+        assert _read_json(collection)["assets"]["data"]["type"] == expected
+
+    def test_a_cog_gets_the_cog_profile(self, tmp_path: Path) -> None:
+        cog = Path(__file__).parents[2] / "fixtures" / "raster" / "valid" / "rgb.tif"
+        collection = self._asset(tmp_path, "a.tif", cog.read_bytes(), "image/png")
+
+        FIXERS["media_type"](tmp_path, False)
+
+        assert _read_json(collection)["assets"]["data"]["type"] == self.COG
+
+    @pytest.mark.parametrize(
+        ("name", "content", "declared"),
+        [
+            ("a.png", b"\x89PNG\r\n\x1a\n", "image/png; charset=binary"),
+            ("a.tif", b"II*\x00" + b"\0" * 8, "image/tiff; application=geotiff; profile=x"),
+            ("a.parquet", b"PAR1" + b"\0" * 8, "application/x-parquet; version=2"),
+        ],
+    )
+    def test_a_type_of_the_right_format_is_kept(
+        self, tmp_path: Path, name: str, content: bytes, declared: str
+    ) -> None:
+        self._asset(tmp_path, name, content, declared)
+        before = _snapshot(tmp_path)
+
+        assert FIXERS["media_type"](tmp_path, False) == []
+        assert _snapshot(tmp_path) == before
+
+    def test_an_unreadable_asset_is_skipped_with_a_reason(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        self._asset(tmp_path, "a.png", b"\x89PNG\r\n\x1a\n", "image/jpeg")
+        before = _snapshot(tmp_path)
+
+        real_open = Path.open
+
+        def denied(self: Path, *args: Any, **kwargs: Any) -> Any:
+            if self.name == "a.png":
+                raise PermissionError(13, "Permission denied", str(self))
+            return real_open(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "open", denied)
+        with caplog.at_level("WARNING", logger="portolan_cli.validation.fixers"):
+            results = FIXERS["media_type"](tmp_path, False)
+        monkeypatch.undo()
+
+        assert results == []
+        assert _snapshot(tmp_path) == before
+        assert "Cannot read a.png to type it: [Errno 13] Permission denied" in caplog.text

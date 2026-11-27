@@ -36,21 +36,21 @@ from portolan_cli.extract.common.converters.sld import (
 )
 
 __all__ = [
-    # Base builders
-    "make_mapbox_style",
-    "make_fill_layer",
-    "make_circle_layer",
-    "make_line_layer",
-    "make_symbol_layer",
-    "make_match_expression",
-    "make_step_expression",
+    "ESRIConverterError",
+    "SLDConverterError",
+    # ESRI converter
+    "convert_esri_renderer",
+    # SLD converter
+    "convert_sld",
     # Color utilities
     "esri_color_to_hex",
     "esri_color_to_opacity",
-    # ESRI converter
-    "convert_esri_renderer",
-    "ESRIConverterError",
-    # SLD converter
-    "convert_sld",
-    "SLDConverterError",
+    "make_circle_layer",
+    "make_fill_layer",
+    "make_line_layer",
+    # Base builders
+    "make_mapbox_style",
+    "make_match_expression",
+    "make_step_expression",
+    "make_symbol_layer",
 ]

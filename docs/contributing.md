@@ -30,7 +30,7 @@ Before you ask for review, a PR should clear this bar:
 - [ ] **Docs and ADRs updated.** User-facing behavior is documented; non-obvious
       decisions are recorded where they apply.
 
-If you run `prek run --all-files` locally and it is green, you have cleared most of
+If you run `uv run prek run --all-files` locally and it is green, you have cleared most of
 this bar before pushing.
 
 ## Development Setup
@@ -51,10 +51,10 @@ this bar before pushing.
    uv sync --all-extras
    ```
 
-4. **Install prek** (git hook manager)
+4. **Install the git hooks**. `uv sync` installs prek. This command installs
+   the pre-commit, commit-msg, and pre-push hooks.
    ```bash
-   uv tool install prek
-   prek install
+   uv run prek install
    ```
 
 5. **Verify setup**
@@ -91,7 +91,8 @@ so the PR title becomes the commit message — write it in conventional form.
 
 1. Create a branch from `main`
 2. Write tests first, then implement (TDD is required — see [Testing](#testing))
-3. Run `prek run --all-files` to check everything locally
+3. Run `uv run prek run --all-files` and
+   `uv run prek run --all-files --stage pre-push` to check everything locally
 4. Push and open a PR — CI runs automatically
 5. Fill in the PR template and link related issues
 
@@ -170,7 +171,7 @@ uv run pytest
 uv run pytest -m unit
 
 # With coverage report
-uv run pytest --cov=portolan_cli --cov-report=html
+uv run pytest --cov=portolan_cli --cov=portolan_core --cov-report=html
 ```
 
 **Test-driven development is required.** Write tests before implementation. Tests must fail before the implementation exists and pass after. This is not optional.
@@ -197,9 +198,10 @@ To cut a release, open a PR that runs:
 uv run cz bump --changelog
 ```
 
-When that PR merges, the release workflow detects the `bump:` commit, creates the
-git tag, builds the package, publishes to PyPI (trusted publishing), and creates a
-GitHub Release.
+When that PR merges, the release workflow finds the `bump:` commit and creates the
+git tag. Then it builds both packages. It publishes `portolan-core` to PyPI first,
+then `portolan-cli`, which pins `portolan-core` to the same version. Both use
+trusted publishing. Last, it creates a GitHub Release with both sets of files.
 
 ### Versioning Policy
 
@@ -216,9 +218,9 @@ number moves to 1 only when a human decides the interface is stable.
 - Use `portolan_cli/output.py` for all user-facing terminal messages
 - Use `logging.getLogger(__name__)` for diagnostic messages. The root `-v` flag
   shows them on stderr. See [Diagnose a run](guides/diagnostics.md).
-- Wrap each new stage of a command in `portolan_cli.trace.span`, and count
-  repeated expensive work with `portolan_cli.trace.count`. Submit thread pool
-  work through `portolan_cli.trace.submit`, so the worker keeps the open span
+- Wrap each new stage of a command in `portolan_core.trace.span`, and count
+  repeated expensive work with `portolan_core.trace.count`. Submit thread pool
+  work through `portolan_core.trace.submit`, so the worker keeps the open span
 - Record a non-obvious decision next to what it governs. User-facing behavior
   goes in `docs/`. Maintainer rationale goes in the docstring or comment at the
   site that enforces it. An accepted upstream limit goes in its `skipif` or

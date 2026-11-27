@@ -13,7 +13,7 @@ from __future__ import annotations
 import pytest
 
 # These will be implemented - tests first!
-from portolan_cli.models.schema import (
+from portolan_core.models.schema import (
     BandSchema,
     ColumnSchema,
     SchemaModel,
@@ -262,6 +262,7 @@ class TestSchemaModel:
             },
         )
 
+        assert schema.statistics is not None
         assert "population" in schema.statistics
         assert schema.statistics["population"]["min"] == 0
 
@@ -340,6 +341,7 @@ class TestSchemaModelSerialization:
 
         assert restored.format == original.format
         assert len(restored.columns) == len(original.columns)
+        assert restored.statistics is not None
         assert "area" in restored.statistics
 
 

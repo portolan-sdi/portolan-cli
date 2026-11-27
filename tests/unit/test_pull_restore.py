@@ -196,7 +196,7 @@ class TestFindMissingFiles:
         collection_dir.mkdir()
 
         # Create empty versions.json
-        versions_data = {
+        versions_data: dict[str, object] = {
             "spec_version": "1.0.0",
             "current_version": None,
             "versions": [],
@@ -224,7 +224,7 @@ class TestPullRestore:
     ) -> None:
         """restore=True should download missing files even when versions match."""
         from portolan_cli.sync.pull import pull
-        from portolan_cli.versions import _parse_versions_file
+        from portolan_core.versions import _parse_versions_file
 
         catalog_root = catalog_with_matching_versions
         collection = "test-collection"
@@ -282,7 +282,7 @@ class TestPullRestore:
     ) -> None:
         """Without restore=True, missing files are NOT downloaded (original behavior)."""
         from portolan_cli.sync.pull import pull
-        from portolan_cli.versions import _parse_versions_file
+        from portolan_core.versions import _parse_versions_file
 
         catalog_root = catalog_with_matching_versions
         collection = "test-collection"
@@ -323,7 +323,7 @@ class TestPullRestore:
     ) -> None:
         """restore=True with all files present should still be 'up to date'."""
         from portolan_cli.sync.pull import pull
-        from portolan_cli.versions import _parse_versions_file
+        from portolan_core.versions import _parse_versions_file
 
         catalog_root = catalog_with_matching_versions
         collection = "test-collection"
@@ -365,7 +365,7 @@ class TestPullRestore:
         to proceed with the pull in this case.
         """
         from portolan_cli.sync.pull import pull
-        from portolan_cli.versions import _parse_versions_file
+        from portolan_core.versions import _parse_versions_file
 
         catalog_root = catalog_with_matching_versions
         collection = "test-collection"
@@ -505,7 +505,7 @@ class TestPullRestoreAndForce:
     ) -> None:
         """--restore and --force can be used together."""
         from portolan_cli.sync.pull import pull
-        from portolan_cli.versions import _parse_versions_file
+        from portolan_core.versions import _parse_versions_file
 
         catalog_root = catalog_with_matching_versions
         collection = "test-collection"

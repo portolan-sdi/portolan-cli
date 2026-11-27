@@ -8,6 +8,7 @@ from {remote_url}/{href}.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -146,3 +147,20 @@ def test_pull_without_collection_pulls_every_collection(tmp_path, monkeypatch):
 
     assert result.exit_code == 0, result.output
     assert "No versions found for collection 'demo'" in result.output
+
+
+@pytest.mark.integration
+def test_pull_prints_each_download_line(iceberg_backend, parquet_file, tmp_path, capsys):
+    """pull() passes a report to download_file, so its download lines print, as before #1133."""
+    publish_boundaries(iceberg_backend, parquet_file)
+
+    def download(*, source: str, destination: Path, report: Any) -> MagicMock:
+        report("info", f"Downloading {destination.name}")
+        return MagicMock(success=True, files_downloaded=1)
+
+    with patch("portolan_cli.sync.download.download_file", side_effect=download):
+        iceberg_backend.pull(
+            remote_url="s3://bucket/catalog", local_root=tmp_path, collection="boundaries"
+        )
+
+    assert capsys.readouterr().out.splitlines()[0] == "→ Downloading data.parquet"

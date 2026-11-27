@@ -28,7 +28,7 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, Any
 
-from portolan_cli.constants import (
+from portolan_core.constants import (
     LEGACY_STYLE_MANIFEST_FIELD,
     PORTOLAN_SCHEMA_URI,
     REMOVED_PORTOLAN_FIELDS,
@@ -179,7 +179,7 @@ def _item_paths(collection_path: Path) -> list[Path]:
     and no filename pattern finds them all. An unreadable collection is
     somebody else's finding, so it yields no items rather than raising.
     """
-    from portolan_cli.stac_links import owned_item_hrefs
+    from portolan_core.stac_links import owned_item_hrefs
 
     try:
         return [path for _href, path in owned_item_hrefs(collection_path)]

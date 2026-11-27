@@ -17,14 +17,15 @@ from pyproj import CRS
 from pyproj.exceptions import CRSError
 
 from portolan_cli.formats import parquet_footer, read_geo_metadata
-from portolan_cli.models.schema import ColumnSchema, SchemaModel
-from portolan_cli.trace import count
+from portolan_core.models.schema import ColumnSchema, SchemaModel
+from portolan_core.trace import count
 
 if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
     import pyarrow as pa
+from portolan_core.bbox import BBOX_2D_LEN
 
 T = TypeVar("T")
 
@@ -96,13 +97,15 @@ class GeoParquetMetadata:
         if crs is None:
             return None
 
-        if isinstance(crs, dict):
+        # Only an EPSG id that pyproj resolves is an EPSG code. pyproj matches
+        # the definition for any other id, such as EPSG:999999 or MYORG:1.
+        if isinstance(crs, dict) and crs.get("id", {}).get("authority", "EPSG") == "EPSG":
             code = crs.get("id", {}).get("code")
-            if code is not None:
-                try:
-                    return int(code)
-                except (TypeError, ValueError):
-                    pass
+            try:
+                CRS.from_epsg(int(code))
+                return int(code)
+            except (TypeError, ValueError, CRSError):
+                pass
 
         try:
             return CRS.from_user_input(crs).to_epsg()
@@ -231,7 +234,7 @@ def open_footer(path: Path) -> pq.ParquetFile | None:
     """
     try:
         return parquet_footer(path)
-    except Exception:  # noqa: BLE001 - an unreadable file has no footer to read
+    except Exception:  # an unreadable file has no footer to read
         return None
 
 
@@ -258,8 +261,8 @@ def read_spatial_layout(source: Path | pq.ParquetFile) -> SpatialLayout:
     (issue #805).
 
     The answer says nothing about row order. A file that carries the column but
-    holds unordered rows still fails PTL-DAT-006, and ``add --force
-    --reconvert`` is what rewrites it.
+    holds unordered rows still fails PTL-DAT-006, and ``check --fix`` or
+    ``add --force --reconvert`` rewrites it.
 
     Args:
         source: Path to a Parquet file, or a file the caller opened with
@@ -405,7 +408,7 @@ def _raw_field_metadata(
     while token in serialized:
         nonce += 1
         token = f"{nonce:0{len(key)}d}".encode()
-    schema = pa.ipc.read_schema(pa.BufferReader(serialized.replace(key, token)))
+    schema = pa.ipc.read_schema(pa.py_buffer(serialized.replace(key, token)))
     return _field_metadata(schema, geometry_columns, masked_key=token)
 
 
@@ -415,7 +418,7 @@ def _field_metadata(
     """Keep metadata at every depth, including semantic Arrow extension keys."""
     result: dict[str | tuple[str, ...], dict[bytes, bytes]] = {}
 
-    def visit(field: pa.Field, path: tuple[str, ...]) -> None:
+    def visit(field: pa.Field[Any], path: tuple[str, ...]) -> None:
         metadata = dict(field.metadata or {})
         if masked_key is not None:
             # The byte substitution can also touch a publisher key or value
@@ -471,12 +474,12 @@ def _extract_bbox(column_meta: dict[str, Any]) -> tuple[float, float, float, flo
     """
     import logging
 
-    from portolan_cli.bbox import is_finite_bbox, to_2d_bbox
+    from portolan_core.bbox import is_finite_bbox, to_2d_bbox
 
     logger = logging.getLogger(__name__)
 
     bbox = column_meta.get("bbox")
-    if bbox and len(bbox) >= 4:
+    if bbox and len(bbox) >= BBOX_2D_LEN:
         try:
             bbox_list = to_2d_bbox([float(value) for value in bbox])
         except (ValueError, TypeError):
@@ -498,10 +501,17 @@ def _extract_crs(column_meta: dict[str, Any]) -> str | dict[str, Any] | None:
 
     # CRS can be PROJJSON dict or WKT string
     if isinstance(crs, dict):
-        # Try to extract EPSG code from PROJJSON
-        epsg = crs.get("id", {}).get("code")
-        if epsg:
-            return f"EPSG:{epsg}"
+        # Read the code with its own authority, so OGC:CRS84 does not become
+        # EPSG:CRS84. Keep the full PROJJSON when pyproj cannot resolve the
+        # id, such as a custom authority (#928).
+        crs_id = crs.get("id", {})
+        if crs_id.get("code"):
+            code = f"{crs_id.get('authority', 'EPSG')}:{crs_id['code']}"
+            try:
+                CRS.from_user_input(code)
+            except CRSError:
+                return crs
+            return code
         return crs
     return str(crs)
 

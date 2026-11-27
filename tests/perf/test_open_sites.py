@@ -1,4 +1,4 @@
-"""Every data file read in portolan_cli counts an open (#992).
+"""Every data file read in portolan_cli or portolan_core counts an open (#992).
 
 The scale gates see a re-open only when the code that opens the file counts
 it. pyarrow, rasterio, and OGR have no choke point in our code, so each
@@ -27,12 +27,14 @@ from __future__ import annotations
 
 import ast
 from pathlib import Path
+from typing import Any
 
 import pytest
 
+from tests.source_roots import CLI_ROOT, CORE_ROOT, SOURCE_ROOTS
+
 pytestmark = pytest.mark.unit
 
-PACKAGE = Path(__file__).resolve().parents[2] / "portolan_cli"
 #: The package that cannot import trace, and so cannot count, under the package root.
 SKIPPED = ("backends", "iceberg")
 
@@ -194,12 +196,21 @@ def _own_calls(scope: ast.AST) -> list[ast.Call]:
     return calls
 
 
-def uncounted_sites(package: Path = PACKAGE) -> list[str]:
+def source_files(*packages: Path) -> list[Path]:
+    """Return the Python files the scan reads. The default is both source folders."""
+    return sorted(
+        path
+        for package in packages or SOURCE_ROOTS
+        for path in package.rglob("*.py")
+        if not path.is_relative_to(package.joinpath(*SKIPPED))
+    )
+
+
+def uncounted_sites(*packages: Path) -> list[str]:
     """Return ``path:function: counter opened N, counted M`` for each short function."""
     found: list[str] = []
-    for path in sorted(package.rglob("*.py")):
-        if path.is_relative_to(package.joinpath(*SKIPPED)):
-            continue
+    for path in source_files(*packages):
+        package = next(p for p in packages or SOURCE_ROOTS if path.is_relative_to(p))
         tree = ast.parse(path.read_text(encoding="utf-8"))
         aliases = _scope_aliases(tree, _aliases(tree))
         scopes = [
@@ -227,6 +238,13 @@ def test_every_open_site_counts() -> None:
     assert uncounted_sites() == []
 
 
+def test_the_scan_reads_both_packages() -> None:
+    """The config parser moved into portolan-core (#1133). The scan must still read it."""
+    files = source_files()
+    assert CLI_ROOT / "convert.py" in files
+    assert CORE_ROOT / "config.py" in files
+
+
 def test_the_scan_finds_an_uncounted_read_and_passes_a_counted_one(tmp_path: Path) -> None:
     package = tmp_path / "portolan_cli"
     package.mkdir()
@@ -235,7 +253,7 @@ def test_the_scan_finds_an_uncounted_read_and_passes_a_counted_one(tmp_path: Pat
         "import pyarrow.parquet as pq\n"
         "import rasterio\n"
         "from pyogrio import read_info\n"
-        "from portolan_cli.trace import count\n\n"
+        "from portolan_core.trace import count\n\n"
         "def counted(path):\n"
         '    count("parquet.opens")\n'
         "    return pq.ParquetFile(path)\n\n"
@@ -302,8 +320,8 @@ def test_delegated_footer_reads_are_counted(
 
     from portolan_cli.formats import in_run
     from portolan_cli.preparation import convert_vector
-    from portolan_cli.run_state import RunState
-    from portolan_cli.trace import counters, tracing
+    from portolan_core.run_state import RunState
+    from portolan_core.trace import counters, tracing
     from tests.perf.runner import _install_parquet_counter
 
     source = tmp_path / "points.parquet"
@@ -312,7 +330,7 @@ def test_delegated_footer_reads_are_counted(
     actual: list[object] = []
     original = pq.ParquetFile.__init__
 
-    def opened(self: object, *args: object, **kwargs: object) -> None:
+    def opened(self: pq.ParquetFile, *args: Any, **kwargs: Any) -> None:
         actual.append(args[0])
         original(self, *args, **kwargs)
 

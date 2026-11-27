@@ -49,7 +49,9 @@ def _private_imports(source: Path, own_package: str) -> list[str]:
             for module in modules:
                 if module.startswith(own_package):
                     continue
-                if module.split(".")[0] == "portolan_cli" and module not in PUBLIC_MODULES:
+                # portolan_core holds the reader modules, which are not the plugin API (#1133).
+                private = module.split(".")[0] in ("portolan_cli", "portolan_core")
+                if private and module not in PUBLIC_MODULES:
                     found.append(f"{path.relative_to(source)}:{node.lineno} imports {module}")
     return found
 
@@ -65,7 +67,7 @@ def test_plugin_imports_only_the_public_api(name: str) -> None:
 def test_the_check_finds_a_private_import(tmp_path: Path) -> None:
     """The scan reports each private form: `import x.y`, `from x.y import`, `from x import y`."""
     (tmp_path / "bad.py").write_text(
-        "import portolan_cli.versions\n"
+        "import portolan_core.versions\n"
         "from portolan_cli.sync.upload import upload_file\n"
         "from portolan_cli import output, api\n"
         "from portolan_cli.api import hookimpl\n",
@@ -74,4 +76,4 @@ def test_the_check_finds_a_private_import(tmp_path: Path) -> None:
 
     found = [line.split(" imports ")[1] for line in _private_imports(tmp_path, "bad")]
 
-    assert found == ["portolan_cli.versions", "portolan_cli.sync.upload", "portolan_cli.output"]
+    assert found == ["portolan_core.versions", "portolan_cli.sync.upload", "portolan_cli.output"]

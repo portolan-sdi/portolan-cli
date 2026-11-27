@@ -24,6 +24,8 @@ from portolan_cli.sync.push import (
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from portolan_cli.sync.report import Report
+
 # =============================================================================
 # Formatting Tests
 # =============================================================================
@@ -49,13 +51,13 @@ class TestFormatFileSize:
     def test_format_megabytes(self) -> None:
         """Files under 1GB should show MB."""
         assert format_file_size(1024 * 1024) == "1.0 MB"
-        assert format_file_size(54.2 * 1024 * 1024) == "54.2 MB"
+        assert format_file_size(int(54.2 * 1024 * 1024)) == "54.2 MB"
 
     @pytest.mark.unit
     def test_format_gigabytes(self) -> None:
         """Large files should show GB."""
         assert format_file_size(1024 * 1024 * 1024) == "1.0 GB"
-        assert format_file_size(2.5 * 1024 * 1024 * 1024) == "2.5 GB"
+        assert format_file_size(int(2.5 * 1024 * 1024 * 1024)) == "2.5 GB"
 
 
 class TestFormatSpeed:
@@ -179,7 +181,7 @@ class TestUploadAssetsVerboseMode:
     @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_default_mode_suppresses_success_messages(
-        self, mock_catalog: Path, capsys: pytest.CaptureFixture[str]
+        self, print_report: Report, mock_catalog: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Default mode should not print per-file success messages."""
         assets = [
@@ -195,7 +197,7 @@ class TestUploadAssetsVerboseMode:
                 catalog_root=mock_catalog,
                 prefix="test-prefix",
                 assets=assets,
-                suppress_progress=True,  # Default quiet mode
+                report=print_report,
             )
 
         captured = capsys.readouterr()
@@ -205,15 +207,10 @@ class TestUploadAssetsVerboseMode:
 
     @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_json_mode_suppresses_progress_bar(
+    async def test_no_progress_bar_by_default(
         self, mock_catalog: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """JSON mode should suppress progress bar output.
-
-        Note: The async upload uses AsyncProgressReporter which is suppressed
-        when json_mode=True. Per-file verbose output is not implemented in
-        the async version - progress is shown via the Rich progress bar.
-        """
+        """Without show_progress, the upload draws no progress bar."""
         assets = [
             mock_catalog / "test-collection" / "item1" / "data.parquet",
         ]
@@ -226,7 +223,6 @@ class TestUploadAssetsVerboseMode:
                 catalog_root=mock_catalog,
                 prefix="test-prefix",
                 assets=assets,
-                json_mode=True,  # Suppress progress bar
             )
 
         # Should complete successfully
@@ -240,7 +236,7 @@ class TestUploadAssetsVerboseMode:
     @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_failures_always_shown(
-        self, mock_catalog: Path, capsys: pytest.CaptureFixture[str]
+        self, print_report: Report, mock_catalog: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Failures should always be shown, regardless of verbose mode."""
         assets = [
@@ -254,12 +250,12 @@ class TestUploadAssetsVerboseMode:
             new_callable=AsyncMock,
             side_effect=Exception("Network error"),
         ):
-            files_uploaded, errors, _, _metrics = await _upload_assets_async(
+            _files_uploaded, errors, _, _metrics = await _upload_assets_async(
                 store=mock_store,
                 catalog_root=mock_catalog,
                 prefix="test-prefix",
                 assets=assets,
-                suppress_progress=True,  # Even in quiet mode
+                report=print_report,
             )
 
         captured = capsys.readouterr()
@@ -280,12 +276,11 @@ class TestUploadAssetsVerboseMode:
         mock_store = MagicMock()
 
         with patch("portolan_cli.sync.push.obs.put_async", new_callable=AsyncMock):
-            files_uploaded, errors, uploaded_keys, metrics = await _upload_assets_async(
+            _files_uploaded, _errors, _uploaded_keys, metrics = await _upload_assets_async(
                 store=mock_store,
                 catalog_root=mock_catalog,
                 prefix="test-prefix",
                 assets=assets,
-                suppress_progress=True,
             )
 
         assert isinstance(metrics, UploadMetrics)
@@ -311,7 +306,6 @@ class TestUploadAssetsVerboseMode:
                 catalog_root=mock_catalog,
                 prefix="test-prefix",
                 assets=assets,
-                suppress_progress=True,  # Even in quiet mode
             )
 
         # Metrics should be populated

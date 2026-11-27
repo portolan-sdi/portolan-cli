@@ -13,7 +13,6 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from portolan_cli.constants import PORTOLAN_SCHEMA_URI
 from portolan_cli.validation.legacy import (
     _MESSAGE,
     _REMOVED_FIELDS_MESSAGE,
@@ -23,6 +22,7 @@ from portolan_cli.validation.legacy import (
     detect_removed_fields,
     detect_style_manifest,
 )
+from portolan_core.constants import PORTOLAN_SCHEMA_URI
 
 if TYPE_CHECKING:
     from pathlib import Path

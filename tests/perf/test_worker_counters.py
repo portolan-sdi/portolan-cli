@@ -46,8 +46,8 @@ def _rewrite_and_audit(source: Path) -> tuple[dict[str, int], int, int]:
 
     from portolan_cli.formats import in_run
     from portolan_cli.preparation import convert_vector
-    from portolan_cli.run_state import RunState
-    from portolan_cli.trace import counters, tracing
+    from portolan_core.run_state import RunState
+    from portolan_core.trace import counters, tracing
 
     actual_opens = 0
     actual_connections = 0

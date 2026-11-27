@@ -11,8 +11,8 @@ from click.testing import CliRunner
 
 from portolan_cli.add import add_files
 from portolan_cli.cli import cli
-from portolan_cli.run_state import RunState
-from portolan_cli.versions import read_versions
+from portolan_core.run_state import RunState
+from portolan_core.versions import read_versions
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -247,7 +247,7 @@ def test_index_recovery_keeps_an_entry_that_another_add_wrote_first(
     conformant_catalog: Path, valid_points_parquet: Path
 ) -> None:
     """The recovery reads the summaries under the lock, so a newer entry survives."""
-    import portolan_cli.catalog as catalog
+    from portolan_cli import catalog
 
     root = conformant_catalog
     source = root / "roads" / "roads.parquet"

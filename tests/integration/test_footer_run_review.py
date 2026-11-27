@@ -11,7 +11,7 @@ import pytest
 
 from portolan_cli.formats import current_run, in_run, parquet_footer, run_scope
 from portolan_cli.preparation import convert_vector
-from portolan_cli.run_state import RunState
+from portolan_core.run_state import RunState
 
 pytestmark = pytest.mark.integration
 
@@ -65,7 +65,7 @@ def test_unreadable_extension_declaration_is_kept(tmp_path: Path, declaration: b
     source = tmp_path / "points.parquet"
     table = pq.read_table(POINTS)
     index = table.schema.get_field_index("geometry")
-    metadata = {
+    metadata: dict[bytes | str, bytes | str] = {
         b"ARROW:extension:name": b"geoarrow.wkb",
         b"ARROW:extension:metadata": declaration,
     }
@@ -89,7 +89,7 @@ def test_rewrite_invalidates_footer_when_stat_key_is_unchanged(
     import geoparquet_io as gpio
     from geoparquet_io.api.table import Table
 
-    import portolan_cli.run_state as run_state
+    from portolan_core import run_state
 
     source = tmp_path / "points.parquet"
     table = gpio.convert(POINTS).add_bbox()
@@ -118,9 +118,9 @@ def test_copy_invalidates_destination_footer(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Copying an existing Parquet must drop reads of the previous output."""
-    import portolan_cli.run_state as run_state
     from portolan_cli.conversion_config import VectorSettings
     from portolan_cli.convert import PROVENANCE_KEY, provenance_record
+    from portolan_core import run_state
 
     source = tmp_path / "points.parquet"
     table = pq.read_table(POINTS)
@@ -153,7 +153,7 @@ def test_reused_scratch_path_does_not_reuse_a_deleted_footer(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A prior scratch footer cannot supply the gate or replacement metadata."""
-    import portolan_cli.run_state as run_state
+    from portolan_core import run_state
 
     source = tmp_path / "points.parquet"
     source.write_bytes(POINTS.read_bytes())
@@ -170,14 +170,19 @@ def test_reused_scratch_path_does_not_reuse_a_deleted_footer(
 
 def test_run_scopes_restore_after_nested_exception_and_thread_work(tmp_path: Path) -> None:
     """Nested scopes restore their parent and worker submissions copy the run."""
-    from portolan_cli.trace import submit
+    from portolan_core.trace import submit
 
     outer, inner = RunState.open(tmp_path), RunState.open(tmp_path)
     assert current_run() is None
     with in_run(outer):
-        with pytest.raises(RuntimeError, match="scope failure"), in_run(inner):
-            assert current_run() is inner
-            raise RuntimeError("scope failure")
+
+        def fail_in_inner_scope() -> None:
+            with in_run(inner):
+                assert current_run() is inner
+                raise RuntimeError("scope failure")
+
+        with pytest.raises(RuntimeError, match="scope failure"):
+            fail_in_inner_scope()
         with run_scope(None):
             assert current_run() is outer
         with ThreadPoolExecutor(max_workers=1) as pool:
@@ -209,8 +214,8 @@ def test_pmtiles_style_reuses_the_discovery_footer(tmp_path: Path) -> None:
     """The PMTiles side step must keep its run scope through style creation."""
     import json
 
-    from portolan_cli.trace import counters, tracing
     from portolan_cli.viz.pmtiles import generate_or_suggest_pmtiles
+    from portolan_core.trace import counters, tracing
 
     collection = tmp_path / "places"
     collection.mkdir()
@@ -234,7 +239,6 @@ def test_pmtiles_style_reuses_the_discovery_footer(tmp_path: Path) -> None:
             {"places"},
             generate_pmtiles=False,
             force=False,
-            verbose=False,
             state=state,
         )
         opens = counters()["parquet.opens"]
@@ -274,7 +278,8 @@ def test_registered_nested_extensions_keep_raw_declarations(tmp_path: Path) -> N
     source = tmp_path / "points.parquet"
     pq.write_table(table.append_column("nested", nested), source)
     extension = PublisherType()
-    pa.register_extension_type(extension)
+    # pyarrow-stubs accept only PyExtensionType here. pyarrow takes any ExtensionType.
+    pa.register_extension_type(extension)  # type: ignore[arg-type]
     try:
         fidelity = read_rewrite_fidelity(source)
         assert fidelity is not None
@@ -290,11 +295,11 @@ def test_registered_nested_extensions_keep_raw_declarations(tmp_path: Path) -> N
 def test_registered_projjson_declaration_allows_a_lossless_rewrite(tmp_path: Path) -> None:
     """GeoArrow's CRS representation tag does not add semantics beyond ``geo``."""
     import geoarrow.pyarrow  # noqa: F401 - force extension-aware Arrow serialization
-    import geopandas as gpd
+    import geopandas
     from shapely.geometry import Point
 
     source = tmp_path / "points.parquet"
-    frame = gpd.GeoDataFrame(
+    frame = geopandas.GeoDataFrame(
         {"a": [1, 2, 3]}, geometry=[Point(0, 0), Point(1, 1), Point(2, 2)], crs=3857
     )
     frame.to_parquet(source)

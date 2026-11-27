@@ -51,7 +51,11 @@ from portolan_cli.extract.arcgis.discovery import (
 )
 from portolan_cli.extract.arcgis.metadata import extract_arcgis_metadata
 from portolan_cli.extract.arcgis.url_parser import ArcGISURLType, parse_arcgis_url
-from portolan_cli.extract.common.report import FolderCoverage, MetadataExtracted
+from portolan_cli.extract.common.report import (
+    FolderCoverage,
+    MetadataExtracted,
+    run_extract_command,
+)
 from portolan_cli.extract.common.source import (
     Discovery,
     LayerMetadata,
@@ -62,15 +66,25 @@ from portolan_cli.extract.common.source import (
     slugify,
 )
 from portolan_cli.extract.common.styles import extract_esri_style
-from portolan_cli.licensing import license_url_from_text
-from portolan_cli.trace import count
+from portolan_core.licensing import license_url_from_text
+from portolan_core.trace import count
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
+    from portolan_cli.extract.arcgis.imageserver.extractor import TileProgress
+    from portolan_cli.extract.arcgis.imageserver.orchestrator import (
+        ImageServerCLIOptions,
+        ImageServerRunResult,
+    )
     from portolan_cli.extract.arcgis.metadata import ArcGISMetadata
-    from portolan_cli.extract.common.progress import ExtractionProgress
-    from portolan_cli.extract.common.report import ExtractionReport
+    from portolan_cli.extract.common.progress import (
+        LayerProgressCallback,
+        MessageCallback,
+    )
+    from portolan_cli.extract.common.report import ExtractionReport, ExtractRunResult
+
+_WGS84_EPSG = 4326
 
 logger = logging.getLogger(__name__)
 
@@ -202,7 +216,7 @@ def _service_output_dir(output_dir: Path, service_name: str) -> Path:
     parts = [slugify(p) for p in service_name.split("/") if p]
     result = output_dir
     for part in parts:
-        result = result / part
+        result /= part
     return result
 
 
@@ -246,7 +260,8 @@ class ExtractionOptions:
     dry_run: bool = False
     vector: VectorSettings = field(default_factory=VectorSettings)
     no_styles: bool = False
-    token: str | None = None
+    # repr=False: an options repr reaches tracebacks and logs.
+    token: str | None = field(default=None, repr=False)
     recurse: bool = True
     license: str | None = None
     license_url: str | None = None
@@ -274,7 +289,7 @@ def _is_wgs84_crs(crs: dict[str, object]) -> bool:
     except (CRSError, KeyError, TypeError, ValueError):
         # An unparsable CRS is not WGS84, so tag it rather than assume CRS84.
         return False
-    return parsed.to_epsg() == 4326 or parsed == CRS("OGC:CRS84")
+    return parsed.to_epsg() == _WGS84_EPSG or parsed == CRS("OGC:CRS84")
 
 
 def _ensure_geoparquet_crs(output_path: Path, source_crs: dict[str, object] | None) -> None:
@@ -594,7 +609,7 @@ class ArcGISLayerSource:
             service_url = service.get_url(base_url)
             try:
                 found = discover_layers(service_url, client)
-            except Exception as err:  # noqa: BLE001 - one service must not stop the walk
+            except Exception as err:  # one service must not stop the walk
                 errors.append(f"{service.name}: {err}")
                 logger.warning("Failed to discover layers from service '%s': %s", service.name, err)
                 continue
@@ -656,7 +671,7 @@ class ArcGISLayerSource:
         options = self.options
         import inspect
 
-        import geoparquet_io as gpio  # type: ignore[import-untyped]
+        import geoparquet_io as gpio
 
         # Check which optional parameters gpio.extract_arcgis supports (feature-detected
         # so older gpio versions continue to work without modification).
@@ -724,7 +739,7 @@ class ArcGISLayerSource:
             details = fetch_layer_details(arcgis_layer.service_url, layer.id, self.options.client())
             description = details.get("description")
             name = details.get("name", layer.name)
-        except Exception as err:  # noqa: BLE001 - a missing description must not fail the catalog
+        except Exception as err:  # a missing description must not fail the catalog
             logger.debug(
                 "Failed to fetch layer details for %s (id=%s) from %s: %s",
                 layer.name,
@@ -774,7 +789,8 @@ def extract_arcgis_catalog(
     service_filter: list[str] | None = None,
     service_exclude: list[str] | None = None,
     options: ExtractionOptions | None = None,
-    on_progress: Callable[[ExtractionProgress], None] | None = None,
+    on_progress: LayerProgressCallback | None = None,
+    on_message: MessageCallback | None = None,
 ) -> ExtractionReport:
     """Extract layers from an ArcGIS service to a Portolan catalog.
 
@@ -787,6 +803,7 @@ def extract_arcgis_catalog(
         service_exclude: Glob patterns to exclude services (for services root URLs)
         options: Extraction options (defaults to ExtractionOptions())
         on_progress: Callback for progress updates
+        on_message: Called as ``on_message(level, text)`` with each catalog notice.
 
     Returns:
         ExtractionReport with results for all layers
@@ -815,4 +832,104 @@ def extract_arcgis_catalog(
     layer_source = ArcGISLayerSource(
         options, service_filter=service_filter, service_exclude=service_exclude
     )
-    return run_layer_extraction(layer_source, url, output_dir, driver, on_progress=on_progress)
+    return run_layer_extraction(
+        layer_source, url, output_dir, driver, on_progress=on_progress, on_message=on_message
+    )
+
+
+def run_extract_arcgis(
+    url: str,
+    output_dir: Path,
+    *,
+    options: ExtractionOptions | None = None,
+    list_only: bool = False,
+    service_filter: list[str] | None = None,
+    service_exclude: list[str] | None = None,
+    imageserver: ImageServerCLIOptions | None = None,
+    layer_filter: list[str] | None = None,
+    layer_exclude: list[str] | None = None,
+    on_progress: LayerProgressCallback | None = None,
+    on_tile_progress: Callable[[TileProgress], None] | None = None,
+    on_message: MessageCallback | None = None,
+) -> ServicesRootDiscoveryResult | ExtractRunResult | ImageServerRunResult:
+    """Run ``portolan extract arcgis`` in the mode that the URL and ``list_only`` select.
+
+    The command resolves the token, asks its questions, and then calls this
+    function. It prints ``to_dict()``. ``--list-services`` prints the bare
+    dict, and the other modes emit it as the envelope ``data``.
+
+    Args:
+        url: ArcGIS FeatureServer, MapServer, ImageServer, or services root URL.
+        output_dir: Directory to write extracted data. ``--list-services``
+            writes nothing.
+        options: Options of the list and layer modes.
+        list_only: List the services of a services root or folder URL
+            (``--list-services``). It uses ``service_filter``, ``options.token``,
+            ``options.recurse``, and ``options.timeout``.
+        service_filter: Glob patterns of the services to include.
+        service_exclude: Glob patterns of the services to exclude.
+        imageserver: Options of the ImageServer mode. The token does not
+            apply to it yet (issue #311).
+        layer_filter: Glob patterns of the layers to include (None = all).
+        layer_exclude: Glob patterns of the layers to exclude.
+        on_progress: Called with the progress of each layer.
+        on_tile_progress: Called with the progress of each ImageServer tile.
+        on_message: Called as ``on_message(level, text)`` with each notice for
+            the user, in the ImageServer and layer modes.
+
+    Returns:
+        The service list, the layer extraction, or the ImageServer extraction.
+
+    Raises:
+        InputValidationError: If the catalog id is not a valid STAC id. The
+            check runs before any request.
+        ValueError: If the URL is not an ArcGIS URL, or ``list_only`` gets a
+            URL that is not a services root or folder.
+    """
+    options = options or ExtractionOptions()
+    if list_only:
+        return list_services(
+            url,
+            service_filter=service_filter,
+            token=options.token,
+            recurse=options.recurse,
+            timeout=options.timeout,
+        )
+
+    if parse_arcgis_url(url).url_type == ArcGISURLType.IMAGE_SERVER:
+        import asyncio
+
+        from portolan_cli.extract.arcgis.imageserver.orchestrator import (
+            ImageServerCLIOptions,
+            ImageServerRunResult,
+            run_imageserver,
+        )
+        from portolan_cli.input_hardening import validate_catalog_id
+
+        image = imageserver or ImageServerCLIOptions()
+        if image.catalog_id is not None:
+            validate_catalog_id(image.catalog_id)
+        exit_code, image_report = asyncio.run(
+            run_imageserver(
+                url, output_dir, image, on_progress=on_tile_progress, on_message=on_message
+            )
+        )
+        from portolan_cli.extract.common.urls import redact_credentials
+
+        # A repr reaches tracebacks and logs, so the result never holds the token.
+        return ImageServerRunResult(
+            redact_credentials(url), output_dir, image.dry_run, exit_code, image_report
+        )
+
+    return run_extract_command(
+        extract_arcgis_catalog,
+        url,
+        output_dir,
+        options,
+        service_filter=service_filter,
+        service_exclude=service_exclude,
+        layer_filter=layer_filter,
+        layer_exclude=layer_exclude,
+        on_progress=on_progress,
+        on_message=on_message,
+    )

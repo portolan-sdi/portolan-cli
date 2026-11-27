@@ -19,9 +19,9 @@ from typing import TYPE_CHECKING, Any
 
 from portolan_cli.metadata.cog import extract_cog_metadata
 from portolan_cli.metadata.geoparquet import extract_geoparquet_metadata
-from portolan_cli.run_state import stat_matches
-from portolan_cli.trace import count
-from portolan_cli.versions import (
+from portolan_core.run_state import stat_matches
+from portolan_core.trace import count
+from portolan_core.versions import (
     VersionsFile,
     read_versions,
     versions_asset_key,
@@ -31,7 +31,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from portolan_cli.metadata.cog import COGMetadata
-    from portolan_cli.run_state import RunState
+    from portolan_core.run_state import RunState
 from portolan_cli.metadata.models import (
     FileMetadataState,
     MetadataCheckResult,
@@ -501,10 +501,8 @@ def detect_changes(state: FileMetadataState) -> list[str]:
 
     # Check feature count
     if (
-        state.stored_feature_count is None
-        and state.current_feature_count is not None
-        or state.current_feature_count != state.stored_feature_count
-    ):
+        state.stored_feature_count is None and state.current_feature_count is not None
+    ) or state.current_feature_count != state.stored_feature_count:
         changes.append("feature_count")
 
     # Check schema
@@ -628,7 +626,7 @@ def check_file_metadata(
 
 def _content_matches(file_path: Path, stored_sha256: str, *, state: RunState | None = None) -> bool:
     """True when the file's SHA-256 equals the checksum versions.json recorded."""
-    from portolan_cli.sync.checksums import compute_checksum
+    from portolan_core.checksums import compute_checksum
 
     if not file_path.is_file():
         return False

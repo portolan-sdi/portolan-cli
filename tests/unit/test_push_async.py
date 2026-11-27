@@ -111,7 +111,7 @@ def async_catalog(tmp_path: Path) -> Path:
         (item_dir / f"file{i}.parquet").write_bytes(b"x" * 1024)
 
     # Create item STAC file
-    item_data = {
+    item_data: dict[str, Any] = {
         "type": "Feature",
         "stac_version": "1.0.0",
         "id": "data",
@@ -189,7 +189,7 @@ def many_files_catalog(tmp_path: Path) -> Path:
         (item_dir / f"file{i}.parquet").write_bytes(b"x" * 512)
 
     # Create item STAC file
-    item_data = {
+    item_data: dict[str, Any] = {
         "type": "Feature",
         "stac_version": "1.0.0",
         "id": "data",
@@ -471,7 +471,6 @@ class TestPushAsyncConcurrency:
             destination="s3://test-bucket/catalog",
             concurrency=limit,
             adaptive=False,
-            json_mode=True,
         )
 
         assert result.success is True
@@ -497,7 +496,6 @@ class TestPushAsyncConcurrency:
             collection="test",
             destination="s3://test-bucket/catalog",
             concurrency=50,
-            json_mode=True,
         )
 
         assert result.success is False
@@ -525,7 +523,6 @@ class TestPushAsyncConcurrency:
             collection="test",
             destination="s3://test-bucket/catalog",
             concurrency=50,
-            json_mode=True,
         )
 
         assert result.success is False
@@ -548,7 +545,6 @@ class TestPushAsyncConcurrency:
             destination="s3://test-bucket/catalog",
             concurrency=1,
             adaptive=False,
-            json_mode=True,
         )
 
         assert result.success is False

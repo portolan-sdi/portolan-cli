@@ -26,7 +26,7 @@ if TYPE_CHECKING:
         LayerResult,
         MetadataExtracted,
     )
-    from portolan_cli.licensing import ResolvedLicense
+    from portolan_core.licensing import ResolvedLicense
 
 
 def make_report(

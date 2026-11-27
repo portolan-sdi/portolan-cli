@@ -15,7 +15,7 @@ from hypothesis import HealthCheck, assume, given, settings
 from hypothesis import strategies as st
 
 from portolan_cli.cli import cli
-from portolan_cli.config import DEFAULT_IGNORED_FILES
+from portolan_core.config import DEFAULT_IGNORED_FILES
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -76,7 +76,7 @@ _WINDOWS_RESERVED = frozenset(
 
 def _is_windows_reserved(name: str) -> bool:
     """Check if name is a Windows reserved filename (case-insensitive, with or without extension)."""
-    base = name.split(".")[0].lower()
+    base = name.split(".", maxsplit=1)[0].lower()
     return base in _WINDOWS_RESERVED
 
 
@@ -262,16 +262,15 @@ class TestListStatusHypothesis:
             tracked_paths = set()
             untracked_paths = set()
 
-            if "collections" in data:
-                for col in data["collections"]:
-                    for item in col.get("items", []):
-                        for asset in item.get("assets", []):
-                            path = asset.get("path", "")
-                            status = asset.get("status", "")
-                            if status == "tracked":
-                                tracked_paths.add(path)
-                            elif status == "untracked":
-                                untracked_paths.add(path)
+            for col in data.get("collections", []):
+                for item in col.get("items", []):
+                    for asset in item.get("assets", []):
+                        path = asset.get("path", "")
+                        status = asset.get("status", "")
+                        if status == "tracked":
+                            tracked_paths.add(path)
+                        elif status == "untracked":
+                            untracked_paths.add(path)
 
             # No file should be in both sets
             overlap = tracked_paths & untracked_paths

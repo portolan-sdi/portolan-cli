@@ -42,7 +42,7 @@ flowchart TD
     GSTAT --> PAY
     PAY --> CFIX{--fix?}
     CFIX -->|no| CREPORT[report + exit code]
-    CFIX -->|yes| FIXR["cli._run_fix_and_repairs (cli.py:1570)"]
+    CFIX -->|yes| FIXR["validation.workflow._run_fix_and_repairs"]
     FIXR --> AUTO["validation.fixers.apply_fixers: AUTO-bucket registry"]
     FIXR --> LEG["scan.check.run_fix_workflow (scan/check.py:572)"]
     LEG --> MSCAN["scan_catalog_metadata (metadata/scan.py:79)"]
@@ -74,7 +74,7 @@ are not yet catalog assets (`scan.check.check_directory`) and item freshness
 against the filesystem (`run_fix_workflow`).
 
 `--fix` is **check → fix → re-check exactly once**, never a loop
-(`cli._execute_check_workflow`, cli.py:1387). The first check's findings pick fixers:
+(`validation.workflow.run_check_workflow`). The first check's findings pick fixers:
 `validation.remediation` sorts each rule into AUTO / INSTRUCT / EXTERNAL, and
 only AUTO rows name a `fixer` key in `validation.fixers.FIXERS`. A fixer takes
 `(catalog_root, dry_run)` and sweeps the whole catalog, so findings decide

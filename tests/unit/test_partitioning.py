@@ -8,10 +8,30 @@ Tests the partitioning functionality including:
 
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
 from pathlib import Path
+from typing import TYPE_CHECKING, Any, cast
 from unittest import mock
 
 import pytest
+
+if TYPE_CHECKING:
+    from datetime import datetime
+
+    import pystac
+
+
+def _world_extent() -> pystac.Extent:
+    """Return a whole-world extent with an open interval."""
+    import pystac
+
+    interval: list[list[datetime | None]] = [[None, None]]
+    return pystac.Extent(
+        spatial=pystac.SpatialExtent(bboxes=[[-180.0, -90.0, 180.0, 90.0]]),
+        temporal=pystac.TemporalExtent(intervals=interval),
+    )
 
 
 class TestShouldPartition:
@@ -42,7 +62,7 @@ class TestShouldPartition:
 
         original_stat = os.stat
 
-        def mock_stat(path: str | Path, *args: object, **kwargs: object) -> os.stat_result:
+        def mock_stat(path: str | Path, *args: Any, **kwargs: Any) -> os.stat_result:
             if Path(path) == large_file:
                 # Return a mock stat result with 3GB size
                 return os.stat_result((0, 0, 0, 0, 0, 0, 3 * 1024 * 1024 * 1024, 0, 0, 0))
@@ -65,7 +85,7 @@ class TestShouldPartition:
 
         original_stat = os.stat
 
-        def mock_stat(path: str | Path, *args: object, **kwargs: object) -> os.stat_result:
+        def mock_stat(path: str | Path, *args: Any, **kwargs: Any) -> os.stat_result:
             if Path(path) == file_path:
                 # Return a mock stat result with 500MB size
                 return os.stat_result((0, 0, 0, 0, 0, 0, 500 * 1024 * 1024, 0, 0, 0))
@@ -90,7 +110,7 @@ class TestShouldPartition:
 
         original_stat = os.stat
 
-        def mock_stat(path: str | Path, *args: object, **kwargs: object) -> os.stat_result:
+        def mock_stat(path: str | Path, *args: Any, **kwargs: Any) -> os.stat_result:
             if Path(path) == large_file:
                 return os.stat_result((0, 0, 0, 0, 0, 0, 5 * 1024 * 1024 * 1024, 0, 0, 0))
             return original_stat(path, *args, **kwargs)
@@ -436,9 +456,10 @@ class TestGetPartitionMetadata:
         assert result["partition:scheme"] == "hive"
         assert result["partition:strategy"] == "kdtree"
         assert result["partition:file_count"] == 2
-        assert len(result["partition:keys"]) == 1
-        assert result["partition:keys"][0]["name"] == "kdtree_cell"
-        assert result["partition:keys"][0]["type"] == "string"
+        keys = cast("list[dict[str, str]]", result["partition:keys"])
+        assert len(keys) == 1
+        assert keys[0]["name"] == "kdtree_cell"
+        assert keys[0]["type"] == "string"
 
     @pytest.mark.unit
     def test_get_partition_metadata_counts_files_correctly(self, tmp_path: Path) -> None:
@@ -466,8 +487,9 @@ class TestGetPartitionMetadata:
 
         result = get_partition_metadata(tmp_path, strategy="h3")
 
-        assert result["partition:keys"][0]["name"] == "h3_cell"
-        assert "H3" in result["partition:keys"][0]["description"]
+        keys = cast("list[dict[str, str]]", result["partition:keys"])
+        assert keys[0]["name"] == "h3_cell"
+        assert "H3" in keys[0]["description"]
 
 
 class TestDetectPartitioning:
@@ -544,10 +566,7 @@ class TestPartitionExtensionInStac:
         collection = pystac.Collection(
             id="test",
             description="Test",
-            extent=pystac.Extent(
-                spatial=pystac.SpatialExtent(bboxes=[[-180, -90, 180, 90]]),
-                temporal=pystac.TemporalExtent(intervals=[[None, None]]),
-            ),
+            extent=_world_extent(),
         )
 
         partition_metadata = {
@@ -574,13 +593,10 @@ class TestPartitionExtensionInStac:
         collection = pystac.Collection(
             id="test",
             description="Test",
-            extent=pystac.Extent(
-                spatial=pystac.SpatialExtent(bboxes=[[-180, -90, 180, 90]]),
-                temporal=pystac.TemporalExtent(intervals=[[None, None]]),
-            ),
+            extent=_world_extent(),
         )
 
-        partition_metadata = {"partition:scheme": "hive", "partition:keys": []}
+        partition_metadata: dict[str, object] = {"partition:scheme": "hive", "partition:keys": []}
 
         add_partition_metadata_to_collection(collection, partition_metadata)
 
@@ -591,7 +607,7 @@ class TestPartitionExtensionInStac:
         """build_stac_extensions detects partition:* fields."""
         from portolan_cli.stac import EXTENSION_URLS, build_stac_extensions
 
-        properties = {
+        properties: dict[str, object] = {
             "partition:scheme": "hive",
             "partition:strategy": "kdtree",
             "partition:keys": [],
@@ -744,10 +760,7 @@ class TestGlobAssetKeyCollision:
         collection = pystac.Collection(
             id="test",
             description="Test collection",
-            extent=pystac.Extent(
-                spatial=pystac.SpatialExtent(bboxes=[[-180, -90, 180, 90]]),
-                temporal=pystac.TemporalExtent(intervals=[[None, None]]),
-            ),
+            extent=_world_extent(),
         )
         # Add a non-glob asset at the target key "partitioned_data"
         collection.assets["partitioned_data"] = pystac.Asset(
@@ -784,10 +797,7 @@ class TestGlobAssetKeyCollision:
         collection = pystac.Collection(
             id="test",
             description="Test collection",
-            extent=pystac.Extent(
-                spatial=pystac.SpatialExtent(bboxes=[[-180, -90, 180, 90]]),
-                temporal=pystac.TemporalExtent(intervals=[[None, None]]),
-            ),
+            extent=_world_extent(),
         )
         collection.assets["existing_glob"] = pystac.Asset(
             href="./year=*/*.parquet",  # Already a glob
@@ -906,3 +916,229 @@ class TestFindLargePartitionCandidates:
             decision = find_large_partition_candidates([other], tmp_path)
 
         assert decision.large_files == []
+
+
+def _points_geoparquet(path: Path) -> Path:
+    """Write a GeoParquet file of 1000 points to ``path``.
+
+    geoparquet-io refuses partitions under 100 rows, so the 10-row fixture is too small.
+    """
+    import json
+
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+    import shapely
+
+    geo = {
+        "version": "1.0.0",
+        "primary_column": "geometry",
+        "columns": {"geometry": {"encoding": "WKB", "geometry_types": ["Point"]}},
+    }
+    points = [shapely.Point(i % 40, i // 40).wkb for i in range(1000)]
+    table = pa.table({"id": list(range(1000)), "geometry": pa.array(points, pa.binary())})
+    pq.write_table(table.replace_schema_metadata({b"geo": json.dumps(geo).encode()}), path)
+    return path
+
+
+class TestPartitionFile:
+    """Tests for partition_file, the library function of `portolan partition`.
+
+    The command has no `--json` flag, so the parity harness cannot run it.
+    These tests compare the `--format json` envelope with the library result.
+    """
+
+    @pytest.mark.integration
+    def test_preview_envelope_is_the_library_result(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The preview envelope data equals partition_file(...).to_dict()."""
+        import json
+
+        from click.testing import CliRunner
+
+        from portolan_cli.cli import cli
+        from portolan_cli.partitioning import partition_file
+
+        monkeypatch.chdir(tmp_path)
+        Path("small.parquet").write_bytes(b"x" * 10)
+        result = CliRunner().invoke(
+            cli, ["--format", "json", "partition", "small.parquet", "--preview"]
+        )
+
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.stdout)["data"]
+        assert data == partition_file(Path("small.parquet"), None, preview=True).to_dict()
+        assert data == {
+            "file": "small.parquet",
+            "size_gb": 0.0,
+            "recommended_partition": False,
+            "strategy": "kdtree",
+            "target_rows": 120_000,
+        }
+
+    @pytest.mark.integration
+    def test_a_geoparquet_io_failure_is_a_partition_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A geoparquet-io failure raises PartitionError, and the envelope reports it."""
+        import json
+
+        from click.testing import CliRunner
+
+        from portolan_cli.cli import cli
+        from portolan_cli.partitioning import partition_file
+        from portolan_core.errors import PartitionError
+
+        def failing_partition(*args: object, **kwargs: object) -> None:
+            raise RuntimeError("Simulated partition failure")
+
+        monkeypatch.chdir(tmp_path)
+        Path("input.parquet").write_bytes(b"x")
+        with mock.patch(
+            "geoparquet_io.core.partition.by_kdtree.partition_by_kdtree", failing_partition
+        ):
+            with pytest.raises(PartitionError) as caught:
+                partition_file(Path("input.parquet"), Path("out"))
+            result = CliRunner().invoke(
+                cli, ["--format", "json", "partition", "input.parquet", "out2"]
+            )
+            text = CliRunner().invoke(cli, ["partition", "input.parquet", "out3"])
+
+        assert caught.value.message == "Simulated partition failure"
+        assert Path("out").is_dir()
+        assert result.exit_code == 1
+        # The envelope keeps the shape of the command before PartitionError: no code.
+        assert json.loads(result.stdout)["errors"] == [
+            {"type": "PartitionError", "message": "Simulated partition failure"}
+        ]
+        assert text.exit_code == 1
+        assert "Partitioning failed: Simulated partition failure" in text.output
+
+    @pytest.mark.integration
+    def test_partition_envelope_is_the_library_result(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A partition writes the same files on both sides, and the envelope is the result."""
+        import json
+
+        from click.testing import CliRunner
+
+        from portolan_cli.cli import cli
+        from portolan_cli.partitioning import PartitionOutcome, partition_file
+
+        monkeypatch.chdir(tmp_path)
+        _points_geoparquet(Path("points.parquet"))
+        result = CliRunner().invoke(
+            cli, ["--format", "json", "partition", "points.parquet", "cli/out"]
+        )
+        outcome = partition_file(Path("points.parquet"), Path("lib/out"))
+
+        assert result.exit_code == 0, result.output
+        assert isinstance(outcome, PartitionOutcome)
+        data = json.loads(result.stdout)["data"]
+
+        def expected(output_dir: Path) -> dict[str, object]:
+            # str(Path), as the command output did before #1133: backslashes on Windows.
+            on_disk = sorted(str(f) for f in output_dir.rglob("*.parquet"))
+            return {
+                "input": "points.parquet",
+                "output_dir": str(output_dir),
+                "partitions": len(on_disk),
+                "files": on_disk,
+            }
+
+        assert len(list(Path("lib/out").rglob("*.parquet"))) > 1
+        assert outcome.to_dict() == expected(Path("lib/out"))
+        assert data == expected(Path("cli/out"))
+
+    @pytest.mark.integration
+    def test_the_library_call_prints_nothing(self, tmp_path: Path) -> None:
+        """A fresh process that calls partition_file gets no terminal output.
+
+        geoparquet-io logs progress through the ``geoparquet_io`` logger. When
+        that logger has no handler and the root logger has none, geoparquet-io
+        installs a stream handler at INFO. The NullHandler that
+        ``portolan_cli`` attaches stops that.
+        """
+        source = _points_geoparquet(tmp_path / "points.parquet")
+
+        result = _python(_PARTITION_CALL, str(source), str(tmp_path / "out"))
+
+        assert list((tmp_path / "out").rglob("*.parquet"))
+        assert (result.stdout, result.stderr) == ("", "")
+
+    @pytest.mark.integration
+    def test_a_caller_that_configures_logging_gets_the_warnings(self, tmp_path: Path) -> None:
+        """The NullHandler keeps propagation, so a root handler gets geoparquet-io warnings."""
+        source = _points_geoparquet(tmp_path / "points.parquet")
+        configure = (
+            "import logging\nlogging.basicConfig(format='%(name)s %(levelname)s %(message)s')\n"
+        )
+
+        result = _python(configure + _PARTITION_CALL, str(source), str(tmp_path / "out"))
+
+        assert result.stdout == ""
+        assert result.stderr.splitlines() == [
+            "geoparquet_io WARNING   Small partitions: Average of 500 rows per partition is"
+            " below recommended 10,000. Suboptimal but might be intentional for your use case."
+        ]
+
+    @pytest.mark.integration
+    def test_the_partition_command_output_is_unchanged(self, tmp_path: Path) -> None:
+        """`portolan partition` shows its own lines and the geoparquet-io warning, not INFO."""
+        import re
+
+        _points_geoparquet(tmp_path / "points.parquet")
+
+        result = _portolan(tmp_path, "partition", "points.parquet", "out")
+
+        assert result.stdout == (
+            "\u2192 Partitioning points.parquet with kdtree strategy...\n"
+            "\u2713 Created 2 partitions in out\n"
+        )
+        assert [re.sub(r"^\+\d+\.\d+s ", "", line) for line in result.stderr.splitlines()] == [
+            "WARNING geoparquet_io:   Small partitions: Average of 500 rows per partition is"
+            " below recommended 10,000. Suboptimal but might be intentional for your use case."
+        ]
+
+    @pytest.mark.integration
+    def test_the_add_command_output_is_unchanged(self, tmp_path: Path) -> None:
+        """`portolan add` of a GeoParquet file that geoparquet-io rewrites prints only its own lines."""
+        _portolan(tmp_path, "init", "--auto", "--license", "CC-BY-4.0")
+        # The subprocess escapes the no_basemap_tiles fixture, so it draws no thumbnail.
+        _portolan(tmp_path, "config", "set", "thumbnails.enabled", "false")
+        (tmp_path / "points").mkdir()
+        _points_geoparquet(tmp_path / "points" / "points.parquet")
+
+        result = _portolan(tmp_path, "add", "points")
+
+        assert result.stdout.splitlines()[0].startswith("\u2192 Rewriting points.parquet (")
+        assert result.stdout.splitlines()[1:] == ["\u2713 Added 1 file to 1 collection"]
+        assert result.stderr == ""
+
+
+_PARTITION_CALL = (
+    "import sys\n"
+    "from pathlib import Path\n"
+    "from portolan_cli.partitioning import partition_file\n"
+    "partition_file(Path(sys.argv[1]), Path(sys.argv[2]))\n"
+)
+
+
+def _python(code: str, *args: str, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
+    """Run ``code`` in a fresh interpreter, so no handler of this test process applies."""
+    # A Windows pipe defaults to cp1252, which cannot encode the output marks.
+    env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
+    return subprocess.run(
+        [sys.executable, "-c", code, *args],
+        capture_output=True,
+        encoding="utf-8",
+        check=True,
+        cwd=cwd,
+        env=env,
+    )
+
+
+def _portolan(cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    """Run the ``portolan`` command in a fresh process in ``cwd``."""
+    return _python("from portolan_cli import cli\ncli()\n", *args, cwd=cwd)

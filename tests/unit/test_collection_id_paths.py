@@ -45,57 +45,60 @@ class TestCollectionIdPathSyntax:
         """Test that paths with uppercase letters are rejected."""
         is_valid, error = validate_collection_id("Environment/Air-Quality")
         assert not is_valid
+        assert error is not None
         assert "uppercase" in error.lower()
 
     def test_validate_path_rejects_spaces(self) -> None:
         """Test that paths with spaces are rejected."""
         is_valid, error = validate_collection_id("environment/air quality")
         assert not is_valid
+        assert error is not None
         assert "spaces" in error.lower()
 
     def test_validate_path_rejects_invalid_chars(self) -> None:
         """Test that paths with invalid characters are rejected."""
         is_valid, error = validate_collection_id("environment/air@quality")
         assert not is_valid
+        assert error is not None
         assert "invalid character" in error.lower()
 
     def test_validate_path_rejects_leading_slash(self) -> None:
         """Test that paths with leading slash are rejected."""
-        is_valid, error = validate_collection_id("/environment/air-quality")
+        is_valid, _error = validate_collection_id("/environment/air-quality")
         assert not is_valid
         # Leading slash fails the "must start with letter" check
 
     def test_validate_path_rejects_trailing_slash(self) -> None:
         """Test that paths with trailing slash are rejected."""
-        is_valid, error = validate_collection_id("environment/air-quality/")
+        is_valid, _error = validate_collection_id("environment/air-quality/")
         assert not is_valid
         # Trailing slash creates invalid character
 
     def test_validate_path_rejects_double_slash(self) -> None:
         """Test that paths with double slashes are rejected."""
-        is_valid, error = validate_collection_id("environment//air-quality")
+        is_valid, _error = validate_collection_id("environment//air-quality")
         assert not is_valid
         # Double slash creates empty segment
 
     def test_validate_path_allows_segment_starting_with_number(self) -> None:
         """Test that path segments starting with numbers are valid."""
-        is_valid, error = validate_collection_id("environment/2024")
+        is_valid, _error = validate_collection_id("environment/2024")
         assert is_valid
-        is_valid, error = validate_collection_id("2024/january")
+        is_valid, _error = validate_collection_id("2024/january")
         assert is_valid
 
     def test_validate_path_rejects_segment_starting_with_hyphen(self) -> None:
         """Test that path segments starting with hyphens are rejected."""
-        is_valid, error = validate_collection_id("environment/-air")
+        is_valid, _error = validate_collection_id("environment/-air")
         assert not is_valid
-        is_valid, error = validate_collection_id("-environment/air")
+        is_valid, _error = validate_collection_id("-environment/air")
         assert not is_valid
 
     def test_validate_path_rejects_segment_starting_with_underscore(self) -> None:
         """Test that path segments starting with underscores are rejected."""
-        is_valid, error = validate_collection_id("environment/_quality")
+        is_valid, _error = validate_collection_id("environment/_quality")
         assert not is_valid
-        is_valid, error = validate_collection_id("_environment/quality")
+        is_valid, _error = validate_collection_id("_environment/quality")
         assert not is_valid
 
     def test_normalize_path_with_uppercase(self) -> None:

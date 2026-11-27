@@ -14,6 +14,9 @@ import pyarrow as pa
 import pygeohash as pgh
 import shapely
 
+_PARTITION_MIN_ROWS = 100_000
+_COARSE_PARTITION_MAX_ROWS = 10_000_000
+
 
 def detect_geohash_precision(row_count: int) -> int | None:
     """Determine geohash precision based on data size.
@@ -23,9 +26,9 @@ def detect_geohash_precision(row_count: int) -> int | None:
         3 (~150km cells) if row_count < 10M.
         4 (~20km cells) if row_count >= 10M.
     """
-    if row_count < 100_000:
+    if row_count < _PARTITION_MIN_ROWS:
         return None
-    if row_count < 10_000_000:
+    if row_count < _COARSE_PARTITION_MAX_ROWS:
         return 3
     return 4
 

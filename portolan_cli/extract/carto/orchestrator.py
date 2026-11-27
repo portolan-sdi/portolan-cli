@@ -22,7 +22,7 @@ Typical usage:
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING
 from urllib.parse import urlencode
 
@@ -48,10 +48,12 @@ from portolan_cli.extract.common.source import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
     from pathlib import Path
 
-    from portolan_cli.extract.common.progress import ExtractionProgress
+    from portolan_cli.extract.common.progress import (
+        LayerProgressCallback,
+        MessageCallback,
+    )
     from portolan_cli.extract.common.report import ExtractionReport
 
 logger = logging.getLogger(__name__)
@@ -100,7 +102,8 @@ class ExtractionOptions:
     limit: int | None = None
     include_cols: str | None = None
     exclude_cols: str | None = None
-    api_key: str | None = None
+    # repr=False: an options repr reaches tracebacks and logs.
+    api_key: str | None = field(default=None, repr=False)
     license: str | None = None
     license_url: str | None = None
     catalog_id: str | None = None
@@ -213,7 +216,7 @@ class CartoLayerSource:
         becomes plain Parquet through gpio's ``geometry=False`` path, with no
         bbox filter, because a bounding-box filter needs a geometry.
         """
-        from geoparquet_io.core import carto as gpio_carto  # type: ignore[import-untyped]
+        from geoparquet_io.core import carto as gpio_carto
 
         table: CartoTableInfo = layer.data
         options = self.options
@@ -255,7 +258,8 @@ def extract_carto_catalog(
     layer_filter: list[str] | None = None,
     layer_exclude: list[str] | None = None,
     options: ExtractionOptions | None = None,
-    on_progress: Callable[[ExtractionProgress], None] | None = None,
+    on_progress: LayerProgressCallback | None = None,
+    on_message: MessageCallback | None = None,
 ) -> ExtractionReport:
     """Extract tables from a Carto account into a Portolan catalog.
 
@@ -266,6 +270,7 @@ def extract_carto_catalog(
         layer_exclude: Glob patterns / names of tables to exclude.
         options: Extraction options (defaults to ExtractionOptions()).
         on_progress: Callback for progress updates.
+        on_message: Called as ``on_message(level, text)`` with each catalog notice.
 
     Returns:
         ExtractionReport with results for all tables.
@@ -290,5 +295,10 @@ def extract_carto_catalog(
         license_url=options.license_url,
     )
     return run_layer_extraction(
-        CartoLayerSource(options), url, output_dir, driver, on_progress=on_progress
+        CartoLayerSource(options),
+        url,
+        output_dir,
+        driver,
+        on_progress=on_progress,
+        on_message=on_message,
     )

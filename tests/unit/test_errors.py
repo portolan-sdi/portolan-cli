@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import pytest
 
-from portolan_cli.errors import (
+from portolan_core.errors import (
     ArcGISAuthError,
     AssetKeyCollisionError,
     CatalogAlreadyExistsError,
@@ -83,8 +83,8 @@ class TestPortolanError:
         """PortolanError stores additional context as attributes."""
         error = PortolanError("Test", foo="bar", count=42)
 
-        assert error.foo == "bar"
-        assert error.count == 42
+        assert vars(error)["foo"] == "bar"
+        assert vars(error)["count"] == 42
 
     @pytest.mark.unit
     def test_error_context_cannot_clobber_reserved_attrs(self) -> None:
@@ -107,7 +107,7 @@ class TestPortolanError:
         assert error.context["code"] == "EVIL-CODE"
 
         # Safe keys should work
-        assert error.safe_key == "this should work"
+        assert vars(error)["safe_key"] == "this should work"
 
 
 class TestCatalogErrors:

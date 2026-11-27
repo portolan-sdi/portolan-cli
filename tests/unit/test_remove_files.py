@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from portolan_cli.remove import _gather_removable_files, _remove_one_file, remove_files
-from portolan_cli.versions import (
+from portolan_core.versions import (
     SPEC_VERSION,
     Asset,
     Version,

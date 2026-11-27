@@ -124,7 +124,7 @@ class PluginGroup(click.Group):
     def _load(cmd_name: str, ep: EntryPoint) -> click.Command | None:
         try:
             loaded = ep.load()
-        except Exception as err:  # noqa: BLE001 - any import failure skips the command
+        except Exception as err:  # any import failure skips the command
             warn(f"Plugin command '{cmd_name}' from {_distribution(ep)} did not load: {err}")
             return None
         if not isinstance(loaded, click.Command):
@@ -265,7 +265,7 @@ class ExtractGroup(PluginGroup):
             loaded: click.Command | None = None
             try:
                 raw: object = extractor.cli_command()
-            except Exception as err:  # noqa: BLE001 - one broken extractor must not break the group
+            except Exception as err:  # one broken extractor must not break the group
                 warn(
                     f"Extractor '{cmd_name}' from {extractor_owner(cmd_name)} did not load "
                     f"its command: {err}"

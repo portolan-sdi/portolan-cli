@@ -32,7 +32,7 @@ from typing import TYPE_CHECKING, Any, Protocol, TypedDict, runtime_checkable
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from portolan_cli.versions import Version
+    from portolan_core.versions import Version
 
 
 class DriftReport(TypedDict):

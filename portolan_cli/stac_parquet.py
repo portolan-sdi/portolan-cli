@@ -30,15 +30,17 @@ import hashlib
 import json
 import os
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Any
+from pathlib import PureWindowsPath
+from typing import TYPE_CHECKING, Any, TypeGuard
+from urllib.parse import unquote
 
 from rashid_core.api import is_absolute_href
 
-from portolan_cli.constants import ROLE_COLLECTION_MIRROR
-from portolan_cli.json_io import write_json_atomic
-from portolan_cli.stac_links import owned_item_hrefs, resolve_href
-from portolan_cli.sync.checksums import file_fields, file_fields_from
-from portolan_cli.trace import count
+from portolan_core.checksums import file_fields, file_fields_from
+from portolan_core.constants import ROLE_COLLECTION_MIRROR
+from portolan_core.json_io import write_json_atomic
+from portolan_core.stac_links import owned_item_hrefs, resolve_href
+from portolan_core.trace import count
 
 if TYPE_CHECKING:
     from collections.abc import Set as AbstractSet
@@ -46,7 +48,9 @@ if TYPE_CHECKING:
 
     import pyarrow as pa
 
-    from portolan_cli.run_state import RunState
+    from portolan_core.run_state import RunState
+
+_MAX_HREFS_SHOWN = 5
 
 # Constants
 PARQUET_FILENAME = "items.parquet"
@@ -136,9 +140,9 @@ def _load_item_dicts(collection_path: Path, owned: list[tuple[str, Path]]) -> li
 
     # Fail fast on stale links - items.parquet must be in sync with collection.json
     if missing_hrefs:
-        missing_list = ", ".join(missing_hrefs[:5])
-        if len(missing_hrefs) > 5:
-            missing_list += f" ... and {len(missing_hrefs) - 5} more"
+        missing_list = ", ".join(missing_hrefs[:_MAX_HREFS_SHOWN])
+        if len(missing_hrefs) > _MAX_HREFS_SHOWN:
+            missing_list += f" ... and {len(missing_hrefs) - _MAX_HREFS_SHOWN} more"
         raise ValueError(
             f"collection.json at {collection_path} has stale item links. "
             f"Missing items: {missing_list}"
@@ -180,7 +184,7 @@ def _mirror_is_current(run: RunState, collection_path: Path, fingerprint: str) -
     The record must hold the same item fingerprint, and the file must still hold
     the recorded bytes. A file that another writer replaced fails the second test.
     """
-    from portolan_cli.versions import versions_asset_key
+    from portolan_core.versions import versions_asset_key
 
     output_path = collection_path / PARQUET_FILENAME
     record = run.tracked_assets(collection_path).get(
@@ -198,7 +202,7 @@ def _spatially_ordered(table: pa.Table) -> pa.Table:
     rarely spatial. geoparquet-io sorts the rows and keeps the schema and its
     metadata, so stac-geoparquet writes the same columns.
     """
-    from geoparquet_io.api.table import Table  # type: ignore[import-untyped]
+    from geoparquet_io.api.table import Table
 
     ordered: pa.Table = Table(table, geometry_column="geometry").sort_hilbert().to_arrow()
     return ordered.replace_schema_metadata(table.schema.metadata)
@@ -243,7 +247,7 @@ def generate_items_parquet(collection_path: Path, *, state: RunState | None = No
             "stac-geoparquet is required for items.parquet generation. "
             "Install with: pip install stac-geoparquet"
         ) from e
-    from portolan_cli.run_state import RunState
+    from portolan_core.run_state import RunState
 
     run = state if state is not None else RunState.open(collection_path.parent)
     output_path = collection_path / PARQUET_FILENAME
@@ -273,6 +277,22 @@ def _strip_file_fields(asset: dict[str, Any]) -> bool:
     for name in present:
         del asset[name]
     return bool(present)
+
+
+def _is_relative_href(href: object) -> TypeGuard[str]:
+    """Whether an href is a relative path before and after it decodes.
+
+    ``resolve_href`` decodes the href, so ``%2Fdata%2Fx.parquet`` names an
+    absolute path. The check reads both spellings for that reason.
+    """
+    return (
+        isinstance(href, str)
+        and bool(href)
+        and not is_absolute_href(href)
+        # A decoded colon is a file name character, not a URI scheme.
+        and not unquote(href).startswith(("/", "\\"))
+        and not PureWindowsPath(unquote(href)).drive
+    )
 
 
 def stamp_file_fields(
@@ -312,7 +332,7 @@ def stamp_file_fields(
         there is something to write.
     """
     href = asset.get("href")
-    if not isinstance(href, str) or not href or is_absolute_href(href):
+    if not _is_relative_href(href):
         return False
 
     path = resolve_href(base_dir, href)
@@ -466,7 +486,7 @@ def _is_selected(asset: dict[str, Any], base_dir: Path, only: AbstractSet[Path] 
     if only is None:
         return True
     href = asset.get("href")
-    if not isinstance(href, str) or not href or is_absolute_href(href):
+    if not _is_relative_href(href):
         return False
     return resolve_href(base_dir, href).resolve() in only
 
@@ -705,7 +725,7 @@ def track_parquet_in_versions(
         FileNotFoundError: If items.parquet doesn't exist.
     """
     from portolan_cli.version_ops import owned_run
-    from portolan_cli.versions import generated_asset_record, track_generated_assets
+    from portolan_core.versions import generated_asset_record, track_generated_assets
 
     root = catalog_root if catalog_root is not None else collection_path.parent
     parquet_path = collection_path / PARQUET_FILENAME
@@ -799,8 +819,8 @@ def generate_parquet_mirrors(
     if not affected_collections:
         return report
 
-    from portolan_cli.config import coerce_bool
     from portolan_cli.version_ops import owned_run
+    from portolan_core.config import coerce_bool
 
     with owned_run(catalog_root, state) as run:
         for coll_id in affected_collections:
@@ -833,3 +853,171 @@ def generate_parquet_mirrors(
                 report.failed[coll_id] = e
 
     return report
+
+
+def collections_with_items(catalog_root: Path) -> list[str]:
+    """Find all collections that own STAC items.
+
+    Ownership includes the items an organizing catalog groups beneath a
+    collection (core.md:168-170).
+
+    Args:
+        catalog_root: Path to the catalog root directory.
+
+    Returns:
+        Sorted list of collection IDs relative to catalog_root.
+    """
+    from portolan_core.stac_links import catalog_collections
+
+    collections: list[str] = []
+    for collection_id in catalog_collections(catalog_root):
+        try:
+            if count_items(catalog_root / collection_id) > 0:
+                collections.append(collection_id)
+        except (json.JSONDecodeError, OSError):
+            continue
+
+    return collections
+
+
+@dataclass(frozen=True)
+class CollectionMirrorResult:
+    """The outcome of ``portolan stac-geoparquet`` for one collection.
+
+    Attributes:
+        collection: Collection ID.
+        item_count: Items in the mirror.
+        parquet_path: Path of ``items.parquet``.
+        dry_run: True when nothing was written.
+        error: The type and the message that the envelope reports, or None.
+            A plain tuple, because push imports this module and must not
+            load ``json_output``.
+        error_summary: The line that the CLI prints for the failure.
+    """
+
+    collection: str
+    item_count: int = 0
+    parquet_path: str = ""
+    dry_run: bool = False
+    error: tuple[str, str] | None = None
+    error_summary: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return the entry of this collection in the envelope ``results``."""
+        return {
+            "collection": self.collection,
+            "item_count": self.item_count,
+            "parquet_path": self.parquet_path,
+            **({"dry_run": True} if self.dry_run else {}),
+        }
+
+
+@dataclass(frozen=True)
+class StacGeoparquetResult:
+    """The outcome of ``portolan stac-geoparquet``.
+
+    Attributes:
+        outcomes: One result per processed collection. A collection with no
+            items is skipped when the run covers the whole catalog.
+        error: A failure of the whole run, or None.
+    """
+
+    outcomes: list[CollectionMirrorResult] = field(default_factory=list)
+    error: tuple[str, str] | None = None
+
+    @property
+    def results(self) -> list[CollectionMirrorResult]:
+        """The collections that succeeded."""
+        return [o for o in self.outcomes if o.error is None]
+
+    @property
+    def errors(self) -> list[tuple[str, str]]:
+        """The failure of each collection that failed."""
+        return [o.error for o in self.outcomes if o.error is not None]
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return the envelope data of ``portolan stac-geoparquet``."""
+        results = self.results
+        return {
+            "collections_processed": len(results),
+            "results": [r.to_dict() for r in results],
+            "errors": [{"type": t, "message": m} for t, m in self.errors],
+        }
+
+
+def _mirror_collection(
+    coll_id: str, catalog_root: Path, dry_run: bool, bulk: bool
+) -> CollectionMirrorResult | None:
+    """Generate the mirror of one collection. Return None to skip an empty one in a bulk run."""
+    from portolan_cli.version_ops import owned_run
+
+    collection_path = catalog_root / coll_id
+
+    def failed(error_type: str, message: str, summary: str) -> CollectionMirrorResult:
+        return CollectionMirrorResult(coll_id, error=(error_type, message), error_summary=summary)
+
+    if not (collection_path / "collection.json").exists():
+        return failed(
+            "CollectionNotFoundError",
+            f"Collection '{coll_id}' not found at {collection_path}",
+            f"Collection '{coll_id}' not found",
+        )
+
+    # Each collection failure is data, so a bulk run continues with the next one.
+    try:
+        item_count = count_items(collection_path)
+    except Exception as e:
+        return failed(
+            type(e).__name__, f"{coll_id}: {e}", f"Failed to count items in '{coll_id}': {e}"
+        )
+
+    if item_count == 0:
+        if bulk:
+            return None
+        message = f"No items found in collection '{coll_id}'"
+        return failed("EmptyCollectionError", message, message)
+
+    if dry_run:
+        return CollectionMirrorResult(
+            coll_id, item_count, str(collection_path / PARQUET_FILENAME), dry_run=True
+        )
+
+    try:
+        with owned_run(catalog_root) as run:
+            parquet_path = generate_items_parquet(collection_path, state=run)
+            register_mirror_asset(collection_path, state=run)
+            track_parquet_in_versions(collection_path, catalog_root, state=run)
+    except Exception as e:
+        return failed(
+            type(e).__name__, f"{coll_id}: {e}", f"Failed to generate parquet for '{coll_id}': {e}"
+        )
+    return CollectionMirrorResult(coll_id, item_count, str(parquet_path))
+
+
+def generate_stac_geoparquet(
+    catalog_root: Path, collection: str | None = None, *, dry_run: bool = False
+) -> StacGeoparquetResult:
+    """Generate ``items.parquet`` for one collection, or for each item-bearing one.
+
+    Each collection gets its own run state, which commits when its mirror is
+    done. A failed collection commits nothing and goes into the result.
+
+    Args:
+        catalog_root: Catalog root directory.
+        collection: Collection ID, or None for each collection with items.
+        dry_run: Report what would be generated and write nothing.
+
+    Returns:
+        The outcome of each collection, or the error when the catalog holds no
+        collection with items.
+    """
+    if collection is not None:
+        targets = [collection]
+    else:
+        targets = collections_with_items(catalog_root)
+        if not targets:
+            return StacGeoparquetResult(
+                error=("NoCollectionsError", "No collections with items found in catalog")
+            )
+    outcomes = [_mirror_collection(c, catalog_root, dry_run, collection is None) for c in targets]
+    return StacGeoparquetResult([o for o in outcomes if o is not None])

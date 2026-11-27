@@ -18,14 +18,10 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from portolan_cli.add import (
-    GEOSPATIAL_EXTENSIONS,
-    get_sidecars,
-    iter_geospatial_files,
-    resolve_collection_id,
-)
 from portolan_cli.catalog import find_catalog_root
-from portolan_cli.constants import SIDECAR_PATTERNS
+from portolan_cli.collection_id import resolve_collection_id
+from portolan_cli.discovery import get_sidecars, iter_geospatial_files
+from portolan_core.constants import GEOSPATIAL_EXTENSIONS, SIDECAR_PATTERNS
 
 # =============================================================================
 # Custom Strategies
@@ -474,7 +470,7 @@ class TestIncrementVersionProperties:
     @pytest.mark.unit
     def test_increment_standard_semver(self) -> None:
         """_increment_version increments standard semver correctly."""
-        from portolan_cli.versions import _increment_version
+        from portolan_core.versions import _increment_version
 
         assert _increment_version("1.2.3") == "1.2.4"
         assert _increment_version("0.0.1") == "0.0.2"
@@ -483,7 +479,7 @@ class TestIncrementVersionProperties:
     @pytest.mark.unit
     def test_increment_prerelease_semver(self) -> None:
         """_increment_version handles pre-release versions."""
-        from portolan_cli.versions import _increment_version
+        from portolan_core.versions import _increment_version
 
         # Pre-release with number suffix
         assert _increment_version("1.0.0-beta.1") == "1.0.0-beta.2"
@@ -493,7 +489,7 @@ class TestIncrementVersionProperties:
     @pytest.mark.unit
     def test_increment_prerelease_no_number(self) -> None:
         """_increment_version handles pre-release without number."""
-        from portolan_cli.versions import _increment_version
+        from portolan_core.versions import _increment_version
 
         # Pre-release without number suffix appends .1 (preserves prerelease tag)
         result = _increment_version("1.0.0-beta")
@@ -506,7 +502,7 @@ class TestIncrementVersionProperties:
     @pytest.mark.unit
     def test_increment_empty_version(self) -> None:
         """_increment_version handles empty version."""
-        from portolan_cli.versions import _increment_version
+        from portolan_core.versions import _increment_version
 
         assert _increment_version("") == "0.0.1"
         assert _increment_version(None) == "0.0.1"  # type: ignore[arg-type]
@@ -514,7 +510,7 @@ class TestIncrementVersionProperties:
     @pytest.mark.unit
     def test_increment_short_version(self) -> None:
         """_increment_version handles short version strings."""
-        from portolan_cli.versions import _increment_version
+        from portolan_core.versions import _increment_version
 
         assert _increment_version("1") == "1.0.1"
         assert _increment_version("1.0") == "1.0.1"
@@ -527,7 +523,7 @@ class TestIncrementVersionProperties:
         length is not < 3, so the old fallback returned the input unchanged - a
         no-op that stalls version bumps. The result must differ from the input.
         """
-        from portolan_cli.versions import _increment_version
+        from portolan_core.versions import _increment_version
 
         for version in ("1.2.3rc1", "1.2.foo", "2.5.9beta"):
             result = _increment_version(version)
@@ -547,7 +543,7 @@ class TestConstantsProperties:
     @pytest.mark.unit
     def test_mtime_tolerance_is_reasonable(self) -> None:
         """MTIME_TOLERANCE_SECONDS is reasonable for NFS."""
-        from portolan_cli.constants import MTIME_TOLERANCE_SECONDS
+        from portolan_core.constants import MTIME_TOLERANCE_SECONDS
 
         # Should be at least 1 second for NFS compatibility
         assert MTIME_TOLERANCE_SECONDS >= 1.0
@@ -557,7 +553,7 @@ class TestConstantsProperties:
     @pytest.mark.unit
     def test_max_catalog_search_depth_is_reasonable(self) -> None:
         """MAX_CATALOG_SEARCH_DEPTH is reasonable."""
-        from portolan_cli.constants import MAX_CATALOG_SEARCH_DEPTH
+        from portolan_core.constants import MAX_CATALOG_SEARCH_DEPTH
 
         # Should be at least 5 levels
         assert MAX_CATALOG_SEARCH_DEPTH >= 5
@@ -567,7 +563,7 @@ class TestConstantsProperties:
     @pytest.mark.unit
     def test_geospatial_extensions_contains_common_formats(self) -> None:
         """GEOSPATIAL_EXTENSIONS includes common formats."""
-        from portolan_cli.constants import GEOSPATIAL_EXTENSIONS
+        from portolan_core.constants import GEOSPATIAL_EXTENSIONS
 
         assert ".geojson" in GEOSPATIAL_EXTENSIONS
         assert ".shp" in GEOSPATIAL_EXTENSIONS
@@ -577,7 +573,7 @@ class TestConstantsProperties:
     @pytest.mark.unit
     def test_sidecar_patterns_contains_shapefile_extensions(self) -> None:
         """SIDECAR_PATTERNS includes shapefile sidecars."""
-        from portolan_cli.constants import SIDECAR_PATTERNS
+        from portolan_core.constants import SIDECAR_PATTERNS
 
         assert ".shp" in SIDECAR_PATTERNS
         shp_sidecars = SIDECAR_PATTERNS[".shp"]
@@ -597,7 +593,7 @@ class TestResolveCollectionIdEdgeCases:
     @pytest.mark.unit
     def test_resolve_raises_for_path_outside_catalog(self, tmp_path: Path) -> None:
         """resolve_collection_id raises ValueError for paths outside catalog."""
-        from portolan_cli.add import resolve_collection_id
+        from portolan_cli.collection_id import resolve_collection_id
 
         catalog = tmp_path / "catalog"
         catalog.mkdir()
@@ -610,7 +606,7 @@ class TestResolveCollectionIdEdgeCases:
     @pytest.mark.unit
     def test_resolve_raises_for_file_at_root(self, tmp_path: Path) -> None:
         """resolve_collection_id raises ValueError for file directly at root."""
-        from portolan_cli.add import resolve_collection_id
+        from portolan_cli.collection_id import resolve_collection_id
 
         catalog = tmp_path / "catalog"
         catalog.mkdir()
@@ -627,7 +623,7 @@ class TestIsCurrentEdgeCases:
     @pytest.mark.unit
     def test_is_current_returns_false_no_versions_file(self, tmp_path: Path) -> None:
         """is_current returns False when versions.json doesn't exist."""
-        from portolan_cli.add import is_current
+        from portolan_core.query import is_current
 
         test_file = tmp_path / "test.parquet"
         test_file.write_bytes(b"data")
@@ -638,7 +634,7 @@ class TestIsCurrentEdgeCases:
     @pytest.mark.unit
     def test_is_current_returns_false_empty_versions(self, tmp_path: Path) -> None:
         """is_current returns False when versions list is empty."""
-        from portolan_cli.add import is_current
+        from portolan_core.query import is_current
 
         test_file = tmp_path / "test.parquet"
         test_file.write_bytes(b"data")
@@ -654,7 +650,7 @@ class TestIsCurrentEdgeCases:
         """is_current returns False when asset not in versions."""
         import json
 
-        from portolan_cli.add import is_current
+        from portolan_core.query import is_current
 
         test_file = tmp_path / "new_file.parquet"
         test_file.write_bytes(b"data")
@@ -691,7 +687,7 @@ class TestIsCurrentEdgeCases:
         """is_current returns True when mtime matches (fast path)."""
         import json
 
-        from portolan_cli.add import is_current
+        from portolan_core.query import is_current
 
         test_file = tmp_path / "test.parquet"
         test_file.write_bytes(b"data")
@@ -732,7 +728,7 @@ class TestIsCurrentEdgeCases:
         """is_current returns False when size differs (skips expensive sha256)."""
         import json
 
-        from portolan_cli.add import is_current
+        from portolan_core.query import is_current
 
         test_file = tmp_path / "test.parquet"
         test_file.write_bytes(b"data" * 100)  # 400 bytes
@@ -772,8 +768,8 @@ class TestIsCurrentEdgeCases:
         """is_current falls back to sha256 when mtime differs but size matches."""
         import json
 
-        from portolan_cli.add import is_current
-        from portolan_cli.sync.checksums import compute_checksum
+        from portolan_core.checksums import compute_checksum
+        from portolan_core.query import is_current
 
         test_file = tmp_path / "test.parquet"
         content = b"exact content"
@@ -853,7 +849,7 @@ class TestAddFilesEdgeCases:
             )
             mock_finalize.return_value = []
 
-            added, skipped, failures = add_files(
+            _added, _skipped, _failures = add_files(
                 paths=[link],
                 catalog_root=catalog,
             )
@@ -894,7 +890,7 @@ class TestAddFilesEdgeCases:
             mock_prepare.side_effect = ValueError("original error")
 
             # Per Issue #175: errors are now collected instead of raised
-            added, skipped, failures = add_files(paths=[test_file], catalog_root=catalog)
+            _added, _skipped, failures = add_files(paths=[test_file], catalog_root=catalog)
 
             # Should have one failure with the raw error message
             assert len(failures) == 1
@@ -909,7 +905,7 @@ class TestRemoveFilesEdgeCases:
         """remove_files refuses to delete symlinks (security)."""
         import json
 
-        from portolan_cli.add import remove_files
+        from portolan_cli.remove import remove_files
 
         # Setup catalog
         catalog = tmp_path / "catalog"
@@ -946,7 +942,7 @@ class TestRemoveFilesEdgeCases:
     @pytest.mark.unit
     def test_remove_files_skips_outside_catalog(self, tmp_path: Path) -> None:
         """remove_files skips files outside catalog."""
-        from portolan_cli.add import remove_files
+        from portolan_cli.remove import remove_files
 
         # Setup catalog
         catalog = tmp_path / "catalog"
@@ -974,7 +970,7 @@ class TestRemoveFilesEdgeCases:
         """remove_files deletes sidecars when removing shapefile."""
         import json
 
-        from portolan_cli.add import remove_files
+        from portolan_cli.remove import remove_files
 
         # Setup catalog
         catalog = tmp_path / "catalog"
@@ -1018,7 +1014,7 @@ class TestRemoveFilesEdgeCases:
             )
         )
 
-        removed, skipped = remove_files(
+        _removed, _skipped = remove_files(
             paths=[shp],
             catalog_root=catalog,
             keep=False,
@@ -1073,7 +1069,7 @@ class TestIterFilesWithSidecarsEdgeCases:
     @pytest.mark.unit
     def test_iter_returns_empty_for_non_directory(self, tmp_path: Path) -> None:
         """iter_files_with_sidecars returns empty list for non-directory."""
-        from portolan_cli.add import iter_files_with_sidecars
+        from portolan_cli.discovery import iter_files_with_sidecars
 
         test_file = tmp_path / "test.geojson"
         test_file.write_text("{}")
@@ -1084,7 +1080,7 @@ class TestIterFilesWithSidecarsEdgeCases:
     @pytest.mark.unit
     def test_iter_skips_non_geospatial_in_nested_dirs(self, tmp_path: Path) -> None:
         """iter_files_with_sidecars skips non-geospatial files in nested dirs."""
-        from portolan_cli.add import iter_files_with_sidecars
+        from portolan_cli.discovery import iter_files_with_sidecars
 
         # Create nested structure
         nested = tmp_path / "sub" / "deep"
@@ -1254,7 +1250,7 @@ class TestMultiAssetProperties:
             (item_dir / ".hidden").write_text("hidden")
             (item_dir / ".DS_Store").write_bytes(b"junk")
 
-            stac_assets, asset_files, asset_paths = _scan_item_assets(
+            _stac_assets, asset_files, _asset_paths = _scan_item_assets(
                 item_dir=item_dir,
                 item_id="test",
                 primary_file=primary,
@@ -1285,7 +1281,7 @@ class TestMultiAssetProperties:
             # Create a regular file
             (item_dir / "readme.txt").write_text("hello")
 
-            stac_assets, asset_files, asset_paths = _scan_item_assets(
+            _stac_assets, asset_files, _asset_paths = _scan_item_assets(
                 item_dir=item_dir,
                 item_id="test",
                 primary_file=primary,
@@ -1328,9 +1324,7 @@ class TestCatalogRootAddProperties:
         with tempfile.TemporaryDirectory() as tmp:
             catalog_root = Path(tmp).resolve()
             # path == catalog_root → empty relative parts → ValueError
-            import pytest as _pytest
-
-            with _pytest.raises(ValueError, match="Cannot determine collection"):
+            with pytest.raises(ValueError, match="Cannot determine collection"):
                 resolve_collection_id(catalog_root, catalog_root)
 
     @pytest.mark.unit
@@ -1442,7 +1436,7 @@ def _conformant_parquet_bytes() -> bytes:
     """
     import json
 
-    import geoparquet_io as gpio  # type: ignore[import-untyped]
+    import geoparquet_io as gpio
 
     from portolan_cli.conversion_config import VectorSettings
     from portolan_cli.convert import apply_vector_settings

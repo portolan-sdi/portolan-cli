@@ -1,6 +1,7 @@
 ---
 paths:
   - "portolan_cli/**/*.py"
+  - "packages/portolan-core/**/*.py"
 ---
 
 # Architecture mindmap (read this first when navigating the code)
@@ -9,6 +10,25 @@ Portolan is a thin Click shell over a fat library, with a pluggable versioning
 backend underneath (CLI-wraps-API, enforced by import-linter).
 Use this map to find where a behavior lives before you start editing. Line
 numbers drift, treat them as a starting point and confirm in the file.
+
+## Two distributions (#1133)
+
+The repo is a uv workspace. The root is `portolan-cli` (`portolan_cli/`, the
+Click shell and the geospatial stack). `packages/portolan-core` is
+`portolan-core` (`src/portolan_core/`, the library). `portolan-cli` depends on
+`portolan-core` at its exact version. `portolan_core` must not import
+`portolan_cli`, Click, or the geospatial stack. The import-linter contracts
+`core-no-cli` and `core-no-heavy` enforce this.
+
+`portolan_core` holds the writer and the light reader modules: `versions`,
+`json_io`, `bbox`, `models`, `query`, `status`, `catalog_list`, `agents_md`,
+`run_state`, `config`, `constants`, `errors`, `extension_registry`,
+`format_families`, `stac_links`, `checksums` (once `sync.checksums`), `trace`,
+and `licensing`. Import them from `portolan_core.<name>`. `portolan_cli` keeps
+no shim, so a patch target names the `portolan_core` path. `portolan_cli.api`
+still re-exports the plugin names. A function that needs a dependency of
+`portolan-cli` stays in `portolan_cli`: `load_dotenv_from_catalog` (python-dotenv)
+lives in `cli.py`.
 
 ## The layers and how a command flows down them
 
@@ -113,8 +133,9 @@ subsystem table below and the path-scoped rules for each.
   checking, not locking. Concurrency safety is an Iceberg-only property.
 - Import contracts (`uv run lint-imports`): `cli` must not import `backends`.
 - Three layer contracts (#944, #947). `layer-read` keeps the read modules
-  (`versions`, `json_io`, `bbox`, `models`, `query`, `status`, `catalog_list`,
-  `agents_md`) free of Click, rasterio, `cli`, and the write modules.
+  (`portolan_core.versions`, `json_io`, `bbox`, `models`, `query`, `status`,
+  `catalog_list`, `agents_md`, `run_state`) free of Click, rasterio, `cli`, and
+  the write modules.
   `layer-manage` keeps every module outside the CLI layer free of Click.
   `layer-cli` lets only the CLI layer (`cli`, `cli_types`, `emit`,
   `add_progress`, `scan.progress`) import a CLI module. Each contract follows
