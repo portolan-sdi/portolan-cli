@@ -17,7 +17,6 @@ from __future__ import annotations
 import contextlib
 import fnmatch
 import functools
-import glob
 import logging
 import shutil
 from dataclasses import dataclass, field
@@ -80,6 +79,7 @@ from portolan_cli.report import emit
 from portolan_cli.scan.detect import is_filegdb
 from portolan_cli.stac import (
     STEM_RANK_SOURCE,
+    _require_wgs84,
     add_projection_extension,
     add_raster_extension,
     add_vector_extension,
@@ -101,7 +101,14 @@ from portolan_core.checksums import (
 )
 from portolan_core.config import get_ignored_files, get_setting, load_merged_metadata
 from portolan_core.constants import ROLE_VISUAL
-from portolan_core.errors import AssetKeyCollisionError, NoGeometryError, RewriteFidelityError
+from portolan_core.errors import (
+    AssetKeyCollisionError,
+    CRSMismatchError,
+    CRSTransformError,
+    InvalidBboxError,
+    NoGeometryError,
+    RewriteFidelityError,
+)
 from portolan_core.format_families import RASTER, VECTOR
 from portolan_core.run_state import RunState
 from portolan_core.stac_links import GDAL_PAM_SUFFIX
@@ -606,36 +613,29 @@ def _pre_validate_geometry(path: Path) -> None:
         return
 
 
-def _cleanup_orphaned_output(output_path: Path, item_dir: Path, source_path: Path) -> None:
-    """Clean up orphaned conversion output when geometry extraction fails.
+def _cleanup_orphaned_output(output_path: Path, source_path: Path) -> None:
+    """Remove a conversion output that gets no STAC record, and its GDAL sidecar.
 
-    Called when conversion succeeds but produces no geometry (empty bbox).
-    Removes the output file and the sidecars of the output to avoid leaving
-    orphaned files in the item directory.
-
-    A sidecar of the output carries the full output name, such as
-    ``scene.tif.aux.xml``. A file that only shares the stem belongs to the
-    user: a pre-built ``zoning.pmtiles`` or the ``.dbf`` of a shapefile
-    source. The cleanup deleted those too.
+    The only sidecar a conversion here writes is GDAL's ``.aux.xml``, such as
+    ``scene.tif.aux.xml``. Any other file that starts with the output name
+    belongs to the user or to a parallel add, such as
+    ``points.parquet.notes.txt`` or ``points.parquet.other.parquet``, so it
+    stays (#928).
 
     Args:
         output_path: Path to the converted output file.
-        item_dir: Directory containing the item files.
         source_path: Original source file path (won't be deleted if same).
     """
     if not output_path.exists() or output_path == source_path:
         return
 
-    # Resolve source_path for comparison (Issue #432: don't delete source file)
-    resolved_source = source_path.resolve()
-
+    sidecar = output_path.with_name(output_path.name + GDAL_PAM_SUFFIX)
     try:
         output_path.unlink()
         logger.debug("Cleaned up orphaned conversion output: %s", output_path)
-        for sidecar in item_dir.glob(f"{glob.escape(output_path.name)}.*"):
-            if sidecar.resolve() != resolved_source:
-                sidecar.unlink()
-                logger.debug("Cleaned up orphaned sidecar: %s", sidecar)
+        # Issue #432: never delete the source file.
+        if sidecar.resolve() != source_path.resolve():
+            sidecar.unlink(missing_ok=True)
     except OSError as cleanup_err:
         # Log but don't swallow the original error
         logger.warning("Failed to clean up orphaned file %s: %s", output_path, cleanup_err)
@@ -775,8 +775,8 @@ VectorMetadata = GeoParquetMetadata | PMTilesMetadata | FlatGeobufMetadata
 AllMetadata = VectorMetadata | COGMetadata
 
 
-def _extract_bbox_wgs84(metadata: AllMetadata, data_path: Path | None = None) -> list[float]:
-    """Extract bbox from metadata, transforming to WGS84 if needed.
+def wgs84_bbox(metadata: AllMetadata, data_path: Path | None = None) -> list[float]:
+    """Return the WGS84 bbox of a metadata object, for a STAC Item or Collection.
 
     PMTiles bbox is already in WGS84 (4326). Other formats may need
     CRS transformation.
@@ -1152,6 +1152,40 @@ def describe_vector_item(
     add_vector_extension(item, metadata)
 
 
+def _item_bbox(
+    metadata: AllMetadata,
+    path: Path,
+    output_path: Path,
+    *,
+    created_output: bool,
+    collection_level: bool,
+) -> list[float]:
+    """Return the WGS84 bbox of an item, or remove a new output and raise.
+
+    The add stops here before any STAC write, so a file this run converted
+    goes too.
+
+    Raises:
+        NoGeometryError: The file has no bbox.
+        CRSTransformError: The bbox cannot be transformed to WGS84.
+        CRSMismatchError: The bbox does not match the declared CRS.
+        InvalidBboxError: The transformed bbox is not valid WGS84.
+    """
+    try:
+        if not metadata.bbox:
+            raise NoGeometryError(
+                path=metadata.id if hasattr(metadata, "id") else path.stem,
+                reason="The source file may have no valid geometry.",
+            )
+        bbox = wgs84_bbox(metadata, output_path)
+        # Collection extents filter invalid asset bboxes when they aggregate (#516).
+        return bbox if collection_level else _require_wgs84(bbox)
+    except (NoGeometryError, CRSTransformError, CRSMismatchError, InvalidBboxError):
+        if created_output:
+            _cleanup_orphaned_output(output_path, path)
+        raise
+
+
 def prepare_item(
     *,
     path: Path,
@@ -1198,6 +1232,9 @@ def prepare_item(
         ValueError: If the format is unsupported or collection_id is invalid.
         FileNotFoundError: If the source file doesn't exist.
         NoGeometryError: If the file has no valid geometry.
+        CRSTransformError: The bbox cannot be transformed to WGS84.
+        CRSMismatchError: The bbox does not match the declared CRS.
+        InvalidBboxError: The transformed bbox is not valid WGS84.
         OutputExistsError: Both output names hold a file that the source did
             not write.
     """
@@ -1277,17 +1314,16 @@ def prepare_item(
             )
 
     # Step 4: Extract and transform bbox
-    if not metadata.bbox:
-        if created_output:
-            _cleanup_orphaned_output(output_path, item_dir, path)
-        raise NoGeometryError(
-            path=metadata.id if hasattr(metadata, "id") else path.stem,
-            reason="The source file may have no valid geometry.",
-        )
-    bbox = _extract_bbox_wgs84(metadata, output_path)
+    collection_level = is_collection_level_asset and handler.asset_level == "collection"
+    bbox = _item_bbox(
+        metadata,
+        path,
+        output_path,
+        created_output=created_output,
+        collection_level=collection_level,
+    )
 
     # Step 5: Scan assets and compute statistics
-    collection_level = is_collection_level_asset and handler.asset_level == "collection"
     try:
         stac_assets, asset_files, _asset_paths = _scan_item_assets(
             item_dir=item_dir,

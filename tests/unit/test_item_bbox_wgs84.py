@@ -3,7 +3,7 @@
 `_extract_geometry_from_file` returned a COG's bbox in the source CRS. STAC
 requires bbox in WGS84 regardless of the asset's own CRS, so rashid flagged
 `PTL-BBX-001` and it cascaded into `PTL-DAT-005` through the collection extent
-union. `add` was unaffected, it reprojects via `preparation._extract_bbox_wgs84`;
+union. `add` was unaffected, it reprojects via `preparation.wgs84_bbox`;
 `metadata.update.update_item_metadata` and `item.create_item` both consume this
 function directly, so both wrote the projected bbox.
 """

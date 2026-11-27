@@ -25,7 +25,12 @@ from portolan_cli.humanize import humanize_slug
 from portolan_cli.providers import derive_provenance, resolve_providers
 from portolan_cli.report import emit
 from portolan_cli.viz.pmtiles_links import PMTILES_MEDIA_TYPE, pmtiles_asset_key
-from portolan_core.bbox import compute_bbox_union, to_2d_bbox
+from portolan_core.bbox import (
+    compute_bbox_union,
+    get_bbox_validation_reason,
+    snap_to_wgs84_range,
+    to_2d_bbox,
+)
 from portolan_core.constants import PARTITION_EXTENSION_URI, PORTOLAN_SCHEMA_URI, ROLE_VISUAL
 from portolan_core.errors import AssetKeyCollisionError, InvalidBboxError
 from portolan_core.extension_registry import EXTENSION_REGISTRY
@@ -144,6 +149,9 @@ def create_collection(
 
     Returns:
         A pystac.Collection object.
+
+    Raises:
+        InvalidBboxError: ``bbox`` is not a valid WGS84 bbox.
     """
     # Issue #502: titles and descriptions are mandatory and must be
     # human-readable. Derive a title from the id when none is supplied, and
@@ -157,6 +165,7 @@ def create_collection(
     # Default to global extent if not specified
     if bbox is None:
         bbox = [-180, -90, 180, 90]
+    bbox = _require_wgs84(bbox)
 
     # Default to open temporal interval
     if temporal_extent is None:
@@ -199,7 +208,14 @@ def create_item(
 
     Returns:
         A pystac.Item object.
+
+    Raises:
+        InvalidBboxError: ``bbox`` is not a valid WGS84 bbox. STAC requires
+            WGS84, so reproject a native bbox first, for example with
+            ``wgs84_bbox`` (#928).
     """
+    bbox = _require_wgs84(bbox)
+
     # Generate polygon geometry from bbox
     geometry = _bbox_to_polygon(bbox)
 
@@ -235,6 +251,18 @@ def create_item(
             item.add_asset(asset_key, asset)
 
     return item
+
+
+def _require_wgs84(bbox: list[float]) -> list[float]:
+    """Return ``bbox`` snapped to the WGS84 range, or raise InvalidBboxError.
+
+    The check passes a coordinate that only rounds past a bound, such as
+    180.00000000000006, so the snapped copy is what the caller stores.
+    """
+    reason = get_bbox_validation_reason(bbox)
+    if reason is not None:
+        raise InvalidBboxError(reason)
+    return snap_to_wgs84_range(bbox)
 
 
 def _bbox_to_polygon(bbox: list[float]) -> dict[str, object]:
@@ -1363,7 +1391,8 @@ def add_projection_extension(
     """Add Projection extension fields to an item from metadata.
 
     Always sets (when available):
-    - proj:code: CRS code (EPSG or WKT)
+    - proj:code: CRS code (EPSG or WKT), or proj:projjson for a PROJJSON
+      CRS that no code names
     - proj:bbox: Bounding box in native CRS
 
     For raster metadata (COGMetadata), also sets:
@@ -1378,7 +1407,9 @@ def add_projection_extension(
     if not hasattr(metadata, "crs") or metadata.crs is None:
         return
 
-    # Set proj:code
+    # Set proj:code or proj:projjson. Drop both first, so a repeat call names one CRS.
+    item.properties.pop("proj:code", None)
+    item.properties.pop("proj:projjson", None)
     crs_str = metadata.crs
     if isinstance(crs_str, str):
         # Normalize EPSG codes
@@ -1388,15 +1419,13 @@ def add_projection_extension(
             # WKT or other format - store as-is
             item.properties["proj:code"] = crs_str
     elif isinstance(crs_str, dict):
-        # PROJJSON format (used by some GeoParquet files)
-        # Try to extract EPSG code if available
-        if "id" in crs_str and "code" in crs_str["id"]:
-            authority = crs_str["id"].get("authority", "EPSG")
-            code = crs_str["id"]["code"]
-            item.properties["proj:code"] = f"{authority}:{code}"
+        # PROJJSON format (used by some GeoParquet files). A CRS with no code
+        # to name goes in proj:projjson (projection v2.0.0), not proj:code.
+        code = _projjson_code(crs_str)
+        if code is None:
+            item.properties["proj:projjson"] = crs_str
         else:
-            # Store as WKT2 if we can't extract EPSG
-            item.properties["proj:code"] = str(crs_str)
+            item.properties["proj:code"] = code
 
     # Set proj:bbox (native CRS bbox)
     if hasattr(metadata, "bbox") and metadata.bbox is not None:
@@ -1419,6 +1448,30 @@ def add_projection_extension(
     ext_url = EXTENSION_URLS["projection"]
     if ext_url not in item.stac_extensions:
         item.stac_extensions.append(ext_url)
+
+
+def _projjson_code(crs: dict[str, Any]) -> str | None:
+    """The proj:code of a PROJJSON CRS, or None when no code names it.
+
+    The id counts only when pyproj resolves it. An id such as EPSG:999999 or
+    MYORG:1 gives way to the EPSG match of the definition (#928).
+    """
+    from pyproj import CRS
+    from pyproj.exceptions import CRSError
+
+    crs_id = crs.get("id", {})
+    if "code" in crs_id:
+        code = f"{crs_id.get('authority', 'EPSG')}:{crs_id['code']}"
+        try:
+            CRS.from_user_input(code)
+            return code
+        except CRSError:
+            pass
+    try:
+        epsg = CRS.from_user_input(crs).to_epsg()
+    except CRSError:
+        epsg = None
+    return f"EPSG:{epsg}" if epsg is not None else None
 
 
 def geometry_type_list(value: object) -> list[str]:

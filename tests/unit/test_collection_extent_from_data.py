@@ -1,6 +1,6 @@
 """Regression tests for collection extents measured from data (PTL-DAT-005).
 
-``_extract_bbox_wgs84`` reprojected the GeoParquet's stored bbox — a *rectangle*
+``wgs84_bbox`` reprojected the GeoParquet's stored bbox — a *rectangle*
 in the source CRS. For a projected CRS the WGS84 envelope of that rectangle is
 strictly larger than the envelope of the data inside it, because the corners of
 a UTM bbox hold no data and the grid lines curve. The declared extent therefore
@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from portolan_cli.crs import measure_wgs84_bbox, transform_bbox_to_wgs84
-from portolan_cli.preparation import _extract_bbox_wgs84
+from portolan_cli.preparation import wgs84_bbox
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -125,7 +125,7 @@ class TestMeasureWgs84Bbox:
 
 
 class TestExtractBboxWgs84UsesMeasurement:
-    """_extract_bbox_wgs84 prefers the measurement and falls back safely."""
+    """wgs84_bbox prefers the measurement and falls back safely."""
 
     def test_uses_measurement_when_data_path_given(self, tmp_path: Path) -> None:
         from portolan_cli.metadata.geoparquet import extract_geoparquet_metadata
@@ -134,7 +134,7 @@ class TestExtractBboxWgs84UsesMeasurement:
         gdf = _write_diamond(path)
         metadata = extract_geoparquet_metadata(path)
 
-        bbox = _extract_bbox_wgs84(metadata, path)
+        bbox = wgs84_bbox(metadata, path)
         expected = gdf.to_crs("EPSG:4326").total_bounds
 
         assert bbox == pytest.approx(list(expected), abs=1e-9)
@@ -146,7 +146,7 @@ class TestExtractBboxWgs84UsesMeasurement:
         _write_diamond(path)
         metadata = extract_geoparquet_metadata(path)
 
-        bbox = _extract_bbox_wgs84(metadata)
+        bbox = wgs84_bbox(metadata)
         assert bbox == list(transform_bbox_to_wgs84(metadata.bbox, UTM30N))
 
 
@@ -230,7 +230,7 @@ class TestTransformerFailureFallsBack:
         original = prep.measure_wgs84_bbox
         prep.measure_wgs84_bbox = lambda *a, **k: None  # type: ignore[assignment]
         try:
-            bbox = _extract_bbox_wgs84(metadata, path)
+            bbox = wgs84_bbox(metadata, path)
         finally:
             prep.measure_wgs84_bbox = original  # type: ignore[assignment]
 
