@@ -366,6 +366,42 @@ class TestGeoParquetMetadataEdgeCases:
         assert extract_geoparquet_metadata(path).crs == "OGC:CRS84"
 
     @pytest.mark.unit
+    def test_extract_crs_keeps_a_projjson_with_a_custom_authority(self, tmp_path: Path) -> None:
+        """pyproj cannot resolve MYORG:1, so the full PROJJSON stays and still reprojects (#928)."""
+        import json
+
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+        from pyproj import CRS
+
+        from portolan_cli.preparation import wgs84_bbox
+
+        projjson = CRS("EPSG:32610").to_json_dict()
+        projjson["id"] = {"authority": "MYORG", "code": 1}
+        geo_meta = {
+            "version": "1.0.0",
+            "primary_column": "geometry",
+            "columns": {
+                "geometry": {
+                    "encoding": "WKB",
+                    "crs": projjson,
+                    "bbox": [500000.0, 4000000.0, 510000.0, 4010000.0],
+                }
+            },
+        }
+        table = pa.table({"geometry": [b"\x00"] * 3})
+        path = tmp_path / "myorg.parquet"
+        pq.write_table(
+            table.cast(table.schema.with_metadata({b"geo": json.dumps(geo_meta).encode()})), path
+        )
+
+        metadata = extract_geoparquet_metadata(path)
+
+        assert metadata.crs == projjson
+        assert metadata.to_stac_properties().get("proj:epsg") == 32610
+        assert wgs84_bbox(metadata) == pytest.approx([-123.0, 36.14, -122.89, 36.23], abs=0.01)
+
+    @pytest.mark.unit
     def test_extract_crs_from_projjson_without_epsg(self, tmp_path: Path) -> None:
         """Returns full PROJJSON when no EPSG code available."""
         import json
