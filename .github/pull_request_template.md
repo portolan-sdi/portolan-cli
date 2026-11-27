@@ -44,7 +44,7 @@ See [what a finished PR looks like](https://github.com/portolan-sdi/portolan-cli
 
 - [ ] Tests written **first** and exercise real behavior (TDD)
 - [ ] Integration coverage where the change crosses layers
-- [ ] `prek run --all-files` is green locally; all required CI checks pass
+- [ ] `uv run prek run --all-files` is green locally; all required CI checks pass
 - [ ] Changed lines are covered (`codecov/patch`)
 - [ ] At least one adversarial review (actively tried to break it)
 - [ ] CodeRabbit comments addressed

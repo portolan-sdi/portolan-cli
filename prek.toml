@@ -1,11 +1,15 @@
 # prek configuration - Tier 1 CI
 #
 # All hooks BLOCK on failure. No warnings, no skips.
-# Install: prek install (requires: uv tool install prek)
+# Install: uv run prek install (installs every type in default_install_hook_types)
 #:schema https://www.schemastore.org/prek.json
 
 # Stop after first hook failure for faster feedback
 fail_fast = true
+
+# A bare `prek install` installs all three, so the commit-msg and pre-push
+# hooks below do not depend on extra --hook-type flags.
+default_install_hook_types = ["pre-commit", "commit-msg", "pre-push"]
 
 # =============================================================================
 # Built-in hooks (native Rust, no network fetch required)
