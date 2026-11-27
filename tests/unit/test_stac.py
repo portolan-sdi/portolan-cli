@@ -136,6 +136,15 @@ class TestCreateItem:
         assert excinfo.value.reason == "west longitude 383639.2 out of range [-180.0, 180.0]"
 
     @pytest.mark.unit
+    def test_create_item_stores_the_snapped_bbox(self) -> None:
+        """A float that rounds past 180 passes the check, so the Item stores 180.0 (#928)."""
+        item = create_item(item_id="edge", bbox=[170.0, -10.0, 180.00000000000006, 10.0])
+
+        assert item.bbox == [170.0, -10.0, 180.0, 10.0]
+        assert [180.0, 10.0] in item.geometry["coordinates"][0]
+        assert 180.00000000000006 not in [x for x, _ in item.geometry["coordinates"][0]]
+
+    @pytest.mark.unit
     def test_create_item_geometry_from_bbox(self) -> None:
         """create_item generates polygon geometry from bbox."""
         item = create_item(
