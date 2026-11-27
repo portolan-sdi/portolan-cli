@@ -534,6 +534,7 @@ class TestPushAllMetadataSync:
 
         stats: dict[str, Any] = {
             "failed": 0,
+            "landed": 0,
             "successful": 1,  # At least one collection succeeded
             "total_files": 0,
             "total_versions": 0,
@@ -589,6 +590,7 @@ class TestPushCatalogLogo:
 
         stats: dict[str, Any] = {
             "failed": 0,
+            "landed": 0,
             "successful": 1,
             "total_files": 0,
             "total_versions": 0,

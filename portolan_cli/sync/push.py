@@ -156,6 +156,8 @@ class PushResult:
             (upper bound; actual count depends on remote state).
         metrics: Upload performance metrics (bytes, duration, speed).
         verify: Counts from ``--verify``. None when push did not verify.
+        landed: True when the remote versions.json names this push. A push
+            that leaves a backup behind fails but has landed.
     """
 
     success: bool
@@ -169,6 +171,7 @@ class PushResult:
     would_push_files: int = 0
     metrics: UploadMetrics | None = None
     verify: VerifyReport | None = None
+    landed: bool = False
 
     @property
     def has_metadata_errors(self) -> bool:
@@ -1014,7 +1017,10 @@ async def _back_up(
             try:
                 await obs.delete_async(store, f"{base}/{key}")
             except Exception as e:
-                if not (isinstance(e, FileNotFoundError) or _is_not_found(e)):
+                # A 404 for the bucket can leave the copy in place (Source
+                # Cooperative answers a bulk delete on an account with 404).
+                gone = isinstance(e, FileNotFoundError) or _is_not_found(e)
+                if not (gone and not await _key_exists(store, f"{base}/{key}")):
                     tell(report, "warn", f"Failed to delete the backup of {key}: {e}")
         raise
     return {key: backup for key, backup in zip(keys, copies, strict=True) if backup}
@@ -2579,7 +2585,9 @@ async def _execute_push_uploads_async(
         # versions.json names the new bytes, so the push rolls back.
         await failed([])
         raise
-    await _drop_backups(store, backups, sizes, report=report)
+    # The new versions.json is live, so a backup that stays fails the push but
+    # does not roll it back. Each push uses a new backup directory.
+    backup_errors = await _drop_backups(store, backups, sizes, report=report)
     repaired = _repaired_count(prefix, reupload, list(written))
     if diff.local_only:
         msg = f"Pushed {len(diff.local_only)} version(s): {diff.local_only}"
@@ -2613,13 +2621,14 @@ async def _execute_push_uploads_async(
             tell(report, "warn", f" {err}")
 
     return PushResult(
-        success=True,
+        success=not backup_errors,
         files_uploaded=files_uploaded,
         versions_pushed=len(diff.local_only),
         conflicts=[],
-        errors=[],
+        errors=backup_errors,
         metadata_errors=all_metadata_errors,
         metrics=metrics,
+        landed=True,
     )
 
 
@@ -3144,6 +3153,7 @@ def _push_all_process_result(
             f"[{current_completed}/{total}] Failed {coll}: {', '.join(errors_list)}",
         )
         stats["failed"] += 1
+        stats["landed"] += result.landed
         stats["errors"][coll] = errors_list
         # A push can fail after verify. Its counts still describe the store.
         if result.verify is not None and stats["verify"] is not None:
@@ -3229,9 +3239,10 @@ def _root_upload_skip_reason(
     Returns:
         A message for the user, or None when the upload may proceed.
     """
-    if stats["failed"] > 0:
+    # A landed collection is live remotely, so the root must link it.
+    if stats["failed"] > stats["landed"]:
         return "Skipping root file upload because some collections failed"
-    if stats["successful"] == 0:
+    if stats["successful"] + stats["landed"] == 0:
         return "Skipping root file upload because no collections were pushed"
     if not catalog_json.exists():
         # A missing root catalog.json means the remote root is already broken.
@@ -3345,6 +3356,17 @@ async def _upload_root_files(
         )
         tell(report, "success", "Uploaded versions.json")
         stats["total_files"] += 1
+
+
+async def _key_exists(store: ObjectStore, key: str) -> bool:
+    """Return True if the remote key exists."""
+    try:
+        await obs.head_async(store, key)
+    except Exception as e:
+        if isinstance(e, FileNotFoundError) or _is_not_found(e):
+            return False
+        raise
+    return True
 
 
 async def _remote_etag(store: ObjectStore, key: str) -> str | None:
@@ -3526,6 +3548,7 @@ async def push_all_collections_async(
     stats: dict[str, Any] = {
         "successful": 0,
         "failed": 0,
+        "landed": 0,
         "total_files": 0,
         "total_versions": 0,
         "total_would_push_files": 0,

@@ -595,7 +595,7 @@ class TestPushAllVerifyCounts:
         """A collection that verified and then failed its upload still adds its counts."""
         from portolan_cli.sync.push import _push_all_process_result
 
-        stats: dict[str, Any] = {"failed": 0, "errors": {}, "verify": VerifyReport()}
+        stats: dict[str, Any] = {"failed": 0, "landed": 0, "errors": {}, "verify": VerifyReport()}
         failed = PushResult(
             success=False,
             files_uploaded=0,

@@ -1280,19 +1280,33 @@ no version. With no new version and no --force, push uploads only those
 assets and keeps the remote versions.json as is. The check compares
 sizes only. It cannot find a wrong object of the same size.
 
+On Source Cooperative, use the repository as the bucket and put the
+account in the endpoint. With the account as the bucket, push cannot
+delete its backup objects, and the push fails.
+
 ```text
 Examples:
+    # Push to Source Cooperative
+    export AWS_ENDPOINT_URL_S3=https://data.source.coop/my-account
+    portolan push s3://my-repository/catalog --profile source-coop
+```
+
+```text
     # Push a single collection
     portolan push s3://mybucket/catalog --collection demographics
     portolan push gs://mybucket/catalog -c imagery --dry-run
 ```
 
+```text
     # Push all collections
     portolan push s3://mybucket/catalog
     portolan push --dry-run  # Uses configured remote
+```
 
+```text
     # Repair objects that disagree with the manifest
     portolan push s3://mybucket/catalog -c demographics --verify
+```
 
 **Usage:**
 

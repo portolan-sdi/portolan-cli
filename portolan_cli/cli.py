@@ -3569,16 +3569,27 @@ def push(
     assets and keeps the remote versions.json as is. The check compares
     sizes only. It cannot find a wrong object of the same size.
 
+    On Source Cooperative, use the repository as the bucket and put the
+    account in the endpoint. With the account as the bucket, push cannot
+    delete its backup objects, and the push fails.
+
     \b
     Examples:
+        # Push to Source Cooperative
+        export AWS_ENDPOINT_URL_S3=https://data.source.coop/my-account
+        portolan push s3://my-repository/catalog --profile source-coop
+
+    \b
         # Push a single collection
         portolan push s3://mybucket/catalog --collection demographics
         portolan push gs://mybucket/catalog -c imagery --dry-run
 
+    \b
         # Push all collections
         portolan push s3://mybucket/catalog
         portolan push --dry-run  # Uses configured remote
 
+    \b
         # Repair objects that disagree with the manifest
         portolan push s3://mybucket/catalog -c demographics --verify
     """

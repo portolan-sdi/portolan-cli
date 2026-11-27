@@ -17,6 +17,7 @@ Test categories:
 
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -748,6 +749,82 @@ class TestRollbackRestoresOverwrittenKeys:
         }
         assert _stored_bytes(remote, "catalog/test/data/data.parquet") == b"bytes of 1.2.0"
         assert _stored_bytes(remote, "catalog/test/style.json") == b'{"style": 2}'
+
+    @pytest.mark.unit
+    def test_push_fails_when_a_backup_stays_after_its_delete(
+        self,
+        local_catalog: Path,
+        remote: MemoryStore,
+        second_push: dict[str, bytes],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The Source Cooperative proxy answers a bulk delete on an account with 404."""
+        from portolan_cli.sync.push import push
+
+        async def bucket_not_found(*_args: Any, **_kwargs: Any) -> None:
+            raise FileNotFoundError("NoSuchBucket")
+
+        monkeypatch.setattr(obs, "delete_async", bucket_not_found)
+        result = push(local_catalog, "test", "s3://mybucket/catalog")
+
+        assert result.success is False
+        leftover = sorted(k for k in stored_keys(remote) if "/push-backup/" in k)
+        assert leftover
+        assert all(any(k in e and "NoSuchBucket" in e for e in result.errors) for k in leftover)
+        assert _stored_bytes(remote, "catalog/test/data/data.parquet") == b"bytes of 1.2.0"
+
+    @pytest.mark.unit
+    def test_push_all_uploads_the_root_when_a_landed_push_keeps_a_backup(
+        self,
+        local_catalog: Path,
+        remote: MemoryStore,
+        second_push: dict[str, bytes],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The new versions.json is live, so the root catalog must name it too."""
+        from portolan_cli.sync.push import push_all_collections
+
+        root = {"type": "Catalog", "id": "c", "stac_version": "1.1.0", "description": "c"}
+        root["links"] = [{"rel": "child", "href": "./test/collection.json"}]
+        (local_catalog / "catalog.json").write_text(json.dumps(root))
+        (local_catalog / ".portolan").mkdir(exist_ok=True)
+        (local_catalog / ".portolan" / "config.yaml").write_text("{}\n")
+
+        async def bucket_not_found(*_args: Any, **_kwargs: Any) -> None:
+            raise FileNotFoundError("NoSuchBucket")
+
+        monkeypatch.setattr(obs, "delete_async", bucket_not_found)
+        result = push_all_collections(local_catalog, "s3://mybucket/catalog")
+
+        assert result.success is False
+        assert "NoSuchBucket" in " ".join(result.collection_errors["test"])
+        assert stored_json(remote, "catalog/catalog.json") == root
+
+    @pytest.mark.unit
+    async def test_interrupted_backup_warns_when_a_copy_stays_after_its_delete(
+        self,
+        print_report: Report,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        from portolan_cli.sync.push import _back_up
+
+        store = MemoryStore()
+        obs.put(store, "catalog/test/a.parquet", b"old")
+
+        async def copy_then_stop(_store: Any, _src: str, dst: str, **_kwargs: Any) -> None:
+            obs.put(store, dst, b"old")
+            raise asyncio.CancelledError
+
+        async def bucket_not_found(*_args: Any, **_kwargs: Any) -> None:
+            raise FileNotFoundError("NoSuchBucket")
+
+        monkeypatch.setattr(obs, "copy_async", copy_then_stop)
+        monkeypatch.setattr(obs, "delete_async", bucket_not_found)
+        with pytest.raises(asyncio.CancelledError):
+            await _back_up(store, {"catalog/test/a.parquet": 3}, "catalog", 4, report=print_report)
+
+        assert "Failed to delete the backup of catalog/test/a.parquet" in capsys.readouterr().err
 
     @pytest.mark.unit
     async def test_backup_key_sits_under_the_push_prefix(self) -> None:

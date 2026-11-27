@@ -134,7 +134,7 @@ def test_cli_reference_fences_every_no_rewrap_block() -> None:
         for ctx, _ in _walk(portolan_cli.cli)
         for line in (ctx.command.help or "").splitlines()
     )
-    assert expected == 47
+    assert expected == 50
 
     # Usage adds one fence per command, and options add none.
     commands = len(list(_walk(portolan_cli.cli)))
