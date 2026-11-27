@@ -67,3 +67,8 @@ example, the second plan drops the parks collection:
 
 Each prior key that the new plan leaves out becomes a delete. Asset files stay
 in place, so remove those yourself.
+
+On Source Cooperative, use the repository as the bucket. Put the account in
+the endpoint, such as `https://data.source.coop/my-account`. With the account as
+the bucket, puts succeed but deletes fail with `NoSuchBucket`. `ObstoreSink`
+raises that error and does not ignore it.

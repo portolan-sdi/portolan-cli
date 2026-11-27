@@ -214,6 +214,24 @@ def test_obstore_sink_deletes_on_a_local_store_and_tolerates_a_missing_key(
     assert _tree(tmp_path) == golden_files()
 
 
+def test_obstore_sink_raises_when_a_404_leaves_the_object_in_place(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The Source Cooperative proxy answers a bulk delete on an account with
+    # 404 NoSuchBucket. obstore reports that 404 as FileNotFoundError.
+    store = MemoryStore()
+    obstore.put(store, "parks/collection.json", b"{}")  # noqa: TID251 - test setup
+
+    def bucket_not_found(*_args: object, **_kwargs: object) -> None:
+        raise FileNotFoundError("NoSuchBucket")
+
+    monkeypatch.setattr(obstore, "delete", bucket_not_found)
+
+    with pytest.raises(FileNotFoundError, match="NoSuchBucket"):
+        ObstoreSink(store).delete("parks/collection.json")
+    ObstoreSink(store).delete("never/written.json")
+
+
 def test_the_validator_accepts_the_written_catalog(tmp_path: Path) -> None:
     apply_plan(_plan(), LocalSink(tmp_path))
 

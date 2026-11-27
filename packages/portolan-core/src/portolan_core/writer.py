@@ -70,7 +70,6 @@ failure raises a :class:`CatalogWriteError` subclass.
 
 from __future__ import annotations
 
-import contextlib
 import json
 import os
 import stat
@@ -335,8 +334,16 @@ class ObstoreSink:
         """Delete the object. A missing object is not an error."""
         import obstore
 
-        with contextlib.suppress(FileNotFoundError):
+        try:
             obstore.delete(self.store, key)
+        except FileNotFoundError:
+            # obstore reports every 404 as FileNotFoundError. A 404 for the
+            # bucket can leave the object in place, so check that it is gone.
+            try:
+                obstore.head(self.store, key)
+            except FileNotFoundError:
+                return
+            raise
 
 
 def _check_key(key: str) -> str:
