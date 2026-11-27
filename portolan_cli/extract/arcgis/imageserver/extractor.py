@@ -1035,7 +1035,7 @@ async def _wait_for_slot(
         last_request_time[slot_id] = time.monotonic()
 
 
-async def _process_tile(
+async def _process_tile(  # noqa: PLR0915, PLR0917 - one ordered sequence over every ImageServer option
     tile: TileSpec,
     url: str,
     output_dir: Path,
@@ -1389,7 +1389,7 @@ def _auto_init_catalog(
     return True
 
 
-async def _extract_all_tiles(
+async def _extract_all_tiles(  # noqa: PLR0917 - one ordered sequence over every ImageServer option
     tiles: list[TileSpec],
     url: str,
     output_dir: Path,
@@ -1532,7 +1532,7 @@ def _record_empty_tile(
         )
 
 
-def _update_stats_and_state(
+def _update_stats_and_state(  # noqa: PLR0913, PLR0917 - one ordered sequence over every ImageServer option
     tile: TileSpec,
     succeeded: bool,
     bytes_downloaded: int,
@@ -1823,7 +1823,7 @@ def _report_tile_counts(
     emit_message(on_message, "info", f"Report: {report_path}")
 
 
-async def extract_imageserver(
+async def extract_imageserver(  # noqa: PLR0914, PLR0915, PLR0917 - one ordered sequence over every ImageServer option
     url: str,
     output_dir: Path,
     config: ExtractionConfig | None = None,

@@ -791,7 +791,7 @@ async def _fetch_remote_versions_async(
         raise PullError(f"Failed to fetch remote versions.json: {e}") from e
 
 
-async def _download_assets_async(
+async def _download_assets_async(  # noqa: PLR0915 - one ordered transport sequence
     store: ObjectStore,
     prefix: str,
     local_root: Path,
@@ -1524,7 +1524,7 @@ def _report_one_pull_result(
     return None
 
 
-async def pull_all_collections_async(
+async def pull_all_collections_async(  # noqa: PLR0915 - one ordered transport sequence
     remote_url: str,
     local_root: Path,
     *,

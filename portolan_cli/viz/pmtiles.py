@@ -750,7 +750,7 @@ def _track_side_step_assets(
         )
 
 
-def generate_pmtiles_for_collection(
+def generate_pmtiles_for_collection(  # noqa: PLR0913, PLR0915 - each tippecanoe option is an argument
     collection_path: Path,
     catalog_root: Path,
     *,

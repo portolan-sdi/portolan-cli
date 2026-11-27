@@ -1250,7 +1250,7 @@ def _require_licenses(
             raise MissingLicenseError(f"collection '{coll_id}'", gap)
 
 
-def add_files(
+def add_files(  # noqa: PLR0913 - each add option is a keyword argument
     *,
     paths: list[Path],
     catalog_root: Path,
@@ -1490,7 +1490,7 @@ def _collections_to_refresh(
     return affected, versioned
 
 
-def run_add(
+def run_add(  # noqa: PLR0913 - each add option is a keyword argument
     paths: list[Path],
     catalog_root: Path,
     *,

@@ -1246,7 +1246,7 @@ class TestAddFilesCodePaths:
             )
         )
 
-        def mock_add_side_effect(
+        def mock_add_side_effect(  # noqa: PLR0917 - mirrors the add signature
             path,
             catalog_root,
             collection_id,

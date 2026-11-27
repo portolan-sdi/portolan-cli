@@ -1635,7 +1635,7 @@ def validate_cog(path: Path) -> str | None:
 # Note: GEOSPATIAL_EXTENSIONS imported from portolan_core.constants
 
 
-def convert_directory(
+def convert_directory(  # noqa: PLR0917 - each convert option is an argument
     path: Path,
     output_dir: Path | None = None,
     on_progress: Callable[[ConversionResult], None] | None = None,

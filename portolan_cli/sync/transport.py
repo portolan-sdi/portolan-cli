@@ -467,7 +467,7 @@ def _drop_missing_child_links(local_path: Path, collections: list[str]) -> None:
             write_json_atomic(path, document)
 
 
-def clone(
+def clone(  # noqa: PLR0915 - one ordered clone sequence
     remote_url: str,
     local_path: Path,
     collection: str | None = None,

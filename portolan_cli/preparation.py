@@ -1152,7 +1152,7 @@ def describe_vector_item(
     add_vector_extension(item, metadata)
 
 
-def prepare_item(
+def prepare_item(  # noqa: PLR0914, PLR0915 - the whole per-file pipeline in one sequence
     *,
     path: Path,
     catalog_root: Path,

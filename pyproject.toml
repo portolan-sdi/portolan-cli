@@ -346,36 +346,12 @@ allowed-confusables = ["×", "ℹ"]
     "S607", # the script resolves its tools from PATH
 ]
 "examples/**/*.py" = ["T20"] # an example prints its result for the reader
-# Pylint size limits, per file. Each line names a real outlier that no small,
-# safe refactor removes. Delete a line when its module drops below the limits.
-# A Click command takes one argument per option.
+# A Click command takes one argument per option. Any other outlier of the pylint
+# size limits carries a line noqa with its reason.
 "portolan_cli/**/*cli.py" = ["PLR0913", "PLR0917"]
-# add_files and run_add take each add option as a keyword argument.
-"portolan_cli/add.py" = ["PLR0913"]
-# The sync orchestrators thread every transport option through each layer.
-"portolan_cli/sync/*.py" = ["PLR0913", "PLR0914", "PLR0915"]
-# The tile worker and extract_imageserver each run one long ordered sequence.
-"portolan_cli/extract/arcgis/imageserver/extractor.py" = [
-    "PLR0913",
-    "PLR0914",
-    "PLR0915",
-    "PLR0917",
-]
-# prepare_item runs the whole per-file pipeline in one ordered sequence.
-"portolan_cli/preparation.py" = ["PLR0914", "PLR0915"]
-# The safe-rename rule holds each name transform of the path in a local.
-"portolan_cli/scan/fix.py" = ["PLR0914"]
 # run_check and the check workflow take each check option as a keyword argument.
 "portolan_cli/validation/runner.py" = ["PLR0913"]
 "portolan_cli/validation/workflow.py" = ["PLR0913"]
-# The PMTiles generator takes each tippecanoe option as a keyword argument.
-"portolan_cli/viz/pmtiles.py" = ["PLR0913", "PLR0915"]
-# The basemap fetch holds the tile grid, the mosaic, and its bounds in locals.
-"portolan_cli/viz/thumbnail.py" = ["PLR0914"]
-# The factory takes one default per ImageServer metadata field.
-"tests/integration/extract/test_imageserver_metadata_seeding.py" = ["PLR0913", "PLR0917"]
-# The fixture generator writes each fixture file in one ordered sequence.
-"tests/fixtures/generate.py" = ["PLR0915"]
 # vulture's whitelist format is bare names and `_.attr` expressions. They are
 # never executed, so the undefined `_` and the bare expressions are the format.
 "vulture_whitelist.py" = ["F821", "B018"]
@@ -468,14 +444,14 @@ raises-extend-require-match-for = [
 #   returns 1 / 4 / 6 / 10, branches 3 / 7 / 13 / 15,
 #   statements 6 / 19 / 40 / 69, locals 3 / 8 / 15 / 31,
 #   nested blocks 2 / 3 / 5 / 8, Boolean expressions 2 / 3 / 4 / 6.
-# max-branches equals mccabe max-complexity. A Click command takes one
-# argument per option, so the argument limits leave room for a real command.
+# max-branches equals mccabe max-complexity. max-positional-args and max-locals
+# sit above p99 so that the noqa lines stay near 30.
 max-args = 12
-max-positional-args = 12
+max-positional-args = 8
 max-returns = 8
 max-branches = 15
 max-statements = 50
-max-locals = 20
+max-locals = 18
 max-nested-blocks = 5
 max-bool-expr = 5
 

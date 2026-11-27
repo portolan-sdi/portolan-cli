@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 pytestmark = [pytest.mark.integration]
 
 
-def make_imageserver_metadata_extracted(
+def make_imageserver_metadata_extracted(  # noqa: PLR0913, PLR0917 - one default per ImageServer metadata field
     source_url: str = "https://services.arcgis.com/test/ImageServer",
     service_name: str = "TestImageServer",
     description: str | None = "Test imagery service",
