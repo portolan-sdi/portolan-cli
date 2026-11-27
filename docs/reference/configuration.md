@@ -64,3 +64,5 @@ row-group statistics (`PTL-DAT-007`), or with row groups that are too large
 (`PTL-DAT-008`). To apply `sort` to a file that `check` does not report, for
 example when you set `add_bbox: false`, run
 `portolan add <path> --force --reconvert`.
+`check --fix` keeps a file when the settings cannot clear the rule, for
+example `PTL-DAT-006` under `sort: none`, and names the setting to change.

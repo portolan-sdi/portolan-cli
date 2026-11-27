@@ -84,35 +84,3 @@ def test_check_fix_command_prints_the_sidecar_notice(tmp_path: Path) -> None:
 
     assert shp.with_suffix(".cpg").read_text() == "ISO-8859-1"
     assert "Encoding sidecar roads.cpg written: DBF records are not valid UTF-8" in result.output
-
-
-def test_fix_rewrites_only_the_files_that_auto_convert_findings_name(tmp_path: Path) -> None:
-    """A checksum finding, an INFO, and a remote href name no file to rewrite."""
-    from rashid_core.api import Finding, Severity
-
-    from portolan_cli.validation.workflow import _reoptimize_targets
-
-    collection = tmp_path / "c" / "collection.json"
-    collection.parent.mkdir()
-    assets = {
-        "a/b": {"href": "./a.tif"},
-        "remote": {"href": "https://example.com/r.tif"},
-        "mirror": {"href": "items.parquet"},
-        "sum": {"href": "s.tif"},
-    }
-    collection.write_text(json.dumps({"assets": assets}))
-
-    def finding(rule: str, key: str, severity: Severity = Severity.ERROR) -> Finding:
-        return Finding(rule, severity, "", "c/collection.json", json_pointer=f"/assets/{key}")
-
-    targets = _reoptimize_targets(
-        tmp_path,
-        [
-            finding("PTL-DAT-011", "a~1b"),
-            finding("PTL-DAT-013", "remote"),
-            finding("PTL-DAT-006", "mirror", Severity.INFO),
-            finding("PTL-DAT-001", "sum"),
-        ],
-    )
-
-    assert targets == frozenset({(tmp_path / "c" / "a.tif").resolve()})

@@ -1669,3 +1669,85 @@ class TestThumbnailFixer:
         assert [r.action for r in results] == [FixAction.UPDATED]
         assert _snapshot(tmp_path) == before
         assert collection_dir.exists()
+
+
+class TestMediaTypes:
+    """PTL-DAT-003: the declared media type follows the bytes of the asset."""
+
+    COG = "image/tiff; application=geotiff; profile=cloud-optimized"
+
+    def _asset(self, tmp_path: Path, name: str, content: bytes, declared: str) -> Path:
+        collection = _tiny_catalog(tmp_path)
+        (collection / name).write_bytes(content)
+        data = _read_json(collection / "collection.json")
+        data["assets"] = {"data": {"href": f"./{name}", "type": declared}}
+        _write_json(collection / "collection.json", data)
+        return collection / "collection.json"
+
+    @pytest.mark.parametrize(
+        ("name", "content", "expected"),
+        [
+            ("a.parquet", b"PAR1" + b"\0" * 8, "application/vnd.apache.parquet"),
+            ("a.pmtiles", b"PMTiles\x03", "application/vnd.pmtiles"),
+            ("a.png", b"\x89PNG\r\n\x1a\n", "image/png"),
+            ("a.jpg", b"\xff\xd8\xff\xe0", "image/jpeg"),
+            ("a.tif", b"II*\x00" + b"\0" * 8, "image/tiff; application=geotiff"),
+            ("a.tif", b"MM\x00*" + b"\0" * 8, "image/tiff; application=geotiff"),
+        ],
+    )
+    def test_the_bytes_decide_the_type(
+        self, tmp_path: Path, name: str, content: bytes, expected: str
+    ) -> None:
+        declared = "image/jpeg" if name == "a.png" else "image/png"
+        collection = self._asset(tmp_path, name, content, declared)
+
+        FIXERS["media_type"](tmp_path, False)
+
+        assert _read_json(collection)["assets"]["data"]["type"] == expected
+
+    def test_a_cog_gets_the_cog_profile(self, tmp_path: Path) -> None:
+        cog = Path(__file__).parents[2] / "fixtures" / "raster" / "valid" / "rgb.tif"
+        collection = self._asset(tmp_path, "a.tif", cog.read_bytes(), "image/png")
+
+        FIXERS["media_type"](tmp_path, False)
+
+        assert _read_json(collection)["assets"]["data"]["type"] == self.COG
+
+    @pytest.mark.parametrize(
+        ("name", "content", "declared"),
+        [
+            ("a.png", b"\x89PNG\r\n\x1a\n", "image/png; charset=binary"),
+            ("a.tif", b"II*\x00" + b"\0" * 8, "image/tiff; application=geotiff; profile=x"),
+            ("a.parquet", b"PAR1" + b"\0" * 8, "application/x-parquet; version=2"),
+        ],
+    )
+    def test_a_type_of_the_right_format_is_kept(
+        self, tmp_path: Path, name: str, content: bytes, declared: str
+    ) -> None:
+        self._asset(tmp_path, name, content, declared)
+        before = _snapshot(tmp_path)
+
+        assert FIXERS["media_type"](tmp_path, False) == []
+        assert _snapshot(tmp_path) == before
+
+    def test_an_unreadable_asset_is_skipped_with_a_reason(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        self._asset(tmp_path, "a.png", b"\x89PNG\r\n\x1a\n", "image/jpeg")
+        before = _snapshot(tmp_path)
+
+        real_open = Path.open
+
+        def denied(self: Path, *args: Any, **kwargs: Any) -> Any:
+            if self.name == "a.png":
+                raise PermissionError(13, "Permission denied", str(self))
+            return real_open(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "open", denied)
+        with caplog.at_level("WARNING", logger="portolan_cli.validation.fixers"):
+            results = FIXERS["media_type"](tmp_path, False)
+        monkeypatch.undo()
+
+        assert results == []
+        assert _snapshot(tmp_path) == before
+        assert "Cannot read a.png to type it: [Errno 13] Permission denied" in caplog.text

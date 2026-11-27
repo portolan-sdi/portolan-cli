@@ -56,8 +56,12 @@ class GeoParquetHandler:
         return output
 
     def reoptimize(self, source: Path, catalog_root: Path | None) -> Path:
-        """Rewrite a GeoParquet file that a ``check --fix`` finding names."""
-        return self.reconvert(source, catalog_root)
+        """Rewrite a GeoParquet file that a ``check --fix`` finding names. A failed rewrite raises."""
+        output = api.convert_vector(
+            source, source.parent, catalog_root, reconvert=True, strict=True
+        )
+        self._check(output)
+        return output
 
     def partition(self, path: Path, catalog_root: Path | None) -> list[Path]:
         """Partition a file above the size threshold. See ``partition_strategy``."""

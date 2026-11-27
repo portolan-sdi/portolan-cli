@@ -16,6 +16,7 @@ not raster math.
 from __future__ import annotations
 
 import shutil
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -23,7 +24,11 @@ import pytest
 import rasterio
 from rasterio.transform import from_bounds
 
+from portolan_cli.hookspecs import hookimpl
+from tests.unit.plugins.stub_handler import StubHandler
+
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
 
@@ -249,3 +254,61 @@ class TestCheckDirectoryForce:
 
         assert "Dry run: 1 file(s) would be converted" in result.output
         assert "tile.tif (COG) -> COG" in result.output
+
+
+@dataclass
+class _PluginCog(StubHandler):
+    """A plugin handler for ``.tif`` that records which method rewrote the file."""
+
+    calls: list[str] = field(default_factory=list)
+
+    def convert(self, source: Path, output_dir: Path, catalog_root: Path | None) -> Path:
+        self.calls.append("convert")
+        return source
+
+    def reoptimize(self, source: Path, catalog_root: Path | None) -> Path:
+        self.calls.append("reoptimize")
+        return source
+
+
+class _Plugin:
+    def __init__(self, handler: StubHandler) -> None:
+        self.handler = handler
+
+    @hookimpl
+    def portolan_formats(self) -> list[object]:
+        return [self.handler]
+
+
+@pytest.mark.integration
+def test_force_calls_the_reoptimize_method_of_a_plugin_handler(
+    tmp_path: Path, register_plugin: Callable[..., None]
+) -> None:
+    from portolan_cli.convert import ConversionStatus, convert_file
+
+    handler = _PluginCog("plugin-cog", frozenset({".tif"}), family="raster")
+    register_plugin(_Plugin(handler))
+    cog = _make_cog_without_overviews(tmp_path / "tile.tif", size=600)
+
+    result = convert_file(cog, force=True)
+
+    assert (result.status, result.output, handler.calls) == (
+        ConversionStatus.SUCCESS,
+        cog,
+        ["reoptimize"],
+    )
+
+
+@pytest.mark.integration
+def test_force_skips_a_plugin_cog_whose_handler_cannot_reoptimize(
+    tmp_path: Path, register_plugin: Callable[..., None]
+) -> None:
+    from portolan_cli.convert import ConversionStatus, convert_file
+
+    register_plugin(_Plugin(StubHandler("plugin-cog", frozenset({".tif"}), family="raster")))
+    cog = _make_cog_without_overviews(tmp_path / "tile.tif", size=600)
+    before = cog.read_bytes()
+
+    result = convert_file(cog, force=True)
+
+    assert (result.status, cog.read_bytes()) == (ConversionStatus.SKIPPED, before)

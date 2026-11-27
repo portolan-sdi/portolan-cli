@@ -43,6 +43,7 @@ from __future__ import annotations
 
 import importlib
 import json
+import logging
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -103,6 +104,8 @@ class FixerRun:
     applied: list[str] = field(default_factory=list)
     skip_reasons: dict[str, list[str]] = field(default_factory=dict)
 
+
+logger = logging.getLogger(__name__)
 
 _STYLE_MEDIA_TYPE = "application/vnd.mapbox.style+json"
 _PARQUET_MEDIA_TYPE = "application/vnd.apache.parquet"
@@ -488,6 +491,7 @@ def _kind(media_type: str) -> str:
 
 def _sniffed_media_type(path: Path) -> str | None:
     """The media type the file's magic bytes imply, preferring the extension's spelling."""
+    from portolan_cli.formats import is_cloud_optimized_geotiff
     from portolan_cli.preparation import _get_media_type
 
     with path.open("rb") as handle:
@@ -495,6 +499,9 @@ def _sniffed_media_type(path: Path) -> str | None:
     sniffed = next((kind for magic, kind in _MAGIC_MEDIA_TYPES if head.startswith(magic)), None)
     if sniffed is None:
         return None
+    if _kind(sniffed) == "image/tiff":
+        cog = "image/tiff; application=geotiff; profile=cloud-optimized"
+        return cog if is_cloud_optimized_geotiff(path) else sniffed
     by_extension = _get_media_type(path)
     return by_extension if _kind(by_extension) == _kind(sniffed) else sniffed
 
@@ -510,7 +517,11 @@ def _fix_media_types(root: Path, dry_run: bool, _state: RunState | None = None) 
             path = _local_asset_path(node, asset)
             if path is None or not isinstance(declared, str) or _kind(declared) not in known:
                 continue
-            sniffed = _sniffed_media_type(path)
+            try:
+                sniffed = _sniffed_media_type(path)
+            except OSError as exc:
+                logger.warning("Cannot read %s to type it: %s", path.name, exc)
+                continue
             if sniffed is not None and _kind(sniffed) != _kind(declared):
                 asset["type"] = sniffed
                 changed = True

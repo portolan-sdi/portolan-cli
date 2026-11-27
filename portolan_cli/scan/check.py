@@ -419,6 +419,7 @@ def check_directory(
             state=state,
         )
         report.conversion_report = conversion_report
+        _stage_converted(conversion_report, catalog_path or path, state)
 
         # Handle legacy file removal (only after actual conversions, not dry run)
         if remove_legacy and conversion_report is not None:
@@ -442,6 +443,22 @@ def check_directory(
     return report
 
 
+def _stage_converted(report: ConversionReport, root: Path, state: RunState | None) -> None:
+    """Record the new bytes of every tracked file a conversion wrote, so ``push`` uploads them."""
+    from portolan_cli.finalization import stage_rewritten
+    from portolan_cli.version_ops import commit_run
+    from portolan_core.run_state import RunState
+
+    outputs = [
+        r.output for r in report.results if r.status is ConversionStatus.SUCCESS and r.output
+    ]
+    run = state or RunState.open(root)
+    stage_rewritten(run, outputs)
+    # A run that stages nothing must not commit: that commit rewrites the catalog index.
+    if state is None and run.staged():
+        commit_run(run)
+
+
 def _forced_paths(
     file_statuses: list[FileStatus],
     reoptimize: frozenset[Path],
@@ -452,9 +469,10 @@ def _forced_paths(
 ) -> list[Path]:
     """Cloud-native files to rewrite: rasters under ``force``, and every file in ``reoptimize``.
 
-    A file qualifies only when its format handler has a ``reoptimize`` method.
+    A file qualifies only when its format handler has a ``reoptimize`` method. A symlink never does.
     """
     from portolan_cli.plugins.formats import handler_for
+    from portolan_cli.report import emit
 
     if not force and not reoptimize:
         return []
@@ -466,8 +484,13 @@ def _forced_paths(
         handler = handler_for(f.path, catalog_path, state=state)
         if handler is None or not hasattr(handler, "reoptimize"):
             continue
-        if f.path.resolve() in named or (force and handler.family == "raster"):
-            forced.append(f.path)
+        if f.path.resolve() not in named and not (force and handler.family == "raster"):
+            continue
+        if f.path.is_symlink():
+            # The rewrite swaps a new file in, so it would replace the link with a copy.
+            emit("warn", f"{f.path.name}: a symlink, not rewritten in place")
+            continue
+        forced.append(f.path)
     return forced
 
 

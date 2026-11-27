@@ -1443,6 +1443,7 @@ def convert_vector(
     catalog_root: Path | None = None,
     *,
     reconvert: bool = False,
+    strict: bool = False,
     settings: VectorSettings | None = None,
     partition_dir: Path | None = None,
 ) -> Path:
@@ -1466,6 +1467,7 @@ def convert_vector(
             None uses the built-in defaults.
         reconvert: True when the operator asked to re-convert from source, which
             rewrites a Parquet file whatever its footer already declares.
+        strict: Raise when a Parquet rewrite fails, and do not keep the file with a warning.
         settings: Explicit vector settings. None reads them from the catalog.
         partition_dir: Directory for Hive partitions by the configured spatial
             index. It applies only to a non-Parquet source, when the settings
@@ -1518,7 +1520,7 @@ def convert_vector(
             # so there is no separate destination to write to. Write a sibling
             # and swap it in, because geoparquet-io cannot write the file it
             # reads.
-            _rewrite_or_keep(source, settings, before)
+            _rewrite_or_keep(source, settings, before, strict=strict)
         else:
             # Copy first, then rewrite the copy. Converting straight into
             # `output_path` would skip `_assert_rewrite_kept_everything`, so a
@@ -1526,7 +1528,7 @@ def convert_vector(
             # the same file kept it on the path above.
             shutil.copy2(source, output_path)
             invalidate(output_path)
-            _rewrite_or_keep(output_path, settings, before)
+            _rewrite_or_keep(output_path, settings, before, strict=strict)
         return output_path
 
     # A non-Parquet source. Convert with the geoparquet-io fluent API, wrapped
@@ -1588,7 +1590,7 @@ def _announce_rewrite(source: Path, reason: str) -> None:
 
 
 def _rewrite_or_keep(
-    source: Path, settings: VectorSettings, before: RewriteFidelity | None
+    source: Path, settings: VectorSettings, before: RewriteFidelity | None, *, strict: bool = False
 ) -> None:
     """Rewrite a GeoParquet in place, or keep it and say why the rewrite failed.
 
@@ -1604,12 +1606,17 @@ def _rewrite_or_keep(
         source: GeoParquet file to rewrite.
         settings: Vector conversion settings to apply.
         before: The fidelity fields of the bytes in ``source``, read before.
+        strict: Raise the failure, and keep the file with no warning.
     """
     try:
         _rewrite_parquet_in_place(source, settings, before)
     except RewriteFidelityError as err:
+        if strict:
+            raise
         emit("warn", f"Kept {source.name} as it is: it would lose {err.lost}")
     except Exception as err:  # a copy is better than a failed add
+        if strict:
+            raise
         logger.info("Rewrite of %s failed: %s", source, err, exc_info=True)
         emit("warn", f"Kept {source.name} as it is: geoparquet-io could not rewrite it ({err})")
 

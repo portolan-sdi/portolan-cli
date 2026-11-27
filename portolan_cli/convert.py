@@ -435,12 +435,18 @@ def convert_file(
         from portolan_cli.plugins.formats import handler_for, plugin_handler_for
 
         # A plugin format handler converts the formats it claims (#947). A built-in
-        # format first passes the cloud-native check.
+        # format, or a cloud-native file under force, first passes the cloud-native check.
         handler = plugin_handler_for(source, catalog_path, state=state)
         reoptimize = False
         display_name = handler.display_name if handler is not None else ""
-        if handler is None:
-            format_info = get_cloud_native_status(source, catalog_path, state=state)
+        format_info = (
+            get_cloud_native_status(source, catalog_path, state=state)
+            if handler is None or force
+            else None
+        )
+        if format_info is not None and (
+            handler is None or format_info.status == CloudNativeStatus.CLOUD_NATIVE
+        ):
             early_exit = _early_exit_result(
                 source,
                 format_info,
@@ -1667,8 +1673,8 @@ def convert_directory(  # noqa: PLR0917 - each convert option is an argument
             > 1 uses a ``ProcessPoolExecutor`` for CPU-bound raster re-encoding
             (issue #530). Callers wanting parallel-by-default resolve a concrete
             count (e.g. ``os.cpu_count()``) before calling.
-        force: Re-optimize already-cloud-native rasters (passed through to
-            :func:`convert_file`). Raster-scoped; valid vectors stay skipped.
+        force: Rewrite each cloud-native file whose handler has a ``reoptimize``
+            method, raster or vector (passed through to :func:`convert_file`).
         state: The run state, which parses the config once per command.
 
     Returns:

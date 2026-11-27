@@ -17,6 +17,7 @@ reason in ``UNBREAKABLE``.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
 import tempfile
@@ -49,6 +50,20 @@ Base = Callable[[str], tuple[Path, set[str]]]
 def _defects(payload: dict[str, Any]) -> set[str]:
     """The rule ids that ``check --json`` reports at warning or error."""
     return {f["rule_id"] for f in payload["data"]["findings"] if f["severity"] != "info"}
+
+
+def _unrecorded(root: Path) -> list[str]:
+    """The tracked files whose bytes differ from their versions.json record."""
+    wrong = []
+    for versions in root.rglob("versions.json"):
+        if versions.parent == root:
+            continue
+        assets = json.loads(versions.read_text())["versions"][-1]["assets"]
+        for key, asset in assets.items():
+            path = versions.parent / key
+            if path.is_file() and hashlib.sha256(path.read_bytes()).hexdigest() != asset["sha256"]:
+                wrong.append(path.relative_to(root).as_posix())
+    return wrong
 
 
 def _check(run: CliHarness, root: Path) -> set[str]:
@@ -112,6 +127,7 @@ def test_fix_repairs_the_rule_and_a_second_fix_is_a_no_op(
         run("check", str(root), "--fix", expect=None)
         fixed = _check(run, root)
         assert rule_id not in fixed, sorted(fixed)
+        assert _unrecorded(root) == []
 
         before = _tree(root)
         run("check", str(root), "--fix", expect=None)

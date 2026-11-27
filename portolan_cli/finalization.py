@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path, PurePath
 from typing import TYPE_CHECKING, Any
 
@@ -72,7 +72,7 @@ from portolan_core.versions import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping
+    from collections.abc import Callable, Iterable, Mapping
 
     from portolan_cli.backends.protocol import PostAddItemContext
     from portolan_cli.plugins.formats import FormatContext
@@ -1310,6 +1310,36 @@ def stage_companions(state: RunState, collection_id: str, paths: list[Path]) -> 
         for path in paths
     )
     state.stage(collection_id, assets=records, minor=True)
+
+
+def stage_rewritten(state: RunState, paths: Iterable[Path]) -> None:
+    """Stage the new bytes of each tracked file that a pass rewrote, as ``add`` records them."""
+    root = state.catalog_root.resolve()
+    for path in paths:
+        collection_dir = next(
+            (p for p in path.resolve().parents if (p / "collection.json").is_file()), None
+        )
+        if collection_dir is None or not collection_dir.is_relative_to(root):
+            continue
+        key = versions_asset_key(path, collection_dir)
+        previous = state.tracked_assets(collection_dir).get(key)
+        if previous is None:
+            continue
+        state.invalidate(path)
+        stat = path.stat()
+        _, feature_count, fingerprint = _asset_freshness_fields(
+            path, is_collection_level=path.parent.resolve() == collection_dir, state=state
+        )
+        record = replace(
+            previous,
+            sha256=state.checksum(path),
+            size_bytes=stat.st_size,
+            mtime=stat.st_mtime,
+            source_mtime=None if previous.source_mtime is None else stat.st_mtime,
+        )
+        if fingerprint is not None:
+            record = replace(record, feature_count=feature_count, schema_fingerprint=fingerprint)
+        state.stage(collection_dir.relative_to(root).as_posix(), assets={key: record})
 
 
 # ─────────────────────────────────────────────────────────────────────────────
