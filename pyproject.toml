@@ -56,9 +56,8 @@ dependencies = [
     "rich>=13.0.0", # Terminal progress bars (transitive via geoparquet-io, but we import directly)
     "rio-cogeo>=5.0.0", # COG creation/validation (includes rasterio)
     "rashid>=0.5.1,<0.6.0", # Conformance validator behind `portolan check`; ships its own STAC + Portolan profile schemas, so validation runs offline. A metapackage over rashid-core[data]. 0.5.1 is the floor because portolan-core needs rashid-core 0.5.1 and the metapackage pins rashid-core exactly (#1133). 0.5.0 is the first release whose import name is rashid_core, which the CLI imports. It also brings the PTL-LNK-006 IRI href, PTL-DAT-011 overview rounding and binary geometry column fixes. Earlier floors: 0.4.0 exempts a display-ready COG from PTL-VIZ-002, so a raster collection with the overview COG that PORTO-FMT-067 asks for and no style asset passes `check` (issue #1141), and its `validate()` takes a `ValidationOptions`. 0.2.0 added PTL-LIV-006, which `check --live` uses (issue #935). 0.1.5 added the catalog-logo rules PTL-LNK-007/008/009 (PORTO-CORE-074..077) and PTL-AST-006. The conformance gate asserts these rules, so this is a hard floor, not a preference
-    # The library half of this repo, a uv workspace member in packages/portolan-core.
-    # The pin is exact because the two distributions release together, and cz bump
-    # rewrites it (see [tool.commitizen]).
+    # The library half of this repo. The pin is exact because both distributions
+    # release together. cz bump rewrites it.
     "portolan-core==0.9.0",
     "lerc>=4.0.1", # Decodes the LERC tiles that hosted tiled imagery layers cache. GDAL 3.12 fails on LERC2 version 6 with "MRF: Error decoding Lerc", so `extract arcgis` cannot read a TilesOnly ImageServer without it (Issue #870). The wheel ships binaries for Windows x64, macOS, and Linux x86-64, so tilecache.py imports it lazily and explains the failure on other platforms
 ]
@@ -66,7 +65,7 @@ dependencies = [
 [project.scripts]
 portolan = "portolan_cli:cli"
 
-# Built-in commands that use the plugin path (#947). An entry point that
+# Built-in commands that use the plugin path. An entry point that
 # portolan-cli declares always loads, whatever PORTOLAN_PLUGINS says.
 [project.entry-points."portolan.commands"]
 "version.rollback" = "portolan_cli.backends.iceberg.cli:rollback"
@@ -88,9 +87,8 @@ e2e = [
     "boto3>=1.35.0",
 ]
 aws = [
-    # obstore.auth.boto3 wraps a botocore session, which reads every credential
-    # mechanism an AWS profile can name. Optional, because a static key pair and
-    # the environment variables need none of it (Issue #872).
+    # obstore.auth.boto3 wraps a botocore session for AWS profiles. It is optional,
+    # because a static key pair and the environment variables need none of it.
     "boto3>=1.35.0",
     # boto3 installs botocore. The profile errors live there, and the upload
     # path reads ProfileNotFound to tell a missing profile from a failed one.
@@ -115,14 +113,11 @@ dev = [
     "types-PyYAML>=6.0", # Type stubs for PyYAML
     "vulture>=2.14",
 ]
-# PMTiles generation now comes from core geoparquet-io (>=1.4.0), which owns
-# create_pmtiles. The extra stays declared, and empty, so an existing
-# `pip install portolan-cli[pmtiles]` still resolves (Issue #754).
+# Core geoparquet-io makes PMTiles. The empty extra keeps
+# `pip install portolan-cli[pmtiles]` working.
 pmtiles = []
-# Rendering itself is core (matplotlib, geopandas). What stays optional here is
-# the extra fidelity: basemap tiles under a vector thumbnail, and the MVT decode
-# that only the PMTiles render path uses. Both are lazily imported and guarded,
-# so a default install renders without them.
+# Rendering is core. These add basemap tiles and the PMTiles MVT decode. Both
+# load lazily behind a guard, so a default install renders without them.
 thumbnails = [
     # viz/thumbnail.py calls private contextily functions, read at 1.7.0.
     # tests/unit/test_thumbnail.py::TestContextilyPrivateParts fails when they change.
@@ -141,9 +136,7 @@ docs = [
 packages = ["portolan_cli"]
 
 # ---------- workspace ----------
-# The root is the portolan-cli distribution. packages/portolan-core is the
-# second distribution, the library without Click or the geospatial stack (#1133).
-# portolan-cli depends on it, so a plain `uv sync` installs it in editable mode.
+# packages/portolan-core is the library without Click or the geospatial stack.
 
 [tool.uv.workspace]
 members = ["packages/portolan-core"]
@@ -163,9 +156,8 @@ version_files = [
     "pyproject.toml:portolan-core==",
 ]
 tag_format = "v$version"
-# uv.lock records the version of each workspace member. Relock after
-# version_files writes the new versions and before the bump commit. cz stages
-# what the hook writes.
+# uv.lock records each workspace member version. Relock after version_files
+# writes the new versions. cz stages what the hook writes.
 pre_bump_hooks = ["uv lock"]
 update_changelog_on_bump = true
 # The project is pre-1.0. A breaking change bumps the minor number, so the
@@ -183,10 +175,8 @@ python_files = "test_*.py"
 python_classes = "Test*"
 python_functions = "test_*"
 addopts = "--tb=short"
-# A marker that is not in `markers` fails collection, so a misspelled marker
-# cannot move a test out of its CI lane. This is the ini key and not
-# --strict-markers in addopts: pytest 9.0.3 ignores that flag there
-# (https://github.com/pytest-dev/pytest/issues/14442).
+# An unknown marker fails collection. pytest 9.0.3 ignores --strict-markers in
+# addopts: https://github.com/pytest-dev/pytest/issues/14442
 strict_markers = true
 markers = [
     "unit: Fast, isolated, no I/O (< 100ms each)",
@@ -232,14 +222,11 @@ target-version = "py311"
 extend-exclude = [".claude"]
 
 [tool.ruff.lint]
-# With explicit-preview-rules, preview turns on only the preview rules that
-# select names. Preview also changes the defaults of stable rules. One such
-# default bans the `gpd` alias for geopandas.
+# explicit-preview-rules turns on only the preview rules that select names.
+# Preview also changes stable defaults: one bans the `gpd` alias for geopandas.
 preview = true
 explicit-preview-rules = true
-# Ruff owns complexity, security, and docstring linting for this repo. It
-# replaces three separate tools that each re-walked the same source tree:
-# xenon/radon (C901), bandit (S), and pylint R0801 (now jscpd, see prek.toml).
+# Ruff owns complexity (C901), security (S), and docstring linting.
 select = [
     "E", # pycodestyle errors
     "W", # pycodestyle warnings
@@ -294,30 +281,23 @@ ignore = [
     "E501", # line too long (handled by formatter)
     "B008", # do not perform function calls in argument defaults (Click uses this)
     "ISC001", # conflicts with the formatter
-    # Google style documents the constructor arguments in the class docstring.
-    # A separate __init__ docstring repeats them. errors.py alone holds 28
-    # two-line constructors whose class docstring already states the contract.
-    "D107", # missing docstring in __init__
-    # Every hit is a loop that isolates one item's failure and continues. It
-    # writes a file, reads a catalog, or calls a remote store. The handler
-    # cannot move out of the loop, because that aborts the loop on the first
-    # failure. The setup cost is free from Python 3.11 and negligible before it.
+    "D1", # docstring coverage: scripts/check_comments.py checks the rendered API
+    # Each hit isolates the failure of one item in a loop and continues. A handler
+    # outside the loop stops the loop at the first failure.
     "PERF203", # try-except within a loop
     # Lazy imports of the heavy geospatial libraries keep CLI startup fast.
     "PLC0415", # import outside top level
     # `from x import y as y` marks an explicit re-export for mypy strict.
     "PLC0414", # useless import alias
 ]
-# The CLI help text and docs/reference/cli.md use the multiplication sign of
-# "workers × concurrency". The scan output prints the information sign as its
-# notice icon.
+# The CLI help uses the multiplication sign of "workers × concurrency".
+# The scan output prints the information sign as its notice icon.
 allowed-confusables = ["×", "ℹ"]
 
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]
-# Tests assert, reach into private helpers, and carry fixture literals that
-# would be magic values in library code. They are still held to the import,
-# naming, and simplification rules.
+# Tests assert, reach into private helpers, and use fixture literals. The
+# import, naming, and simplification rules still apply.
 "tests/**/*.py" = [
     "S101", # assert is the point of a test
     "PLR2004", # an expected value in an assertion is clearest as a literal
@@ -354,10 +334,8 @@ allowed-confusables = ["×", "ℹ"]
 # vulture's whitelist format is bare names and `_.attr` expressions. They are
 # never executed, so the undefined `_` and the bare expressions are the format.
 "vulture_whitelist.py" = ["F821", "B018"]
-# TID251, permanent. The CLI layer prints, so it imports portolan_cli.output.
-# It is the layer-cli contract below; tests/docs/test_quality_config.py keeps
-# the two lists equal. api.py re-exports output for plugins. sync/upload.py is
-# the object-store transport and the one module that calls obstore.put.
+# TID251, permanent: the layer-cli contract, api.py, and sync/upload.py.
+# tests/docs/test_quality_config.py keeps the lists equal.
 "portolan_cli/cli.py" = ["TID251"]
 "portolan_cli/cli_types.py" = ["TID251"]
 "portolan_cli/emit.py" = ["TID251"]
@@ -372,50 +350,38 @@ allowed-confusables = ["×", "ℹ"]
 "portolan_cli/sync/upload.py" = ["TID251"]
 # The writer sink puts small catalog JSON and Markdown with its own Content-Type.
 "packages/portolan-core/src/portolan_core/writer.py" = ["TID251"]
-# TID251, ratchet (#1035). Each module still prints through portolan_cli.output
-# or calls obstore.put. The letter names the #1035 agent that owns the module.
-# Delete a line when its module is clean, and delete the same module from
-# RATCHET_TID251 and from the output-is-cli-only ignore_imports. Never add one.
+# TID251, ratchet. Delete only, here, in RATCHET_TID251, and in the
+# output-is-cli-only ignore_imports. Never add one.
 
 [tool.ruff.lint.flake8-tidy-imports.banned-api]
-# Library output on stdout corrupts the JSON envelope (#1005) and interleaves
-# with progress lines (#1012). A direct obstore.put skips Content-Type (#807)
-# and the multipart part size (#908). Ruff resolves aliases, so
-# `import obstore as obs` then `obs.put(...)` is reported.
+# Library output on stdout corrupts the JSON envelope. A direct obstore.put
+# skips Content-Type and the part size. Ruff resolves aliases.
 "portolan_cli.output".msg = "Library code logs through logging.getLogger. Only the CLI layer prints. See #1005."
 "obstore.put".msg = "Call the put_object helper in portolan_cli.sync.upload. It sets Content-Type and the part size. See #807 and #908."
 "obstore.put_async".msg = "Call the put_object_async helper in portolan_cli.sync.upload. See #807 and #908."
 
 [tool.ruff.lint.flake8-builtins]
-# STAC names a collection field "license". The ArcGIS REST API and the schema
-# sidecar name a field "format". The keyword arguments carry the same names, so
-# the Python API matches the specification it writes. No function that takes
-# them calls the shadowed builtin.
+# The keyword arguments match the STAC "license" and ArcGIS "format" fields.
+# No function that takes them calls the shadowed builtin.
 builtins-ignorelist = ["license", "format"]
 
 [tool.ruff.lint.pep8-naming]
-# "ET" is the alias the stdlib documentation gives for xml.etree.ElementTree.
-# "InterruptException" mirrors duckdb.InterruptException. convert.py matches
-# that class name as a string, so a test double must use the same name.
+# "ET" is the stdlib alias for xml.etree.ElementTree. convert.py matches
+# duckdb.InterruptException by name, so a test double uses the same name.
 extend-ignore-names = ["ET", "InterruptException"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["portolan_cli", "portolan_core"]
-# Every module defers annotation evaluation. This is what makes the TC rules
-# safe here: moving an import into a TYPE_CHECKING block cannot break a runtime
-# annotation when no annotation is evaluated at runtime.
+# Every module defers annotation evaluation, so the TC rules can safely move
+# an import into a TYPE_CHECKING block.
 required-imports = ["from __future__ import annotations"]
 
 [tool.ruff.lint.pydocstyle]
-# Without an explicit convention ruff enables every D rule, including D413,
-# which alone accounted for 1069 of 1233 D violations. Google is the style the
-# existing docstrings already follow.
+# Without a convention ruff enables every D rule. The docstrings use Google style.
 convention = "google"
 
 [tool.ruff.lint.mccabe]
-# The removed xenon hook allowed any block up to grade C (complexity 20). It
-# also checked the module average and the repo average. A single complex
-# function cannot move an average. This is the per-function ceiling instead.
+# The per-function ceiling. It equals pylint max-branches.
 max-complexity = 15
 
 [tool.ruff.lint.flake8-pytest-style]
@@ -436,15 +402,8 @@ raises-extend-require-match-for = [
 ]
 
 [tool.ruff.lint.pylint]
-# Each limit sits near the 99th percentile of the functions in portolan_cli,
-# packages, and scripts, so that a rule fires only on a real outlier.
-# Measured distribution on 2026-11-27 (p50 / p90 / p99 / max):
-#   arguments 2 / 5 / 12 / 33, positional arguments 2 / 4 / 8 / 33,
-#   returns 1 / 4 / 6 / 10, branches 3 / 7 / 13 / 15,
-#   statements 6 / 19 / 40 / 69, locals 3 / 8 / 15 / 31,
-#   nested blocks 2 / 3 / 5 / 8, Boolean expressions 2 / 3 / 4 / 6.
-# max-branches equals mccabe max-complexity. max-positional-args and max-locals
-# sit above p99 so that the noqa lines stay near 30.
+# Each limit sits near the p99 of the functions in portolan_cli, packages, and
+# scripts, so a rule fires only on a real outlier.
 max-args = 12
 max-positional-args = 8
 max-returns = 8
@@ -466,7 +425,7 @@ python_version = "3.11"
 strict = true # Enables all strict flags at once
 # Bare `uv run mypy` checks this scope. The prek hook passes no paths.
 files = ["portolan_cli", "packages/portolan-core/src", "scripts", "tests"]
-# The example plugin (#947) is a separate package. Its path lets mypy check
+# The example plugin is a separate package. Its path lets mypy check
 # its tests and its code without installing it.
 mypy_path = ["packages/portolan-core/src", "tests/plugins/portolan_example/src"]
 explicit_package_bases = true
@@ -492,10 +451,8 @@ disallow_incomplete_defs = false
 disallow_untyped_calls = false
 disallow_any_generics = false
 
-# These packages ship no py.typed marker. PyPI has no stub for gitingest,
-# pygeohash, contextily, geoparquet-io, geoarrow, lerc, mapbox-vector-tile or
-# pyogrio. types-rasterio needs Python 3.12, and the project
-# supports Python 3.11.
+# These packages ship no py.typed marker and PyPI has no usable stub.
+# types-rasterio needs Python 3.12.
 [[tool.mypy.overrides]]
 module = [
     "rasterio.*",
@@ -510,11 +467,8 @@ module = [
 ]
 ignore_missing_imports = true
 
-# markdown ships no inline types. types-Markdown exists on PyPI, so mypy
-# reports the missing stub even under ignore_missing_imports, and it reports it
-# against the importing file. One docs test imports markdown's slugify to prove
-# that the anchors the generator writes match the anchors MkDocs renders. The
-# suppression therefore names that one test module.
+# types-Markdown exists, so mypy reports the missing stub in the importing file.
+# One docs test imports markdown's slugify, so the override names that test.
 [[tool.mypy.overrides]]
 module = ["markdown.*"]
 ignore_missing_imports = true
@@ -526,11 +480,8 @@ disable_error_code = ["import-untyped"]
 # ---------- spell check ----------
 
 [tool.codespell]
-# "Nd" is a Unicode category code for "Number, decimal digit" used in Hypothesis tests
-# French words from Belgian ISO 19139 test fixture (tests/fixtures/csw/belgium_buildings_iso19139.xml)
-# "BU" is the INSPIRE theme code for Buildings (used in test fixtures)
-# "disjointness" is a real set-theory term (codespell wants "disjointedness")
-# "lod" is the ArcGIS tile cache term for a level of detail (the tileInfo "lods" array)
+# nd: a Unicode category. bu: an INSPIRE theme. lod: ArcGIS level of detail.
+# The French words come from the Belgian ISO 19139 fixture.
 ignore-words-list = "nd,bu,ue,adresse,projet,environnement,copie,explicite,connexion,objets,visibles,issus,fonction,mesures,informations,disjointness,lod"
 
 # ---------- dead code ----------
@@ -551,8 +502,6 @@ verbose = false
 ignore_decorators = ["@breaks"]
 
 # ---------- architecture enforcement ----------
-# Stricter layered contracts are aspirational - the current architecture has some coupling
-# that would need refactoring to support full layered enforcement.
 
 [tool.importlinter]
 root_packages = ["portolan_cli", "portolan_core"]
@@ -570,11 +519,10 @@ forbidden_modules = ["portolan_cli.backends"]
 # cli.py uses these modules as a clean interface; direct cli->backends is still forbidden.
 ignore_imports = [
     "portolan_cli.catalog -> portolan_cli.backends",
-    # finalize_items routes version snapshots to the active backend (#624 moved
-    # this edge out of add.py into finalization.py); cli reaches it only via the
-    # library layer, so the direct cli->backends ban still holds.
+    # finalize_items routes version snapshots to the active backend. cli
+    # reaches it only through the library layer.
     "portolan_cli.finalization -> portolan_cli.backends",
-    "portolan_cli.finalization -> portolan_cli.backends.protocol", # PostAddContext types the on_post_add context (#977)
+    "portolan_cli.finalization -> portolan_cli.backends.protocol", # PostAddContext types the on_post_add context
     "portolan_cli.version_ops -> portolan_cli.backends",
     "portolan_cli.version_ops -> portolan_cli.backends.protocol",
     "portolan_cli.hookspecs -> portolan_cli.backends.protocol", # TYPE_CHECKING only
@@ -584,11 +532,8 @@ ignore_imports = [
 id = "validation-is-an-adapter"
 name = "Validation is a rashid adapter and must not import the CLI"
 type = "forbidden"
-# The extraction seam is gone: rashid ships as a package and
-# portolan_cli.validation is the adapter in front of it. What
-# remains worth locking is direction. The adapter builds rashid's config,
-# calls it, and returns plain data (validation.report emits dicts, never
-# Click/Rich output), so cli.py depends on validation and never the reverse.
+# portolan_cli.validation is the adapter in front of rashid and returns plain
+# data. cli.py depends on validation, never the reverse.
 source_modules = ["portolan_cli.validation"]
 forbidden_modules = ["portolan_cli.cli"]
 
@@ -601,25 +546,20 @@ modules = [
     "portolan_core.errors",
     "portolan_core.constants",
     "portolan_cli.json_output",
-    # input sanitization. A stdlib-only leaf (re, pathlib, urllib):
-    # it hardens agent-supplied arguments, which is not catalog validation, so
-    # it sits at the top level rather than inside validation/.
+    # A stdlib-only leaf that hardens agent-supplied arguments. It is not
+    # catalog validation, so it is not in validation/.
     "portolan_cli.input_hardening",
 ]
 
-# ---------- feature-package boundaries (#625) ----------
-# The scan/, sync/, and viz/ subpackages group the modules that used to sit
-# flat in the root. Their real dependency DAG is: sync (top orchestration) may
-# reach down into scan (its `sync` orchestrator drives check/scan); scan and viz
-# are independent peers, and neither reaches back up into sync. These two
-# contracts lock that shape so the grouping can't silently erode.
+# ---------- feature-package boundaries ----------
+
+# sync may import scan. scan and viz are peers, and neither imports sync.
 
 [[tool.importlinter.contracts]]
 id = "viz-is-a-leaf"
 name = "viz must not import the scan or sync layers"
 type = "forbidden"
-# viz/ only produces/classifies visual + tiling artifacts (thumbnails, Mapbox GL
-# styles, PMTiles). It is a leaf: it depends on neither scanning nor sync.
+# viz/ makes thumbnails, Mapbox GL styles, and PMTiles. It is a leaf.
 source_modules = ["portolan_cli.viz"]
 forbidden_modules = ["portolan_cli.scan", "portolan_cli.sync"]
 
@@ -627,31 +567,16 @@ forbidden_modules = ["portolan_cli.scan", "portolan_cli.sync"]
 id = "scan-below-sync"
 name = "scan must not directly import the sync or viz layers"
 type = "forbidden"
-# scan/ (directory scanning, classification, inference, check) sits below sync
-# and is independent of viz. sync may import scan, never the reverse.
-#
-# Direct-only: `scan.check` is a command-level orchestrator that legitimately
-# fans out through shared root modules (catalog, metadata, convert), which in
-# turn depend on viz.*. Those transitive chains are the
-# existing architecture, not a scan->sync/viz coupling. What we lock here is
-# the boundary that actually matters: no scan module may *directly* import the
-# sync or viz packages. (viz-is-a-leaf stays transitive because viz truly is.)
+# Direct imports only: scan.check reaches viz through shared root modules
+# such as catalog, metadata, and convert.
 source_modules = ["portolan_cli.scan"]
 forbidden_modules = ["portolan_cli.sync", "portolan_cli.viz"]
 allow_indirect_imports = true
 
-# ---------- layers (#944, #947) ----------
-# The package has three layers. A library caller (a Cloud Run job, a notebook,
-# a plugin) imports the read and manage layers without the CLI shell.
-#
-#   read    catalog, collection, and item access. No Click, no rasterio,
-#           no module that writes a catalog.
-#   manage  STAC builders, conversion, extraction, versions.json, sync,
-#           backends. No Click.
-#   cli     cli, cli_types, emit, add_progress, scan.progress. Click and Rich.
-#
-# Each check follows transitive imports, and an import inside a function body
-# counts too.
+# ---------- layers ----------
+
+# Three layers: read (no Click, rasterio, or writes), manage (no Click), and cli.
+# A library caller imports read and manage without the CLI shell.
 
 [[tool.importlinter.contracts]]
 id = "layer-read"
@@ -666,7 +591,7 @@ source_modules = [
     "portolan_core.status",
     "portolan_core.catalog_list",
     "portolan_core.agents_md",
-    # The run state of one command (issue #995). Every read module may take it.
+    # The run state of one command. Every read module may take it.
     "portolan_core.run_state",
 ]
 forbidden_modules = [
@@ -740,10 +665,9 @@ ignore_imports = [
     "portolan_cli -> portolan_cli.cli",
 ]
 
-# ---------- output and transport bans (#1035) ----------
-# The second layer under ruff TID251. Ruff sees one file at a time. These
-# contracts see the import graph, and they report an ignore_imports line that
-# matches no import, so a ratchet line cannot outlive its import.
+# ---------- output and transport bans ----------
+
+# The import-graph layer under ruff TID251. A stale ignore_imports line fails.
 
 [[tool.importlinter.contracts]]
 id = "output-is-cli-only"
@@ -761,17 +685,14 @@ ignore_imports = [
     "portolan_cli.extract.common.cli_helpers -> portolan_cli.output",
     "portolan_cli.extract.common.layer_cli -> portolan_cli.output",
     "portolan_cli.api -> portolan_cli.output",
-    # Ratchet. The same modules as the TID251 ratchet in
-    # [tool.ruff.lint.per-file-ignores], plus sync.upload: ruff exempts that
-    # file for obstore.put, so only this contract sees its output import.
-    # The letter names the owning #1035 agent. Delete only.
+    # Ratchet: the TID251 ratchet modules. Delete only.
 ]
 
 [[tool.importlinter.contracts]]
 id = "object-store-is-sync-transport-only"
 name = "Only the sync transport modules and the writer sink import obstore"
 type = "forbidden"
-# portolan-core holds the reader modules, so the ban reads it too (#1133).
+# portolan-core holds the reader modules, so the ban reads it too.
 source_modules = ["portolan_cli", "portolan_cli.**", "portolan_core", "portolan_core.**"]
 forbidden_modules = ["obstore"]
 allow_indirect_imports = true
@@ -783,10 +704,9 @@ ignore_imports = [
     "portolan_cli.sync.pull -> obstore",
 ]
 
-# ---------- portolan-core boundary (#1133) ----------
-# portolan-core is the library half of the workspace. A library caller installs
-# it without the CLI shell and without the geospatial stack. Each contract
-# follows transitive imports, and an import inside a function body counts too.
+# ---------- portolan-core boundary ----------
+
+# A library caller installs portolan-core without the CLI or the geospatial stack.
 
 [[tool.importlinter.contracts]]
 id = "sync-transport-no-scan"
@@ -811,10 +731,8 @@ forbidden_modules = ["portolan_cli"]
 [[tool.importlinter.contracts]]
 id = "core-no-heavy"
 name = "portolan-core must not import click or the geospatial stack"
-# This list is the fast named check. External packages are leaves in the
-# graph, so it cannot see click behind rio_cogeo. The allowlist is the
-# deptry-core hook in prek.toml, which rejects any import that
-# packages/portolan-core/pyproject.toml does not declare.
+# This list cannot see click behind rio_cogeo. The deptry-core hook in
+# prek.toml rejects any import that portolan-core does not declare.
 type = "forbidden"
 source_modules = ["portolan_core"]
 forbidden_modules = [
@@ -830,8 +748,6 @@ forbidden_modules = [
 ]
 
 # ---------- dependency checking ----------
-# deptry detects unused, missing, and transitive dependencies
-# Rules: DEP001 (missing), DEP002 (unused), DEP003 (transitive), DEP004 (imported as dev)
 
 [tool.deptry]
 # Treat optional-dependencies groups as dev dependencies
@@ -851,26 +767,16 @@ extend_exclude = [
 rashid = "rashid_core"
 
 [tool.deptry.per_rule_ignores]
-# Stability and security constraints for transitive dependencies (not directly
-# imported)
-# - aiohttp: CVE-2026-111063 and others
-# - certifi: PYSEC-2026-4320
-# - cryptography: CVE-2026-39892
-# - duckdb: 1.5.5 segfaults in ST_Read_Meta on malformed input. See
-#   duckdb/duckdb-spatial#860
-# - lxml: CVE-2026-41066
-# - pillow: CVE-2026-40192, CVE-2026-112390 and others
-# - pygments: CVE-2026-4539
-# - requests: CVE-2026-25645
+# Transitive dependencies pinned for stability or security.
 DEP002 = [
-    "aiohttp",
-    "certifi",
-    "cryptography",
-    "duckdb",
-    "lxml",
-    "pillow",
-    "pygments",
-    "requests",
+    "aiohttp", # CVE-2026-111063 and others
+    "certifi", # PYSEC-2026-4320
+    "cryptography", # CVE-2026-39892
+    "duckdb", # 1.5.5 segfaults in ST_Read_Meta: https://github.com/duckdb/duckdb-spatial/issues/860
+    "lxml", # CVE-2026-41066
+    "pillow", # CVE-2026-40192, CVE-2026-112390 and others
+    "pygments", # CVE-2026-4539
+    "requests", # CVE-2026-25645
     "pyiceberg",
     "shapely",
     "pygeohash",
@@ -879,9 +785,9 @@ DEP002 = [
 
 [dependency-groups]
 dev = [
-    # The conformance gate validates emitted raster items against the vendored
-    # raster v2.0.0 schema. jsonschema arrives transitively through rashid, but
-    # the gate would break silently if rashid ever dropped it, so declare it.
+    # The conformance gate validates raster items against the vendored schema.
+    # Declare jsonschema, so the gate does not depend on rashid to bring it.
+
     "jsonschema>=4.0.0",
     "moto[s3,server]>=5.0.0",
     "numpy>=2.2.6",

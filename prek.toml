@@ -1,19 +1,14 @@
-# prek configuration - Tier 1 CI
-#
-# All hooks BLOCK on failure. No warnings, no skips.
-# Install: uv run prek install (installs every type in default_install_hook_types)
+# prek configuration. Every hook blocks on failure.
+# Install: uv run prek install
 #:schema https://www.schemastore.org/prek.json
 
-# Stop after first hook failure for faster feedback
+# Stop after the first hook failure.
 fail_fast = true
 
-# A bare `prek install` installs all three, so the commit-msg and pre-push
-# hooks below do not depend on extra --hook-type flags.
+# A bare `prek install` installs all three hook types.
 default_install_hook_types = ["pre-commit", "commit-msg", "pre-push"]
 
-# =============================================================================
-# Built-in hooks (native Rust, no network fetch required)
-# =============================================================================
+# ---------- built-in hooks (native Rust, no network) ----------
 [[repos]]
 repo = "builtin"
 hooks = [
@@ -38,9 +33,8 @@ hooks = [
   },
 ]
 
-# =============================================================================
-# External tool hooks
-# =============================================================================
+# ---------- external tool hooks ----------
+
 # Ruff runs from uv.lock, so the hook and `uv run ruff` use one version.
 [[repos]]
 repo = "local"
@@ -79,18 +73,13 @@ hooks = [
   { id = "commitizen", stages = ["commit-msg"] },
 ]
 
-# =============================================================================
-# Workflow linting — keeps the supply-chain hardening in .github/workflows
-# from rotting (SHA pins, least-privilege permissions, no template injection).
-# =============================================================================
+# ---------- workflow linting: SHA pins, least privilege, no template injection ----------
 [[repos]]
 repo = "https://github.com/rhysd/actionlint"
 rev = "v1.7.12"
 hooks = [
-  # -shellcheck= disables actionlint's embedded shellcheck: its presence varies
-  # by machine (it shells out to an optional binary), which would make results
-  # non-deterministic. actionlint's own workflow validation — action refs,
-  # expression syntax, needs/matrix graphs — is what we gate on here.
+  # -shellcheck= turns off the optional shellcheck binary, which varies by
+  # machine. The gate is actionlint's own workflow validation.
   { id = "actionlint", args = ["-shellcheck="] },
 ]
 
@@ -98,8 +87,7 @@ hooks = [
 repo = "https://github.com/woodruffw/zizmor-pre-commit"
 rev = "v1.26.1"
 hooks = [
-  # --no-online-audits: hermetic (no network calls to GitHub during the audit),
-  # so the hook is deterministic and works offline / in CI without a token.
+  # --no-online-audits makes no network calls, so the hook works offline.
   { id = "zizmor", args = ["--no-online-audits"] },
 ]
 
@@ -110,14 +98,11 @@ repo = "https://github.com/portolan-sdi/portolan-ops"
 rev = "v1.12.0"
 hooks = [{ id = "lychee" }]
 
-# =============================================================================
-# Local hooks
-# =============================================================================
+# ---------- local hooks ----------
 [[repos]]
 repo = "local"
 hooks = [
-  # === SAFETY HOOKS ===
-  # Prevent accidental commits of temporary/generated content
+  # Block commits of worktree files.
   {
     id = "forbid-worktrees",
     name = "forbid worktree files",
@@ -128,8 +113,7 @@ hooks = [
     pass_filenames = false,
   },
 
-  # === AUTO-UPDATE HOOKS ===
-  # These regenerate content from code - keeps docs in sync automatically
+  # Regenerate the AGENTS.md sections from code.
   {
     id = "update-agents-md",
     name = "auto-update AGENTS.md sections",
@@ -139,7 +123,6 @@ hooks = [
     pass_filenames = false,
   },
 
-  # === VALIDATION HOOKS ===
   {
     id = "validate-agents-md",
     name = "validate AGENTS.md references",
@@ -195,11 +178,8 @@ hooks = [
     pass_filenames = false,
   },
 
-  # === LINT / SECURITY / DUPLICATION ===
-  # These moved out of ci.yml's lint/dead-code/security jobs so there is ONE
-  # rule source: CI runs `prek run --all-files` (see .github/workflows/ci.yml
-  # `quality` job) instead of re-invoking each tool with its own drifting args.
-  # Config lives in pyproject.toml ([tool.codespell]).
+  # CI runs `prek run --all-files`, so these hooks are the one rule source.
+  # pyproject.toml [tool.codespell] holds the codespell config.
   {
     id = "codespell",
     name = "spell check",
@@ -208,20 +188,8 @@ hooks = [
     args = ["portolan_cli", "packages", "tests", "docs"],
     pass_filenames = false,
   },
-  # Duplication is gated against a committed baseline, not a percentage. The
-  # gate fails only when a commit adds a clone. Pay the baseline down with
-  # `jscpd --update-baseline` after a real dedup. test_jscpd_baseline_only_shrinks
-  # in tests/docs/test_quality_config.py pins the clone count and minTokens.
-  #
-  # This replaces a pylint R0801 hook that could not fail: pylint scores a run
-  # as 10 - (findings / statements) * 10, so 93 duplicate blocks over 23908
-  # statements scored 9.96 against a --fail-under=9.5 floor. That gate needed
-  # ~1195 duplicate blocks to trip. jscpd also reads tests/, which the pylint
-  # hook never scanned, and finishes in 0.2s against pylint's 25.8s.
-  #
-  # `failOnEmpty` in .jscpd.json guards the new gate against the old one's
-  # failure mode. A run that matches no file must fail loudly, not pass
-  # silently.
+  # The gate fails when a commit adds a clone to .jscpd-baseline.json. After a
+  # real dedup, run `jscpd --update-baseline` and lower the pinned count.
   {
     id = "jscpd",
     name = "duplicate code (jscpd, baseline-gated)",
@@ -230,5 +198,13 @@ hooks = [
     files = { glob = ["portolan_cli/**/*.py", "packages/**/*.py", "tests/**/*.py", ".jscpd.json", ".jscpd-baseline.json"] },
     pass_filenames = false,
   },
-
+  # Cap docstrings and comment blocks at 2 lines and ban history in them.
+  {
+    id = "check-comments",
+    name = "docstring and comment length and history",
+    entry = "uv run python scripts/check_comments.py",
+    language = "system",
+    files = { glob = ["portolan_cli/**/*.py", "packages/**/*.py", "scripts/**/*.py", "tests/**/*.py", "examples/**/*.py", "vulture_whitelist.py", "pyproject.toml", "prek.toml", ".github/workflows/*.yml"] },
+    pass_filenames = true,
+  },
 ]
